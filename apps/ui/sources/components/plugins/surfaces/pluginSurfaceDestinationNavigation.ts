@@ -117,6 +117,25 @@ export type PluginSurfaceDestinationOpenSurfaceHandlerInput = Readonly<{
      */
     runtimeAdmission?: PluginSurfaceDestinationRuntimeAdmission;
     /**
+     * The enclosing scope's `openSurface`, when this scope is mounted inside
+     * one.
+     *
+     * A destination's `targetKind` is a registry slot fact, so the target
+     * scopes PARTITION the destination space: `appPage`, `settingsPage` and the
+     * app `rightSidebarTab` are admitted at the `app` target only, and their
+     * incumbent route/sidebar owners consequently register with the app-scope
+     * binding. Without this, a Session/Project mount could never reach any of
+     * them, which is exactly what a Composer "View details" needs.
+     *
+     * It is a scope handoff, not a fallback chain: only
+     * `plugin_surface_open_destination_unknown` — "no destination with this
+     * qualified reference belongs to my target at all" — is handed on. Every
+     * other outcome, including an ambiguous, unavailable, retired or
+     * owner-less destination that IS this scope's, is returned as-is, so a
+     * refusal can never be laundered into a second attempt elsewhere.
+     */
+    enclosingOpenSurface?: PluginSurfaceOpenHandler | null;
+    /**
      * Incumbent navigation owners, indexed by their normalized container.
      * Omission is deliberate: an unavailable adapter is never substituted by
      * a page, pane, or another selected plugin surface.
@@ -162,6 +181,22 @@ function unavailable(reason: string): Extract<PluginSurfaceOpenOutcome, Readonly
     return { ok: false, code: 'unavailable', reason };
 }
 
+/**
+ * "No destination with this qualified reference belongs to my target at all."
+ *
+ * It is the ONLY refusal an enclosing scope may be asked to answer instead,
+ * because it is the only one that says nothing about the destination itself.
+ * Ambiguity, unavailability, a retired origin and a missing owner are all
+ * facts about a destination this scope does own, and handing those on would
+ * turn one truthful refusal into a search.
+ */
+function isDestinationOutsideTargetScope(
+    outcome: Extract<PluginSurfaceOpenOutcome, Readonly<{ ok: false }>>,
+): boolean {
+    return outcome.code === 'unavailable'
+        && outcome.reason === 'plugin_surface_open_destination_unknown';
+}
+
 function isExactDestination(
     placement: PluginUiDestinationProjection,
     request: PluginSurfaceOpenRequest,
@@ -182,7 +217,9 @@ function isExactDestination(
  */
 export function resolvePluginSurfaceDestinationOpen(input: Omit<
     PluginSurfaceDestinationOpenSurfaceHandlerInput,
-    'handlers'
+    // Resolution answers only "is this destination mine?". Handing a scope
+    // handoff to the resolver would make it a second navigation decision-maker.
+    'handlers' | 'enclosingOpenSurface'
 > & Readonly<{
     request: PluginSurfaceOpenRequest;
 }>): PluginSurfaceDestinationOpenResult<PluginUiDestinationProjection> {
@@ -297,7 +334,11 @@ export function createPluginSurfaceDestinationOpenSurfaceHandler(
             ...(input.runtimeAdmission === undefined ? {} : { runtimeAdmission: input.runtimeAdmission }),
             request,
         });
-        if (!resolved.ok) return resolved;
+        if (!resolved.ok) {
+            return input.enclosingOpenSurface && isDestinationOutsideTargetScope(resolved)
+                ? await input.enclosingOpenSurface(request)
+                : resolved;
+        }
         if (isSettingsPageResolution(resolved)) {
             const handler = input.handlers.settingsPage;
             if (!handler) {
@@ -371,7 +412,11 @@ function createPluginSurfaceDestinationNavigationBindingFromReader(
             ...(input.runtimeAdmission === undefined ? {} : { runtimeAdmission: input.runtimeAdmission }),
             request,
         });
-        if (!resolved.ok) return resolved;
+        if (!resolved.ok) {
+            return input.enclosingOpenSurface && isDestinationOutsideTargetScope(resolved)
+                ? await input.enclosingOpenSurface(request)
+                : resolved;
+        }
         const container = resolved.placement.binding.container;
         const owners = ownersByContainer.get(container);
         if (!owners || owners.size !== 1) {

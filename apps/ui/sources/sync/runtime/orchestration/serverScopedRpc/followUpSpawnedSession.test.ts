@@ -43,7 +43,24 @@ function composerAttachmentOnlyMeta(): Record<string, unknown> {
                 key: 'review-42',
                 value: { reviewId: '42' },
                 presentation: { label: 'Review #42', typeLabel: 'Review comment' },
-                content: [{ mediaId: 'media-42' }],
+                // The real post-spawn shape: a Composer draft whose media is
+                // still the transfer-owned staged claim. The daemon's
+                // SessionMedia finalizer turns it into a durable reference
+                // during admission, so this turn must reach the sender.
+                content: {
+                    kind: 'stagedMedia',
+                    handle: {
+                        v: 1,
+                        id: 'staged-content-42',
+                        executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+                        owner: { pluginId: 'com.acme.review', localId: 'review' },
+                        mediaKind: 'image',
+                        mimeType: 'image/png',
+                        name: 'review-42.png',
+                        sizeBytes: 2048,
+                        sha256: 'a'.repeat(64),
+                    },
+                },
             }],
         },
     };

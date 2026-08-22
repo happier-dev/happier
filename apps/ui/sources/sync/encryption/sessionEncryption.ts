@@ -1,3 +1,7 @@
+import { hkdf } from '@noble/hashes/hkdf';
+import { hmac } from '@noble/hashes/hmac';
+import { sha256 } from '@noble/hashes/sha2';
+import { utf8ToBytes } from '@noble/hashes/utils';
 import { encodeBase64 } from '@/encryption/base64';
 import type { RawRecord } from '../typesRaw';
 import { ApiMessage } from '../api/types/apiTypes';
@@ -14,6 +18,13 @@ function isEncryptedApiMessage(message: ApiMessage): message is EncryptedApiMess
     const content: any = (message as any)?.content;
     return Boolean(content && content.t === 'encrypted' && typeof content.c === 'string');
 }
+
+/**
+ * Shared with the CLI owner `deriveSessionInputEqualityTagV1`
+ * (`apps/cli/src/session/transport/encryption/sessionEncryptionContext.ts`), so
+ * both clients key Session-input equality out of one purpose-separated label.
+ */
+const SESSION_INPUT_EQUALITY_HKDF_LABEL_V1 = 'happier.session-input-equality.v1';
 
 function computeCiphertextFingerprint(ciphertextB64: string): string {
     const value = String(ciphertextB64 ?? '');
@@ -32,14 +43,53 @@ export class SessionEncryption {
     private readonly agentStateDecryptInFlight = new Map<string, Promise<AgentState>>();
     private readonly snapshotStateDecryptInFlight = new Map<string, Promise<{ metadata: Metadata | null; agentState: AgentState }>>();
 
+    /**
+     * The secret this Session's content is sealed with. It never leaves the
+     * device and is used here only as HKDF input keying material, never as a
+     * cipher key. A SessionEncryption opened without it (a public share view)
+     * cannot assert Session-input equality and says so instead of degrading.
+     */
+    private readonly equalityKeyMaterial: Uint8Array | null;
+
     constructor(
         sessionId: string,
         encryptor: Encryptor & Decryptor,
-        cache: EncryptionCache
+        cache: EncryptionCache,
+        equalityKeyMaterial: Uint8Array | null = null,
     ) {
         this.sessionId = sessionId;
         this.encryptor = encryptor;
         this.cache = cache;
+        this.equalityKeyMaterial = equalityKeyMaterial;
+    }
+
+    /**
+     * Server-opaque equality for one E2EE Session input, keyed by this Session's
+     * own encryption material.
+     *
+     * A Session input is re-encrypted on every attempt, so its ciphertext cannot
+     * identify "the same admitted payload" across a lost response. A tag can,
+     * and the server only ever compares two client-asserted tags for equality --
+     * it never computes one. Keying is therefore free at the server and load
+     * bearing at the client: an unkeyed digest of the plaintext, carried beside
+     * the ciphertext, would let the server confirm a guessed plaintext.
+     *
+     * The Session id is the HKDF salt so tags cannot be correlated across
+     * Sessions.
+     */
+    deriveInputEqualityTagV1(canonicalIntent: string): string {
+        const keyMaterial = this.equalityKeyMaterial;
+        if (!keyMaterial || keyMaterial.length === 0) {
+            throw new Error(`Session ${this.sessionId} has no input-equality key material`);
+        }
+        const equalityKey = hkdf(
+            sha256,
+            keyMaterial,
+            utf8ToBytes(this.sessionId),
+            utf8ToBytes(SESSION_INPUT_EQUALITY_HKDF_LABEL_V1),
+            32,
+        );
+        return encodeBase64(hmac(sha256, equalityKey, utf8ToBytes(canonicalIntent)), 'base64url');
     }
 
     /**

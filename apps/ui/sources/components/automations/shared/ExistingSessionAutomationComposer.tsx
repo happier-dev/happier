@@ -1,3 +1,4 @@
+import { mentionRefV1SurvivesRenderedTokenAlone } from '@happier-dev/protocol';
 import type {
     ComposerRefV1,
     ComposerSnapshotV1,
@@ -5,7 +6,8 @@ import type {
 } from '@happier-dev/protocol';
 import React from 'react';
 
-import { getAgentCore } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import type {
     ComposerReferenceSearchHost,
@@ -317,6 +319,35 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
 
     React.useEffect(() => registerComposerPresentationTarget(composerRef, composerTarget), [composerRef, composerTarget]);
 
+    /**
+     * The Automation template this surface writes is the released V2 envelope,
+     * whose daemon-side payload schema is `.strict()`: it stores the rendered
+     * prompt program alone and cannot gain a reference field without breaking
+     * every released reader. So a reference whose identity that program cannot
+     * express — a Session, Skill, vendor-plugin or plugin-contributed pick,
+     * whose token is a display label — would be persisted as a look-alike token
+     * the agent cannot resolve.
+     *
+     * The verdict comes from the same Protocol owner the New Session Automation
+     * writer uses, so the two surfaces cannot disagree about which references an
+     * Automation can carry. A `@docs/README.md` file mention IS the path the
+     * program renders, so it keeps working here.
+     */
+    const submitAutomationComposerDocument = React.useCallback(() => {
+        const current = documentRef.current;
+        const unsupportedReference = composerReferencesFromStructuredMentions({
+            text: current.text,
+            mentions: current.mentions,
+        }).find((reference) => !mentionRefV1SurvivesRenderedTokenAlone(reference));
+        if (unsupportedReference) {
+            Modal.alert(t('common.error'), t('automations.unsupportedReference', {
+                reference: unsupportedReference.token,
+            }));
+            return;
+        }
+        props.onSubmit();
+    }, [props.onSubmit]);
+
     const document = documentRef.current;
     const extraActionChips = React.useMemo(() => [
         ...(props.extraActionChips ?? []),
@@ -345,7 +376,7 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
                     mentions,
                 }, true);
             }}
-            onSend={props.onSubmit}
+            onSend={submitAutomationComposerDocument}
             isSendDisabled={props.isSubmitDisabled || composerInputEffects.composerInputLock !== null}
             submitAccessibilityLabel={props.submitAccessibilityLabel}
             placeholder={t('automations.edit.messagePlaceholder')}
@@ -358,7 +389,11 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
             sessionId={props.context.session.id}
             metadata={ownerMetadata}
             agentType={composerState.agentId ?? undefined}
-            agentLabel={composerState.agentId ? t(getAgentCore(composerState.agentId).displayNameKey) : tLoose('common.unknown')}
+            agentLabel={composerState.agentId
+                ? (isBundledAgentId(composerState.agentId)
+                    ? t(getAgentCore(composerState.agentId).displayNameKey)
+                    : formatAgentLikeIdForDisplay(composerState.agentId))
+                : tLoose('common.unknown')}
             permissionMode={composerState.permissionMode}
             onPermissionModeChange={(mode) => {
                 props.onChangeDraft((current) => current

@@ -42,6 +42,7 @@ const eventSummary = {
         },
     },
     targetType: 'existingSession' as const,
+    existingSessionId: 'session-1',
     templateVersion: 3,
     nextRunAt: null,
     lastRunAt: null,
@@ -108,10 +109,14 @@ describe('fetchAndApplyAutomations', () => {
             id: 'event-1',
             trigger: eventSummary.trigger,
             detail: { kind: 'unloaded', templateVersion: 3 },
-            linkedExistingSessionId: null,
+            // The bounded list carries the owner-projected association, so a
+            // session-scoped consumer never reads private detail to find it.
+            linkedExistingSessionId: 'session-1',
         })]);
         const appliedSummary = applyAutomations.mock.calls[0]?.[0]?.[0];
         expect(appliedSummary).not.toHaveProperty('triggerDefinitionEnvelope');
+        expect(appliedSummary).not.toHaveProperty('templateCiphertext');
+        expect(appliedSummary).not.toHaveProperty('executionRecipe');
         expect(listAutomationDefinitionRunsV3Mock).toHaveBeenCalledWith({
             credentials: { accessToken: 'token' },
             automationId: 'event-1',

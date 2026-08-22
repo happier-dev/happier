@@ -1,3 +1,4 @@
+import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
 import {
     getLegacyConnectedServiceRegistryEntry,
     type ConnectedServiceDisplayNameKey,
@@ -13,9 +14,9 @@ export function resolveConnectedServiceRegistryEntryDisplayName(
     entry: ConnectedServiceRegistryEntry,
     translate: (key: ConnectedServiceDisplayNameKey) => string,
 ): string {
-    const projectedTitle = entry.projectedTitle;
+    const projectedTitle = resolveProjectedLocalizedText(entry.projectedTitle);
     if (projectedTitle) {
-        return typeof projectedTitle === 'string' ? projectedTitle : projectedTitle.fallback;
+        return projectedTitle;
     }
     return translate(entry.displayNameKey ?? 'connectedServices.fallbackName');
 }

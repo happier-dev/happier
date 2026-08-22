@@ -49,9 +49,9 @@ vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
     runtimeFetchWithServerReachability: runtimeFetchWithServerReachabilityMock,
 }));
 
-const resumeSessionMock = vi.hoisted(() => vi.fn(async (_options?: ResumeSessionOptions) => ({ type: 'success' as const })));
+const ensureSessionRuntimeForPendingInputMock = vi.hoisted(() => vi.fn(async (_options?: ResumeSessionOptions) => ({ type: 'success' as const })));
 vi.mock('@/sync/ops', () => ({
-    resumeSession: (...args: Parameters<typeof resumeSessionMock>) => resumeSessionMock(...args),
+    ensureSessionRuntimeForPendingInput: (...args: Parameters<typeof ensureSessionRuntimeForPendingInputMock>) => ensureSessionRuntimeForPendingInputMock(...args),
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -65,7 +65,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
             supportsSelection: false,
         },
     }),
-    isAgentId: (value: unknown) => typeof value === 'string' && ['claude', 'codex'].includes(value),
+    isBundledAgentId: (value: unknown) => typeof value === 'string' && ['claude', 'codex'].includes(value),
     resolveAgentIdFromFlavor: (value: string | null | undefined) =>
         typeof value === 'string' && ['claude', 'codex'].includes(value) ? value : null,
     resolveAgentIdFromSessionMetadata: (metadata: Record<string, unknown> | null | undefined) => {
@@ -389,7 +389,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         appStateAddListener.mockClear();
         runtimeFetchWithServerReachabilityMock.mockReset();
         runtimeFetchWithServerReachabilityMock.mockResolvedValue(new Response(null, { status: 200 }));
-        resumeSessionMock.mockClear();
+        ensureSessionRuntimeForPendingInputMock.mockClear();
     });
 
     afterEach(() => {
@@ -1344,7 +1344,14 @@ describe('sync.sendMessage optimistic thinking', () => {
         'falls back to the socket commit path when active-session runtime RPC fails with %s',
         async (sessionRpcError) => {
             const sessionId = 's_active_runtime_rpc_fallback';
-            storage.getState().applySessions([createSession({ sessionId })]);
+            storage.getState().applySessions([createSession({
+                sessionId,
+                metadata: {
+                    machineId: 'm1',
+                    path: '/repo',
+                    flavor: 'codex',
+                } as any,
+            })]);
 
             const encryption = await Encryption.create(new Uint8Array(32).fill(9));
             await encryption.initializeSessions(new Map([[sessionId, null]]));
@@ -1377,6 +1384,10 @@ describe('sync.sendMessage optimistic thinking', () => {
                 }),
                 expect.anything(),
             );
+            expect(ensureSessionRuntimeForPendingInputMock).toHaveBeenCalledWith(expect.objectContaining({
+                sessionId,
+                initialTranscriptAfterSeq: 6,
+            }));
 
             sessionRpcSpy.mockRestore();
         },
@@ -2605,8 +2616,8 @@ describe('sync.sendMessage optimistic thinking', () => {
             text: 'wake from pending',
         });
 
-        expect(resumeSessionMock).toHaveBeenCalledTimes(1);
-        expect(resumeSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(ensureSessionRuntimeForPendingInputMock).toHaveBeenCalledTimes(1);
+        expect(ensureSessionRuntimeForPendingInputMock).toHaveBeenCalledWith(expect.objectContaining({
             sessionId,
             machineId: 'm1',
             directory: '/repo',
@@ -2727,7 +2738,7 @@ describe('sync.sendMessage optimistic thinking', () => {
             expect.objectContaining({ method: 'PATCH' }),
         );
         expect(sessionRpcSpy).not.toHaveBeenCalled();
-        expect(resumeSessionMock).not.toHaveBeenCalled();
+        expect(ensureSessionRuntimeForPendingInputMock).not.toHaveBeenCalled();
         expect(emitWithAck).not.toHaveBeenCalled();
         expect(transportSend).not.toHaveBeenCalled();
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();

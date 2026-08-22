@@ -15,7 +15,6 @@ import {
     pluginUiSelectedActionInputMatchesOperation,
     pluginUiSelectedActionInputsEqual,
     pluginUiTargetedContributionOperationKey,
-    readPluginUiHostApiErrorPayload,
     isPluginUiHostApiVersionCompatibleV1,
     type PluginHostedWebBridgeEnvelopeV1,
     type PluginHostedWebBridgeHostMessageEnvelopeV1,
@@ -46,7 +45,11 @@ import {
     type PluginUiHostReadyStateChange,
     type PluginUiHostReadyStateSnapshot,
 } from './readyState';
-import type { PluginSurfaceHostApiRequestOptions } from '../surfaces/createPluginSurfaceHostApi';
+import {
+    createPluginSurfaceHostApiPluginErrorData,
+    settlePluginSurfaceHostApiRequest,
+    type PluginSurfaceHostApiRequestOptions,
+} from '../surfaces/createPluginSurfaceHostApi';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 export type PluginHostedWebHostApiRequestHandler = (
@@ -253,7 +256,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
     audit?: (event: PluginHostedWebHostApiAuditEvent) => void;
     nowMs?: () => number;
 }>): PluginHostedWebHostApiBridgeHandler {
-    const readyState = createPluginUiHostReadyStateStore({ nowMs: params.nowMs });
+    const readyState = createPluginUiHostReadyStateStore({ surface: params.surface, nowMs: params.nowMs });
     // UI-D02/UI-D03: what this transport can actually serve. The mount's
     // factually installed methods run through the ONE negotiated-method rule
     // (shared with the React Native mount), are narrowed to what the hosted-web
@@ -333,6 +336,19 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
      * successor.
      */
     const hostResourceSubscriptions = new Map<string, 'pending' | 'active' | 'retired'>();
+    /**
+     * A mount-side watch pumps from the moment it is admitted, which is before
+     * this bridge has written the establishment response. `pending` is
+     * therefore a publishable state: the guest already holds the subscription
+     * record and buffers everything that precedes its own acknowledgement, so
+     * forwarding is what makes that pre-ACK buffer reachable. Only a `retired`
+     * or unknown id is suppressed.
+     */
+    function isPublishableHostResourceState(
+        state: 'pending' | 'active' | 'retired' | undefined,
+    ): boolean {
+        return state === 'pending' || state === 'active';
+    }
     let currentSurface: PluginUiJsonValueV1 | undefined = params.canonicalHostApi?.surface;
     let currentSurfaceSemanticKey = currentSurface === undefined
         ? undefined
@@ -455,11 +471,10 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
             payload: { subscriptionId },
         });
         if (!request.success) return;
-        try {
-            await params.handleRequest(request.data);
-        } catch {
-            // Local retirement remains final when the host boundary is unavailable.
-        }
+        await settlePluginSurfaceHostApiRequest(
+            request.data,
+            () => params.handleRequest!(request.data),
+        );
     }
 
     function canonicalBridgeResponse(
@@ -499,7 +514,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
             requestId: string;
             method: PluginUiHostMethodV1;
         }>,
-        code: string,
+        code: PluginUiHostApiErrorCodeV1,
         diagnostics: readonly string[] = [],
     ): PluginHostedWebBridgeResponseEnvelopeV1 {
         return canonicalBridgeResponse(envelope, PluginUiHostApiWireEnvelopeV1Schema.parse({
@@ -508,19 +523,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
             identity: message.identity,
             requestId: message.requestId,
             method: message.method,
-            error: {
-                name: 'PluginError',
-                code,
-                retryable: code === 'unavailable' || code === 'timeout',
-                ...(diagnostics.length === 0
-                    ? {}
-                    : {
-                        diagnostics: diagnostics.map((diagnostic) => ({
-                            code: diagnostic,
-                            severity: 'error' as const,
-                        })),
-                    }),
-            },
+            error: createPluginSurfaceHostApiPluginErrorData(code, diagnostics),
         }));
     }
 
@@ -626,17 +629,20 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
                 });
                 if (!request.success) return canonicalRequestError(envelope, message, 'invalid_payload');
                 hostResourceSubscriptions.set(message.subscriptionId, 'pending');
-                try {
-                    admission = await params.handleRequest(request.data);
-                    const hostError = readPluginUiHostApiErrorPayload(admission);
-                    if (hostError) {
-                        hostResourceSubscriptions.delete(message.subscriptionId);
-                        return canonicalRequestError(envelope, message, hostError.code, hostError.diagnostics);
-                    }
-                } catch {
+                const response = await settlePluginSurfaceHostApiRequest(
+                    request.data,
+                    () => params.handleRequest!(request.data),
+                );
+                if (response.kind === 'error') {
                     hostResourceSubscriptions.delete(message.subscriptionId);
-                    return canonicalRequestError(envelope, message, 'internal_error', ['host_api_handler_failed']);
+                    return canonicalRequestError(
+                        envelope,
+                        message,
+                        response.payload.code,
+                        response.payload.diagnostics,
+                    );
                 }
+                admission = response.payload;
                 if (disposed || !isCurrent() || hostResourceSubscriptions.get(message.subscriptionId) !== 'pending') {
                     // The mount admitted a subscription after either this bridge,
                     // its bound surface, or the guest subscription retired. The
@@ -754,19 +760,29 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
         const cancellation = new AbortController();
         canonicalPending.set(message.requestId, cancellation);
         try {
-            const result = await params.handleRequest(request.data, {
-                signal: cancellation.signal,
-                ...(targetedSelection === undefined
-                    ? {}
-                    : {
-                        targetedOperation: targetedSelection.operation,
-                        selectedActionInput: targetedSelection.result,
-                    }),
-            });
+            const response = await settlePluginSurfaceHostApiRequest(
+                request.data,
+                () => params.handleRequest!(request.data, {
+                    signal: cancellation.signal,
+                    ...(targetedSelection === undefined
+                        ? {}
+                        : {
+                            targetedOperation: targetedSelection.operation,
+                            selectedActionInput: targetedSelection.result,
+                        }),
+                }),
+            );
             if (disposed || cancellation.signal.aborted) return canonicalBridgeAck(envelope);
             if (!isCurrent()) return canonicalRequestError(envelope, message, 'stale_surface');
-            const hostError = readPluginUiHostApiErrorPayload(result);
-            if (hostError) return canonicalRequestError(envelope, message, hostError.code, hostError.diagnostics);
+            if (response.kind === 'error') {
+                return canonicalRequestError(
+                    envelope,
+                    message,
+                    response.payload.code,
+                    response.payload.diagnostics,
+                );
+            }
+            const result = response.payload;
             if (selectionRequest?.success && 'operation' in selectionRequest.data) {
                 const selectionResult = PluginUiSelectActionInputResultV1Schema.safeParse(result);
                 if (selectionResult.success && selectionResult.data.kind === 'submitted') {
@@ -866,12 +882,12 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
         if (!isCurrent()) {
             return createBridgeError(envelope, 'stale_surface');
         }
-        if (sessionlessInitialReady && readyState.read(params.surface).state !== 'pending') {
+        if (sessionlessInitialReady && readyState.read().state !== 'pending') {
             params.audit?.({ type: 'readyStale', surface: params.surface });
             return createBridgeError(envelope, 'stale_surface');
         }
         if (envelope.kind === 'hostApi') {
-            if (!disposed && readyState.read(params.surface).state !== 'ready') {
+            if (!disposed && readyState.read().state !== 'ready') {
                 return createBridgeError(envelope, 'unavailable', [
                     'hosted_web_bootstrap_required',
                 ]);
@@ -879,7 +895,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
             return handleCanonicalWireEnvelope(envelope);
         }
         if (envelope.kind === PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1) {
-            if (!disposed && readyState.read(params.surface).state !== 'ready') {
+            if (!disposed && readyState.read().state !== 'ready') {
                 return createBridgeError(envelope, 'unavailable', [
                     'hosted_web_bootstrap_required',
                 ]);
@@ -894,7 +910,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
         }
 
         if (envelope.kind === 'ready') {
-            const recorded = readyState.recordReady(params.surface);
+            const recorded = readyState.recordReady();
             if (recorded.result === 'recorded') {
                 // The strict guest-ready message is the only bootstrap trigger.
                 // It has already passed source/origin/nonce/address validation
@@ -935,7 +951,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
     }
 
     const handler = Object.assign(handleBridgeEnvelope, {
-        getReadyState: (): PluginUiHostReadyStateSnapshot => readyState.read(params.surface),
+        getReadyState: (): PluginUiHostReadyStateSnapshot => readyState.read(),
         pushSurfaceContext: (surface: PluginUiJsonValueV1): void => {
             const binding = params.canonicalHostApi;
             if (disposed || !binding || !isCurrent() || surface === currentSurface) return;
@@ -955,7 +971,8 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
         },
         publishResourceSubscriptionEvent: (event: PluginUiResourceSubscriptionEventV1): boolean => {
             const binding = params.canonicalHostApi;
-            if (disposed || !binding || !isCurrent() || hostResourceSubscriptions.get(event.subscriptionId) !== 'active') return false;
+            const state = hostResourceSubscriptions.get(event.subscriptionId);
+            if (disposed || !binding || !isCurrent() || !isPublishableHostResourceState(state)) return false;
             pushToFrame(PluginUiHostApiWireEnvelopeV1Schema.parse({
                 wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
                 kind: 'subscription',
@@ -965,7 +982,12 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
             }));
             // A terminal arm ends the subscription at the host too, so a later
             // event cannot address a subscription the guest already retired.
-            if (event.kind === 'complete' || event.kind === 'error') {
+            // While the establishment is still in flight the id must stay
+            // `pending`: the guest is waiting on that acknowledgement to flush
+            // the very event just pushed, so retiring it here would answer
+            // `disconnected` and discard the terminal arm instead of
+            // delivering it. Its own dispose closes the id straight after.
+            if ((event.kind === 'complete' || event.kind === 'error') && state === 'active') {
                 hostResourceSubscriptions.delete(event.subscriptionId);
             }
             return true;
@@ -979,7 +1001,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
                 || disposed
                 || !binding
                 || !isCurrent()
-                || hostResourceSubscriptions.get(input.subscriptionId) !== 'active') {
+                || !isPublishableHostResourceState(hostResourceSubscriptions.get(input.subscriptionId))) {
                 return false;
             }
             pushToFrame(PluginUiHostApiWireEnvelopeV1Schema.parse({
@@ -992,7 +1014,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
             return true;
         },
         recordReadyTimeout: (): PluginUiHostReadyStateSnapshot => {
-            const snapshot = readyState.recordTimeout(params.surface);
+            const snapshot = readyState.recordTimeout();
             if (snapshot.state === 'timedOut') {
                 params.onReadyStateChange?.({
                     state: 'timedOut',
@@ -1032,7 +1054,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
             for (const cancellation of collectionUiQueryPending.values()) cancellation.abort();
             collectionUiQueryPending.clear();
             collectionUiQueryBridge?.dispose();
-            readyState.reset(params.surface);
+            readyState.reset();
         },
     });
 

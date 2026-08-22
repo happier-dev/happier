@@ -5,7 +5,7 @@ import {
 } from '@happier-dev/protocol';
 
 import {
-    isAgentId,
+    isBundledAgentId,
     type AgentId,
 } from '@/agents/catalog/catalog';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
@@ -36,7 +36,7 @@ function resolveDefaultBuiltInAgentId(params: Readonly<{
   fallbackAgentId?: AgentId | null;
 }>): AgentId | null {
   const sessionAgent = readRawMetadataAgent(params.metadata);
-  if (sessionAgent && isAgentId(sessionAgent) && (params.enabledAgentIds.length === 0 || params.enabledAgentIds.includes(sessionAgent))) {
+  if (sessionAgent && isBundledAgentId(sessionAgent) && (params.enabledAgentIds.length === 0 || params.enabledAgentIds.includes(sessionAgent))) {
     return sessionAgent;
   }
 
@@ -44,7 +44,7 @@ function resolveDefaultBuiltInAgentId(params: Readonly<{
     ? (params.metadata as Record<string, unknown>)
     : null;
   const metadataAgentId = resolveAgentIdFromSessionMetadata(metadata);
-  if (metadataAgentId && (params.enabledAgentIds.length === 0 || params.enabledAgentIds.includes(metadataAgentId))) {
+  if (metadataAgentId && isBundledAgentId(metadataAgentId) && (params.enabledAgentIds.length === 0 || params.enabledAgentIds.includes(metadataAgentId))) {
     return metadataAgentId;
   }
 
@@ -55,7 +55,7 @@ function resolveDefaultBuiltInAgentId(params: Readonly<{
     return fallbackAgentId;
   }
 
-  return params.enabledAgentIds[0] ?? metadataAgentId ?? fallbackAgentId ?? null;
+  return null;
 }
 
 function resolveDefaultBackendId(params: Readonly<{

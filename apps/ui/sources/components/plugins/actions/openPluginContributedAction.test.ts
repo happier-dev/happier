@@ -189,6 +189,73 @@ describe('openPluginContributedAction', () => {
         expect(Modal.alert).not.toHaveBeenCalled();
     });
 
+    it.each([
+        ['success', { ok: true as const, result: { completed: true } }],
+        ['failure', { ok: false as const, code: 'unavailable' as const, reason: 'known_failure' }],
+        ['outcome unknown', { ok: false as const, code: 'timeout' as const, reason: 'plugin_ui_action_outcome_unknown' }],
+    ] as const)('retains a settled direct %s outcome when the composer scope retires before presentation continues', async (_label, outcome) => {
+        const descriptor = { ...action(), inputHints: null, kind: 'direct' as const };
+        const expected = {
+            kind: 'direct' as const,
+            action: descriptor,
+            outcome,
+        } satisfies PluginContributedActionOpenOutcome;
+        const abortController = new AbortController();
+        const controller = {
+            list: () => [],
+            listSlashCommands: () => [],
+            open: vi.fn(() => new Promise<PluginContributedActionOpenOutcome>((resolve) => {
+                queueMicrotask(() => {
+                    // `open()` has settled the canonical Action outcome before
+                    // presentation learns that its composer scope retired.
+                    resolve(expected);
+                    abortController.abort();
+                });
+            })),
+            isReferenceAvailable: () => false,
+            isSessionReferenceAvailable: () => false,
+            invokeReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+            openSessionReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+        } satisfies PluginContributedActionController;
+        const { Modal } = await import('@/modal');
+
+        await expect(openPluginContributedAction({
+            controller,
+            action: descriptor,
+            signal: abortController.signal,
+        })).resolves.toBe(expected);
+
+        expect(abortController.signal.aborted).toBe(true);
+        expect(Modal.show).not.toHaveBeenCalled();
+        expect(Modal.alert).not.toHaveBeenCalled();
+    });
+
+    it('keeps a true pre-dispatch composer abort stale without calling the Action controller', async () => {
+        const descriptor = { ...action(), inputHints: null, kind: 'direct' as const };
+        const controller = {
+            list: () => [],
+            listSlashCommands: () => [],
+            open: vi.fn(),
+            isReferenceAvailable: () => false,
+            isSessionReferenceAvailable: () => false,
+            invokeReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+            openSessionReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+        } satisfies PluginContributedActionController;
+        const abortController = new AbortController();
+        abortController.abort();
+        const { Modal } = await import('@/modal');
+
+        await expect(openPluginContributedAction({
+            controller,
+            action: descriptor,
+            signal: abortController.signal,
+        })).resolves.toEqual({ kind: 'stale', reason: 'host_retired' });
+
+        expect(controller.open).not.toHaveBeenCalled();
+        expect(Modal.show).not.toHaveBeenCalled();
+        expect(Modal.alert).not.toHaveBeenCalled();
+    });
+
     it('presents a form returned by the current session-reference controller without reconstructing its command', async () => {
         const descriptor = action();
         const actionForm = form(descriptor);

@@ -192,7 +192,7 @@ const projection: PluginUiProjectionModel = {
     },
 };
 
-function createHandle() {
+function createHandle(input: Readonly<{ frameOrigin?: string }> = {}) {
     const dispose = vi.fn();
     let current = true;
     const revokeListeners = new Set<() => void>();
@@ -207,6 +207,7 @@ function createHandle() {
                 return { dispose: () => revokeListeners.delete(listener) };
             }),
             dispose,
+            ...(input.frameOrigin === undefined ? {} : { frameOrigin: input.frameOrigin }),
         },
         dispose,
         revoke: () => {
@@ -357,6 +358,26 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
         expect((mounted?.bridge as { expectedOrigin?: string } | undefined)?.expectedOrigin)
             .toBe(`happier-hosted-artifact://hpa_${'a'.repeat(64)}`);
         expect(mounted).not.toHaveProperty('url');
+    });
+
+    it('uses the exact Windows Wry HTTPS origin returned by the native Artifact adapter', async () => {
+        frameProps.length = 0;
+        const frameOrigin = `https://happier-hosted-artifact.hpa_${'a'.repeat(64)}`;
+        const native = createHandle({ frameOrigin });
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        await renderScreen(
+            <PluginHostedWebPane
+                contributionId="hostedWeb:acme.preview:preview-web"
+                surfaceContext={{ ...surfaceContext, platform: 'desktop' }}
+                pluginUiProjection={projection}
+                platform="desktop"
+                bridgeNonce="nonce-windows-desktop"
+                {...({ nativeArtifactAdoption: createNativeArtifactAdoption(native.handle), mountInstanceKey: 'target-windows-desktop' } as const)}
+            />,
+        );
+
+        expect((frameProps.at(-1)?.bridge as { expectedOrigin?: string } | undefined)?.expectedOrigin)
+            .toBe(frameOrigin);
     });
 
     it('feeds desktop host history and the canonical Back command through the direct-Wry frame', async () => {

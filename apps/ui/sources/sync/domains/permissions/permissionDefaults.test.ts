@@ -63,4 +63,17 @@ describe('resolveNewSessionDefaultPermissionMode', () => {
         const emptyAccountDefaults = readAccountPermissionDefaults({}, ['codex']);
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults: emptyAccountDefaults, legacyProfileDefaultPermissionMode: 'plan' })).toBe('read-only');
     });
+
+    it('preserves an external Agent default without borrowing bundled permission policy', () => {
+        const externalTarget = { kind: 'backend', backendId: 'acme.review.backend' } as const;
+        const externalDefaults = readAccountPermissionDefaults({
+            [resolveBackendTargetKeyV2(externalTarget)]: 'plan',
+        }, ['codex']);
+
+        expect(resolveNewSessionDefaultPermissionMode({
+            agentType: 'acme.review.backend',
+            backendTarget: externalTarget,
+            accountDefaults: externalDefaults,
+        })).toBe('plan');
+    });
 });

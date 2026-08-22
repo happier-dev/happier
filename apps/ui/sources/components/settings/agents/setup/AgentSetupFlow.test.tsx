@@ -54,8 +54,8 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => tauriDesktopState.value,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => tauriDesktopState.value,
 }));
 
 const modalMock = createModalModuleMock({

@@ -12,7 +12,7 @@ import {
     upsertAndActivateServer,
 } from '@/sync/domains/server/serverRuntime';
 import { activateStackRuntimeServer, readStackRuntimeServerUrl } from '@/sync/domains/server/stackRuntimeServer';
-import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
+import { invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
 import { guardAccountEncryptionFirstKeyCredentialMutation } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
 
 function resolveBootServerUrlFromTerminalConnectHash(): string | null {
@@ -70,7 +70,7 @@ function parseDesktopBootCredentials(value: unknown): AuthCredentials | null {
 }
 
 function canUseStackDesktopBootCredentials(bootServerUrl?: string | null): boolean {
-    if (!isTauriDesktop()) return false;
+    if (!isDesktopHost()) return false;
     const stackRuntimeServerUrl = readStackRuntimeServerUrl();
     if (!stackRuntimeServerUrl) return false;
     if (!bootServerUrl) return true;
@@ -88,7 +88,7 @@ async function resolveStackDesktopBootCredentials(bootServerUrl?: string | null)
     if (!canUseStackDesktopBootCredentials(bootServerUrl)) return null;
 
     try {
-        const credentials = await invokeTauri<unknown>('desktop_read_stack_boot_credentials');
+        const credentials = await invokeDesktopHost<unknown>('desktop_read_stack_boot_credentials');
         return parseDesktopBootCredentials(credentials);
     } catch {
         return null;

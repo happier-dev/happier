@@ -3,7 +3,7 @@ import type { ResumeSessionOptions } from '@/sync/ops';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import { canResumeOrContinueSessionWithOptions, getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
 import { deriveAcpBackendIdFromFlavor } from '@/agents/runtime/acpFlavor';
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
@@ -85,7 +85,9 @@ export function buildResumeSessionBaseOptionsFromSession(opts: {
         sessionId,
         machineId,
         directory,
-        backendTarget: { kind: 'builtInAgent', agentId: getAgentCore(agentId).cli.spawnAgent },
+        backendTarget: isBundledAgentId(agentId)
+            ? { kind: 'builtInAgent', agentId: getAgentCore(agentId).cli.spawnAgent }
+            : { kind: 'backend', backendId: agentId },
         ...(resume ? { resume } : {}),
         ...(connectedServices ? { connectedServices } : {}),
         ...(connectedServices && connectedServicesUpdatedAt !== null ? { connectedServicesUpdatedAt } : {}),

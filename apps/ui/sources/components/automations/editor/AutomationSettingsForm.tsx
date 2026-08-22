@@ -12,6 +12,7 @@ import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGro
 import { usePopoverBoundaryRef } from '@/components/ui/popover';
 import { TextInput } from '@/components/ui/text/Text';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
+import { clampAutomationIntervalMinutes } from '@/sync/domains/automations/automationValidation';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -42,10 +43,6 @@ const stylesheet = StyleSheet.create((theme) => ({
 function normalizeTimezone(value: string): string | null {
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
-}
-
-function clampEveryMinutes(value: number): number {
-    return Math.min(Math.max(value, 1), 24 * 60);
 }
 
 export const AutomationSettingsForm = React.memo((props: Props) => {
@@ -187,7 +184,7 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
                                                 onChangeText={(value) => {
                                                     const parsed = Number.parseInt(value, 10);
                                                     if (!Number.isFinite(parsed)) return;
-                                                    update({ everyMinutes: clampEveryMinutes(parsed) });
+                                                    update({ everyMinutes: clampAutomationIntervalMinutes(parsed) });
                                                 }}
                                                 placeholder={t('automations.form.placeholders.everyMinutes')}
                                                 placeholderTextColor={theme.colors.input.placeholder}

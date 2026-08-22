@@ -10,7 +10,7 @@ import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { useSettingMutable, useSettings } from '@/sync/domains/state/storage';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { sync } from '@/sync/sync';
 
 import {
@@ -143,7 +143,7 @@ function useNativeSshBootstrapInterruptions(
 }
 
 export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
-    const isDesktop = isTauriDesktop();
+    const isDesktop = isDesktopHost();
     const runner = getDefaultSystemTaskRunner();
     const supportsRemoteHostManagementSurface = isDesktop || runner.mode === 'native';
     const { theme } = useUnistyles();

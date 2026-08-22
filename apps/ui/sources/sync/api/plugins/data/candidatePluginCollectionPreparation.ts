@@ -12,7 +12,7 @@ import {
     PluginCollectionCandidatePreparationStageRequestV1Schema,
     PluginCollectionCandidatePreparationStageResultV1Schema,
     compilePluginJsonSchema,
-    measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1,
+    splitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1,
     type NormalizedPluginAccountCollectionContractV1,
     type PluginCollectionCandidatePreparationBindingV1,
     type PluginCollectionCandidatePreparationErrorV1,
@@ -123,36 +123,6 @@ function createCandidateStageRequest(input: Readonly<{
             target: { content: item.content, projection: item.projection },
         })),
     });
-}
-
-function splitCandidateStageRequestsForKnownLimits(input: Readonly<{
-    binding: PluginCollectionCandidatePreparationBindingV1;
-    items: readonly CandidateStageItem[];
-    limits: Pick<PluginDataCollectionsCapabilities, 'maxBatchRows' | 'maxBatchBytes'>;
-}>): readonly PluginCollectionCandidatePreparationStageRequestV1[] {
-    const requests: PluginCollectionCandidatePreparationStageRequestV1[] = [];
-    let pending: CandidateStageItem[] = [];
-    for (const item of input.items) {
-        const candidate = createCandidateStageRequest({
-            binding: input.binding,
-            items: [...pending, item],
-        });
-        const exceedsKnownLimit = candidate.items.length > input.limits.maxBatchRows
-            || measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1(candidate)
-                > input.limits.maxBatchBytes;
-        if (exceedsKnownLimit && pending.length > 0) {
-            requests.push(createCandidateStageRequest({ binding: input.binding, items: pending }));
-            pending = [item];
-        } else {
-            // A singleton that cannot fit has no smaller valid request shape.
-            // Preserve the server's authoritative typed deployment-limit result.
-            pending.push(item);
-        }
-    }
-    if (pending.length > 0) {
-        requests.push(createCandidateStageRequest({ binding: input.binding, items: pending }));
-    }
-    return requests;
 }
 
 function unavailable(
@@ -340,16 +310,17 @@ export function createActivePluginCollectionCandidatePreparation(input: Readonly
         try {
             const exactBinding = binding.success ? binding.data : input.candidate.binding;
             const collectionLimits = readKnownCollectionLimits(inputStage.operation);
+            const stageRequest = createCandidateStageRequest({
+                binding: exactBinding,
+                items: inputStage.items,
+            });
             requests = collectionLimits
-                ? splitCandidateStageRequestsForKnownLimits({
+                ? splitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1({
                     binding: exactBinding,
-                    items: inputStage.items,
+                    items: stageRequest.items,
                     limits: collectionLimits,
                 })
-                : [createCandidateStageRequest({
-                    binding: exactBinding,
-                    items: inputStage.items,
-                })];
+                : [stageRequest];
         } catch {
             return rejected('collection_candidate_preparation_invalid');
         }

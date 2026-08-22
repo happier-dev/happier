@@ -15,6 +15,13 @@ const registrationFailed = Object.freeze({
     code: 'native_artifact_resource_registration_failed' as const,
 });
 
+function windowsWryArtifactFrameOrigin(storagePartitionId: string): string {
+    // Wry's Windows custom-protocol transport maps
+    // `happier-hosted-artifact://<partition>` to this HTTPS origin when the
+    // restricted child enables `with_https_scheme(true)`.
+    return `https://happier-hosted-artifact.${storagePartitionId}`;
+}
+
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -30,9 +37,23 @@ function isProfileIsolationCapability(value: unknown): value is PluginNativeArti
         || value === 'WEB_MESSAGE_LISTENER';
 }
 
-function readRegistrationResult(value: unknown): PluginNativeArtifactResourceRegistrationResult {
+function readRegistrationResult(
+    value: unknown,
+    storagePartitionId: string,
+): PluginNativeArtifactResourceRegistrationResult {
     if (!isRecord(value)) return registrationFailed;
     if (value.kind === 'registered' && hasExactlyKeys(value, ['kind'])) return registered;
+    if (
+        value.kind === 'registered'
+        && typeof value.frameOrigin === 'string'
+        && value.frameOrigin === windowsWryArtifactFrameOrigin(storagePartitionId)
+        && hasExactlyKeys(value, ['kind', 'frameOrigin'])
+    ) {
+        return Object.freeze({
+            kind: 'registered' as const,
+            frameOrigin: value.frameOrigin,
+        });
+    }
     if (
         value.kind === 'unavailable'
         && value.code === 'hosted_web_profile_isolation_unavailable'
@@ -83,7 +104,7 @@ export function createTauriPluginNativeArtifactResourceRegistrar(input: Readonly
                 return readRegistrationResult(await dispatch(
                     'desktop_hosted_artifact_register',
                     { input: registration },
-                ));
+                ), registration.storagePartitionId);
             } catch {
                 return registrationFailed;
             }

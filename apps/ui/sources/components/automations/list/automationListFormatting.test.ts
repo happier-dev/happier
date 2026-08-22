@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { AutomationRunStateV3Schema } from '@happier-dev/protocol';
+
 import { setPreferredLanguageFromSettings } from '@/text';
 import {
     formatAutomationNextRun,
+    formatAutomationRunStateLabel,
     formatAutomationScheduleLabel,
     formatAutomationTriggerLabel,
 } from './automationListFormatting';
@@ -47,5 +50,53 @@ describe('formatAutomationTriggerLabel', () => {
         expect(formatAutomationTriggerLabel({ kind: 'conversation' })).toBe('Disparador de conversación');
         expect(formatAutomationNextRun(null)).toBe('Sin próxima ejecución');
         expect(formatAutomationNextRun(1_700_000_000_000)).toBe('Próxima: fecha-localizada');
+    });
+});
+
+describe('formatAutomationRunStateLabel', () => {
+    it('gives every canonical Run state a product label instead of the raw state token', () => {
+        const labels = AutomationRunStateV3Schema.options.map((state) => ({
+            state,
+            label: formatAutomationRunStateLabel(state),
+        }));
+
+        expect(labels).toEqual([
+            { state: 'queued', label: 'Queued' },
+            { state: 'claimed', label: 'Claimed' },
+            { state: 'running', label: 'Running' },
+            { state: 'succeeded', label: 'Succeeded' },
+            { state: 'failed', label: 'Failed' },
+            { state: 'cancelled', label: 'Cancelled' },
+            { state: 'expired', label: 'Expired' },
+            { state: 'dispatch_failed', label: 'Dispatch failed' },
+            { state: 'skipped', label: 'Skipped' },
+            { state: 'missed', label: 'Missed' },
+            { state: 'outcome_uncertain', label: 'Outcome uncertain' },
+        ]);
+        for (const { state, label } of labels) {
+            expect(label).not.toBe(state);
+            expect(label).not.toBe(state.toUpperCase());
+            expect(label).not.toMatch(/^automations\./u);
+        }
+    });
+
+    it('resolves every Run state through the active locale', () => {
+        setPreferredLanguageFromSettings('es');
+
+        const labels = AutomationRunStateV3Schema.options.map((state) => formatAutomationRunStateLabel(state));
+
+        expect(labels).toEqual([
+            'En cola',
+            'Reclamada',
+            'En curso',
+            'Correcta',
+            'Fallida',
+            'Cancelada',
+            'Caducada',
+            'Envío fallido',
+            'Omitida',
+            'Perdida',
+            'Resultado incierto',
+        ]);
     });
 });

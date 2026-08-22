@@ -8,7 +8,6 @@ describe('hosted-web native bridge message adapter', () => {
     it('accepts a message only from the exact token-scoped iOS frame origin', () => {
         const onMessage = vi.fn();
         const bridgeInput = {
-            fallbackFrameUrl: `${frameOrigin}/`,
             bridge: {
                 expectedOrigin: frameOrigin,
                 expectedPluginId: 'acme.preview',
@@ -20,9 +19,7 @@ describe('hosted-web native bridge message adapter', () => {
                 onMessage,
             },
         };
-        const onNativeMessage = createPluginHostedWebNativeMessageBridge(
-            bridgeInput as Parameters<typeof createPluginHostedWebNativeMessageBridge>[0],
-        );
+        const onNativeMessage = createPluginHostedWebNativeMessageBridge(bridgeInput);
         const message = JSON.stringify({
             version: 1,
             pluginId: 'acme.preview',

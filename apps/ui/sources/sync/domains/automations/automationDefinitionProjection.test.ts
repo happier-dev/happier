@@ -33,6 +33,7 @@ const eventSummary = {
         },
     },
     targetType: 'existingSession' as const,
+    existingSessionId: 'session-1',
     templateVersion: 3,
     nextRunAt: null,
     lastRunAt: null,
@@ -266,7 +267,7 @@ describe('Automation V3 definition projection', () => {
         expect(attachAutomationDefinitionDetail(summary, existingSessionDetail)).toBeNull();
     });
 
-    it('projects a lifecycle direct result into the same record and clears private LKG on typed content unavailability', () => {
+    it('projects a lifecycle direct result into the same record and clears private LKG on typed content unavailability without dropping the bounded association', () => {
         const detail = {
             ...eventSummary,
             executionRecipe,
@@ -285,15 +286,20 @@ describe('Automation V3 definition projection', () => {
         });
         expect(fromMutation).not.toHaveProperty('triggerDefinitionEnvelope');
 
-        expect(markAutomationDefinitionContentUnavailable(fromMutation)).toMatchObject({
+        const unavailable = markAutomationDefinitionContentUnavailable(fromMutation);
+        expect(unavailable).toMatchObject({
             id: 'automation-event-1',
             detail: {
                 kind: 'unavailable',
                 templateVersion: 3,
                 code: 'automation_stored_content_unavailable',
             },
-            linkedExistingSessionId: null,
+            // The association is a bounded fact the definition owner already
+            // published, so revoking unreadable private content must not also
+            // hide the Automation from its Session.
+            linkedExistingSessionId: 'session-1',
         });
+        expect(unavailable.detail).not.toHaveProperty('value');
     });
 
     it('does not let a stale direct response regress a newer summary revision', () => {

@@ -45,8 +45,8 @@ installSettingsViewCommonModuleMocks({
     },
 });
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => tauriDesktopState.value,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => tauriDesktopState.value,
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({

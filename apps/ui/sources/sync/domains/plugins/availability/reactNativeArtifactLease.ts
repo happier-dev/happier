@@ -5,6 +5,7 @@ import {
     isPluginMachineMaterializationOnServerIdentityV1,
     type DaemonPluginReactNativeCrashBindingTokenV1,
     type DaemonPluginUiArtifactBytesReadResponse,
+    type PluginContributionIdentityV1,
     type PluginMachineExecutionOriginV1,
 } from '@happier-dev/protocol';
 import {
@@ -37,8 +38,8 @@ import type {
 
 /**
  * The Artifact consumer is a closed daemon contract. Renderers alone carry a
- * crash binding because Voice has a distinct activation lifecycle and must
- * never participate in renderer crash containment.
+ * crash binding; Voice and generic client contributions have distinct
+ * activation lifecycles and never participate in renderer crash containment.
  */
 export type PluginReactNativeArtifactOwner =
     | Readonly<{
@@ -47,6 +48,17 @@ export type PluginReactNativeArtifactOwner =
     }>
     | Readonly<{
         artifactOwnerKind: 'voiceProvider';
+    }>
+    | Readonly<{
+        /**
+         * A generic client executable is anchored to the exact Action that
+         * selected it. It never borrows Voice or renderer lifecycle authority.
+         */
+        artifactOwnerKind: 'clientContribution';
+        clientContribution: Readonly<{
+            family: 'actions';
+            action: PluginContributionIdentityV1;
+        }>;
     }>;
 
 /**
@@ -173,6 +185,15 @@ function artifactPlatformFromCacheIdentity(
     return platform === 'web' || platform === 'ios' || platform === 'android'
         ? platform
         : null;
+}
+
+function isSameClientContribution(
+    left: Extract<PluginReactNativeArtifactOwner, { artifactOwnerKind: 'clientContribution' }>['clientContribution'],
+    right: Extract<PluginReactNativeArtifactOwner, { artifactOwnerKind: 'clientContribution' }>['clientContribution'],
+): boolean {
+    return left.family === right.family
+        && left.action.pluginId === right.action.pluginId
+        && left.action.localId === right.action.localId;
 }
 
 function persistentIdentityFor(input: Readonly<{
@@ -330,6 +351,14 @@ export function decodePluginReactNativeExactArtifactFileSet(input: Readonly<{
         }
     } else if (response.artifactOwnerKind !== input.artifactOwnerKind) {
         return null;
+    } else if (
+        input.artifactOwnerKind === 'clientContribution'
+        && (
+            response.artifactOwnerKind !== 'clientContribution'
+            || !isSameClientContribution(response.clientContribution, input.clientContribution)
+        )
+    ) {
+        return null;
     }
     const parsedIdentity = DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(response.cacheIdentity);
     if (!parsedIdentity.success || !cacheIdentityMatches(parsedIdentity.data, input.identity)) return null;
@@ -378,6 +407,15 @@ function daemonArtifactByteReadOwner(
     }
     if (input.artifactOwnerKind === 'voiceProvider') {
         return Object.freeze({ artifactOwnerKind: 'voiceProvider' });
+    }
+    if (input.artifactOwnerKind === 'clientContribution') {
+        return Object.freeze({
+            artifactOwnerKind: 'clientContribution',
+            clientContribution: Object.freeze({
+                family: 'actions',
+                action: Object.freeze({ ...input.clientContribution.action }),
+            }),
+        });
     }
     return Object.freeze({ artifactOwnerKind: 'collectionMigrations' });
 }

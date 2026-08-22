@@ -23,6 +23,7 @@ import {
     resolveConnectedAccountConfigurationControl,
     type ConnectedAccountConfigurationDraft,
 } from './connectedAccountConfigurationDraft';
+import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
 
 const stylesheet = StyleSheet.create((theme) => ({
     field: {
@@ -63,12 +64,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-function localizedText(
-    value: string | Readonly<{ fallback: string }> | undefined,
-): string {
-    return typeof value === 'string' ? value : value?.fallback ?? '';
-}
-
 function compareFields(
     left: PluginConfigurationSettingFieldV2,
     right: PluginConfigurationSettingFieldV2,
@@ -89,8 +84,8 @@ function ConfigurationSelectField(props: Readonly<{
     const options = listConnectedAccountConfigurationOptions(props.field);
     const items = React.useMemo<DropdownMenuItem[]>(() => options.map((option) => ({
         id: JSON.stringify(option.value),
-        title: localizedText(option.title),
-        subtitle: localizedText(option.description) || undefined,
+        title: resolveProjectedLocalizedText(option.title),
+        subtitle: resolveProjectedLocalizedText(option.description) || undefined,
     })), [options]);
     const selectedId = props.value === undefined ? null : JSON.stringify(props.value);
     return (
@@ -105,8 +100,8 @@ function ConfigurationSelectField(props: Readonly<{
             matchTriggerWidth
             connectToTrigger
             itemTrigger={{
-                title: localizedText(props.field.title),
-                subtitle: localizedText(props.field.description) || undefined,
+                title: resolveProjectedLocalizedText(props.field.title),
+                subtitle: resolveProjectedLocalizedText(props.field.description) || undefined,
             }}
             items={items}
             onSelect={(itemId) => {
@@ -170,8 +165,8 @@ export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAc
         >
             {fields.map((field) => {
                 const control = resolveConnectedAccountConfigurationControl(field);
-                const title = localizedText(field.title);
-                const description = localizedText(field.description);
+                const title = resolveProjectedLocalizedText(field.title);
+                const description = resolveProjectedLocalizedText(field.description);
                 const disabled = props.saving;
                 if (control === 'switch') {
                     const value = draft[field.id] === true;
@@ -217,7 +212,7 @@ export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAc
                     return options.map((option) => {
                         const optionId = JSON.stringify(option.value);
                         const selected = selectedIds.has(optionId);
-                        const optionTitle = localizedText(option.title);
+                        const optionTitle = resolveProjectedLocalizedText(option.title);
                         const toggle = () => updateDraft(
                             field.id,
                             selected
@@ -228,7 +223,7 @@ export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAc
                             <Item
                                 key={`${field.id}:${optionId}`}
                                 title={optionTitle}
-                                subtitle={localizedText(option.description) || undefined}
+                                subtitle={resolveProjectedLocalizedText(option.description) || undefined}
                                 rightElement={(
                                     <Switch
                                         testID={`connected-account-configuration:${field.id}:${optionId}`}
@@ -262,7 +257,7 @@ export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAc
                             multiline={multiline}
                             autoCapitalize="none"
                             autoCorrect={false}
-                            placeholder={localizedText(field.presentation?.placeholder)}
+                            placeholder={resolveProjectedLocalizedText(field.presentation?.placeholder)}
                             placeholderTextColor={theme.colors.input.placeholder}
                             style={[
                                 styles.input,

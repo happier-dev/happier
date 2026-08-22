@@ -1,8 +1,8 @@
 import type { AgentLocalAuthPlugin } from '@/agents/catalog/localAuth/agentLocalAuthPlugin';
 import { createCatalogAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/createCatalogAgentLocalAuthPlugin';
-import { CANONICAL_AGENT_IDS, type AgentId } from '@/agents/registry/registryCore';
+import { CANONICAL_AGENT_IDS } from '@/agents/registry/registryCore';
 
-export const AGENT_LOCAL_AUTH_PLUGINS: readonly AgentLocalAuthPlugin[] = (CANONICAL_AGENT_IDS as readonly AgentId[])
+export const AGENT_LOCAL_AUTH_PLUGINS: readonly AgentLocalAuthPlugin[] = CANONICAL_AGENT_IDS
     .map((agentId) => createCatalogAgentLocalAuthPlugin(agentId));
 
 export function getAgentLocalAuthPlugin(agentId: string | null | undefined): AgentLocalAuthPlugin | null {

@@ -1,5 +1,6 @@
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
+    type PluginUiActionProjection,
     type PluginUiHostedWebProjection,
     type PluginUiProjectionModel,
     type PluginUiReactNativeBundleProjection,
@@ -12,6 +13,7 @@ import {
     type PluginVoiceProviderProjection,
 } from './projection';
 import {
+    arePluginMachineExecutionOriginsEqual,
     PluginMachineExecutionOriginV1Schema,
     type PluginMachineExecutionOriginV1,
     type PluginProjectionInstalledPackageV2,
@@ -207,16 +209,6 @@ function deriveUnionGeneration(members: readonly PluginUiProjectionUnionMember[]
     return hash >>> 0;
 }
 
-function areSamePluginMachineExecutionOrigins(
-    left: PluginMachineExecutionOriginV1,
-    right: PluginMachineExecutionOriginV1,
-): boolean {
-    return left.serverIdentityId === right.serverIdentityId
-        && left.materializationRef.pluginId === right.materializationRef.pluginId
-        && left.materializationRef.machineId === right.materializationRef.machineId
-        && left.materializationRef.materializationId === right.materializationRef.materializationId;
-}
-
 /**
  * The direct V2 producer stamp. This is intentionally parsed as an origin
  * record, not rebuilt from entry/plugin/machine fields: only the projection
@@ -248,18 +240,64 @@ function selectedOriginOwnsEntry(input: Readonly<{
         && selectedOrigin.materializationRef.pluginId === pluginId
         && selectedOrigin.materializationRef.machineId === input.machineId
         && producerOrigin.materializationRef.machineId === input.machineId
-        && areSamePluginMachineExecutionOrigins(selectedOrigin, producerOrigin);
+        && arePluginMachineExecutionOriginsEqual(selectedOrigin, producerOrigin);
 }
 
-function memberHasSelectedContribution(input: Readonly<{
+/**
+ * Why a member's entry may contribute to the union, or `null` for one that may
+ * not. The two arms are not interchangeable: only an UNMATERIALIZED
+ * contribution may be published without an exact producer stamp.
+ */
+type PluginUiProjectionUnionEntryAdmission = 'unmaterialized' | 'selectedOrigin';
+
+function admitMemberEntry(input: Readonly<{
+    member: PluginUiProjectionUnionMember & Readonly<{ projection: PluginUiProjectionModel }>;
+    selectedOriginsByPluginId: PluginUiProjectionUnionOriginSelections;
+    entry: unknown;
+}>): PluginUiProjectionUnionEntryAdmission | null {
+    const pluginId = readString(asRecord(input.entry)?.pluginId);
+    if (!pluginId) return null;
+    // The unmaterialized arm.
+    //
+    // The projection producer stamps an entry only for a plugin it holds a
+    // materialization for (`materializationIdsByPluginId`). A plugin the
+    // Account can never materialize therefore arrives UNSTAMPED and has
+    // nothing for Administration to select: requiring a selected origin for it
+    // is not fail-closed, it is fail-always — it removed every app-scope
+    // contribution of every such plugin, on every machine.
+    //
+    // The discriminator is that STRUCTURAL fact — the producer stamped no
+    // materialization — never the plugin's provenance. A plugin shipped inside
+    // the host binary and an externally authored plugin the daemon loaded
+    // without an Account materialization are in the identical position and are
+    // admitted on identical terms. Wherever an Administration selection CAN
+    // exist it stays the sole authority, so this arm fills only the gap a
+    // selection can never reach and can never shadow a selected
+    // materialization.
+    if (
+        !input.selectedOriginsByPluginId.has(pluginId)
+        && readPluginUiProjectionEntryExecutionOrigin(input.entry) === null
+    ) {
+        return 'unmaterialized';
+    }
+    return selectedOriginOwnsEntry({
+        selectedOriginsByPluginId: input.selectedOriginsByPluginId,
+        entry: input.entry,
+        machineId: input.member.machineId,
+    })
+        ? 'selectedOrigin'
+        : null;
+}
+
+function memberHasAdmittedContribution(input: Readonly<{
     member: PluginUiProjectionUnionMember & Readonly<{ projection: PluginUiProjectionModel }>;
     selectedOriginsByPluginId: PluginUiProjectionUnionOriginSelections;
 }>): boolean {
-    const owns = (entry: unknown): boolean => selectedOriginOwnsEntry({
+    const owns = (entry: unknown): boolean => admitMemberEntry({
+        member: input.member,
         selectedOriginsByPluginId: input.selectedOriginsByPluginId,
         entry,
-        machineId: input.member.machineId,
-    });
+    }) !== null;
     const projection = input.member.projection;
     return Object.values(projection.translationsByPluginId).some(owns)
         || Object.values(projection.structuredMessagesByKind).some(owns)
@@ -269,6 +307,7 @@ function memberHasSelectedContribution(input: Readonly<{
         || Object.values(projection.surfacePlacementsById).some(owns)
         || Object.values(projection.settingsGroupsById).some(owns)
         || Object.values(projection.settingsPagesById).some(owns)
+        || Object.values(projection.actionsById).some(owns)
         || Object.values(projection.voiceProvidersById).some(owns)
         || Object.values(projection.unknownEntriesById).some(owns);
 }
@@ -330,12 +369,12 @@ export function unionPluginUiProjections(
         });
     }
 
-    const selectedContributing = contributing.filter((member) => memberHasSelectedContribution({
+    const admittedContributing = contributing.filter((member) => memberHasAdmittedContribution({
         member,
         selectedOriginsByPluginId,
     }));
 
-    if (selectedContributing.length === 0) {
+    if (admittedContributing.length === 0) {
         return Object.freeze({
             pluginUiProjection: null,
             phase,
@@ -350,7 +389,7 @@ export function unionPluginUiProjections(
     // itself current. Concrete mounts use their per-entry origin below, so this
     // coarse fail-closed flag cannot revoke an unrelated current origin.
     const interactionEnabled = phase === 'current'
-        && selectedContributing.some((member) => (
+        && admittedContributing.some((member) => (
             member.phase === 'current' && member.interactionEnabled
         ));
 
@@ -364,21 +403,26 @@ export function unionPluginUiProjections(
     const surfacePlacementsById: Record<string, PluginUiSurfacePlacementProjection> = {};
     const settingsGroupsById: Record<string, PluginUiSettingsGroupProjection> = {};
     const settingsPagesById: Record<string, PluginUiSettingsPageProjection> = {};
+    const actionsById: Record<string, PluginUiActionProjection> = {};
     const voiceProvidersById: Record<string, PluginVoiceProviderProjection> = {};
     const unknownEntriesById: Record<string, UnknownRecord> = {};
 
-    for (const member of selectedContributing) {
+    for (const member of admittedContributing) {
         const model = member.projection;
-        const selectedPluginIds = new Set<string>();
+        const admittedPluginIds = new Set<string>();
         const originFor = (entry: UnknownRecord): PluginUiContributionOriginV1 | null => {
-            if (!selectedOriginOwnsEntry({
-                selectedOriginsByPluginId,
-                entry,
-                machineId: member.machineId,
-            })) return null;
+            const admission = admitMemberEntry({ member, selectedOriginsByPluginId, entry });
+            if (!admission) return null;
             const executionOrigin = readPluginUiProjectionEntryExecutionOrigin(entry);
-            if (!executionOrigin) return null;
-            selectedPluginIds.add(executionOrigin.materializationRef.pluginId);
+            // A selected contribution keeps its hard producer-stamp
+            // requirement. An unmaterialized contribution has no
+            // materialization to stamp, so it publishes an absent exact origin:
+            // every consumer that needs one still fails closed on its own
+            // rather than on a fabricated identity.
+            if (!executionOrigin && admission !== 'unmaterialized') return null;
+            const pluginId = executionOrigin?.materializationRef.pluginId
+                ?? readString(entry.pluginId);
+            if (pluginId) admittedPluginIds.add(pluginId);
             return Object.freeze({
                 machineId: member.machineId,
                 serverId: member.serverId,
@@ -429,6 +473,10 @@ export function unionPluginUiProjections(
             const origin = originFor(entry);
             if (origin) settingsPagesById[id] = stamp(entry, origin);
         }
+        for (const [id, entry] of Object.entries(model.actionsById)) {
+            const origin = originFor(entry);
+            if (origin) actionsById[id] = stamp(entry, origin);
+        }
         for (const [id, entry] of Object.entries(model.voiceProvidersById)) {
             const origin = originFor(entry);
             if (origin) voiceProvidersById[id] = stamp(entry, origin);
@@ -441,10 +489,11 @@ export function unionPluginUiProjections(
         }
         // A package catalog fact has no contribution-level origin stamp of its
         // own. It is therefore visible in an app union only after one of that
-        // same plugin's actual contributions proved the exact selected
-        // materialization for this member. This prevents a newer replica's
-        // brand from shadowing the selected artifact's brand.
-        for (const pluginId of selectedPluginIds) {
+        // same plugin's actual contributions was admitted for this member —
+        // by the exact selected materialization, or as an unmaterialized
+        // contribution. This prevents a newer replica's brand from shadowing
+        // the selected artifact's brand.
+        for (const pluginId of admittedPluginIds) {
             const installedPackage = model.installedPackagesById[pluginId];
             if (installedPackage) {
                 installedPackagesById[pluginId] = installedPackage;
@@ -452,12 +501,12 @@ export function unionPluginUiProjections(
         }
     }
 
-    const generations = selectedContributing.map((member) => member.projection.generation);
+    const generations = admittedContributing.map((member) => member.projection.generation);
     const generation = generations.every((memberGeneration) => memberGeneration === null)
         ? null
-        : selectedContributing.length === 1
+        : admittedContributing.length === 1
             ? generations[0]!
-            : deriveUnionGeneration(selectedContributing);
+            : deriveUnionGeneration(admittedContributing);
     const entryCount = Object.keys(translationsByPluginId).length
         + Object.keys(structuredMessagesByKind).length
         + Object.keys(sessionHeaderActionsById).length
@@ -466,6 +515,7 @@ export function unionPluginUiProjections(
         + Object.keys(surfacePlacementsById).length
         + Object.keys(settingsGroupsById).length
         + Object.keys(settingsPagesById).length
+        + Object.keys(actionsById).length
         + Object.keys(voiceProvidersById).length
         + Object.keys(unknownEntriesById).length;
 
@@ -500,6 +550,7 @@ export function unionPluginUiProjections(
         surfacePlacementsById: Object.freeze(surfacePlacementsById),
         settingsGroupsById: Object.freeze(settingsGroupsById),
         settingsPagesById: Object.freeze(settingsPagesById),
+        actionsById: Object.freeze(actionsById),
         voiceProvidersById: Object.freeze(voiceProvidersById),
         // Openable viewers are scoped to a session/project details host. There is
         // no app-union consumer, so do not make app scope a second projection

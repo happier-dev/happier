@@ -94,6 +94,10 @@ const PRESENTATIONS = Object.freeze({
         titleKey: 'settingsProviders.errors.unreachableTitle',
         descriptionKey: 'settingsProviders.errors.unreachableDescription',
     },
+    provider_probe_capacity_exhausted: {
+        titleKey: 'settingsProviders.errors.probeCapacityTitle',
+        descriptionKey: 'settingsProviders.errors.probeCapacityDescription',
+    },
     provider_rpc_response_invalid: {
         titleKey: 'settingsProviders.errors.rpcResponseInvalidTitle',
         descriptionKey: 'settingsProviders.errors.rpcResponseInvalidDescription',

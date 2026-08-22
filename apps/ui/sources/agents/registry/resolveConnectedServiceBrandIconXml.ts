@@ -1,6 +1,6 @@
 import type { Theme } from '@/theme';
 
-import { resolveAgentIdFromConnectedServiceId } from './registryCore';
+import { isBundledAgentId, resolveAgentIdFromConnectedServiceId } from './registryCore';
 import { AGENT_LOGO_SVG_XML } from './agentLogoSvgXml';
 
 /**
@@ -39,6 +39,6 @@ export function resolveConnectedServiceBrandIconXml(
     const agentId = resolveAgentIdFromConnectedServiceId(normalized);
     if (!agentId) return null;
 
-    const resolver = AGENT_LOGO_SVG_XML[agentId];
+    const resolver = isBundledAgentId(agentId) ? AGENT_LOGO_SVG_XML[agentId] : undefined;
     return resolver ? resolver(theme) : null;
 }

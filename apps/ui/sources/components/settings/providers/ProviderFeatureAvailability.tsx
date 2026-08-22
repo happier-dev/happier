@@ -3,6 +3,10 @@ import type { FeatureDecision } from '@happier-dev/protocol';
 
 import { Item } from '@/components/ui/lists/Item';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
+import {
+    resolveFeatureAvailabilityArm,
+    type FeatureAvailabilityArm,
+} from '@/hooks/server/resolveFeatureAvailabilityArm';
 import { t } from '@/text';
 
 export type ProviderAvailabilityPresentation = Readonly<{
@@ -22,44 +26,41 @@ export type ProviderAvailabilityPresentation = Readonly<{
         | 'settingsProviders.unavailableDescription';
 }>;
 
+const PRESENTATION_BY_ARM: Record<
+    Exclude<FeatureAvailabilityArm, 'available'>,
+    ProviderAvailabilityPresentation
+> = {
+    checking: {
+        titleKey: 'settingsProviders.availabilityChecking',
+        descriptionKey: 'settingsProviders.availabilityCheckingDescription',
+    },
+    unknown: {
+        titleKey: 'settingsProviders.availabilityProblem',
+        descriptionKey: 'settingsProviders.availabilityProblemDescription',
+    },
+    unsupported_context: {
+        titleKey: 'settingsProviders.availabilityContextUnsupported',
+        descriptionKey: 'settingsProviders.availabilityContextUnsupportedDescription',
+    },
+    unsupported: {
+        titleKey: 'settingsProviders.availabilityUnsupported',
+        descriptionKey: 'settingsProviders.availabilityUnsupportedDescription',
+    },
+    server_disabled: {
+        titleKey: 'settingsProviders.unavailable',
+        descriptionKey: 'settingsProviders.unavailableDescription',
+    },
+    policy_disabled: {
+        titleKey: 'settingsProviders.availabilityPolicyDisabled',
+        descriptionKey: 'settingsProviders.availabilityPolicyDisabledDescription',
+    },
+};
+
 export function resolveProviderAvailabilityPresentation(
     decision: FeatureDecision | null,
 ): ProviderAvailabilityPresentation | null {
-    if (!decision) {
-        return {
-            titleKey: 'settingsProviders.availabilityChecking',
-            descriptionKey: 'settingsProviders.availabilityCheckingDescription',
-        };
-    }
-    if (decision.state === 'enabled') return null;
-    if (decision.state === 'unknown') {
-        return {
-            titleKey: 'settingsProviders.availabilityProblem',
-            descriptionKey: 'settingsProviders.availabilityProblemDescription',
-        };
-    }
-    if (decision.state === 'unsupported') {
-        if (decision.blockedBy !== 'server' || decision.blockerCode !== 'endpoint_missing') {
-            return {
-                titleKey: 'settingsProviders.availabilityContextUnsupported',
-                descriptionKey: 'settingsProviders.availabilityContextUnsupportedDescription',
-            };
-        }
-        return {
-            titleKey: 'settingsProviders.availabilityUnsupported',
-            descriptionKey: 'settingsProviders.availabilityUnsupportedDescription',
-        };
-    }
-    if (decision.blockedBy === 'server') {
-        return {
-            titleKey: 'settingsProviders.unavailable',
-            descriptionKey: 'settingsProviders.unavailableDescription',
-        };
-    }
-    return {
-        titleKey: 'settingsProviders.availabilityPolicyDisabled',
-        descriptionKey: 'settingsProviders.availabilityPolicyDisabledDescription',
-    };
+    const arm = resolveFeatureAvailabilityArm(decision);
+    return arm === 'available' ? null : PRESENTATION_BY_ARM[arm];
 }
 
 export function useProviderFeatureAvailability(): Readonly<{

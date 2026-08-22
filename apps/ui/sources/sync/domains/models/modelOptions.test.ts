@@ -142,6 +142,35 @@ describe('modelOptions', () => {
         });
     });
 
+    it('projects dynamic models for an external Agent without falling back to a bundled catalog', () => {
+        const out = getModelOptionsForSession(
+            'acme.agent',
+            withMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    agentId: 'acme.agent',
+                    updatedAt: 1,
+                    currentModelId: 'acme-pro',
+                    availableModels: [{ id: 'acme-pro', name: 'Acme Pro', description: 'Plugin-provided.' }],
+                },
+            }),
+        );
+
+        expect(out).toEqual([
+            { value: 'default', label: expect.any(String), description: '' },
+            { value: 'acme-pro', label: 'Acme Pro', description: 'Plugin-provided.' },
+        ]);
+        expect(isModelSelectableForSession('acme.agent', withMetadata({
+            sessionModelsV1: {
+                v: 1,
+                agentId: 'acme.agent',
+                updatedAt: 1,
+                currentModelId: 'acme-pro',
+                availableModels: [{ id: 'acme-pro', name: 'Acme Pro' }],
+            },
+        }), 'acme-pro')).toBe(true);
+    });
+
     it('ignores stale dynamic session model rows for static-only providers and uses the static catalog', () => {
         const staticClaudeValues = getModelOptionsForAgentType('claude').map((option) => option.value);
         const out = getModelOptionsForSession(

@@ -268,7 +268,7 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             for (const agentId of listAgentUniverseIds()) {
                 const raw = (legacyByAgent as Record<string, unknown>)[agentId];
                 if (isPermissionMode(raw)) {
-                    const group = getAgentCore(agentId).permissions.modeGroup;
+                    const group = getAgentCore(agentId)?.permissions.modeGroup;
                     const allowed = group === 'codexLike' ? CODEX_LIKE_PERMISSION_MODES : CLAUDE_PERMISSION_MODES;
                     if (!(allowed as readonly string[]).includes(raw)) continue;
                     byTargetKey[buildAgentUniverseBackendTargetKey(agentId)] = raw;
@@ -280,7 +280,7 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
             if (parsed) {
                 const seededMode: PermissionMode = parsed === 'plan' ? 'read-only' : parsed;
                 for (const to of listAgentUniverseIds()) {
-                    const group = getAgentCore(to).permissions.modeGroup;
+                    const group = getAgentCore(to)?.permissions.modeGroup;
                     const allowed = group === 'codexLike' ? CODEX_LIKE_PERMISSION_MODES : CLAUDE_PERMISSION_MODES;
                     byTargetKey[buildAgentUniverseBackendTargetKey(to)] =
                         (allowed as readonly string[]).includes(seededMode) ? seededMode : 'default';

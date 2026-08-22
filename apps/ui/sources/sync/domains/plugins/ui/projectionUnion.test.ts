@@ -18,6 +18,7 @@ import {
 function machineProjection(input: Readonly<{
     generation: number;
     entriesById: Readonly<Record<string, unknown>>;
+    actionsById?: Readonly<Record<string, unknown>>;
     installedPackagesById?: Readonly<Record<string, unknown>>;
 }>) {
     return normalizePluginUiProjection({
@@ -26,7 +27,7 @@ function machineProjection(input: Readonly<{
         installedPackagesById: input.installedPackagesById ?? {},
         agentsById: {},
         backendsById: {},
-        actionsById: {},
+        actionsById: input.actionsById ?? {},
         toolsById: {},
         commandsById: {},
         resourcesById: {},
@@ -104,6 +105,7 @@ function member(input: Readonly<{
     serverId?: string | null;
     generation?: number;
     entriesById?: Readonly<Record<string, unknown>>;
+    actionsById?: Readonly<Record<string, unknown>>;
     installedPackagesById?: Readonly<Record<string, unknown>>;
     producerOriginsByPluginId?: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
     phase?: PluginUiProjectionUnionMember['phase'];
@@ -118,6 +120,11 @@ function member(input: Readonly<{
                 generation: input.generation,
                 entriesById: stampEntriesWithProducerOrigins(
                     input.entriesById ?? {},
+                    input.machineId,
+                    input.producerOriginsByPluginId,
+                ),
+                actionsById: stampEntriesWithProducerOrigins(
+                    input.actionsById ?? {},
                     input.machineId,
                     input.producerOriginsByPluginId,
                 ),
@@ -393,6 +400,68 @@ describe('unionPluginUiProjections', () => {
             .toBeUndefined();
     });
 
+    it('carries a client Action only from its exact selected producer and preserves its execution target', () => {
+        const pluginId = 'acme.client-action';
+        const actionId = `${pluginId}/open-preview`;
+        const outputSchema = {
+            type: 'object',
+            properties: {
+                summary: { type: 'string' },
+            },
+            required: ['summary'],
+            additionalProperties: false,
+        } as const;
+        const action = {
+            id: 'open-preview',
+            pluginId,
+            title: 'Open preview',
+            scopes: ['session'],
+            surfaces: ['ui'],
+            placementBindings: ['detailsPanel'],
+            dangerLevel: 'safe',
+            available: true,
+            execution: {
+                target: 'client',
+                client: {
+                    artifactId: 'client-runtime',
+                    modulePath: './clientRuntime',
+                    exportName: 'activate',
+                },
+                platforms: ['web'],
+            },
+            outputSchema,
+        };
+        const selected = selectedOrigin(pluginId, 'machine-a');
+
+        const union = unionPluginUiProjections([
+            member({
+                machineId: 'machine-b',
+                generation: 4,
+                actionsById: { [actionId]: action },
+            }),
+            member({
+                machineId: 'machine-a',
+                generation: 3,
+                actionsById: { [actionId]: action },
+            }),
+        ], selectedOrigins(selected));
+
+        const projected = union.pluginUiProjection?.actionsById[actionId];
+        expect(projected).toMatchObject({
+            ...action,
+            execution: action.execution,
+            outputSchema,
+        });
+        expect(readPluginUiContributionOrigin(projected)).toEqual({
+            machineId: 'machine-a',
+            serverId: 'server-1',
+            generation: 3,
+            interactionEnabled: true,
+            phase: 'current',
+            executionOrigin: selected,
+        });
+    });
+
     it('does not let an older replica of a plugin hide the machine that actually has its app surface', () => {
         const union = unionPluginUiProjections([
             // machine-a sorts first, but its copy of the plugin predates the
@@ -570,6 +639,99 @@ describe('unionPluginUiProjections', () => {
             phase: 'current',
             interactionEnabled: true,
         });
+    });
+
+    it('admits an unmaterialized contribution by structure, for a bundled and an external plugin alike', () => {
+        // The producer stamps an entry only when it knows a materialization for
+        // that plugin. A plugin the Account can never materialize — one shipped
+        // inside the host binary, and equally an externally authored plugin the
+        // daemon loaded from a source root — therefore has nothing to stamp and
+        // nothing for Administration to select. Requiring a selected origin
+        // there is fail-always, not fail-closed, and the discriminator is the
+        // missing stamp, never the plugin's provenance.
+        const installedPackage = (pluginId: string, kind: string) => ({
+            id: pluginId,
+            displayName: pluginId,
+            version: '1.0.0',
+            enabled: true,
+            source: { kind, locator: pluginId },
+        });
+        const unstampedMember: PluginUiProjectionUnionMember = {
+            machineId: 'machine-a',
+            serverId: 'server-1',
+            projection: machineProjection({
+                generation: 7,
+                entriesById: {
+                    bundled: placementEntry({
+                        pluginId: 'happier.triage',
+                        localId: 'triage',
+                        container: 'appPage',
+                    }),
+                    external: placementEntry({ pluginId: 'acme.inspector', localId: 'panel' }),
+                },
+                installedPackagesById: {
+                    'happier.triage': installedPackage('happier.triage', 'bundled'),
+                    'acme.inspector': installedPackage('acme.inspector', 'marketplace'),
+                },
+            }),
+            phase: 'current',
+            interactionEnabled: true,
+        };
+
+        const union = unionPluginUiProjections([unstampedMember], new Map());
+
+        const bundled = union.pluginUiProjection
+            ?.surfacePlacementsById['surfacePlacement:happier.triage:triage'];
+        const external = union.pluginUiProjection
+            ?.surfacePlacementsById['surfacePlacement:acme.inspector:panel'];
+        expect(bundled).toBeDefined();
+        // C1: the external plugin in the identical structural position is
+        // admitted on identical terms. A `source.kind` branch here would give
+        // the bundled copy a capability the external one cannot reach.
+        expect(external).toBeDefined();
+        expect(union.pluginUiProjection?.installedPackagesById['happier.triage']).toBeDefined();
+        expect(union.pluginUiProjection?.installedPackagesById['acme.inspector']).toBeDefined();
+        expect(union.interactionEnabled).toBe(true);
+        // The exact origin is absent because no materialization exists — every
+        // consumer that needs one (launch input, mounted action caller) keeps
+        // failing closed on its own rather than on a fabricated identity.
+        for (const admitted of [bundled, external]) {
+            expect(readPluginUiContributionOrigin(admitted)).toMatchObject({
+                machineId: 'machine-a',
+                phase: 'current',
+                executionOrigin: null,
+            });
+        }
+    });
+
+    it('still withholds an unstamped contribution wherever a selection exists for that plugin', () => {
+        // The fail-closed half that must survive the re-key: once the Account
+        // holds a selection for a plugin id, only the exact producer stamp
+        // admits it. A daemon that lost its execution-origin context publishes
+        // unstamped entries, and those must not slip in through the
+        // unmaterialized arm.
+        const unstampedMember: PluginUiProjectionUnionMember = {
+            machineId: 'machine-a',
+            serverId: 'server-1',
+            projection: machineProjection({
+                generation: 7,
+                entriesById: {
+                    selected: placementEntry({ pluginId: 'acme.selected', localId: 'panel' }),
+                },
+                installedPackagesById: {},
+            }),
+            phase: 'current',
+            interactionEnabled: true,
+        };
+
+        const union = unionPluginUiProjections(
+            [unstampedMember],
+            selectedOrigins(selectedOrigin('acme.selected', 'machine-a')),
+        );
+
+        expect(union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.selected:panel'])
+            .toBeUndefined();
+        expect(union.pluginUiProjection?.installedPackagesById['acme.selected']).toBeUndefined();
     });
 
     it('treats an authority flip as a member change and an unchanged snapshot as none', () => {

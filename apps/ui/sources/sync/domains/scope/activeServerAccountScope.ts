@@ -112,6 +112,31 @@ export function captureActiveServerAccountScopeLifetime(): ActiveServerAccountSc
 }
 
 /**
+ * Capture the Account lifetime that owns one in-flight request as a plain
+ * currentness fence.
+ *
+ * This is the same lifetime `captureActiveServerAccountScopeLifetime()` returns —
+ * no second Account registry — with the one case that owner cannot express: a
+ * request started while NO Account was mounted. An Account mounting mid-flight is
+ * still an Account-lifetime change, so that case fences on "still nothing mounted"
+ * rather than fencing on nothing at all.
+ *
+ * Use it wherever a request captured under Account A must not publish rows, apply
+ * annotations, or complete navigation after a switch to Account B.
+ */
+export function captureActiveServerAccountScopeCurrentness(): ActiveServerAccountScopeLifetime | Readonly<{
+    isCurrent(): boolean;
+    onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
+}> {
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (lifetime) return lifetime;
+    return Object.freeze({
+        isCurrent: (): boolean => getActiveServerAccountScope() === null,
+        onRetire: (): Readonly<{ dispose(): void }> => NOOP_DISPOSABLE,
+    });
+}
+
+/**
  * The synchronous hook from the incumbent server-scoped reset owner.
  * Repeated reset/disconnect paths are intentionally idempotent.
  */

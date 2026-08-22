@@ -1,7 +1,10 @@
+import { AUTOMATION_INT_COLUMN_MAX } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import {
     buildAutomationScheduleFromDraft,
+    clampAutomationIntervalMinutes,
+    MAX_AUTOMATION_INTERVAL_MINUTES,
     normalizeAutomationDescription,
     normalizeAutomationName,
     validateAutomationTemplateTarget,
@@ -45,6 +48,20 @@ describe('automationValidation', () => {
             scheduleExpr: '*/5 * * * *',
             timezone: 'UTC',
         });
+    });
+
+    it('never emits an everyMs the Automation.everyMs INTEGER column cannot hold', () => {
+        const widest = buildAutomationScheduleFromDraft({
+            enabled: true,
+            name: 'Widest',
+            description: '',
+            scheduleKind: 'interval',
+            everyMinutes: clampAutomationIntervalMinutes(Number.MAX_SAFE_INTEGER),
+            cronExpr: '0 * * * *',
+            timezone: null,
+        });
+        expect(widest.everyMs).toBe(MAX_AUTOMATION_INTERVAL_MINUTES * 60_000);
+        expect(widest.everyMs).toBeLessThanOrEqual(AUTOMATION_INT_COLUMN_MAX);
     });
 
     it('requires existingSessionId for existing_session target', () => {

@@ -4,7 +4,7 @@ import {
     type BackendTargetRefV2Input,
 } from '@happier-dev/protocol';
 
-import { isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from './getResolvedBackendCatalogEntries';
@@ -30,7 +30,7 @@ function buildEnabledBuiltInAgentIds(params: Readonly<{
     backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
 }>): AgentId[] {
     const explicitEnabledAgentIds = Array.isArray(params.enabledAgentIds)
-        ? params.enabledAgentIds.filter((agentId): agentId is AgentId => isAgentId(agentId))
+        ? params.enabledAgentIds.filter((agentId): agentId is AgentId => isBundledAgentId(agentId))
         : null;
 
     return explicitEnabledAgentIds ?? getEnabledAgentIds({
@@ -141,7 +141,7 @@ function resolveProjectedBuiltInBackendTarget(
         }
     }
 
-    if (!isAgentId(target.backendId)) {
+    if (!isBundledAgentId(target.backendId)) {
         return target;
     }
 

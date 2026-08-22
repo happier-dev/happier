@@ -74,3 +74,31 @@ export function resolvePluginDisplayString(
     }
     return readDisplayLiteral(candidates.fallback);
 }
+
+/**
+ * The wire shape every plugin-declared display string arrives in: either an
+ * already-human literal, or a `{ key, fallback }` pair where `key` names a
+ * translation the plugin ships and `fallback` is the developer literal.
+ */
+export type PluginProjectedLocalizedText =
+    | string
+    | Readonly<{ key?: unknown; fallback?: unknown }>;
+
+/**
+ * Resolve a projected `{ key, fallback }` display string. Callers used to read
+ * `.fallback` directly, which threw away the translations bundled plugins ship
+ * for that key and showed every non-English reader the developer literal.
+ * Delegates to the single owner above so the key/fallback precedence and the
+ * "an unresolved key never renders raw" rule stay in one place.
+ */
+export function resolveProjectedLocalizedText(
+    value: PluginProjectedLocalizedText | null | undefined,
+): string {
+    if (typeof value === 'string') {
+        return resolvePluginDisplayString({ literals: [value] }) ?? '';
+    }
+    return resolvePluginDisplayString({
+        keys: [value?.key],
+        fallback: value?.fallback,
+    }) ?? '';
+}

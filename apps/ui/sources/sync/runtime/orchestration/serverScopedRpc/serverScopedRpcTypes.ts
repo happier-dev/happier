@@ -1,5 +1,15 @@
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 
+/**
+ * How long an unqualified server-scoped RPC operation may stay in flight.
+ *
+ * This is the ceiling every caller inherits when it does not name its own, so
+ * it is also the point past which an unsettled daemon call is stuck rather
+ * than slow. Consumers that must decide how long to keep waiting on a daemon
+ * round-trip derive their bound from this value instead of restating it.
+ */
+export const DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS = 30_000;
+
 export type SocketRpcResult =
     | { ok: true; result: string }
     | { ok: false; error?: string; errorCode?: string };

@@ -16,6 +16,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { presentProviderCompatibilityReasons } from '@/providers/connection/compatibilityReasonPresentation';
+import { en } from '@/text/translations/en';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -1231,6 +1232,36 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(rows.map((item) => item.props.title)).not.toContain('cliproxyapi');
     });
 
+    it('shows localized unavailable copy when the managed target machine is missing', async () => {
+        state.connection = connection({
+            providerName: 'Managed Gateway',
+            scope: 'machine',
+            deployment: {
+                kind: 'managedLocal',
+                targetMachineId: 'machine-missing',
+                effects: {
+                    implementationIdentity: {
+                        pluginId: 'external.managed.provider',
+                        localId: 'gateway',
+                    },
+                    protocols: ['openai-responses'],
+                    connectedAccountPurposes: [],
+                },
+            },
+        });
+
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        const implementation = screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-implementation',
+        );
+
+        expect(implementation?.props.subtitle).toBe(
+            'settingsProviders.local.startedByHappier · common.unavailable',
+        );
+        expect(implementation?.props.subtitle).not.toContain('machine-missing');
+    });
+
     it('renders a null managed effect as unavailable without hiding the external escape action', async () => {
         state.connection = connection({
             sourceStatus: 'unavailable',
@@ -1439,6 +1470,9 @@ describe('ProviderConnectionDetailScreen', () => {
         });
 
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const { ConnectedAccountPurposeTargetChooser } = await import(
+            '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser'
+        );
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
         const activate = screen.findAllByType('Item').find(
             (item) => item.props.title === 'settingsProviders.local.configureManaged',
@@ -1453,6 +1487,16 @@ describe('ProviderConnectionDetailScreen', () => {
             'settingsProviders.local.invalidPurposeTargetDescription',
         );
         expect(run).not.toHaveBeenCalled();
+
+        // The English copy for the body this screen just raised must name an
+        // action this screen offers. The only editor rendered for a managed
+        // purpose is ConnectedAccountPurposeTargetChooser — there is no text
+        // field — so instructing an `account:<id>` / `group:<id>` syntax would
+        // send the user looking for an input that does not exist.
+        const raisedBody = en.settingsProviders.local.invalidPurposeTargetDescription;
+        expect(raisedBody).not.toMatch(/\b(account|group)\s*:\s*<?id>?/iu);
+        expect(screen.findAllByType('TextInput')).toHaveLength(0);
+        expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser).length).toBeGreaterThan(0);
 
         await pressAndFlush(screen.findAllByType('Item').find(
             (item) => item.props.testID === 'provider-connection-managed-purpose-cancel',

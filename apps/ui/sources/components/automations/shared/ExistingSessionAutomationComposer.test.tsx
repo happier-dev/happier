@@ -19,6 +19,7 @@ import type {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const randomUUIDSpy = vi.hoisted(() => vi.fn(() => 'automation-composer-scope'));
+const modalAlertSpy = vi.hoisted(() => vi.fn((_title?: string, _message?: string) => {}));
 const agentInputSpy = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeSpy = vi.hoisted(() => vi.fn<
     (params: unknown) => Promise<unknown>
@@ -101,7 +102,6 @@ function currentAutomationDaemonProjection() {
                     qualifiedId: 'acme.automations/issues',
                     localId: 'issues',
                 },
-                stability: 'experimental',
                 progression: { declared: true, normalized: true, merged: true },
                 registration: { requirement: 'required', state: 'bound', generation: '9' },
                 activation: { state: 'active', generation: '9' },
@@ -179,6 +179,11 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
     tLoose: (key: string) => key,
 }));
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: { alert: modalAlertSpy } }).module;
+});
 
 const DRAFT = {
     targetType: 'existing_session',
@@ -268,6 +273,7 @@ describe('ExistingSessionAutomationComposer', () => {
         machineRpcWithServerScopeSpy.mockReset();
         machineRpcWithServerScopeSpy.mockResolvedValue({});
         pluginSurfaceHostSpy.mockClear();
+        modalAlertSpy.mockClear();
         automationDaemonProjectionState.current = currentAutomationDaemonProjection();
     });
 
@@ -332,6 +338,109 @@ describe('ExistingSessionAutomationComposer', () => {
             prompt: 'Review @issue',
             displayText: 'Review @issue',
         });
+    });
+
+    it('refuses a submit carrying a reference the rendered Automation prompt cannot express', async () => {
+        const { ExistingSessionAutomationComposer } = await import('./ExistingSessionAutomationComposer');
+        const onSubmit = vi.fn();
+
+        await renderScreen(<ExistingSessionAutomationComposer
+            context={createContext()}
+            onChangeDraft={vi.fn()}
+            onSubmit={onSubmit}
+            submitAccessibilityLabel="Save"
+            isSubmitDisabled={false}
+        />);
+
+        const ref = {
+            kind: 'automationAuthoring' as const,
+            sessionId: 's1',
+            instanceId: 'automation-composer-scope',
+        };
+        const initial = readComposerPresentationSnapshot(ref);
+        if (!initial) throw new Error('expected mounted automation composer target');
+
+        await act(async () => {
+            expect(applyComposerPresentationTransaction({
+                ref,
+                transaction: {
+                    expectedRevision: initial.revision,
+                    operations: [
+                        { kind: 'text.set', text: 'Continue @Nightly audit' },
+                        {
+                            kind: 'reference.insert',
+                            reference: {
+                                kind: 'happier.session',
+                                ref: 'session:sess_01HZX',
+                                token: '@Nightly audit',
+                                start: 9,
+                                end: 23,
+                                label: 'Nightly audit',
+                            },
+                        },
+                    ],
+                },
+            })).toMatchObject({ status: 'applied' });
+        });
+
+        const send = agentInputSpy.mock.calls.at(-1)?.[0] as Readonly<{ onSend: () => void }>;
+        act(() => { send.onSend(); });
+
+        // The V2 Automation template stores the rendered program alone, so a
+        // Session pick would become a look-alike token: the writer refuses it
+        // instead of persisting an Automation that silently loses the identity.
+        expect(onSubmit).not.toHaveBeenCalled();
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'automations.unsupportedReference');
+    });
+
+    it('submits a file mention whose rendered token already carries its path', async () => {
+        const { ExistingSessionAutomationComposer } = await import('./ExistingSessionAutomationComposer');
+        const onSubmit = vi.fn();
+
+        await renderScreen(<ExistingSessionAutomationComposer
+            context={createContext()}
+            onChangeDraft={vi.fn()}
+            onSubmit={onSubmit}
+            submitAccessibilityLabel="Save"
+            isSubmitDisabled={false}
+        />);
+
+        const ref = {
+            kind: 'automationAuthoring' as const,
+            sessionId: 's1',
+            instanceId: 'automation-composer-scope',
+        };
+        const initial = readComposerPresentationSnapshot(ref);
+        if (!initial) throw new Error('expected mounted automation composer target');
+
+        await act(async () => {
+            expect(applyComposerPresentationTransaction({
+                ref,
+                transaction: {
+                    expectedRevision: initial.revision,
+                    operations: [
+                        { kind: 'text.set', text: 'Review @docs/README.md every morning' },
+                        {
+                            kind: 'reference.insert',
+                            reference: {
+                                kind: 'happier.file',
+                                ref: 'file:docs/README.md',
+                                token: '@docs/README.md',
+                                start: 7,
+                                end: 22,
+                                label: 'README.md',
+                            },
+                        },
+                    ],
+                },
+            })).toMatchObject({ status: 'applied' });
+        });
+
+        const send = agentInputSpy.mock.calls.at(-1)?.[0] as Readonly<{ onSend: () => void }>;
+        act(() => { send.onSend(); });
+
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+        expect(onSubmit).toHaveBeenCalledTimes(1);
     });
 
     it('projects the mounted action-bar layout through the automation Composer snapshot', async () => {

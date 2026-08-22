@@ -1,11 +1,11 @@
-import { getAgentLocalCliConfig, type AgentId } from '@happier-dev/agents';
+import { getAgentLocalCliConfig, type BundledAgentId } from '@happier-dev/agents';
 
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
 
 import { buildAgentCliInstallBanner } from './buildAgentCliInstallBanner';
 
 export function buildCatalogAgentCliUiConfig(
-  agentId: AgentId,
+  agentId: BundledAgentId,
 ): AgentCoreConfig['cli'] {
   const localCliConfig = getAgentLocalCliConfig(agentId);
 

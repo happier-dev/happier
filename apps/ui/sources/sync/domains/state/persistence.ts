@@ -15,7 +15,7 @@ import { Purchases, purchasesDefaults, purchasesParse } from '../purchases/purch
 import { ACCOUNT_SETTING_ARTIFACTS } from '../settings/registry/account/accountSettingArtifacts';
 import { LOCAL_ACCOUNT_SETTING_ARTIFACTS } from '../settings/registry/local/localAccountSettingDefinitions';
 import { isModelMode, isPermissionMode, type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/registry/registryCore';
+import { DEFAULT_AGENT_ID, isBundledAgentId, type AgentId } from '@/agents/registry/registryCore';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 import { SecretStringSchema, type SecretString } from '../../encryption/secretSettings';
 import {
@@ -604,10 +604,10 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
                 return undefined;
             }
         })();
-        const agentTypeCandidate = backendTarget && isAgentId(backendTarget.backendId)
+        const agentTypeCandidate = backendTarget && isBundledAgentId(backendTarget.backendId)
             ? backendTarget.backendId
             : parsed.agentType;
-        const agentType: AgentId = isAgentId(agentTypeCandidate) && !isLegacyCompatAgentType(agentTypeCandidate)
+        const agentType: AgentId = isBundledAgentId(agentTypeCandidate) && !isLegacyCompatAgentType(agentTypeCandidate)
             ? agentTypeCandidate
             : DEFAULT_AGENT_ID;
         const permissionMode: PermissionMode = isPermissionMode(parsed.permissionMode)

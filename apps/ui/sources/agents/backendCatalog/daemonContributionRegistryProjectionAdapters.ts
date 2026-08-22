@@ -1,4 +1,5 @@
 import type {
+    ActionInputHints,
     PluginActionConfirmationV2,
     PluginProjectedActionV2,
     PluginProjectedResourceV2,
@@ -7,6 +8,11 @@ import type {
     PluginProjectionV2,
 } from '@happier-dev/protocol';
 import { AGENT_IDS, type AgentId } from '@happier-dev/agents';
+
+import {
+    resolvePluginProjectedActionPresentation,
+    type PluginProjectedActionPresentation,
+} from '@/sync/domains/plugins/ui/actionPresentation';
 
 import type {
     MergedBackendCapabilities,
@@ -81,6 +87,12 @@ export type PluginProjectionAction = Readonly<{
     id: string;
     title: string;
     description: string | null;
+    /**
+     * The daemon-projected author presentation retained for the one host
+     * Action resolver. Legacy consumers continue to receive the fallback
+     * string fields above until they join that resolver.
+     */
+    localizedPresentation?: PluginProjectedActionPresentation;
     /** Manifest-declared icon slug; renderers map only known local icon names. */
     icon: string | null;
     scopes: readonly string[];
@@ -94,13 +106,15 @@ export type PluginProjectionAction = Readonly<{
     /** Canonical Action input contract used by host-owned selection validation. */
     inputSchema: PluginProjectedActionV2['inputSchema'] | null;
     /** Protocol-normalized SDK-ACTION-FORM descriptor; no renderer infers a form from schema. */
-    inputHints: PluginProjectedActionV2['inputHints'] | null;
+    inputHints: ActionInputHints | null;
     /** Action-owned composer slash presentation; the picker never parses a manifest itself. */
     slash?: PluginProjectedActionV2['slash'] | null;
     /** Smaller values present before larger values within each semantic placement. */
     priority: number | null;
     dangerLevel: PluginProjectedActionV2['dangerLevel'];
     confirmation: PluginActionConfirmationV2 | null;
+    /** Daemon-projected canonical action policy facts; never UI-synthesized. */
+    authorization?: PluginProjectedActionV2['authorization'];
     available: boolean | null;
 }>;
 
@@ -200,20 +214,32 @@ function isProjectedAgentId(value: unknown): value is AgentId {
 }
 
 function mapV2Action(action: PluginProjectedActionV2): PluginProjectionAction {
+    const localizedPresentation: PluginProjectedActionPresentation = Object.freeze({
+        title: action.title,
+        ...(action.description === undefined ? {} : { description: action.description }),
+        ...(action.inputHints === undefined ? {} : { inputHints: action.inputHints }),
+    });
+    const presentation = resolvePluginProjectedActionPresentation({
+        pluginId: action.pluginId,
+        presentation: localizedPresentation,
+        projection: null,
+    });
     return {
         id: action.id,
-        title: action.title,
-        description: action.description ?? null,
+        title: presentation.title,
+        description: presentation.description,
+        localizedPresentation,
         icon: action.icon ?? null,
         scopes: action.scopes,
         surfaces: action.surfaces,
         placementBindings: action.placementBindings ?? [],
         inputSchema: action.inputSchema ?? null,
-        inputHints: action.inputHints ?? null,
+        inputHints: presentation.inputHints,
         slash: action.slash ?? null,
         priority: action.priority ?? null,
         dangerLevel: action.dangerLevel,
         confirmation: action.confirmation ?? null,
+        ...(action.authorization ? { authorization: action.authorization } : {}),
         available: typeof action.available === 'boolean' ? action.available : null,
     };
 }
@@ -415,6 +441,34 @@ function buildV2PluginProjectionById(
     return entries;
 }
 
+/**
+ * Reads the `plugin.ui.v1` UI-behavior descriptor each projected Agent
+ * declared, re-assembled into the envelope the client's single descriptor
+ * interpreter consumes. Only Agents that actually declared one appear, so an
+ * Agent without a descriptor keeps the neutral fallback rather than an empty
+ * projection that would look like a declared one.
+ */
+export function readProjectedAgentUiBehaviorDescriptors(
+    mergedProviderProjectionById: Readonly<Record<string, MergedProviderProjectionEntry>>,
+): Readonly<Record<string, Readonly<Record<string, unknown>>>> {
+    const descriptorsByAgentId: Record<string, Readonly<Record<string, unknown>>> = {};
+    for (const [agentId, entry] of Object.entries(mergedProviderProjectionById)) {
+        const ui = entry.ui;
+        if (!ui) continue;
+        if (!ui.behavior && !ui.message && !ui.components) continue;
+        descriptorsByAgentId[agentId] = {
+            kind: 'plugin.ui.v1',
+            pluginId: entry.identity?.pluginId ?? agentId,
+            agentId,
+            version: 1,
+            ...(ui.behavior ? { behavior: ui.behavior } : {}),
+            ...(ui.message ? { message: ui.message } : {}),
+            ...(ui.components ? { components: ui.components } : {}),
+        };
+    }
+    return descriptorsByAgentId;
+}
+
 export function adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(
     projection: DaemonContributionRegistryProjection,
 ): Readonly<{
@@ -445,6 +499,9 @@ export function adaptDaemonContributionRegistryProjectionToMergedProjectionInput
             iconAgentId: isProjectedAgentId(entry.iconAgentId) ? entry.iconAgentId : null,
             cli: isPluginProjectionV2(projection)
                 ? projection.agentsById[agentEntryId]?.cli ?? null
+                : null,
+            ui: isPluginProjectionV2(projection)
+                ? projection.agentsById[agentEntryId]?.ui ?? null
                 : null,
         };
     }

@@ -13,6 +13,8 @@ import {
     PluginUiApplyComposerRequestV1Schema,
     PluginUiHostMethodV1Schema,
     PluginUiJsonValueV1Schema,
+    PluginUiPublishCurrentUiContextRequestV1Schema,
+    normalizePluginUiSemanticCommandV1,
     type PluginUiChannelV1,
     type PluginUiApplyComposerRequestV1,
     type PluginUiHostMethodV1,
@@ -24,6 +26,7 @@ import {
     type PluginUiResourceSubscriptionEventV1,
     type PluginUiSurfaceContextV1,
     type PluginUiTargetedContributionsV1,
+    type CurrentUiContextSnapshotV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -33,16 +36,20 @@ import {
 } from '@/sync/domains/state/storage';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 import {
+    createPluginSurfaceHostApiError,
     createPluginSurfaceHostApi,
     type PluginSurfaceHostApiHandlers,
     type PluginSurfaceHostApiV1,
 } from './createPluginSurfaceHostApi';
+import type { CurrentUiContextMountedEnrichment } from '@/components/appShell/currentUiContext/currentUiContextModel';
 import {
     createPluginSurfaceActionHostApi,
     type PluginSurfaceActionMountedBinding,
+    type PluginSurfaceContributedActionDescriptorResolver,
     type PluginSurfaceContributedActionTransport,
     type PluginSurfaceHostActionExecute,
 } from './pluginSurfaceActionDispatch';
@@ -150,6 +157,12 @@ export type BoundPluginSurfaceFacts = Readonly<{
     /** The projection generation this mount is bound to. */
     projectionGeneration?: number | string | null;
     /**
+     * The one CurrentUiContextProvider reader, borrowed at action-dispatch
+     * time. A mounted surface never snapshots, stores, or resolves context on
+     * its own.
+     */
+    readCurrentUiContext?: () => CurrentUiContextSnapshotV1 | null | undefined;
+    /**
      * Exact producer-stamped materialization for this mounted contribution.
      * The controller carries it only to the daemon action ingress; it never
      * exposes it to renderer input or lets a placement reconstruct it.
@@ -170,6 +183,17 @@ export type BoundPluginSurfaceFacts = Readonly<{
     resourceContext?: PluginResourceContextV1;
     /** Exact normalized daemon projection for the selected target/generation. */
     pluginProjectionById?: Readonly<Record<string, PluginProjectionEntry>> | null;
+    /**
+     * Exact normalized projection used only by the Action presentation resolver.
+     * It carries no target selection, execution, or mount currentness authority.
+     */
+    pluginUiProjection?: PluginUiProjectionModel | null;
+    /**
+     * Exact current raw V2 Action lookup from the mounted UI projection. It is
+     * deliberately opaque here: this controller owns no Action catalog or
+     * target normalization.
+     */
+    resolveContributedAction?: PluginSurfaceContributedActionDescriptorResolver;
     /**
      * The one cold-admitted targeted-contribution snapshot for this mounted
      * target. It is a target fact, not an Action catalog: selection stays
@@ -230,7 +254,34 @@ export type BoundPluginSurfaceMountedHostApiHandlersFactory = (input: Readonly<{
     isCurrent: () => boolean;
 }>) => Readonly<{
     handlers: PluginSurfaceHostApiHandlers;
+    /**
+     * Exact controller-bound publication data. The controller parses and
+     * qualifies the public request before it reaches this private capability.
+     */
+    currentUiContext?: BoundPluginSurfaceCurrentUiContextPublication;
+    /**
+     * Runs only from the controller hook's committed-effect lifecycle. A
+     * factory executes while React renders, so external registration here
+     * would leak an abandoned render into a host-owned store.
+     */
+    activate?: () => void;
+    /**
+     * Host-private current-UI focus fact for this exact mounted bundle. It is
+     * data pushed after commit, never an author callback or store predicate.
+     */
+    setCurrentUiContextEligibility?: (eligible: boolean) => void;
     dispose?: () => void;
+}>;
+
+/**
+ * The provider-local mount record capability. It carries no callback or
+ * executable dispatcher: semantic commands remain opaque to the snapshot.
+ */
+export type BoundPluginSurfaceCurrentUiContextPublication = Readonly<{
+    publish: (enrichment: CurrentUiContextMountedEnrichment | null) => boolean;
+    clear: () => void;
+    restore: () => boolean;
+    dispose: () => void;
 }>;
 
 /**
@@ -332,8 +383,25 @@ export type BoundPluginSurfaceController = Readonly<{
      * the parent remains the sole lifecycle owner.
      */
     onRetire: BoundPluginSurfaceMountLifetime['onRetire'];
+    /**
+     * Synchronously fences this exact mount without invoking teardown that can
+     * schedule React state. The owner performs full disposal in a safe phase.
+     */
+    retire: () => void;
     /** Idempotent. Retires what the mount put in front of the user and fences in-flight work. */
     dispose: () => void;
+    /**
+     * Host-private post-commit activation for a mounted semantic bundle. It is
+     * absent unless the exact controller factory provided one.
+     */
+    activateMountedHostApiHandlers?: () => void;
+    /**
+     * Host-private current-UI focus update for this exact controller. A
+     * retired controller ignores it; no plugin payload crosses this seam.
+     */
+    setCurrentUiContextEligibility?: (eligible: boolean) => void;
+    /** Hides only this exact current mount's enrichment; retirement disposes it. */
+    clearCurrentUiContext: () => void;
 }>;
 
 const EMPTY_RESOURCE_SCOPE: readonly PluginUiSurfaceContextV1['resourceScope'][number][] = Object.freeze([]);
@@ -490,6 +558,56 @@ function createBoundPluginSurfaceOpenDispatcher(input: Readonly<{
     };
 }
 
+type NormalizeCurrentUiContextPublicationResult =
+    | Readonly<{ ok: true; enrichment: CurrentUiContextMountedEnrichment | null }>
+    | Readonly<{ ok: false }>;
+
+/**
+ * The protocol request is the only author-input parser. This controller then
+ * qualifies local semantic references once, while deliberately leaving Action
+ * execution and destination navigation with their existing semantic owners.
+ */
+function normalizeCurrentUiContextPublication(input: Readonly<{
+    pluginId: string;
+    payload: unknown;
+}>): NormalizeCurrentUiContextPublicationResult {
+    const parsed = PluginUiPublishCurrentUiContextRequestV1Schema.safeParse(input.payload);
+    if (!parsed.success) return { ok: false };
+    const enrichment = parsed.data.enrichment;
+    if (enrichment === null) return { ok: true, enrichment: null };
+
+    const commands: Array<NonNullable<CurrentUiContextMountedEnrichment['commands']>[number]> = [];
+    for (const declaration of enrichment.commands ?? []) {
+        const command = normalizePluginUiSemanticCommandV1({
+            pluginId: input.pluginId,
+            command: declaration.command,
+        });
+        if (command === null) return { ok: false };
+        commands.push(Object.freeze({
+            title: declaration.title,
+            ...(declaration.description === undefined ? {} : { description: declaration.description }),
+            command,
+        }));
+    }
+    return Object.freeze({
+        ok: true as const,
+        enrichment: Object.freeze({
+            ...(enrichment.entity === undefined ? {} : { entity: enrichment.entity }),
+            ...(enrichment.detail === undefined ? {} : { detail: enrichment.detail }),
+            ...(enrichment.commands === undefined ? {} : { commands: Object.freeze(commands) }),
+        }),
+    });
+}
+
+/** The controller owns this Host API method; mounted bundles cannot bypass it. */
+function omitCurrentUiContextHostApiHandler(
+    handlers: PluginSurfaceHostApiHandlers | undefined,
+): PluginSurfaceHostApiHandlers | undefined {
+    if (!handlers || handlers.publishCurrentUiContext === undefined) return handlers;
+    const { publishCurrentUiContext: _ignored, ...retained } = handlers;
+    return retained;
+}
+
 export function createBoundPluginSurfaceController(input: Readonly<{
     facts: BoundPluginSurfaceFacts;
     binding?: BoundPluginSurfaceBinding;
@@ -596,9 +714,15 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         const openSurface = createBoundPluginSurfaceOpenDispatcher({ surfaceContext, hostApi });
         let accountRetirement: Readonly<{ dispose(): void }> | undefined;
         let parentRetirement: Readonly<{ dispose(): void }> | undefined;
-        const dispose = (): void => {
+        let disposed = false;
+        const retire = (): void => {
             if (retired) return;
             retired = true;
+        };
+        const dispose = (): void => {
+            if (disposed) return;
+            disposed = true;
+            retire();
             notifyRetirement();
             accountRetirement?.dispose();
             parentRetirement?.dispose();
@@ -626,7 +750,9 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             openSurface,
             isCurrent,
             onRetire,
+            retire,
             dispose,
+            clearCurrentUiContext: () => {},
         });
     }
 
@@ -637,24 +763,89 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     const mountedHandlerBundle = isOpenableContentViewer
         ? undefined
         : binding?.createMountedHostApiHandlers?.({ isCurrent });
+    const currentUiContextPublication = mountedHandlerBundle?.currentUiContext;
+    const publishCurrentUiContext = currentUiContextPublication
+        ? (request: PluginUiHostApiRequestEnvelopeV1): PluginUiJsonValueV1 => {
+            const normalized = normalizeCurrentUiContextPublication({
+                pluginId: surfaceContext.pluginId,
+                payload: request.payload,
+            });
+            if (!normalized.ok) {
+                return createPluginSurfaceHostApiError('invalid_payload', [
+                    'plugin_current_ui_context_payload_invalid',
+                ]);
+            }
+            if (!currentUiContextPublication.publish(normalized.enrichment)) {
+                return createPluginSurfaceHostApiError('unavailable', [
+                    'plugin_current_ui_context_unavailable',
+                ]);
+            }
+            return null;
+        }
+        : undefined;
+    // A mounted bundle may contribute other semantic handlers, but only this
+    // controller parses/qualifies `publishCurrentUiContext`. Dropping a legacy
+    // supplied handler closes the otherwise competing publication path.
+    const bindingMountedHostApiHandlers = omitCurrentUiContextHostApiHandler(
+        binding?.mountedHostApiHandlers,
+    );
+    const bundleMountedHostApiHandlers = omitCurrentUiContextHostApiHandler(
+        mountedHandlerBundle?.handlers,
+    );
     const mountedHostApiHandlers = mountedHandlerBundle
         ? Object.freeze({
-            ...binding?.mountedHostApiHandlers,
-            ...mountedHandlerBundle.handlers,
+            ...bindingMountedHostApiHandlers,
+            ...bundleMountedHostApiHandlers,
+            ...(publishCurrentUiContext ? { publishCurrentUiContext } : {}),
         })
-        : binding?.mountedHostApiHandlers;
+        : bindingMountedHostApiHandlers;
     const disposeMountedHostApiHandlers = mountedHandlerBundle
         ? () => {
+            // Retire the exact current-UI record before arbitrary mounted
+            // presentation cleanup. This is the controller's synchronous
+            // currentness boundary, not a provider-side watcher.
+            currentUiContextPublication?.dispose();
             binding?.disposeMountedHostApiHandlers?.();
             mountedHandlerBundle.dispose?.();
         }
         : binding?.disposeMountedHostApiHandlers;
+    // Factories run while React renders. Keep their optional activation and
+    // focus updates attached to this controller, then let the hook below call
+    // them only after commit. This avoids a second lifetime side channel and
+    // prevents an abandoned render from registering semantic context.
+    const activateMountedHostApiHandlers = mountedHandlerBundle?.activate
+        ? () => {
+            if (isCurrent()) mountedHandlerBundle.activate?.();
+        }
+        : undefined;
+    const setCurrentUiContextEligibility = mountedHandlerBundle?.setCurrentUiContextEligibility
+        ? (eligible: boolean) => {
+            if (isCurrent()) mountedHandlerBundle.setCurrentUiContextEligibility?.(eligible);
+        }
+        : undefined;
+    const clearCurrentUiContext = (): void => {
+        if (isCurrent()) currentUiContextPublication?.clear();
+    };
 
     const callerBinding = resolvePluginSurfaceCallerBinding(input.facts);
     // Addressing/generation are mount identity facts. Reachability is not: a
     // reconnect must make the existing facade capable again without replacing
     // its adapter or aborting an author-held signal.
     const daemon = resolveDaemonBinding(input.facts);
+    // Client-targeted Actions need the same exact projection generation but no
+    // daemon reachability. The generic executable index, not this controller,
+    // resolves the target/origin/registration under this fact.
+    const clientAction = typeof input.facts.projectionGeneration === 'number'
+        && Number.isInteger(input.facts.projectionGeneration)
+        && input.facts.projectionGeneration >= 0
+        ? {
+            projectionGeneration: input.facts.projectionGeneration,
+            ...(surfaceContext.sessionId ? { sessionId: surfaceContext.sessionId } : {}),
+            ...(input.facts.readCurrentUiContext
+                ? { currentUiContext: input.facts.readCurrentUiContext }
+                : {}),
+        }
+        : null;
     const isDaemonInteractionEnabled = input.facts.isDaemonInteractionEnabled
         ?? (() => input.facts.daemonInteractionEnabled);
     const isMethodAvailable = (method: PluginUiHostMethodV1): boolean => (
@@ -699,6 +890,9 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             ...(input.facts.pluginProjectionById
                 ? { pluginProjectionById: input.facts.pluginProjectionById }
                 : {}),
+            ...(input.facts.pluginUiProjection
+                ? { pluginUiProjection: input.facts.pluginUiProjection }
+                : {}),
             targetedContributions,
             host: {
                 machineId: daemon.machineId,
@@ -725,6 +919,10 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             ...(hostActionContext ? { context: hostActionContext } : {}),
         },
         ...(callerBinding ? { callerBinding } : {}),
+        ...(input.facts.resolveContributedAction
+            ? { resolveContributedAction: input.facts.resolveContributedAction }
+            : {}),
+        ...(clientAction ? { clientAction } : {}),
         ...(daemon
             ? {
                 contributedAction: {
@@ -782,10 +980,16 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     const openSurface = createBoundPluginSurfaceOpenDispatcher({ surfaceContext, hostApi });
     let accountRetirement: Readonly<{ dispose(): void }> | undefined;
     let parentRetirement: Readonly<{ dispose(): void }> | undefined;
-    const dispose = (): void => {
+    let disposed = false;
+    const retire = (): void => {
         if (retired) return;
         retired = true;
         mountLifetime.abort();
+    };
+    const dispose = (): void => {
+        if (disposed) return;
+        disposed = true;
+        retire();
         notifyRetirement();
         accountRetirement?.dispose();
         parentRetirement?.dispose();
@@ -814,7 +1018,11 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         openSurface,
         isCurrent,
         onRetire,
+        retire,
         dispose,
+        clearCurrentUiContext,
+        ...(activateMountedHostApiHandlers ? { activateMountedHostApiHandlers } : {}),
+        ...(setCurrentUiContextEligibility ? { setCurrentUiContextEligibility } : {}),
     });
 }
 
@@ -838,6 +1046,7 @@ export function useBoundPluginSurfaceController(input: Readonly<{
     );
     const actionInputSelectionFactsKey = serializePluginActionInputSelectionFacts({
         pluginProjectionById: facts.pluginProjectionById,
+        pluginUiProjection: facts.pluginUiProjection,
         targetedContributions: facts.targetedContributions,
         targetPluginId: facts.pluginId,
     });
@@ -862,6 +1071,7 @@ export function useBoundPluginSurfaceController(input: Readonly<{
             facts.sessionId,
             facts.targetAuthorityKey,
             facts.projectionGeneration,
+            facts.readCurrentUiContext,
             facts.executionOrigin?.serverIdentityId,
             facts.executionOrigin?.materializationRef.pluginId,
             facts.executionOrigin?.materializationRef.machineId,
@@ -874,6 +1084,7 @@ export function useBoundPluginSurfaceController(input: Readonly<{
             facts.mountInstanceKey,
             facts.interactionEnabled,
             actionInputSelectionFactsKey,
+            facts.resolveContributedAction,
             joinResourceScope(facts.resourceScope),
             binding?.executeHostAction,
             binding?.openSurface,
@@ -886,7 +1097,24 @@ export function useBoundPluginSurfaceController(input: Readonly<{
             binding?.createMountedHostApiHandlers,
         ],
     );
-    React.useEffect(() => () => controller.dispose(), [controller]);
+    React.useInsertionEffect(() => (
+        // StrictMode replays layout effects without recreating this memoized
+        // controller. Insertion cleanup therefore only fences the exact
+        // controller; publication teardown waits for the safe layout phase.
+        () => controller.retire()
+    ), [controller]);
+    React.useLayoutEffect(() => {
+        // A mounted-handler factory runs during render to contribute its
+        // methods, but external registration remains a committed layout
+        // effect. The exact mounted bundle makes replayed activation idempotent.
+        controller.activateMountedHostApiHandlers?.();
+        return () => {
+            // React runs insertion cleanup before layout cleanup for actual
+            // replacement and unmount. StrictMode replays only layout effects,
+            // so a current controller is not disposed by the simulated cleanup.
+            if (!controller.isCurrent()) controller.dispose();
+        };
+    }, [controller]);
     return controller;
 }
 

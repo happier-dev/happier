@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     createCanonicalJsonSigningInput,
@@ -21,7 +21,11 @@ import { useAutomationRuns } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { getAutomationRunOriginTranslationKey } from '@/components/automations/list/automationListFormatting';
+import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
+import {
+    formatAutomationRunStateLabel,
+    getAutomationRunOriginTranslationKey,
+} from '@/components/automations/list/automationListFormatting';
 import type {
     AutomationRunDetailPrivateContentInspection,
     AutomationRunDetailRouteInspection,
@@ -363,6 +367,7 @@ type AccountScopedRouteState<T> = RouteScopedState<T> & Readonly<{
 export function AutomationRunDetailScreen(): React.ReactElement {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const router = useRouter();
     const params = useLocalSearchParams<{ id?: string | string[]; runId?: string | string[] }>();
     const automationId = normalizeParam(params.id);
     const runId = normalizeParam(params.runId);
@@ -556,6 +561,10 @@ export function AutomationRunDetailScreen(): React.ReactElement {
     const sourceSelectorId = run?.origin.kind === 'pluginEvent'
         ? run.origin.sourceSelectorId
         : null;
+    // A Run that produced a Session is the user's only pointer back to the
+    // work it started, so the detail keeps that reachable rather than leaving
+    // the identifier in the transport projection.
+    const producedSessionId = run?.producedSessionId ?? null;
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
@@ -591,7 +600,7 @@ export function AutomationRunDetailScreen(): React.ReactElement {
                 ) : (
                     <>
                         <ItemGroup title={t('automations.detail.recentRunsTitle')}>
-                            <Item title={run.state.toUpperCase()} showChevron={false} mode="info" />
+                            <Item title={formatAutomationRunStateLabel(run.state)} showChevron={false} mode="info" />
                             <Item
                                 title={t('automations.detail.runMeta.originTitle')}
                                 detail={t(getAutomationRunOriginTranslationKey(run.origin))}
@@ -628,6 +637,22 @@ export function AutomationRunDetailScreen(): React.ReactElement {
                                 showChevron={false}
                                 mode="info"
                             />
+                            {run.startedAt !== null ? (
+                                <Item
+                                    title={t('executionRuns.details.timestamps.started')}
+                                    detail={formatDate(run.startedAt, unknownDate)}
+                                    showChevron={false}
+                                    mode="info"
+                                />
+                            ) : null}
+                            {run.finishedAt !== null ? (
+                                <Item
+                                    title={t('executionRuns.details.timestamps.finished')}
+                                    detail={formatDate(run.finishedAt, unknownDate)}
+                                    showChevron={false}
+                                    mode="info"
+                                />
+                            ) : null}
                             <Item
                                 title={t('automations.detail.runMeta.updated', {
                                     time: formatDate(run.updatedAt, unknownDate),
@@ -635,6 +660,17 @@ export function AutomationRunDetailScreen(): React.ReactElement {
                                 showChevron={false}
                                 mode="info"
                             />
+                            {producedSessionId ? (
+                                <Item
+                                    testID="automation-run-detail-produced-session"
+                                    title={t('runs.openSession')}
+                                    subtitle={producedSessionId}
+                                    subtitleLines={0}
+                                    onPress={() => navigateWithBlurOnWeb(
+                                        () => router.push(`/session/${producedSessionId}` as never),
+                                    )}
+                                />
+                            ) : null}
                             {run.errorCode ? (
                                 <Item
                                     title={t('automations.detail.runMeta.error', { message: run.errorCode })}

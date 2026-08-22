@@ -14,6 +14,7 @@ import {
     createPluginContextualResourceReadClient,
     type PluginSurfaceResourceReadTransport,
 } from './pluginSurfaceResourceRead';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 const surfaceContext: PluginUiSurfaceContextV1 = {
     pluginId: 'acme.preview',
@@ -68,6 +69,25 @@ function createMountedHostApi(read: PluginSurfaceResourceReadTransport) {
 }
 
 describe('mounted plugin surface resource snapshot read (§3.6)', () => {
+    it('combines mount and caller cancellation when AbortSignal.any is unavailable', () => {
+        const lifetime = new AbortController();
+        const caller = new AbortController();
+        const anyDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+        Object.defineProperty(AbortSignal, 'any', {
+            configurable: true,
+            value: undefined,
+        });
+
+        try {
+            const signal = mergeAbortSignals([lifetime.signal, caller.signal]).signal;
+            caller.abort();
+            expect(signal?.aborted).toBe(true);
+        } finally {
+            if (anyDescriptor) Object.defineProperty(AbortSignal, 'any', anyDescriptor);
+            else Reflect.deleteProperty(AbortSignal, 'any');
+        }
+    });
+
     it('binds an exact Session context without manufacturing a Surface envelope', async () => {
         const requests: unknown[] = [];
         const client = createPluginContextualResourceReadClient({

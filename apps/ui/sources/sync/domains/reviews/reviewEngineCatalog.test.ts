@@ -65,12 +65,10 @@ describe('buildAvailableReviewEngineOptions', () => {
   it('falls back to the backend id when a discovered review backend has no canonical agent label', () => {
     const opts = buildAvailableReviewEngineOptions({
       enabledAgentIds: ['claude'],
-      resolveAgentLabel: (id) => {
-        if (id === 'customAcp') {
-          throw new Error('Unsupported UI agent core: customAcp');
-        }
-        return `agent:${id}`;
-      },
+      // An Agent with no bundled core has no translated display name, so the
+      // real resolver answers with the formatted backend id. (It used to throw
+      // here; `getAgentCore` is a typed lookup now.)
+      resolveAgentLabel: (id) => (id === 'customAcp' ? id : `agent:${id}`),
       executionRunsBackends: {
         claude: { available: true, intents: ['review'] },
         customAcp: { available: true, intents: ['review'] },

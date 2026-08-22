@@ -1,5 +1,4 @@
 import { BackendTargetKeyV2Schema, type BackendTargetRefV2Input } from '@happier-dev/protocol';
-import type { AgentId } from '@/agents/catalog/catalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 export const SESSION_TRANSCRIPT_STORAGE_MODES = ['persisted', 'direct'] as const;
@@ -65,7 +64,7 @@ export function readAccountTranscriptStorageDefaults(params: Readonly<{
 }
 
 export function resolveNewSessionDefaultTranscriptStorage(params: Readonly<{
-    agentType: AgentId;
+    agentType: string;
     backendTarget?: BackendTargetRefV2Input | null;
     accountDefaults: AccountTranscriptStorageDefaults;
     profileDefaultsByTargetKey?: Record<string, SessionTranscriptStorageMode | undefined> | null;

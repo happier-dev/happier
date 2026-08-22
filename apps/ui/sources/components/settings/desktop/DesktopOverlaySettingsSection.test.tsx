@@ -113,8 +113,8 @@ vi.mock('@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge', () =
         listenDesktopActivityOverlayWindowStateMock(handler),
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => true,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => true,
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({

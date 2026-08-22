@@ -1,4 +1,9 @@
-import type { InteractionTransientRequesterV1 } from '@happier-dev/protocol';
+import type {
+    InteractionTransientRequesterV1,
+    PluginActionCurrentIntentRequest,
+    PluginActionCurrentIntentResult,
+    PluginProjectedActionV2,
+} from '@happier-dev/protocol';
 import type {
     PluginUiHostApiRequestEnvelopeV1,
     PluginUiJsonValueV1,
@@ -15,6 +20,7 @@ import type {
     PluginSurfaceHostApiMethodHandler,
     PluginSurfaceHostApiRequestOptions,
 } from './createPluginSurfaceHostApi';
+import { createPluginSurfaceHostApiError } from './createPluginSurfaceHostApi';
 
 /**
  * The mounted `notify` / `confirm` handlers (§3.4).
@@ -65,12 +71,18 @@ function readTitle(payload: Readonly<Record<string, PluginUiJsonValueV1>> | null
     return typeof title === 'string' && title.trim().length > 0 ? title : null;
 }
 
+function readConfirmationText(
+    value: string | Readonly<{ key: string; fallback: string }>,
+): string {
+    return typeof value === 'string' ? value : value.fallback;
+}
+
 function invalidPayload(reason: string): PluginUiJsonValueV1 {
-    return { code: 'invalid_payload', diagnostics: [reason] };
+    return createPluginSurfaceHostApiError('invalid_payload', [reason]);
 }
 
 function staleSurface(): PluginUiJsonValueV1 {
-    return { code: 'stale_surface', diagnostics: ['plugin_ui_generation_retired'] };
+    return createPluginSurfaceHostApiError('stale_surface', ['plugin_ui_generation_retired']);
 }
 
 export type CreatePluginSurfaceFeedbackHandlersInput = Readonly<{
@@ -85,9 +97,84 @@ export type CreatePluginSurfaceFeedbackHandlersInput = Readonly<{
 export type PluginSurfaceFeedbackHandlers = Readonly<{
     notify: PluginSurfaceHostApiMethodHandler;
     confirm: PluginSurfaceHostApiMethodHandler;
+    /**
+     * The Action present-user gate consumes this exact incumbent interaction
+     * owner; it is not a second confirmation lifecycle for client Actions.
+     */
+    requestCurrentIntent?: (
+        request: PluginActionCurrentIntentRequest<PluginProjectedActionV2>,
+    ) => Promise<PluginActionCurrentIntentResult>;
     /** Retire anything this surface put on screen. Idempotent. */
     dispose: () => void;
 }>;
+
+export function createPluginActionCurrentIntentHandler(input: Readonly<{
+    requester: InteractionTransientRequesterV1;
+    signal?: AbortSignal;
+    isCurrent: () => boolean;
+}>): (
+    request: PluginActionCurrentIntentRequest<PluginProjectedActionV2>,
+) => Promise<PluginActionCurrentIntentResult> {
+    const interactions = createAppShellTransientInteractions({
+        requester: input.requester,
+        signal: input.signal ?? new AbortController().signal,
+        isCurrent: input.isCurrent,
+    });
+    return async (request) => {
+        if (!input.isCurrent()) {
+            return Object.freeze({
+                status: 'unavailable' as const,
+                code: 'plugin_action_generation_retired',
+            });
+        }
+        const confirmation = request.action.confirmation;
+        if (!confirmation) {
+            return Object.freeze({
+                status: 'unavailable' as const,
+                code: 'plugin_action_current_intent_unavailable',
+            });
+        }
+        const title = readConfirmationText(confirmation.title);
+        const confirmLabel = confirmation.confirmLabel
+            ? readConfirmationText(confirmation.confirmLabel)
+            : undefined;
+        const outcome = await interactions.confirm({
+            kind: 'confirmation',
+            title,
+            message: confirmation.body
+                ? readConfirmationText(confirmation.body)
+                : title,
+        }, {
+            ...(request.signal ? { signal: request.signal } : {}),
+            presentationContext: {
+                title,
+                ...(confirmLabel === undefined ? {} : { confirmLabel }),
+            },
+        });
+        if (!input.isCurrent()) {
+            return Object.freeze({
+                status: 'unavailable' as const,
+                code: 'plugin_action_generation_retired',
+            });
+        }
+        if (outcome.status === 'approved') {
+            return Object.freeze({
+                status: 'approved' as const,
+                fingerprint: request.fingerprint,
+            });
+        }
+        if (outcome.status === 'declined' || outcome.status === 'userCancelled') {
+            return Object.freeze({
+                status: 'rejected' as const,
+                code: 'plugin_action_current_intent_rejected',
+            });
+        }
+        return Object.freeze({
+            status: 'unavailable' as const,
+            code: 'plugin_action_current_intent_unavailable',
+        });
+    };
+}
 
 export function createPluginSurfaceFeedbackHandlers(
     input: CreatePluginSurfaceFeedbackHandlersInput,
@@ -134,7 +221,10 @@ export function createPluginSurfaceFeedbackHandlers(
         if (!isCurrent()) return staleSurface();
         const title = readTitle(payload);
         if (!interactions) {
-            return { code: 'unavailable', diagnostics: ['plugin_surface_confirm_requester_unavailable'] };
+            return createPluginSurfaceHostApiError(
+                'unavailable',
+                ['plugin_surface_confirm_requester_unavailable'],
+            );
         }
         const outcome = await interactions.confirm({
             kind: 'confirmation',
@@ -153,15 +243,27 @@ export function createPluginSurfaceFeedbackHandlers(
         // present the dialog at all.
         if (outcome.status !== 'approved' && outcome.status !== 'declined' && outcome.status !== 'userCancelled') {
             return isCurrent()
-                ? { code: 'unavailable', diagnostics: ['plugin_surface_confirm_unavailable'] }
+                ? createPluginSurfaceHostApiError(
+                    'unavailable',
+                    ['plugin_surface_confirm_unavailable'],
+                )
                 : staleSurface();
         }
         return { confirmed: outcome.status === 'approved' };
     };
 
+    const requestCurrentIntent = interactions && input.interactionRequester
+        ? createPluginActionCurrentIntentHandler({
+            requester: input.interactionRequester,
+            signal: retirement.signal,
+            isCurrent,
+        })
+        : undefined;
+
     return Object.freeze({
         notify,
         confirm,
+        ...(requestCurrentIntent === undefined ? {} : { requestCurrentIntent }),
         dispose: () => {
             if (disposed) return;
             // Ordered deliberately: `disposed` first, so the confirmation owner

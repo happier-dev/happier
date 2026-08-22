@@ -4,7 +4,7 @@ import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRout
 
 import type { SessionSubagent } from '../types';
 import { resolveSubAgentSidechainProviderLabel } from './resolveSubAgentSidechainProviderLabel';
-import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
+import { isAsyncSubAgentLaunchToolResult, isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
 import { resolvePendingPermissionRouteForSubAgentTool } from './resolvePendingPermissionRouteForSubAgentTool';
 
 function readNonEmptyString(value: unknown): string | null {
@@ -19,9 +19,23 @@ function readSubAgentDisplayTitle(toolMessage: ToolCallMessage): string {
         ?? toolMessage.tool.name;
 }
 
+/**
+ * The agent's state, which is not always the launching call's state.
+ *
+ * The generic sub-agent tool launches ASYNCHRONOUSLY: the call returns within milliseconds carrying
+ * only a launch acknowledgement (`status: 'async_launched'`), the agent then runs for as long as
+ * its work takes, and its real result supersedes that acknowledgement later. Reading the
+ * acknowledgement as the agent's answer drew every live sub-agent as finished seconds after it
+ * started. `isAsyncSubAgentLaunchToolResult` is the shared owner of that question, so this row and
+ * the agent runtime's activity headline cannot disagree about it.
+ *
+ * A failed launch is still a failure: the exception is bounded to a non-error completion.
+ */
 function deriveSubAgentStatus(toolMessage: ToolCallMessage): SessionSubagent['status'] {
     if (toolMessage.tool.state === 'running') return 'running';
-    if (toolMessage.tool.state === 'completed') return 'succeeded';
+    if (toolMessage.tool.state === 'completed') {
+        return isAsyncSubAgentLaunchToolResult(toolMessage.tool.result) ? 'running' : 'succeeded';
+    }
     if (toolMessage.tool.state === 'error') return 'failed';
     return 'unknown';
 }

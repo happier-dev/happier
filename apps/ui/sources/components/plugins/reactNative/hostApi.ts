@@ -17,6 +17,7 @@ import {
     PluginUiReadComposerRequestV1Schema,
     PluginUiPickComposerMediaRequestV1Schema,
     PluginUiPickComposerMediaResultV1Schema,
+    PluginUiPublishCurrentUiContextRequestV1Schema,
     PluginUiReleaseComposerContentRequestV1Schema,
     PluginUiReplacePageLocationRequestV1Schema,
     PluginUiReplacePageLocationResultV1Schema,
@@ -32,7 +33,6 @@ import {
     ComposerTransactionResultV1Schema,
     pluginUiSelectedActionInputsEqual,
     pluginUiTargetedContributionOperationKey,
-    readPluginUiHostApiErrorPayload,
     type PluginUiHostApiErrorCodeV1,
     type PluginUiHostApiRequestMethodV1,
     type PluginUiHostApiRequestEnvelopeV1,
@@ -56,31 +56,21 @@ import type {
     SurfaceContext,
     ComposerSnapshotV1,
 } from '@happier-dev/plugin-sdk/ui';
-import type {
-    JsonValue,
-    PluginCancellationOptions,
-    PluginReference,
+import {
+    PluginError,
+    type JsonValue,
+    type PluginCancellationOptions,
+    type PluginReference,
 } from '@happier-dev/plugin-sdk';
 
 import { resolveNegotiatedPluginSurfaceHostApiMethods } from '../hostApi/negotiatedMethods';
 import { createPluginUiHostSubscriptionRegistry } from '../hostApi/subscriptions';
-import type { PluginSurfaceHostApiRequestOptions } from '../surfaces/createPluginSurfaceHostApi';
+import {
+    createPluginSurfaceHostApiPluginErrorData,
+    settlePluginSurfaceHostApiRequest,
+    type PluginSurfaceHostApiRequestOptions,
+} from '../surfaces/createPluginSurfaceHostApi';
 import { decodeBase64 } from '@/encryption/base64';
-
-export class PluginReactNativeHostApiError extends Error {
-    readonly code: PluginUiHostApiErrorCodeV1;
-    readonly diagnostics: readonly string[];
-
-    constructor(input: Readonly<{
-        code: PluginUiHostApiErrorCodeV1;
-        diagnostics?: readonly string[];
-    }>) {
-        super(input.code);
-        this.name = 'PluginReactNativeHostApiError';
-        this.code = input.code;
-        this.diagnostics = Object.freeze([...(input.diagnostics ?? [])]);
-    }
-}
 
 export type PluginReactNativeHostApiRequestHandler = (
     request: PluginUiHostApiRequestEnvelopeV1,
@@ -131,11 +121,18 @@ type PluginReactNativeHostRequestTransport = Readonly<{
     dispose: () => void;
 }>;
 
+function createHostApiError(
+    code: PluginUiHostApiErrorCodeV1,
+    diagnostics: readonly string[] = [],
+): PluginError {
+    return new PluginError(createPluginSurfaceHostApiPluginErrorData(code, diagnostics));
+}
+
 function throwHostApiError(
     code: PluginUiHostApiErrorCodeV1,
     diagnostics: readonly string[] = [],
 ): never {
-    throw new PluginReactNativeHostApiError({ code, diagnostics });
+    throw createHostApiError(code, diagnostics);
 }
 
 function createRequestEnvelope(input: Readonly<{
@@ -225,20 +222,14 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
             ...(payload !== undefined ? { payload } : {}),
         });
 
-        let result: PluginUiJsonValueV1 | undefined;
-        try {
-            result = await params.handleRequest(envelope, options);
-        } catch {
-            throwHostApiError('internal_error', ['host_api_handler_failed']);
+        const response = await settlePluginSurfaceHostApiRequest(
+            envelope,
+            () => params.handleRequest(envelope, options),
+        );
+        if (response.kind === 'error') {
+            throwHostApiError(response.payload.code, response.payload.diagnostics);
         }
-        // A mounted host answers with a plain JSON value, so a failed dispatch
-        // arrives as a typed error payload rather than a thrown error. Reject it
-        // here — the same recognition the hosted-web bridge applies — instead of
-        // resolving `{ code, diagnostics }` to the author as a successful action
-        // result (UI-D08).
-        const hostError = readPluginUiHostApiErrorPayload(result);
-        if (hostError) throwHostApiError(hostError.code, hostError.diagnostics);
-        return result;
+        return response.payload;
     }
 
     async function disposeSettledHostResource(subscriptionId: string): Promise<void> {
@@ -299,10 +290,7 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
                 const onAbort = () => {
                     abandoned = true;
                     retirePendingSubscription();
-                    reject(new PluginReactNativeHostApiError({
-                        code: 'unavailable',
-                        diagnostics: ['aborted'],
-                    }));
+                    reject(createHostApiError('unavailable', ['aborted']));
                 };
                 removeAbortListener = () => abortSignal.removeEventListener('abort', onAbort);
                 abortSignal.addEventListener('abort', onAbort, { once: true });
@@ -393,10 +381,7 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
                 const onAbort = () => {
                     abandoned = true;
                     retirePendingSubscription();
-                    reject(new PluginReactNativeHostApiError({
-                        code: 'unavailable',
-                        diagnostics: ['aborted'],
-                    }));
+                    reject(createHostApiError('unavailable', ['aborted']));
                 };
                 removeAbortListener = () => abortSignal.removeEventListener('abort', onAbort);
                 abortSignal.addEventListener('abort', onAbort, { once: true });
@@ -700,6 +685,13 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
      * mount-scoped adapter when a daemon reconnects or temporarily revalidates.
      */
     getInstalledMethods?: () => readonly PluginUiHostMethodV1[];
+    /**
+     * Reads the controller's STRUCTURAL method set (`admissionMethods`), which
+     * excludes transient availability narrowing. It is what separates a method
+     * this mount can never serve from one it merely cannot serve right now;
+     * without it every absence reads as a permanent capability verdict.
+     */
+    getAdmissionMethods?: () => readonly PluginUiHostMethodV1[];
     /** Consumes the mount controller's currentness fact; this adapter does not own it. */
     isCurrent?: () => boolean;
 }>): CanonicalPluginReactNativeHostApiAdapter {
@@ -715,6 +707,10 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
     const resolveNegotiatedMethods = (): readonly PluginUiHostMethodV1[] =>
         resolveCanonicalPluginReactNativeHostApiMethods(
             params.getInstalledMethods?.() ?? params.installedMethods,
+        );
+    const resolveStructuralMethods = (): readonly PluginUiHostMethodV1[] =>
+        resolveCanonicalPluginReactNativeHostApiMethods(
+            params.getAdmissionMethods?.() ?? params.getInstalledMethods?.() ?? params.installedMethods,
         );
     let currentSurface = params.surface;
     // The operation is never serialized in the public executeAction payload.
@@ -767,9 +763,17 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
     }
 
     function assertInstalled(method: PluginUiHostMethodV1): void {
-        if (!resolveNegotiatedMethods().includes(method)) {
-            throwHostApiError('unsupported_method', [`host_api_method_not_installed:${method}`]);
+        if (resolveNegotiatedMethods().includes(method)) return;
+        // This adapter deliberately outlives a daemon reconnect, so its method
+        // set is a CURRENT availability fact. A method the mount structurally
+        // installs is re-advertised on recovery; reporting it as
+        // `unsupported_method` hands the caller a permanent capability verdict
+        // it will never revisit, which is how an outage at mount time turns
+        // into a session-long loss of live Resources.
+        if (resolveStructuralMethods().includes(method)) {
+            throwHostApiError('unavailable', [`host_api_method_unavailable:${method}`]);
         }
+        throwHostApiError('unsupported_method', [`host_api_method_not_installed:${method}`]);
     }
 
     function disposable(dispose: () => void): Readonly<{ dispose: () => void }> {
@@ -790,6 +794,17 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
             methods: resolveNegotiatedMethods(),
         }),
+        publishCurrentUiContext: (enrichment) => {
+            assertActive();
+            assertInstalled('publishCurrentUiContext');
+            const payload = PluginUiPublishCurrentUiContextRequestV1Schema.safeParse({ enrichment });
+            if (!payload.success) throwHostApiError('invalid_payload');
+            // Like the browser transport, publication has no acknowledgement or
+            // author-visible ID. The mount/controller remains the authority for
+            // admission and synchronous retirement; a late transport failure
+            // cannot leave a second client-side context owner behind.
+            void transport.request('publishCurrentUiContext', payload.data).catch(() => undefined);
+        },
         context: async (options) => {
             assertActive(options?.signal);
             assertInstalled('context');

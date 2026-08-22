@@ -1,7 +1,7 @@
 import type { ImageSourcePropType } from 'react-native';
 
 import type { CanonicalAgentId } from './registryCore';
-import { CANONICAL_AGENT_IDS } from './registryCore';
+import { isBundledAgentId } from './registryCore';
 import type { Theme } from '@/theme';
 
 import { BUNDLED_CANONICAL_AGENTS_UI } from './generatedBundledPluginEntries';
@@ -55,12 +55,11 @@ const UNKNOWN_AGENT_UI: AgentUiConfig = Object.freeze({
     cliGlyph: '?',
 });
 
-function isCanonicalAgentId(value: unknown): value is CanonicalAgentId {
-    return typeof value === 'string' && (CANONICAL_AGENT_IDS as readonly string[]).includes(value);
-}
-
 export function getAgentUiConfig(agentId: string | null | undefined): AgentUiConfig {
-    if (isCanonicalAgentId(agentId)) {
+    // `isBundledAgentId` narrows to the key of the bundled record. An externally
+    // installed Agent legitimately has no bundled presentation entry, so it gets
+    // the neutral placeholder rather than an `undefined` masquerading as a config.
+    if (isBundledAgentId(agentId)) {
         return CANONICAL_AGENTS_UI[agentId] ?? UNKNOWN_AGENT_UI;
     }
     return UNKNOWN_AGENT_UI;

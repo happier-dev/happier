@@ -17,6 +17,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createPluginHostedWebHostApiBridgeHandler } from '@/components/plugins/hostApi/hostedWebAdapter';
 import { createPluginSurfaceActionHostApi } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import { createPluginSurfaceHostApi } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
 
 const surface: PluginUiSurfaceContextV1 = {
     pluginId: 'acme.preview',
@@ -671,6 +672,50 @@ describe('hosted web plugin host API adapter', () => {
         })]);
     });
 
+    it('preserves an Action result whose domain payload happens to carry a host error code', async () => {
+        const mountedHostApi = createPluginSurfaceHostApi({
+            surfaceContext: surface,
+            handlers: {
+                executeAction: async () => ({
+                    code: 'timeout',
+                    outcome: 'domain-success',
+                }),
+            },
+        });
+        const handler = createPluginHostedWebHostApiBridgeHandler({
+            surface,
+            requestIdPrefix: 'hosted-web-domain-result',
+            bridgeNonce: 'nonce-1',
+            canonicalHostApi: {
+                identity: canonicalIdentity,
+                surface: canonicalSurface,
+                methods: mountedHostApi.installedMethods,
+            },
+            handleRequest: mountedHostApi.handleRequest,
+        });
+
+        await handler(createEnvelope('ready', { ready: true }));
+        await expect(handler(createEnvelope('hostApi', {
+            wireVersion: 1,
+            kind: 'request',
+            identity: canonicalIdentity,
+            requestId: 'domain-result',
+            method: 'executeAction',
+            payload: { action: 'report', input: null },
+        }))).resolves.toMatchObject({
+            kind: 'result',
+            payload: {
+                kind: 'result',
+                requestId: 'domain-result',
+                method: 'executeAction',
+                result: {
+                    code: 'timeout',
+                    outcome: 'domain-success',
+                },
+            },
+        });
+    });
+
     it('advertises selection in the sole 1.0 contract and rejects retired negotiation ranges', async () => {
         const seenRequests: PluginUiHostApiRequestEnvelopeV1[] = [];
         const handler = createPluginHostedWebHostApiBridgeHandler({
@@ -903,6 +948,29 @@ describe('hosted web plugin host API adapter', () => {
                 machineId: 'machine-1',
                 expectedGeneration: '7',
                 execute: contributed,
+            },
+            resolveContributedAction: (identity) => {
+                const knownAction = (
+                    identity.pluginId === targetedOperation.action.pluginId
+                    && (
+                        identity.localId === targetedOperation.action.localId
+                        || identity.localId === 'other-action'
+                    )
+                ) || (
+                    identity.pluginId === surface.pluginId
+                    && identity.localId === 'connection/create'
+                );
+                return knownAction
+                    ? {
+                        id: identity.localId,
+                        pluginId: identity.pluginId,
+                        title: 'Targeted connection action',
+                        scopes: ['session'],
+                        surfaces: ['ui'],
+                        execution: { target: 'daemon' },
+                        dangerLevel: 'safe',
+                    }
+                    : null;
             },
             selectActionInput: async (): Promise<PluginUiJsonValueV1> => selectedResult,
         });
@@ -1452,6 +1520,128 @@ describe('hosted web plugin host API adapter', () => {
                 result: admission,
             },
         });
+    });
+
+    it('delivers a Resource event published while establishment is still in flight', async () => {
+        // The mount's Resource pump starts the moment `owner.open` admits the
+        // subscription, so its first invalidation can reach this bridge before
+        // the establishment response has been written. Suppressing it here lost
+        // the event outright: the SDK client already buffers everything that
+        // arrives before its own acknowledgement, so the bridge must forward.
+        const admission = {
+            subscriptionId: 'watch-resource-subscription',
+            digest: `sha256:${'a'.repeat(64)}`,
+        } as const;
+        const invalidatedDigest = `sha256:${'b'.repeat(64)}` as const;
+        const postToFrame = vi.fn();
+        let publishedDuringEstablishment: boolean | undefined;
+        let handler!: ReturnType<typeof createPluginHostedWebHostApiBridgeHandler>;
+        handler = createPluginHostedWebHostApiBridgeHandler({
+            surface,
+            requestIdPrefix: 'hosted-web-resource-establishment',
+            bridgeNonce: 'nonce-1',
+            canonicalHostApi: {
+                identity: canonicalIdentity,
+                surface: canonicalSurface,
+                methods: ['watchResource'],
+            },
+            handleRequest: async (request): Promise<PluginUiJsonValueV1> => {
+                if (request.method !== 'watchResource') return null;
+                publishedDuringEstablishment = handler.publishResourceSubscriptionEvent({
+                    version: 1,
+                    subscriptionId: admission.subscriptionId,
+                    kind: 'invalidated',
+                    digest: invalidatedDigest,
+                });
+                return admission;
+            },
+            postToFrame,
+        });
+        await handler(createEnvelope('ready', { ready: true }));
+
+        await expect(handler(createEnvelope('hostApi', {
+            wireVersion: 1,
+            kind: 'subscribe',
+            identity: canonicalIdentity,
+            requestId: 'watch-resource-request',
+            subscriptionId: admission.subscriptionId,
+            method: 'watchResource',
+            payload: { resource: 'live-status' },
+        }))).resolves.toMatchObject({
+            kind: 'result',
+            payload: { kind: 'result', method: 'watchResource', result: admission },
+        });
+
+        expect(publishedDuringEstablishment).toBe(true);
+        expect(postToFrame.mock.calls.map(([message]) => message.payload)).toContainEqual(
+            expect.objectContaining({
+                kind: 'subscription',
+                subscriptionId: admission.subscriptionId,
+                event: expect.objectContaining({ kind: 'invalidated', digest: invalidatedDigest }),
+            }),
+        );
+        // A later event on the promoted subscription still flows.
+        expect(handler.publishResourceSubscriptionEvent({
+            version: 1,
+            subscriptionId: admission.subscriptionId,
+            kind: 'invalidated',
+            digest: `sha256:${'c'.repeat(64)}`,
+        })).toBe(true);
+    });
+
+    it('keeps a terminal Resource event published during establishment from failing that establishment', async () => {
+        // A watch that terminates before its acknowledgement is still a
+        // successful establishment for the guest: the client needs the ack in
+        // order to flush the buffered terminal arm to its listener.
+        const admission = {
+            subscriptionId: 'watch-resource-subscription',
+            digest: `sha256:${'a'.repeat(64)}`,
+        } as const;
+        const postToFrame = vi.fn();
+        let handler!: ReturnType<typeof createPluginHostedWebHostApiBridgeHandler>;
+        handler = createPluginHostedWebHostApiBridgeHandler({
+            surface,
+            requestIdPrefix: 'hosted-web-resource-terminal',
+            bridgeNonce: 'nonce-1',
+            canonicalHostApi: {
+                identity: canonicalIdentity,
+                surface: canonicalSurface,
+                methods: ['watchResource'],
+            },
+            handleRequest: async (request): Promise<PluginUiJsonValueV1> => {
+                if (request.method !== 'watchResource') return null;
+                handler.publishResourceSubscriptionEvent({
+                    version: 1,
+                    subscriptionId: admission.subscriptionId,
+                    kind: 'error',
+                    code: 'expired_resource',
+                    diagnostics: ['stale_generation'],
+                });
+                return admission;
+            },
+            postToFrame,
+        });
+        await handler(createEnvelope('ready', { ready: true }));
+
+        await expect(handler(createEnvelope('hostApi', {
+            wireVersion: 1,
+            kind: 'subscribe',
+            identity: canonicalIdentity,
+            requestId: 'watch-resource-request',
+            subscriptionId: admission.subscriptionId,
+            method: 'watchResource',
+            payload: { resource: 'live-status' },
+        }))).resolves.toMatchObject({
+            kind: 'result',
+            payload: { kind: 'result', method: 'watchResource', result: admission },
+        });
+        expect(postToFrame.mock.calls.map(([message]) => message.payload)).toContainEqual(
+            expect.objectContaining({
+                kind: 'subscription',
+                subscriptionId: admission.subscriptionId,
+                event: expect.objectContaining({ kind: 'error', code: 'expired_resource' }),
+            }),
+        );
     });
 
     it('does not republish a semantically unchanged Context snapshot', async () => {

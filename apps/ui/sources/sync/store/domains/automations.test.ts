@@ -62,6 +62,7 @@ const eventDefinitionSummary = {
         },
     },
     targetType: 'existingSession' as const,
+    existingSessionId: 'session-1',
     templateVersion: 3,
     nextRunAt: null,
     lastRunAt: null,
@@ -209,6 +210,7 @@ describe('createAutomationsDomain', () => {
         harness.get().applyAutomations([createAutomationDefinitionFromDetail(eventDefinitionDetail)]);
         harness.get().applyAutomations([createAutomationDefinitionSummary({
             ...eventDefinitionSummary,
+            existingSessionId: null,
             trigger: {
                 ...eventDefinitionSummary.trigger,
                 sourceSelectorId: 'selector-2',

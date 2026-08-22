@@ -1,4 +1,5 @@
 import {
+    isPluginUiHermesBytecodeArtifactV1,
     verifyPluginUiArtifactBytesIntegrityV1,
     verifyPluginUiArtifactFileSetIntegrityV1,
     type PluginUiArtifactDigestV1,
@@ -36,7 +37,7 @@ import { createExpoPluginNativeArtifactResourceRegistrar } from '@/sync/domains/
 import { createTauriPluginNativeArtifactResourceRegistrar } from '@/sync/domains/plugins/availability/nativeArtifactResourceRegistrar.tauri';
 import { createBrowserPluginUiPersistentArtifactStore } from '@/sync/domains/plugins/ui/artifactByteCache.browser';
 import { createTauriPluginUiPersistentArtifactStore } from '@/sync/domains/plugins/ui/artifactByteCache.tauri';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import {
     createReactNativeInstalledArtifactDiskGc,
     createReactNativePersistentArtifactStore,
@@ -455,7 +456,12 @@ export function createPluginReactNativeArtifactLeaseCacheSink(input: Readonly<{
             return input.cache.putInstalledArtifact({
                 identity: entry.identity,
                 bytes: entry.bytes,
-                format: 'plainJs',
+                // Read the format off the verified entry bytes. Asserting
+                // `plainJs` here made the cache's Hermes refusal unreachable for
+                // every source, including the ones that never touch the daemon.
+                format: isPluginUiHermesBytecodeArtifactV1(entry.bytes)
+                    ? 'hermesBytecode'
+                    : 'plainJs',
                 accountScope: entry.accountScope,
                 entryRelativePath: entry.entryRelativePath,
                 files: entry.files,
@@ -974,7 +980,7 @@ type DefaultPersistentArtifactStore = Readonly<{
 }>;
 
 function createDefaultPersistentArtifactStore(): DefaultPersistentArtifactStore {
-    if (isTauriDesktop()) {
+    if (isDesktopHost()) {
         const nativeStore = createTauriPluginUiPersistentArtifactStore();
         return Object.freeze({
             reactNativeStore: adaptPluginUiPersistentArtifactStoreForReactNativeBundleCache(nativeStore),

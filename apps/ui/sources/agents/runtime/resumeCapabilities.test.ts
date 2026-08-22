@@ -11,6 +11,81 @@ import {
 } from './resumeCapabilities';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
+const projectedExternalLifecycleCapabilities = {
+    agentId: 'acme-lifecycle',
+    identity: {
+        pluginId: 'acme.lifecycle',
+        localId: 'acme-lifecycle',
+    },
+    generation: 42,
+    capabilities: {
+        surfaces: ['terminal'],
+        sessions: {
+            open: ['create', 'resume', 'fork'],
+            delivery: ['newTurn', 'steer', 'followUp'],
+            cancel: true,
+            conversationRollback: true,
+            usageLimitRecovery: {
+                active: ['checkNow'],
+                inactive: ['checkNow', 'consumeResetCredit'],
+            },
+        },
+        executionRuns: {
+            open: ['create', 'resume', 'fork'],
+            checkpoint: true,
+            stop: true,
+        },
+    },
+} as const;
+
+const projectedExternalLifecycleOptions = {
+    currentAgentCapabilities: projectedExternalLifecycleCapabilities,
+} as unknown as Parameters<typeof canResumeSessionWithOptions>[1];
+
+describe('projected external Agent resume capability', () => {
+    const externalRuntimeMetadata = {
+        runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'acme-lifecycle',
+            agent: {
+                providerSessionId: 'acme-session-1',
+            },
+        },
+    } as const;
+
+    test('resumes through the exact current declaration and generic runtime descriptor', () => {
+        expect(canResumeSessionWithOptions(
+            externalRuntimeMetadata,
+            projectedExternalLifecycleOptions,
+        )).toBe(true);
+        expect(getAgentVendorResumeId(
+            externalRuntimeMetadata,
+            'acme-lifecycle',
+            projectedExternalLifecycleOptions,
+        )).toBe('acme-session-1');
+    });
+
+    test('uses declared create for pre-start recovery without a provider session id', () => {
+        expect(canContinueSessionWithFreshSpawn({
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'acme-lifecycle',
+                agent: {},
+            },
+        }, projectedExternalLifecycleOptions)).toBe(true);
+    });
+
+    test('fails closed for missing or stale current declaration backing', () => {
+        expect(canResumeSessionWithOptions(externalRuntimeMetadata)).toBe(false);
+        expect(canResumeSessionWithOptions(externalRuntimeMetadata, {
+            currentAgentCapabilities: {
+                ...projectedExternalLifecycleCapabilities,
+                agentId: 'acme-other',
+            },
+        } as unknown as Parameters<typeof canResumeSessionWithOptions>[1])).toBe(false);
+    });
+});
+
 describe('getAgentVendorResumeId', () => {
     const currentAntigravityAgent = {
         identity: {

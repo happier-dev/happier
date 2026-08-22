@@ -39,7 +39,7 @@ import { normalizePetCompanionSizeScale } from '@/sync/domains/pets/companionSiz
 import { normalizeLocalPetSourceMetadata } from '@/sync/domains/pets/normalizeLocalPetSources';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWriters';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { PetsAccountLibrarySection } from './petsSettingsScreen/PetsAccountLibrarySection';
@@ -120,7 +120,7 @@ export function PetsSettingsScreen() {
     const [localImportDiagnosticTargetKey, setLocalImportDiagnosticTargetKey] = React.useState<string | null>(null);
     const removingLocalPetSourceKeysRef = React.useRef(new Set<string>());
     const forgottenLocalPetSourceKeysRef = React.useRef(new Set<string>());
-    const showDesktopOverlaySettings = isTauriDesktop();
+    const showDesktopOverlaySettings = isDesktopHost();
     const companionSizeScale = normalizePetCompanionSizeScale(localSettings.petsCompanionSizeScale);
     const scopedDiscoveredPets = discoveredPetsTargetKey === executionTargetKey ? discoveredPets : [];
     const scopedImportedLocalPets = importedLocalPetsTargetKey === executionTargetKey ? importedLocalPets : [];

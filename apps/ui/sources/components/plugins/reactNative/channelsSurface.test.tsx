@@ -678,6 +678,12 @@ function createOfflineChannelsDataClient(input: Readonly<{
     delete: remove,
     query,
     batch,
+    limits: async () => {
+      throw new Error('Channels offline policy does not size its direct state writes.');
+    },
+    measureBatch: async () => {
+      throw new Error('Channels offline policy does not size its direct state writes.');
+    },
   } satisfies ChannelStateCollection;
   const deliveriesCollection = { query: deliveryQuery };
   const client: PluginUiDataClient = {
@@ -788,6 +794,12 @@ function createDeliveryResolutionDataClient(input: Readonly<{
     batch: async () => {
       throw new Error('Delivery-resolution UI does not batch-mutate retained custody.');
     },
+    limits: async () => {
+      throw new Error('Delivery-resolution UI does not size retained-custody writes.');
+    },
+    measureBatch: async () => {
+      throw new Error('Delivery-resolution UI does not size retained-custody writes.');
+    },
   } satisfies ChannelDeliveriesCollection;
   const stateCollection = {
     get: async () => null,
@@ -800,6 +812,12 @@ function createDeliveryResolutionDataClient(input: Readonly<{
     query: stateQuery,
     batch: async () => {
       throw new Error('Delivery-resolution UI does not batch-mutate ingress custody.');
+    },
+    limits: async () => {
+      throw new Error('Delivery-resolution UI does not size ingress-custody writes.');
+    },
+    measureBatch: async () => {
+      throw new Error('Delivery-resolution UI does not size ingress-custody writes.');
     },
   } satisfies ChannelStateCollection;
   const client: PluginUiDataClient = {
@@ -3002,7 +3020,7 @@ describe('Channels settings surface (real source, mounted)', () => {
           });
           return {
             kind: 'ready',
-            supportedTransports: ['checkpointedPull', 'socket', 'durablePush'],
+            supportedTransports: ['checkpointedPull', 'socket'],
             recommendedTransport: 'socket',
             overlapSafety: 'safe',
             replayContinuity: 'none',

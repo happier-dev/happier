@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 
-import { isTauriDesktop } from "@/utils/platform/tauri";
+import { isDesktopHost } from "@/utils/platform/desktopHost";
 
 import type { LocalServicePreviewPlatform } from "./url";
 
@@ -26,7 +26,7 @@ export function resolveLocalServicePreviewPlatform(
     if (Platform.OS === "ios" || Platform.OS === "android") {
         return Platform.OS;
     }
-    if (isTauriDesktop()) {
+    if (isDesktopHost()) {
         return "desktop";
     }
     return "web";

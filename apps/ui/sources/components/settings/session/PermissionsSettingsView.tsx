@@ -217,6 +217,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
             <ItemGroup title={t('settingsSession.defaultPermissions.title')} footer={t('settingsSession.defaultPermissions.footer')}>
                 {enabledAgentIds.map((agentId, index) => {
                     const core = getAgentCore(agentId);
+                    if (!core) return null;
                     const mode = getDefaultPermission(agentId);
                     const showDivider = index < enabledAgentIds.length - 1;
                     return (
@@ -293,6 +294,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
 
                     {supportedDirectAgentIds.map((agentId, index) => {
                         const core = getAgentCore(agentId);
+                        if (!core) return null;
                         const override = accountTranscriptStorageDefaults.byTargetKey[
                             resolveBackendTargetKeyV2({ kind: 'backend', backendId: agentId })
                         ] ?? null;

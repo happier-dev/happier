@@ -1,4 +1,7 @@
-import type { AutomationScheduleInput } from '@/sync/domains/automations/automationValidation';
+import {
+    clampAutomationIntervalMinutes,
+    type AutomationScheduleInput,
+} from '@/sync/domains/automations/automationValidation';
 
 import type { AutomationSettingsValue } from './AutomationSettingsForm';
 
@@ -9,6 +12,5 @@ export function buildAutomationScheduleInputFromForm(form: AutomationSettingsVal
         return { kind: 'cron', scheduleExpr, timezone };
     }
 
-    const minutes = Math.min(Math.max(Math.floor(form.everyMinutes), 1), 24 * 60);
-    return { kind: 'interval', everyMs: minutes * 60_000, timezone };
+    return { kind: 'interval', everyMs: clampAutomationIntervalMinutes(form.everyMinutes) * 60_000, timezone };
 }

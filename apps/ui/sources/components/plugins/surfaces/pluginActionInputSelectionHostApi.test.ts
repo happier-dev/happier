@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import {
+    EMPTY_PLUGIN_UI_PROJECTION,
+    type PluginUiProjectionModel,
+} from '@/sync/domains/plugins/ui/projection';
+import { setPreferredLanguageFromSettings } from '@/text';
 import type {
     PluginUiTargetedContributionOperationV1,
     PluginUiTargetedContributionsV1,
@@ -151,6 +156,93 @@ describe('plugin Action input selection Host API producer', () => {
             connectedAccount: { kind: 'none' },
         });
         expect(present).toHaveBeenCalledOnce();
+    });
+
+    it('resolves localized Action form presentation from the mounted projection', async () => {
+        setPreferredLanguageFromSettings('es');
+        try {
+            const projected = projection();
+            const setup = projected['acme.setup']!;
+            const sourceAction = setup.actions[0]!;
+            const localizedProjection = Object.freeze({
+                ...projected,
+                'acme.setup': Object.freeze({
+                    ...setup,
+                    actions: [Object.freeze({
+                        ...sourceAction,
+                        localizedPresentation: Object.freeze({
+                            title: { key: 'actions.prepare.title', fallback: 'Prepare connection' },
+                            description: { key: 'actions.prepare.description', fallback: 'Prepare the connection.' },
+                            inputHints: {
+                                title: { key: 'actions.prepare.form.title', fallback: 'Prepare connection' },
+                                fields: [{
+                                    path: 'repository',
+                                    title: { key: 'actions.prepare.form.repository', fallback: 'Repository' },
+                                    widget: 'text' as const,
+                                    required: true,
+                                }],
+                            },
+                        }),
+                    })],
+                }),
+            });
+            const pluginUiProjection: PluginUiProjectionModel = Object.freeze({
+                ...EMPTY_PLUGIN_UI_PROJECTION,
+                translationsByPluginId: Object.freeze({
+                    'acme.setup': Object.freeze({
+                        id: 'translations:acme.setup',
+                        pluginId: 'acme.setup',
+                        contributionKind: 'translations' as const,
+                        locales: ['en', 'es'],
+                        bundles: Object.freeze({
+                            en: Object.freeze({}),
+                            es: Object.freeze({
+                                'actions.prepare.title': 'Preparar conexión',
+                                'actions.prepare.description': 'Prepara la conexión.',
+                                'actions.prepare.form.title': 'Preparar conexión',
+                                'actions.prepare.form.repository': 'Repositorio',
+                            }),
+                        }),
+                    }),
+                }),
+            });
+            const handlerInput = {
+                pluginProjectionById: localizedProjection,
+                // The mounted host already owns this exact normalized projection;
+                // this test proves selection does not discard its Action presentation.
+                pluginUiProjection,
+                targetedContributions: targetedContributions(),
+                host: {
+                    machineId: 'machine-a',
+                    serverId: 'server-a',
+                    expectedGeneration: 7,
+                    targetPluginId: 'acme.caller',
+                    accountLifetime,
+                },
+                isCurrent: () => true,
+                present: ({ form }: { form: { presentation: unknown; submit: () => Promise<unknown> } }) => {
+                    expect(form.presentation).toEqual({
+                        title: 'Preparar conexión',
+                        description: 'Prepara la conexión.',
+                        inputHints: {
+                            title: 'Preparar conexión',
+                            fields: [{
+                                path: 'repository',
+                                title: 'Repositorio',
+                                widget: 'text',
+                                required: true,
+                            }],
+                        },
+                    });
+                    void form.submit();
+                },
+            };
+            const handler = createPluginActionInputSelectionHostApiHandler(handlerInput);
+
+            await expect(handler(request())).resolves.toMatchObject({ kind: 'submitted' });
+        } finally {
+            setPreferredLanguageFromSettings(null);
+        }
     });
 
     it('settles explicit dismissal as cancellation', async () => {

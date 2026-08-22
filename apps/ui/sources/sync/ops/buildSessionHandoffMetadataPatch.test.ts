@@ -465,6 +465,55 @@ describe('buildSessionHandoffMetadataPatch', () => {
         expect(updated).not.toHaveProperty('agentRuntimeDescriptorV1');
     });
 
+    it('preserves an installed Agent handoff identity and runtime descriptor without a bundled behavior patch', () => {
+        const runtimeDescriptorV1 = {
+            v: 1,
+            agentId: 'acme.agent',
+            agent: {
+                providerSessionId: 'external_target_session',
+            },
+        } as const;
+
+        const updated = buildSessionHandoffMetadataPatch({
+            metadata: {
+                flavor: 'claude',
+                host: 'source-host',
+                machineId: 'machine_source',
+                path: '/repo/source',
+                claudeSessionId: 'claude_source_session',
+            },
+            agentId: 'acme.agent',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            sessionStorageBefore: 'persisted',
+            sessionStorageAfter: 'direct',
+            targetPath: '/repo/target',
+            transportStrategy: 'server_routed_stream',
+            completedAtMs: 123,
+            targetRemoteSessionId: 'external_target_session',
+            targetDirectSource: { kind: 'claudeConfig', configDir: null, projectId: null },
+            targetRuntimeDescriptor: runtimeDescriptorV1,
+        });
+
+        expect(updated).toMatchObject({
+            flavor: 'acme.agent',
+            machineId: 'machine_target',
+            path: '/repo/target',
+            runtimeDescriptorV1,
+            externalSessionV1: {
+                agentId: 'acme.agent',
+                machineId: 'machine_target',
+                remoteSessionId: 'external_target_session',
+                runtimeDescriptorV1,
+            },
+            handoffV1: {
+                agentId: 'acme.agent',
+            },
+        });
+        expect(updated).not.toHaveProperty('claudeSessionId');
+        expect(buildProviderPatchInputMock).not.toHaveBeenCalled();
+    });
+
     it('clears stale Claude machine-local transcript metadata after handoff rebinding', () => {
         const updated = buildSessionHandoffMetadataPatch({
             metadata: {

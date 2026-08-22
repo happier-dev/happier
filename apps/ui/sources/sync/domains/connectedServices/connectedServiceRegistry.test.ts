@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  getConnectedServiceRegistryEntry,
+  getLegacyConnectedServiceRegistryEntry,
   getQualifiedConnectedServiceRegistryEntry,
   getConnectedServiceRegistrySnapshot,
   installConnectedAccountDescriptorProjection,
@@ -89,9 +89,9 @@ describe('connectedServiceRegistry', () => {
 
   it('consumes projected plugin descriptors through the canonical registry', () => {
     install([{ id: 'bitbucket-account', serviceId: 'bitbucket', pluginId: 'happier.scm.forge.bitbucket', provenance: 'external', sourceKind: 'bundled', title: 'Bitbucket account', authentication: manualAuthentication([{ id: 'token', title: 'Token', secret: true }]), capabilities: [], availability: { state: 'available', reason: 'resolved' }, diagnostics: [] }]);
-    expect(getConnectedServiceRegistryEntry('bitbucket')).toMatchObject({ connectCommand: 'happier connect bitbucket --token', supportsToken: true });
+    expect(getLegacyConnectedServiceRegistryEntry('bitbucket')).toMatchObject({ connectCommand: 'happier connect bitbucket --token', supportsToken: true });
     install([]);
-    expect(getConnectedServiceRegistryEntry('bitbucket')).toMatchObject({ supportsToken: false });
+    expect(getLegacyConnectedServiceRegistryEntry('bitbucket')).toMatchObject({ supportsToken: false });
   });
 
   it('publishes immutable replacement entry snapshots for projection currentness', () => {
@@ -191,7 +191,7 @@ describe('connectedServiceRegistry', () => {
       errorReason: null,
     });
 
-    expect(getConnectedServiceRegistryEntry('github')).toMatchObject({
+    expect(getLegacyConnectedServiceRegistryEntry('github')).toMatchObject({
       service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
       executable: true,
       projectionStatus: 'ready',
@@ -226,7 +226,7 @@ describe('connectedServiceRegistry', () => {
       errorReason: null,
     });
 
-    expect(getConnectedServiceRegistryEntry('github')).toMatchObject({
+    expect(getLegacyConnectedServiceRegistryEntry('github')).toMatchObject({
       service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
       executable: true,
       projectionStatus: 'ready',
@@ -239,17 +239,17 @@ describe('connectedServiceRegistry', () => {
   it('does not infer executable built-in behavior before the daemon projection arrives', () => {
     install([]);
 
-    expect(getConnectedServiceRegistryEntry('openai-codex')).toMatchObject({
+    expect(getLegacyConnectedServiceRegistryEntry('openai-codex')).toMatchObject({
       supportsOauth: false,
       supportsToken: false,
       executable: false,
     });
-    expect(getConnectedServiceRegistryEntry('openai')).toMatchObject({
+    expect(getLegacyConnectedServiceRegistryEntry('openai')).toMatchObject({
       connectCommand: 'happier connect openai',
       supportsToken: false,
       executable: false,
     });
-    expect(getConnectedServiceRegistryEntry('gemini')).toMatchObject({
+    expect(getLegacyConnectedServiceRegistryEntry('gemini')).toMatchObject({
       supportsOauth: false,
       supportsToken: false,
       executable: false,
@@ -257,7 +257,7 @@ describe('connectedServiceRegistry', () => {
   });
 
   it('makes the exact qualified bundled projection authoritative over the legacy built-in presentation', () => {
-    const legacyEntry = getConnectedServiceRegistryEntry('openai');
+    const legacyEntry = getLegacyConnectedServiceRegistryEntry('openai');
     install([{
       id: 'openai',
       serviceId: 'openai',
@@ -271,7 +271,7 @@ describe('connectedServiceRegistry', () => {
       diagnostics: [],
     }]);
 
-    const projectedEntry = getConnectedServiceRegistryEntry('openai');
+    const projectedEntry = getLegacyConnectedServiceRegistryEntry('openai');
     expect(projectedEntry).not.toBe(legacyEntry);
     expect(projectedEntry).toMatchObject({
       service: { pluginId: 'happier.voice.openai', localId: 'openai' },

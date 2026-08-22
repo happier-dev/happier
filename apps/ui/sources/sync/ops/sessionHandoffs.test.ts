@@ -4069,6 +4069,178 @@ describe('sessionHandoffs ops', () => {
         }));
     });
 
+    it('passes an installed Agent target identity and vendor handoff id through the canonical resume boundary', async () => {
+        const runtimeDescriptorV1 = {
+            v: 1,
+            agentId: 'acme.agent',
+            agent: {
+                providerSessionId: 'external_target_session',
+            },
+        };
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_external_agent',
+                status: { handoffId: 'handoff_external_agent', status: 'pending', phase: 'preparing', recoveryActions: [] },
+                endpointCandidates: [],
+                handoffMetadataV2: {},
+                targetPath: '/repo',
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_external_agent',
+                status: {
+                    handoffId: 'handoff_external_agent',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    transportStrategy: 'server_routed_stream',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'external_target_session',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                runtimeDescriptorV1,
+                resume: {
+                    directory: '/repo',
+                    agent: 'acme.agent',
+                    resume: 'external_target_session',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_external_agent',
+                status: { handoffId: 'handoff_external_agent', status: 'completed', phase: 'finalizing', recoveryActions: [] },
+            });
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({
+            status: 'ready',
+            features: {
+                features: {
+                    sessions: { enabled: true, handoff: { enabled: true, serverRoutedTransfer: { enabled: true } } },
+                    machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: true }, serverRouted: { enabled: true } } },
+                },
+                capabilities: {},
+            },
+        });
+        resumeSessionMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_external_agent' });
+        patchSessionMetadataWithRetryMock.mockResolvedValueOnce(undefined);
+
+        const { completeSessionHandoff } = await import('./sessionHandoffs');
+        await expect(completeSessionHandoff({
+            sessionId: 'sess_external_agent',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            sessionStorageMode: 'persisted',
+            preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+            sourceMetadata: {
+                path: '/repo',
+                machineId: 'machine_source',
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'acme.agent',
+                    agent: {
+                        providerSessionId: 'external_source_session',
+                    },
+                },
+            },
+        } as any)).resolves.toEqual(expect.objectContaining({
+            ok: true,
+            handoffId: 'handoff_external_agent',
+        }));
+
+        expect(resumeSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'sess_external_agent',
+            machineId: 'machine_target',
+            backendTarget: {
+                kind: 'backend',
+                backendId: 'acme.agent',
+            },
+            resume: 'external_target_session',
+            runtimeDescriptorV1,
+        }));
+    });
+
+    it('preserves a typed target Agent-unavailable rejection without a bundled fallback', async () => {
+        const runtimeDescriptorV1 = {
+            v: 1,
+            agentId: 'acme.agent',
+            agent: {
+                providerSessionId: 'external_target_session',
+            },
+        };
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_external_agent_unavailable',
+                status: { handoffId: 'handoff_external_agent_unavailable', status: 'pending', phase: 'preparing', recoveryActions: [] },
+                endpointCandidates: [],
+                handoffMetadataV2: {},
+                targetPath: '/repo',
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_external_agent_unavailable',
+                status: {
+                    handoffId: 'handoff_external_agent_unavailable',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    transportStrategy: 'server_routed_stream',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'external_target_session',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                runtimeDescriptorV1,
+                resume: {
+                    directory: '/repo',
+                    agent: 'acme.agent',
+                    resume: 'external_target_session',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_external_agent_unavailable',
+                status: { handoffId: 'handoff_external_agent_unavailable', status: 'aborted', phase: 'finalizing', recoveryActions: [] },
+            });
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({
+            status: 'ready',
+            features: {
+                features: {
+                    sessions: { enabled: true, handoff: { enabled: true, serverRoutedTransfer: { enabled: true } } },
+                    machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: true }, serverRouted: { enabled: true } } },
+                },
+                capabilities: {},
+            },
+        });
+        resumeSessionMock.mockResolvedValueOnce({
+            type: 'error',
+            errorCode: 'target_agent_unavailable',
+            errorMessage: 'The installed Agent is no longer available on the target machine.',
+        });
+
+        const { completeSessionHandoff } = await import('./sessionHandoffs');
+        await expect(completeSessionHandoff({
+            sessionId: 'sess_external_agent_unavailable',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            sessionStorageMode: 'persisted',
+            preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+            sourceMetadata: {
+                path: '/repo',
+                machineId: 'machine_source',
+                runtimeDescriptorV1,
+            },
+        } as any)).resolves.toMatchObject({
+            ok: false,
+            errorCode: 'target_agent_unavailable',
+            errorMessage: 'The installed Agent is no longer available on the target machine.',
+        });
+        expect(patchSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+    });
+
     it('prefers target runtimeDescriptorV1 over the resume payload during handoff resume forwarding', async () => {
         machineRpcWithServerScopeMock
             .mockResolvedValueOnce({

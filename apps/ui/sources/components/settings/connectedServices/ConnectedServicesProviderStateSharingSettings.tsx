@@ -27,7 +27,7 @@ export function resolveProviderStateSharingAgentIds(
     agentIds: readonly AgentId[] = AGENT_IDS,
 ): readonly AgentId[] {
     return agentIds.filter((agentId) => {
-        const capability = getAgentCore(agentId).connectedServices?.providerStateSharing;
+        const capability = getAgentCore(agentId)?.connectedServices?.providerStateSharing;
         return capability?.config.supported === true || capability?.state.supported === true;
     });
 }
@@ -67,6 +67,7 @@ function resolveSharedStatePrivacyRiskAgents(
     const entries: Array<{ agentId: AgentId; agentTitle: string }> = [];
     for (const agentId of agentIds) {
         const agentCore = getAgentCore(agentId);
+        if (!agentCore) continue;
         const stateCapability = agentCore.connectedServices?.providerStateSharing?.state;
         if (stateCapability?.supported !== true) continue;
         if (!stateCapability.modes.includes('shared')) continue;
@@ -214,6 +215,7 @@ export function ConnectedServicesProviderStateSharingBackendGroups(props: Readon
         <>
             {agentIds.map((agentId) => {
                 const agentCore = getAgentCore(agentId);
+                if (!agentCore) return null;
                 return (
                     <ItemGroup
                         key={agentId}

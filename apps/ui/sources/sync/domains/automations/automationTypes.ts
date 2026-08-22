@@ -149,35 +149,6 @@ export function isPluginEventAutomationDefinition(
 /** Bounded V3 Run projection held by the incumbent Automation run cache. */
 export type AutomationDefinitionRun = AutomationV3RunListItem;
 
-export type AutomationRunState =
-    | 'queued'
-    | 'claimed'
-    | 'running'
-    | 'succeeded'
-    | 'failed'
-    | 'cancelled'
-    | 'expired';
-
-export type AutomationRun = Readonly<{
-    id: string;
-    automationId: string;
-    state: AutomationRunState;
-    scheduledAt: number;
-    dueAt: number;
-    claimedAt: number | null;
-    startedAt: number | null;
-    finishedAt: number | null;
-    claimedByMachineId: string | null;
-    leaseExpiresAt: number | null;
-    attempt: number;
-    summaryCiphertext: string | null;
-    errorCode: string | null;
-    errorMessage: string | null;
-    producedSessionId: string | null;
-    createdAt: number;
-    updatedAt: number;
-}>;
-
 export type AutomationTemplate = Readonly<{
     directory: string;
     checkoutCreationDraft?: NewSessionCheckoutCreationDraft;

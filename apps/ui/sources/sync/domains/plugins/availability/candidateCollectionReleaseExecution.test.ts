@@ -25,8 +25,8 @@ const artifactGraph = PluginUiArtifactsManifestEntryV1Schema.parse({
     contributionId: 'tasks-collections',
     tier: 'reactNative',
     platform: 'ios',
-    entry: 'entry.mjs',
-    files: [{ relativePath: 'entry.mjs', digest: fileDigest, byteSize: 1 }],
+    entry: 'entry.mjs.bundle',
+    files: [{ relativePath: 'entry.mjs.bundle', digest: fileDigest, byteSize: 1 }],
     digest: artifactDigest,
     builtWith: { bundler: 'repack', version: '1.0.0' },
     repack: {

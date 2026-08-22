@@ -104,9 +104,9 @@ const artifactGraph = PluginUiArtifactsManifestEntryV1Schema.parse({
     contributionId: 'tasks-migrations',
     tier: 'reactNative',
     platform,
-    entry: 'react-native/tasks/ios.bundle.js',
+    entry: 'react-native/tasks/ios.bundle',
     files: [{
-        relativePath: 'react-native/tasks/ios.bundle.js',
+        relativePath: 'react-native/tasks/ios.bundle',
         digest: `sha256:${'a'.repeat(64)}`,
         byteSize: 1,
     }],

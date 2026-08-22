@@ -11,24 +11,24 @@
 
 import type { BundledPluginUiAppArtifactInventory } from './bundledPluginUiArtifactInventory';
 
-const BUNDLED_PLUGIN_UI_APP_ASSET_0 = require("@happier-dev/plugins-channels/happier-plugin-ui/react-native-web/channels-app-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_1 = require("@happier-dev/plugins-inspector/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_2 = require("@happier-dev/plugins-posthog/happier-plugin-ui/react-native-web/posthog-issue-detail-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_3 = require("@happier-dev/plugins-posthog/happier-plugin-ui/react-native-web/posthog-triage-sources-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_4 = require("@happier-dev/plugins-scm-azure-devops/happier-plugin-ui/react-native-web/azure-devops-detail-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_5 = require("@happier-dev/plugins-scm-azure-devops/happier-plugin-ui/react-native-web/azure-devops-triage-sources-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_6 = require("@happier-dev/plugins-scm-bitbucket/happier-plugin-ui/react-native-web/bitbucket-detail-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_7 = require("@happier-dev/plugins-scm-bitbucket/happier-plugin-ui/react-native-web/bitbucket-triage-sources-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_8 = require("@happier-dev/plugins-scm-github/happier-plugin-ui/react-native-web/github-detail-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_9 = require("@happier-dev/plugins-scm-github/happier-plugin-ui/react-native-web/github-triage-sources-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_10 = require("@happier-dev/plugins-scm-gitlab/happier-plugin-ui/react-native-web/gitlab-detail-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_11 = require("@happier-dev/plugins-scm-gitlab/happier-plugin-ui/react-native-web/gitlab-triage-sources-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_12 = require("@happier-dev/plugins-sentry/happier-plugin-ui/react-native-web/sentry-detail-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_13 = require("@happier-dev/plugins-sentry/happier-plugin-ui/react-native-web/sentry-triage-sources-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_14 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native-web/triage-entries-compact-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_15 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native-web/triage-entry-picker-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_16 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native-web/triage-list-page-native/entry.mjs");
-const BUNDLED_PLUGIN_UI_APP_ASSET_17 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native-web/triage-session-entries-native/entry.mjs");
+const BUNDLED_PLUGIN_UI_APP_ASSET_0 = require("@happier-dev/plugins-channels/happier-plugin-ui/react-native-web/channels-app-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_1 = require("@happier-dev/plugins-inspector/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_2 = require("@happier-dev/plugins-posthog/happier-plugin-ui/react-native-web/posthog-issue-detail-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_3 = require("@happier-dev/plugins-posthog/happier-plugin-ui/react-native-web/posthog-triage-sources-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_4 = require("@happier-dev/plugins-scm-azure-devops/happier-plugin-ui/react-native-web/azure-devops-detail-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_5 = require("@happier-dev/plugins-scm-azure-devops/happier-plugin-ui/react-native-web/azure-devops-triage-sources-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_6 = require("@happier-dev/plugins-scm-bitbucket/happier-plugin-ui/react-native-web/bitbucket-detail-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_7 = require("@happier-dev/plugins-scm-bitbucket/happier-plugin-ui/react-native-web/bitbucket-triage-sources-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_8 = require("@happier-dev/plugins-scm-github/happier-plugin-ui/react-native-web/github-detail-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_9 = require("@happier-dev/plugins-scm-github/happier-plugin-ui/react-native-web/github-triage-sources-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_10 = require("@happier-dev/plugins-scm-gitlab/happier-plugin-ui/react-native-web/gitlab-detail-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_11 = require("@happier-dev/plugins-scm-gitlab/happier-plugin-ui/react-native-web/gitlab-triage-sources-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_12 = require("@happier-dev/plugins-sentry/happier-plugin-ui/react-native-web/sentry-detail-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_13 = require("@happier-dev/plugins-sentry/happier-plugin-ui/react-native-web/sentry-triage-sources-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_14 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native-web/triage-entries-compact-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_15 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native-web/triage-entry-picker-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_16 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native-web/triage-list-page-native/entry.mjs.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_17 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native-web/triage-session-entries-native/entry.mjs.bundle");
 
 export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
   Object.freeze({
@@ -36,11 +36,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "channels-app-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:5af4c6eb47736b50214fdd29e3e98110ad90339ce28afe57cede2b945395bcdc",
+    digest: "sha256:41ba72306d5fcd1eb674b9b00972b677d7a6abbf9fbbb1bd831d2ff50e6439f4",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/channels-app-native/entry.mjs",
+        relativePath: "react-native-web/channels-app-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_0,
       }),
     ]),
@@ -50,11 +50,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "inspector-app-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:d69d1ade4e548435f4c7e41fb9bb08e94c569de35c3369855ebc68ce47d3c4b9",
+    digest: "sha256:0c5255378ce6f336b72dc8000d23ac7e7b15911d05b2ab248f571771670a3c91",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/inspector-app-native/entry.mjs",
+        relativePath: "react-native-web/inspector-app-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_1,
       }),
     ]),
@@ -64,11 +64,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "posthog-issue-detail-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:c3bac196bed1560258f8f0ed29c26c3f1d11ce1332c359620e7076be6f5e4733",
+    digest: "sha256:50f95662e057e681fb251953c964626d9262ad6939e787f930621630260e5b46",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/posthog-issue-detail-native/entry.mjs",
+        relativePath: "react-native-web/posthog-issue-detail-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_2,
       }),
     ]),
@@ -78,11 +78,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "posthog-triage-sources-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:99b4d3e781e4727829cee6b0c686890a638815f6222f1f041ca2db50d458786f",
+    digest: "sha256:56e451048b1c3d7e51be6634d073ccf948437ba0e1cfb4acf440ae3d533eb99e",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/posthog-triage-sources-native/entry.mjs",
+        relativePath: "react-native-web/posthog-triage-sources-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_3,
       }),
     ]),
@@ -92,11 +92,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "azure-devops-detail-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:bf813787ef31361dacb003d9ad4045b4550980bbee3d87ac85139275a11ca8eb",
+    digest: "sha256:ecafe6733f3c2dac541203dbfe6d43c0b6e83d98f19f5c3391aa2a02fb232767",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/azure-devops-detail-native/entry.mjs",
+        relativePath: "react-native-web/azure-devops-detail-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_4,
       }),
     ]),
@@ -106,11 +106,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "azure-devops-triage-sources-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:b559452a6d85efbc91e7a5742e0bf62eab43642ecd62f3afdc490d74c92e42d5",
+    digest: "sha256:a34dda99c3a8eca176693f8e6938d5c1f266713c714e9c07c8f8d058ec202f2c",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/azure-devops-triage-sources-native/entry.mjs",
+        relativePath: "react-native-web/azure-devops-triage-sources-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_5,
       }),
     ]),
@@ -120,11 +120,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "bitbucket-detail-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:ab81d67c60da2eb788acdf5edef3094f5f7d4a09680011e7fcbc8377fb63d325",
+    digest: "sha256:3387117d4374c05a3b594797f78ef53c8672e08743146deaa391228d0decbd6a",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/bitbucket-detail-native/entry.mjs",
+        relativePath: "react-native-web/bitbucket-detail-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_6,
       }),
     ]),
@@ -134,11 +134,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "bitbucket-triage-sources-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:19103143f544f8d9d960d4a9f4738650b0ab4c4674b9dac77bc89cbd2a63f3fd",
+    digest: "sha256:26673f604223273a1bde33be4e5189c93021cdfe8a46d7787acc8cad520dd5a7",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/bitbucket-triage-sources-native/entry.mjs",
+        relativePath: "react-native-web/bitbucket-triage-sources-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_7,
       }),
     ]),
@@ -148,11 +148,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "github-detail-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:4c1916764e9b7cde6a739776cd685c473ed715a0160eb37879f4d594f5fd55a7",
+    digest: "sha256:3bc8b5ee1bdc690e3da949d5a18e3b82657fe89fb7043d144ebc6bd087444ca0",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/github-detail-native/entry.mjs",
+        relativePath: "react-native-web/github-detail-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_8,
       }),
     ]),
@@ -162,11 +162,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "github-triage-sources-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:0c9801cbfd0bee76c14d525814c74da2af029450b2c4c8be3c0293710cac2a4d",
+    digest: "sha256:fb550f5371bff69acdfe14d7c4e63a7053c7ceaa0fb4b9cc15504fca9de9a72d",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/github-triage-sources-native/entry.mjs",
+        relativePath: "react-native-web/github-triage-sources-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_9,
       }),
     ]),
@@ -176,11 +176,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "gitlab-detail-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:431738ae29d401c2b8e0037dbe0d3f98a94f1c37d9d254c7cb95181788e0f629",
+    digest: "sha256:840dc322d67b0965319cbaa79f90c6c1e87cad97dfe53c808124a80abd4151f6",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/gitlab-detail-native/entry.mjs",
+        relativePath: "react-native-web/gitlab-detail-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_10,
       }),
     ]),
@@ -190,11 +190,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "gitlab-triage-sources-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:06a1f958b4a4340f42bd062dbf4c9a8d253fcc266f4cd5e3ac4e8361ffd5afcd",
+    digest: "sha256:6b3c623e32cc2360fc2d5eb049b22683efe9e23ebedf507bf5cb47f3c8bf55ba",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/gitlab-triage-sources-native/entry.mjs",
+        relativePath: "react-native-web/gitlab-triage-sources-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_11,
       }),
     ]),
@@ -204,11 +204,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "sentry-detail-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:151b3ae2728000346c345075b6e96647a8daec44c6a7008aed9f4d66e0214c38",
+    digest: "sha256:7e2a8fd9de12ba8f9597156049e7f2ce9140df1ee414b81a7d7df4f8bcabdba7",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/sentry-detail-native/entry.mjs",
+        relativePath: "react-native-web/sentry-detail-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_12,
       }),
     ]),
@@ -218,11 +218,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "sentry-triage-sources-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:315d5a1a4c4b86bfec67f37e0cdff3958db9356a9ed71a0737eacaac427ceb9d",
+    digest: "sha256:e6d136d5a79bedfc93920c65d97b941c67ed264c100031c7bdf194ac4341ae13",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/sentry-triage-sources-native/entry.mjs",
+        relativePath: "react-native-web/sentry-triage-sources-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_13,
       }),
     ]),
@@ -232,11 +232,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "triage-entries-compact-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:87b5566fad28fe9b74732a718e997f6acd1c95e40797828f25f3ee96fc811d4f",
+    digest: "sha256:fd2812eab409a2c5168e39718abc5e5fbca72dc163ea799d98f84565c3a1d721",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/triage-entries-compact-native/entry.mjs",
+        relativePath: "react-native-web/triage-entries-compact-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_14,
       }),
     ]),
@@ -246,11 +246,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "triage-entry-picker-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:d38205a1b462bc5641a5a27414f485fc9c7329f741e6961b5a9dc4b0cd52e117",
+    digest: "sha256:291e0984f9114cfac83849d5da8c35b6ae10030741a58908a35c2f462f940eb7",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/triage-entry-picker-native/entry.mjs",
+        relativePath: "react-native-web/triage-entry-picker-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_15,
       }),
     ]),
@@ -260,11 +260,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "triage-list-page-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:06b36ac8b69dee0f85f0f25d6bd774a514baf26399548782139e8d76a553d6b3",
+    digest: "sha256:cd9fbb032aa18a51088c42682f0b943a8cff725f9539198202cc64c9b4464ff9",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/triage-list-page-native/entry.mjs",
+        relativePath: "react-native-web/triage-list-page-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_16,
       }),
     ]),
@@ -274,11 +274,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "triage-session-entries-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:9da3c75eede7be4a1769caf1bf78eb28c86d4c34779bdb6e936827f02c075467",
+    digest: "sha256:453e86de0e381b7583e2041274605df9a5691d75193a6ac13854422b738addec",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
-        relativePath: "react-native-web/triage-session-entries-native/entry.mjs",
+        relativePath: "react-native-web/triage-session-entries-native/entry.mjs.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_17,
       }),
     ]),

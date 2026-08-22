@@ -102,7 +102,7 @@ vi.mock('@/agents/registry/registryCore', () => ({
 
 vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: agentCatalogMocks.getAgentCore,
-    isAgentId: (agentId: unknown) => typeof agentId === 'string' && ['claude', 'codex', 'pi'].includes(agentId),
+    isBundledAgentId: (agentId: unknown) => typeof agentId === 'string' && ['claude', 'codex', 'pi'].includes(agentId),
     resolveAgentIdFromFlavor: agentCatalogMocks.resolveAgentIdFromFlavor,
     resolveAgentIdFromSessionMetadata: (metadata: Record<string, unknown> | null | undefined) =>
         agentCatalogMocks.resolveAgentIdFromFlavor(metadata?.flavor),
@@ -112,14 +112,14 @@ vi.mock('@/agents/catalog/catalog', () => ({
     },
 }));
 
-const resumeSessionSpy = vi.hoisted(() =>
+const ensureSessionRuntimeForPendingInputSpy = vi.hoisted(() =>
     vi.fn<(..._args: unknown[]) => Promise<unknown>>(async () => ({ type: 'success' as const })),
 );
 vi.mock('@/sync/ops', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/ops')>();
     return {
         ...actual,
-        resumeSession: (...args: unknown[]) => resumeSessionSpy(...args),
+        ensureSessionRuntimeForPendingInput: (...args: unknown[]) => ensureSessionRuntimeForPendingInputSpy(...args),
     };
 });
 
@@ -230,7 +230,7 @@ describe('sync.sendMessage wake-after-send', () => {
         }), 1);
         kvStore.clear();
         appStateAddListener.mockClear();
-        resumeSessionSpy.mockClear();
+        ensureSessionRuntimeForPendingInputSpy.mockClear();
     });
 
     afterEach(() => {
@@ -346,8 +346,8 @@ describe('sync.sendMessage wake-after-send', () => {
 
         await sync.sendMessage(sessionId, 'hello');
 
-        expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
-        expect(resumeSessionSpy).toHaveBeenCalledWith(
+        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledTimes(1);
+        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 sessionId,
                 machineId: 'm1',
@@ -408,8 +408,8 @@ describe('sync.sendMessage wake-after-send', () => {
 
         await sync.sendMessage(sessionId, 'hello');
 
-        expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
-        expect(resumeSessionSpy).toHaveBeenCalledWith(
+        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledTimes(1);
+        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 sessionId,
                 machineId: 'm-new',
@@ -472,7 +472,7 @@ describe('sync.sendMessage wake-after-send', () => {
 
         expect(rpcSpy).not.toHaveBeenCalled();
         expect(emitWithAck).not.toHaveBeenCalled();
-        expect(resumeSessionSpy).not.toHaveBeenCalled();
+        expect(ensureSessionRuntimeForPendingInputSpy).not.toHaveBeenCalled();
         expect(storage.getState().sessionPending[sessionId]).toBeUndefined();
     });
 
@@ -503,7 +503,7 @@ describe('sync.sendMessage wake-after-send', () => {
             ...createPlainSession({ sessionId }),
             pendingVersion: 2,
         }]);
-        resumeSessionSpy.mockResolvedValueOnce({
+        ensureSessionRuntimeForPendingInputSpy.mockResolvedValueOnce({
             type: 'error',
             errorCode: 'DAEMON_RPC_UNAVAILABLE',
             errorMessage: 'Daemon RPC is not available',
@@ -518,7 +518,7 @@ describe('sync.sendMessage wake-after-send', () => {
             currentPendingEnqueueAck(init));
 
         await expect(sync.submitMessage(sessionId, 'should report wake failure')).rejects.toThrow('Daemon RPC is not available');
-        expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
+        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledTimes(1);
     });
 
     it('rejects an unsupported Voice submit to a resolver-confirmed remote target before persistence or active transport', async () => {

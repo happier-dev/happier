@@ -1,4 +1,3 @@
-import type { AgentId } from '@/agents/catalog/catalog';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import {
     LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY,
@@ -428,7 +427,7 @@ export function resolveSessionConfigOptionOverridesFromMetadata(params: Readonly
 }
 
 export function computeSessionConfigOptionControls(params: {
-    agentId: AgentId;
+    agentId: string;
     metadata: Metadata | null | undefined;
 }): SessionConfigOptionControl[] | null {
     const state = parseSessionConfigOptionsState(
@@ -482,7 +481,7 @@ export function computeSessionConfigOptionControlsForProvider(params: Readonly<{
 }
 
 export function computeSessionConfigOptionControlsFromOverride(params: Readonly<{
-    agentId: AgentId;
+    agentId: string;
     configOptions: ReadonlyArray<SessionConfigOptionInput> | null | undefined;
     overrides?: Readonly<Record<string, Readonly<{ value: unknown }>>> | null;
 }>): SessionConfigOptionControl[] | null {

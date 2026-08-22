@@ -96,7 +96,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
   const backendMenuItems = React.useMemo(() => {
     return backendEntries.map((entry) => {
       const displayAgentId = entry.iconAgentId ?? entry.catalogAgentId ?? entry.builtInAgentId;
-      const iconName = displayAgentId ? getAgentCore(displayAgentId).ui?.agentPickerIconName : 'layers-outline';
+      const iconName = getAgentCore(displayAgentId ?? '')?.ui?.agentPickerIconName ?? 'layers-outline';
       return {
         id: entry.backendTargetKey,
         title: entry.title,

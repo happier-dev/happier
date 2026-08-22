@@ -19,7 +19,7 @@ import { useLocalSettings } from '@/sync/domains/state/storage';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import {
     ANCHOR_OPTIONS,
     AUTO_HIDE_DELAY_OPTIONS,
@@ -46,7 +46,7 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
     );
 
     React.useEffect(() => {
-        if (!isTauriDesktop()) {
+        if (!isDesktopHost()) {
             return;
         }
 

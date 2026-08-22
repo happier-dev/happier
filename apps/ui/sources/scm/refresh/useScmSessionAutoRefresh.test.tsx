@@ -16,8 +16,8 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => false,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => false,
 }));
 
 vi.mock('@/scm/scmStatusSync', () => ({

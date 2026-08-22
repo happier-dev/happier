@@ -5,7 +5,6 @@ import {
     VoiceCredentialAccessPhaseSchema,
     VoiceCredentialSlotIdSchema,
     type ConnectedAccountMaterializationRequest,
-    type PluginPermissionDeclarationV1,
 } from '@happier-dev/protocol';
 
 import type { DaemonMergedProjectionPhase } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
@@ -70,16 +69,6 @@ export type InstalledPluginEntry = Readonly<{
         diagnostics: readonly InstalledPluginDiagnostic[];
     }>;
     diagnostics: readonly InstalledPluginDiagnostic[];
-    /**
-     * The canonical install manifest projection, when present in the machine
-     * capability snapshot. Declared capabilities/permissions are read from here
-     * for the permission-review pane (the same `requiredPermissions` the daemon
-     * projects to the server manifest projection).
-     */
-    manifest?: Readonly<{
-        permissions?: readonly PluginPermissionDeclarationV1[];
-        optionalPermissions?: readonly PluginPermissionDeclarationV1[];
-    }> | null;
 }>;
 
 export type DevelopmentPluginEntry = Readonly<{
@@ -628,23 +617,104 @@ export function readPluginDevelopmentSourceRootReviewChange(
 }
 
 /**
+ * A daemon-issued change that is waiting on a present user, in the exactly two
+ * shapes a present user can be asked about: trust this folder, or install and
+ * trust this package.
+ *
+ * This is the one reader for that pair. Every place a pending change reaches
+ * the app — the result of a change this app started, the enumeration of changes
+ * some other client prepared, and the by-id status rejoin — parses it here, so
+ * the decision a screen offers can never disagree with the stage the daemon is
+ * actually at.
+ */
+export type PendingPluginChangeDecision =
+    | Readonly<{ kind: 'sourceRootReviewRequired'; sourceRootReview: PendingPluginDevelopmentSourceRootReview }>
+    | Readonly<{ kind: 'reviewRequired'; installationReview: PendingPluginChangeReview }>;
+
+export function readPendingPluginChangeDecision(change: unknown): PendingPluginChangeDecision | null {
+    const sourceRootReview = readPluginDevelopmentSourceRootReviewChange(change);
+    if (sourceRootReview) return { kind: 'sourceRootReviewRequired', sourceRootReview };
+    const installationReview = readPluginInstallationReviewChange(change, null);
+    return installationReview ? { kind: 'reviewRequired', installationReview } : null;
+}
+
+/** The daemon-issued id of whichever decision this change is currently at. */
+export function readPendingPluginChangeDecisionId(decision: PendingPluginChangeDecision): string {
+    return decision.kind === 'sourceRootReviewRequired'
+        ? decision.sourceRootReview.pendingChangeId
+        : decision.installationReview.pendingChangeId;
+}
+
+/**
  * The three outcomes `tool.plugins#develop` can hand back for a present user to
  * decide. `develop` has no caller-known plugin id — the daemon derives it from
  * the source root only after the root is trusted — so this reader keys on the
  * action and never on an expected identity.
  */
 export type PluginDevelopChange =
-    | Readonly<{ kind: 'sourceRootReviewRequired'; sourceRootReview: PendingPluginDevelopmentSourceRootReview }>
-    | Readonly<{ kind: 'reviewRequired'; installationReview: PendingPluginChangeReview }>
+    | PendingPluginChangeDecision
     | Readonly<{ kind: 'committed' }>;
 
 export function readPluginDevelopChange(value: unknown): PluginDevelopChange | null {
     if (!isRecord(value) || value.action !== 'develop' || !isRecord(value.change)) return null;
-    const sourceRootReview = readPluginDevelopmentSourceRootReviewChange(value.change);
-    if (sourceRootReview) return { kind: 'sourceRootReviewRequired', sourceRootReview };
-    const installationReview = readPluginInstallationReviewChange(value.change, null);
-    if (installationReview) return { kind: 'reviewRequired', installationReview };
+    const decision = readPendingPluginChangeDecision(value.change);
+    if (decision) return decision;
     return value.change.kind === 'committed' ? { kind: 'committed' } : null;
+}
+
+/**
+ * One entry of the daemon's outstanding-decision enumeration.
+ *
+ * `applying` is listed rather than hidden: a change that is mid-apply is still
+ * this user's change, and silently omitting it would make a decision they just
+ * made look like it vanished.
+ */
+export type PendingPluginChangeListing =
+    | PendingPluginChangeDecision
+    | Readonly<{ kind: 'applying'; pendingChangeId: string }>;
+
+export function readPendingPluginChangeListing(value: unknown): PendingPluginChangeListing | null {
+    if (!isRecord(value)) return null;
+    if (value.kind === 'applying') {
+        const pendingChangeId = readNonEmptyString(value.pendingChangeId);
+        return pendingChangeId && hasOnlyKeys(value, ['kind', 'pendingChangeId'])
+            ? { kind: 'applying', pendingChangeId }
+            : null;
+    }
+    return readPendingPluginChangeDecision(value);
+}
+
+export function readPendingPluginChangeListingId(entry: PendingPluginChangeListing): string {
+    return entry.kind === 'applying' ? entry.pendingChangeId : readPendingPluginChangeDecisionId(entry);
+}
+
+/**
+ * The by-id rejoin, projected verbatim from the daemon change owner.
+ *
+ * A listing snapshot is a projection that can be minutes old. Before a user is
+ * asked to approve anything, the change is re-read at its owner, which is the
+ * only place that can say the honest arms: still applying, already expired, or
+ * the daemon that held it is gone.
+ */
+export type PendingPluginChangeStatus =
+    | PendingPluginChangeDecision
+    | Readonly<{ kind: 'applying'; pendingChangeId: string }>
+    | Readonly<{ kind: 'terminal'; pendingChangeId: string; outcome: string }>
+    | Readonly<{ kind: 'expired' }>
+    | Readonly<{ kind: 'daemonUnavailable' }>;
+
+export function readPendingPluginChangeStatus(result: unknown): PendingPluginChangeStatus | null {
+    if (!isRecord(result) || result.action !== 'changeStatus' || !isRecord(result.status)) return null;
+    const status = result.status;
+    const decision = readPendingPluginChangeDecision(status);
+    if (decision) return decision;
+    if (status.kind === 'expired' || status.kind === 'daemonUnavailable') return { kind: status.kind };
+    const pendingChangeId = readNonEmptyString(status.pendingChangeId);
+    if (!pendingChangeId) return null;
+    if (status.kind === 'applying') return { kind: 'applying', pendingChangeId };
+    if (status.kind !== 'terminal' || !isRecord(status.result)) return null;
+    const outcome = readNonEmptyString(status.result.kind);
+    return outcome ? { kind: 'terminal', pendingChangeId, outcome } : null;
 }
 
 /**
@@ -939,6 +1009,13 @@ type MarketplaceCapabilitySnapshot = Readonly<{
                     }>;
                     actions: Readonly<{ test: boolean; pack: boolean }>;
                 }>[];
+                /**
+                 * Daemon-owned outstanding decisions, projected verbatim. A
+                 * machine whose snapshot predates the enumeration reports
+                 * nothing, so the section stays absent instead of claiming
+                 * there is nothing to decide.
+                 */
+                pendingChanges?: readonly unknown[];
             } | null;
         }>>>;
     };
@@ -987,6 +1064,32 @@ export function readDevelopmentPlugins(
     });
 }
 
+/**
+ * The changes this machine's daemon is still waiting on a present user for.
+ *
+ * A change an Agent prepared has no caller left to hand its issued id to, so
+ * this read is the only way it becomes visible in the app at all. Entries the
+ * app cannot fully type are dropped rather than shown: a user must never be
+ * asked to approve a payload their client could not read.
+ */
+export function readPendingPluginChanges(
+    state: ReturnType<typeof useMachineCapabilitiesCache>['state'],
+): readonly PendingPluginChangeListing[] {
+    const snapshot = state.status === 'loaded' || state.status === 'loading' || state.status === 'error'
+        ? state.snapshot
+        : null;
+    if (!snapshot) return [];
+    const toolPlugins = (snapshot as MarketplaceCapabilitySnapshot).response.results[MARKETPLACE_CAPABILITY_ID];
+    const pendingChanges = toolPlugins?.ok && toolPlugins.data && typeof toolPlugins.data === 'object'
+        ? toolPlugins.data.pendingChanges
+        : null;
+    if (!Array.isArray(pendingChanges)) return [];
+    return pendingChanges.flatMap((entry) => {
+        const listing = readPendingPluginChangeListing(entry);
+        return listing ? [listing] : [];
+    });
+}
+
 export function readDevelopmentCreateAvailable(
     state: ReturnType<typeof useMachineCapabilitiesCache>['state'],
 ): boolean {
@@ -1019,6 +1122,33 @@ export function readDevelopmentSourceInstallAvailable(
         && toolPlugins.data !== null
         && typeof toolPlugins.data === 'object'
         && toolPlugins.data.developmentActions?.develop === true;
+}
+
+/**
+ * What a listed pending change is asking for, in the user's own terms. The
+ * locator and the package identity are the whole security payload of the two
+ * decisions, so both are shown verbatim rather than summarised away.
+ */
+export function formatPendingPluginChangeTitle(entry: PendingPluginChangeListing): string {
+    if (entry.kind === 'applying') return t('settingsPlugins.pendingChangeApplying');
+    return entry.kind === 'sourceRootReviewRequired'
+        ? t('settingsPlugins.developmentTrustSourceRootTitle')
+        : t('settingsPlugins.marketplaceInstallReviewTitle', {
+            name: entry.installationReview.review.displayName,
+            version: entry.installationReview.review.version,
+        });
+}
+
+export function formatPendingPluginChangeSubtitle(entry: PendingPluginChangeListing): string {
+    if (entry.kind === 'applying') return entry.pendingChangeId;
+    return entry.kind === 'sourceRootReviewRequired'
+        ? t('settingsPlugins.pendingChangeSourceRootSubtitle', {
+            path: entry.sourceRootReview.review.source.locator,
+        })
+        : t('settingsPlugins.pendingChangeInstallSubtitle', {
+            pluginId: entry.installationReview.review.pluginId,
+            source: entry.installationReview.review.source.locator,
+        });
 }
 
 export function formatCatalogEntryVersion(version: string | null): string | undefined {

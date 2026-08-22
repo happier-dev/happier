@@ -1,6 +1,6 @@
 import type { ResumeSessionOptions } from '@/sync/ops';
 import type { Session } from '../state/storageTypes';
-import { isAgentId, buildWakeResumeExtras } from '@/agents/catalog/catalog';
+import { buildWakeResumeExtras } from '@/agents/catalog/catalog';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
@@ -104,8 +104,12 @@ export function getPendingQueueWakeResumeOptions(opts: {
             ? backendTarget.agentId
             : null);
     if (!agentId) return baseWithCursor;
-    if (!isAgentId(agentId)) return baseWithCursor;
 
+    // `buildWakeResumeExtras` is the one owner of an Agent's wake-resume extras
+    // and already answers `{}` when no behavior is contributed under this id.
+    // A bundled-id filter here would drop the extras an externally installed
+    // Agent projects through its `plugin.ui.v1` descriptor, which the session
+    // goal resume path (`@/sync/ops/sessionGoals`) already delivers.
     return {
         ...baseWithCursor,
         ...buildWakeResumeExtras({ agentId, resumeCapabilityOptions, session }),

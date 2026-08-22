@@ -18,15 +18,6 @@ export type PluginUiHostReadyStateChange = Readonly<{
     diagnostics: readonly string[];
 }>;
 
-function createSurfaceKey(surface: PluginUiSurfaceContextV1): string {
-    return [
-        surface.pluginId,
-        surface.contributionId,
-        surface.surfaceId,
-        surface.sessionId ?? '',
-    ].join('\u001f');
-}
-
 export function pluginUiSurfaceContextsMatch(
     expected: PluginUiSurfaceContextV1,
     actual: Readonly<{
@@ -42,66 +33,67 @@ export function pluginUiSurfaceContextsMatch(
         && expected.sessionId === actual.sessionId;
 }
 
+/**
+ * One bound surface, one ready state. The hosted-web adapter creates this store
+ * inside its own per-surface handler and can never bind a second surface to it,
+ * so the state is a single scalar rather than a keyed collection.
+ */
 export function createPluginUiHostReadyStateStore(options: Readonly<{
+    surface: PluginUiSurfaceContextV1;
     nowMs?: () => number;
-}> = {}) {
+}>) {
     const nowMs = options.nowMs ?? (() => Date.now());
-    const states = new Map<string, PluginUiHostReadyStateSnapshot>();
+    const surface = options.surface;
+    let state: PluginUiHostReadyStateSnapshot | null = null;
 
-    function read(surface: PluginUiSurfaceContextV1): PluginUiHostReadyStateSnapshot {
-        const key = createSurfaceKey(surface);
-        const existing = states.get(key);
-        if (existing) {
-            return existing;
+    function read(): PluginUiHostReadyStateSnapshot {
+        if (state) {
+            return state;
         }
-        const pending = Object.freeze({
+        state = Object.freeze({
             state: 'pending' as const,
             surface,
             updatedAtMs: nowMs(),
             diagnostics: [],
         });
-        states.set(key, pending);
-        return pending;
+        return state;
     }
 
-    function recordReady(surface: PluginUiSurfaceContextV1): Readonly<{
+    function recordReady(): Readonly<{
         result: PluginUiHostReadyRecordResult;
         snapshot: PluginUiHostReadyStateSnapshot;
     }> {
-        const current = read(surface);
+        const current = read();
         if (current.state === 'ready') {
             return Object.freeze({ result: 'duplicate' as const, snapshot: current });
         }
-        const snapshot = Object.freeze({
+        state = Object.freeze({
             state: 'ready' as const,
             surface,
             updatedAtMs: nowMs(),
             diagnostics: [],
         });
-        states.set(createSurfaceKey(surface), snapshot);
-        return Object.freeze({ result: 'recorded' as const, snapshot });
+        return Object.freeze({ result: 'recorded' as const, snapshot: state });
     }
 
     function recordTimeout(
-        surface: PluginUiSurfaceContextV1,
         diagnostics: readonly string[] = ['ready_timeout'],
     ): PluginUiHostReadyStateSnapshot {
-        const current = read(surface);
+        const current = read();
         if (current.state === 'ready') {
             return current;
         }
-        const snapshot = Object.freeze({
+        state = Object.freeze({
             state: 'timedOut' as const,
             surface,
             updatedAtMs: nowMs(),
             diagnostics: [...diagnostics],
         });
-        states.set(createSurfaceKey(surface), snapshot);
-        return snapshot;
+        return state;
     }
 
-    function reset(surface: PluginUiSurfaceContextV1): void {
-        states.delete(createSurfaceKey(surface));
+    function reset(): void {
+        state = null;
     }
 
     return Object.freeze({

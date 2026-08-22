@@ -16,7 +16,7 @@ import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWr
 import { t } from '@/text';
 import { sync } from '@/sync/sync';
 import { runPushNotificationPermissionPriming } from '@/activity/notifications/permission/pushNotificationPermissionPriming';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
     AttentionDeliveryPolicyV1Schema,
@@ -67,7 +67,7 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
     );
 
     const pushEnabled = attentionPolicy.channels.expo_push.enabled !== false;
-    const previewSupported = Platform.OS !== 'web' && !isTauriDesktop();
+    const previewSupported = Platform.OS !== 'web' && !isDesktopHost();
     const liveActivityRemoteUpdateDiagnostics =
         useFeatureDetails<LiveActivityRemoteUpdateCapabilityDiagnostics>({
             featureId: 'app.ui.liveActivities',
@@ -233,7 +233,7 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
     }, [attentionPolicy.sounds.defaultSoundId, localSettings.attentionDeviceOverridesV1.sounds.enabled]);
 
     const showIosActivitySurfaceSections = Platform.OS === 'ios';
-    const showSharedDesktopActivitySurfaceSettings = !showIosActivitySurfaceSections && isTauriDesktop();
+    const showSharedDesktopActivitySurfaceSettings = !showIosActivitySurfaceSections && isDesktopHost();
 
     return (
         <ItemList style={{ paddingTop: 0 }} testID="settings-notifications-screen">
@@ -265,7 +265,7 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
                 localSettings={localSettings}
                 setLocalSetting={setLocalSetting}
             />
-            {isTauriDesktop() ? (
+            {isDesktopHost() ? (
                 <NotificationDesktopPermissionSection />
             ) : null}
             <NotificationQuietHoursSection

@@ -33,8 +33,8 @@ const appStateAddListener = vi.hoisted(() => vi.fn((_event: string, handler: (st
 
 const tauriDesktopState = vi.hoisted(() => ({ value: false }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => tauriDesktopState.value,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => tauriDesktopState.value,
 }));
 
 const jsThreadLagTelemetrySummary = vi.hoisted(() => ({

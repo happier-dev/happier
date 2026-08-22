@@ -11,6 +11,7 @@ import {
 
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
+    createPluginUiProjectedActionResolver,
     normalizePluginUiProjection,
     resolvePluginUiProjectionState,
 } from './projection';
@@ -106,6 +107,7 @@ function createProjection(): PluginProjectionV2 {
                 icon: 'open-outline',
                 scopes: ['session'],
                 surfaces: ['ui'],
+                execution: { target: 'daemon' },
                 placementBindings: ['detailsPanel'],
                 priority: 0,
                 dangerLevel: 'safe',
@@ -201,7 +203,7 @@ function createProjection(): PluginProjectionV2 {
                         contributionKind: 'sessionHeaderAction',
                         descriptorId: 'open-preview',
                         title: { key: 'title', fallback: 'Open preview' },
-                        command: {
+                        action: {
                             kind: 'executeAction',
                             action: { pluginId: 'acme.preview', localId: 'open-preview' },
                         },
@@ -631,6 +633,16 @@ describe('plugin UI projection normalization', () => {
         const model = normalizePluginUiProjection(createProjection());
 
         expect(model.generation).toBe(12);
+        // Actions are daemon-admitted projection facts. The UI executable
+        // compositor must consume this exact map rather than reconstructing
+        // client targets from Voice declarations or issuing another fetch.
+        expect(model.actionsById['acme.preview/open-preview']).toMatchObject({
+            id: 'open-preview',
+            pluginId: 'acme.preview',
+            surfaces: ['ui'],
+            execution: { target: 'daemon' },
+            available: true,
+        });
         const conversation = model.voiceProvidersById['acme.preview/conversation']?.definition;
         expect(conversation?.kind).toBe('conversation');
         if (conversation?.kind !== 'conversation') throw new Error('expected conversation Voice projection');
@@ -660,7 +672,7 @@ describe('plugin UI projection normalization', () => {
         });
         expect(model.sessionHeaderActionsById['sessionHeaderAction:acme.preview:open-preview']).toMatchObject({
             descriptorId: 'open-preview',
-            command: {
+            action: {
                 kind: 'executeAction',
                 action: { pluginId: 'acme.preview', localId: 'open-preview' },
             },
@@ -710,6 +722,27 @@ describe('plugin UI projection normalization', () => {
         });
     });
 
+    it('resolves a raw Action only by its exact qualified identity', () => {
+        const model = normalizePluginUiProjection(createProjection());
+        const action = model.actionsById['acme.preview/open-preview'];
+        if (!action) throw new Error('action fixture is required');
+
+        const resolveAction = createPluginUiProjectedActionResolver(model.actionsById);
+        expect(resolveAction({ pluginId: 'acme.preview', localId: 'open-preview' })).toBe(action);
+        expect(resolveAction({ pluginId: 'acme.preview', localId: 'other-action' })).toBeNull();
+
+        // A malformed map entry must not let a key substitute another raw
+        // descriptor. The dispatcher can therefore trust this as its target
+        // source without accepting a stale/cross-plugin projection value.
+        const mismatchedEntryResolver = createPluginUiProjectedActionResolver({
+            'acme.other/open-preview': action,
+        });
+        expect(mismatchedEntryResolver({
+            pluginId: 'acme.other',
+            localId: 'open-preview',
+        })).toBeNull();
+    });
+
     it('fails closed when multiple plugins project the same structured-message kind', () => {
         const projection = createProjection();
         const entries = projection.familiesById.pluginUi?.entriesById;
@@ -728,19 +761,19 @@ describe('plugin UI projection normalization', () => {
         expect(model.structuredMessagesByKind['acme.preview/preview-card.v1']).toBeUndefined();
     });
 
-    it('retains a compiled session-header command without re-admitting its Action target in UI', () => {
+    it('retains a compiled session-header action without re-admitting its Action target in UI', () => {
         const projection = createProjection();
         delete projection.actionsById['acme.preview/open-preview'];
 
         // Action availability/currentness is owned by the compiled producer and
         // canonical dispatcher. Re-checking this adjacent catalog here would
         // restore a competing UI admission owner and reject a valid compiled
-        // command before the owner can return its typed outcome.
+        // semantic action before the owner can return its typed outcome.
         expect(normalizePluginUiProjection(projection)
             .sessionHeaderActionsById['sessionHeaderAction:acme.preview:open-preview'])
             .toMatchObject({
                 descriptorId: 'open-preview',
-                command: {
+                action: {
                     kind: 'executeAction',
                     action: { pluginId: 'acme.preview', localId: 'open-preview' },
                 },

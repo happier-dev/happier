@@ -9,6 +9,8 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
+import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
+import { restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import { t } from '@/text';
 
 import type {
@@ -21,6 +23,87 @@ type Props = Readonly<{
 }>;
 
 const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
+
+/**
+ * The composer already renders inside the Automation popover, which can itself
+ * sit in a modal. Its expanders must out-rank both so the first Escape only
+ * collapses this composer's expanded pickers and the next one still reaches
+ * that enclosing surface instead of discarding the draft.
+ */
+const pickerEscapePriority = ESCAPE_LAYER_PRIORITIES.modal + 1;
+
+/**
+ * One dismissal and focus-custody owner for every expander in this composer.
+ * These pickers are in-flow disclosure lists, not floating menus, so they reuse
+ * the host Escape stack and the canonical focus-return helper rather than
+ * growing a second overlay lifecycle — and every picker shares this owner
+ * instead of repeating the latch five times.
+ */
+function useEventComposerPickerDisclosure(params: Readonly<{
+    anyPickerOpen: boolean;
+    collapseAllPickers: () => void;
+}>) {
+    const triggerNodesRef = React.useRef(new Map<string, FocusReturnTarget>());
+    const triggerRefCallbacksRef = React.useRef(new Map<string, (node: FocusReturnTarget) => void>());
+    const lastExpandedPickerKeyRef = React.useRef<string | null>(null);
+    const pendingFocusReturnKeyRef = React.useRef<string | null>(null);
+    const collapseAllPickersRef = React.useRef(params.collapseAllPickers);
+    collapseAllPickersRef.current = params.collapseAllPickers;
+
+    // A stable callback per picker keeps the trigger ref from detaching and
+    // reattaching on every render of the surrounding form.
+    const pickerTriggerRef = React.useCallback((pickerKey: string) => {
+        const cached = triggerRefCallbacksRef.current.get(pickerKey);
+        if (cached) return cached;
+        const callback = (node: FocusReturnTarget) => {
+            if (node === null || node === undefined) {
+                triggerNodesRef.current.delete(pickerKey);
+                return;
+            }
+            triggerNodesRef.current.set(pickerKey, node);
+        };
+        triggerRefCallbacksRef.current.set(pickerKey, callback);
+        return callback;
+    }, []);
+
+    /**
+     * Arms the return only for a collapse that takes the user's own focused
+     * element away. A collateral collapse — another picker closing this one —
+     * must not pull focus off the control the user is actually on.
+     */
+    const notePickerCollapsed = React.useCallback((pickerKey: string) => {
+        pendingFocusReturnKeyRef.current = pickerKey;
+    }, []);
+
+    const notePickerTriggerPressed = React.useCallback((pickerKey: string, wasExpanded: boolean) => {
+        if (wasExpanded) {
+            pendingFocusReturnKeyRef.current = pickerKey;
+            return;
+        }
+        lastExpandedPickerKeyRef.current = pickerKey;
+    }, []);
+
+    React.useEffect(() => {
+        const pickerKey = pendingFocusReturnKeyRef.current;
+        if (pickerKey === null) return;
+        pendingFocusReturnKeyRef.current = null;
+        restoreFocusToBestTarget({ current: triggerNodesRef.current.get(pickerKey) ?? null });
+    });
+
+    useEscapeLayer({
+        enabled: Platform.OS === 'web' && params.anyPickerOpen,
+        priority: pickerEscapePriority,
+        onEscape: () => {
+            const pickerKey = lastExpandedPickerKeyRef.current;
+            lastExpandedPickerKeyRef.current = null;
+            if (pickerKey !== null) pendingFocusReturnKeyRef.current = pickerKey;
+            collapseAllPickersRef.current();
+            return true;
+        },
+    });
+
+    return { pickerTriggerRef, notePickerCollapsed, notePickerTriggerPressed };
+}
 
 function watcherKey(params: Readonly<{
     machineId: string;
@@ -90,6 +173,25 @@ export function PluginEventAutomationComposerContent(props: Props) {
     const [existingSessionPickerOpen, setExistingSessionPickerOpen] = React.useState(false);
     const [filterFieldPickerOpenFor, setFilterFieldPickerOpenFor] = React.useState<string | null>(null);
     const [filterOperatorPickerOpenFor, setFilterOperatorPickerOpenFor] = React.useState<string | null>(null);
+    const collapseAllPickers = React.useCallback(() => {
+        setEventPickerOpen(false);
+        setWatcherPickerOpen(false);
+        setExistingSessionPickerOpen(false);
+        setFilterFieldPickerOpenFor(null);
+        setFilterOperatorPickerOpenFor(null);
+    }, []);
+    const {
+        pickerTriggerRef,
+        notePickerCollapsed,
+        notePickerTriggerPressed,
+    } = useEventComposerPickerDisclosure({
+        anyPickerOpen: eventPickerOpen
+            || watcherPickerOpen
+            || existingSessionPickerOpen
+            || filterFieldPickerOpenFor !== null
+            || filterOperatorPickerOpenFor !== null,
+        collapseAllPickers,
+    });
     const selectedEvent = props.model.selectedEvent;
     const selectedWatcher = props.model.selectedWatcherOrigin;
     const selectedEventAvailability = selectedEvent
@@ -222,7 +324,11 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                     disabled: props.model.existingSessionOptions.length === 0,
                                 }}
                                 disabled={props.model.existingSessionOptions.length === 0}
-                                onPress={() => setExistingSessionPickerOpen((current) => !current)}
+                                ref={pickerTriggerRef('existingSession')}
+                                onPress={() => {
+                                    notePickerTriggerPressed('existingSession', existingSessionPickerOpen);
+                                    setExistingSessionPickerOpen((current) => !current);
+                                }}
                                 style={({ pressed }) => [
                                     styles.selectTrigger,
                                     props.model.existingSessionOptions.length === 0 ? styles.disabled : null,
@@ -250,6 +356,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                 accessibilityState={{ selected }}
                                                 onPress={() => {
                                                     props.model.selectExistingSession(option);
+                                                    notePickerCollapsed('existingSession');
                                                     setExistingSessionPickerOpen(false);
                                                 }}
                                                 style={({ pressed }) => [
@@ -320,7 +427,11 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                 testID="automation-event-picker"
                                 accessibilityRole="button"
                                 accessibilityState={{ expanded: eventPickerOpen }}
-                                onPress={() => setEventPickerOpen((current) => !current)}
+                                ref={pickerTriggerRef('event')}
+                                onPress={() => {
+                                    notePickerTriggerPressed('event', eventPickerOpen);
+                                    setEventPickerOpen((current) => !current);
+                                }}
                                 style={({ pressed }) => [styles.selectTrigger, pressed ? styles.pressed : null]}
                             >
                                 <Text numberOfLines={1} style={styles.selectTriggerText}>
@@ -349,6 +460,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                 accessibilityState={{ selected }}
                                                 onPress={() => {
                                                     props.model.selectEvent(event);
+                                                    notePickerCollapsed('event');
                                                     setEventPickerOpen(false);
                                                     setWatcherPickerOpen(false);
                                                 }}
@@ -394,7 +506,11 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                         testID="automation-event-watcher-picker"
                                         accessibilityRole="button"
                                         accessibilityState={{ expanded: watcherPickerOpen }}
-                                        onPress={() => setWatcherPickerOpen((current) => !current)}
+                                        ref={pickerTriggerRef('watcher')}
+                                        onPress={() => {
+                                            notePickerTriggerPressed('watcher', watcherPickerOpen);
+                                            setWatcherPickerOpen((current) => !current);
+                                        }}
                                         style={({ pressed }) => [styles.selectTrigger, pressed ? styles.pressed : null]}
                                     >
                                         <Text numberOfLines={1} style={styles.selectTriggerText}>
@@ -430,6 +546,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                         disabled={!selectable}
                                                         onPress={() => {
                                                             props.model.selectWatcher(candidate);
+                                                            notePickerCollapsed('watcher');
                                                             setWatcherPickerOpen(false);
                                                         }}
                                                         style={({ pressed }) => [
@@ -556,7 +673,12 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                         accessibilityRole="button"
                                                         accessibilityLabel={t('settingsPlugins.eventAutomationComposer.filterField')}
                                                         accessibilityState={{ expanded: filterFieldPickerOpenFor === clause.id }}
+                                                        ref={pickerTriggerRef(`filterField:${clause.id}`)}
                                                         onPress={() => {
+                                                            notePickerTriggerPressed(
+                                                                `filterField:${clause.id}`,
+                                                                filterFieldPickerOpenFor === clause.id,
+                                                            );
                                                             setFilterFieldPickerOpenFor((current) => (
                                                                 current === clause.id ? null : clause.id
                                                             ));
@@ -572,7 +694,12 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                         accessibilityRole="button"
                                                         accessibilityLabel={t('settingsPlugins.eventAutomationComposer.filterOperator')}
                                                         accessibilityState={{ expanded: filterOperatorPickerOpenFor === clause.id }}
+                                                        ref={pickerTriggerRef(`filterOperator:${clause.id}`)}
                                                         onPress={() => {
+                                                            notePickerTriggerPressed(
+                                                                `filterOperator:${clause.id}`,
+                                                                filterOperatorPickerOpenFor === clause.id,
+                                                            );
                                                             setFilterOperatorPickerOpenFor((current) => (
                                                                 current === clause.id ? null : clause.id
                                                             ));
@@ -610,6 +737,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                                 accessibilityState={{ selected: clause.field === field.pointer }}
                                                                 onPress={() => {
                                                                     props.model.setFilterClauseField(clause.id, field.pointer);
+                                                                    notePickerCollapsed(`filterField:${clause.id}`);
                                                                     setFilterFieldPickerOpenFor(null);
                                                                 }}
                                                                 style={({ pressed }) => [
@@ -636,6 +764,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                                 accessibilityState={{ selected: clause.op === op }}
                                                                 onPress={() => {
                                                                     props.model.setFilterClauseOperator(clause.id, op);
+                                                                    notePickerCollapsed(`filterOperator:${clause.id}`);
                                                                     setFilterOperatorPickerOpenFor(null);
                                                                 }}
                                                                 style={({ pressed }) => [

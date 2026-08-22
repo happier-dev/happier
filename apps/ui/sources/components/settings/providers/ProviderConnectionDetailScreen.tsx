@@ -526,7 +526,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                     t('settingsProviders.local.startedByHappier'),
                                     managedTargetMachine
                                         ? machineName(managedTargetMachine)
-                                        : managedDeployment.targetMachineId,
+                                        : t('common.unavailable'),
                                 ].join(' · ')}
                                 icon={<Icon name="cpu" size={29} color={theme.colors.text.secondary} />}
                             />

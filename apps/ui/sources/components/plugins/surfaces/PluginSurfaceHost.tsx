@@ -50,7 +50,17 @@ import {
     createComposerPresentationTransactionApplier,
     type ComposerPresentationHostOwner,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
-import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import {
+    usePluginSurfaceCurrentUiContextEligibility,
+    usePluginSurfaceFocusEligibility,
+} from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import {
+    useCurrentUiContextMountLifecycleActive,
+    useCurrentUiContextMountPublisher,
+    useOptionalCurrentUiContextReader,
+} from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import type { CurrentUiContextMountPublication } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import type { CurrentUiContextMountedEnrichment } from '@/components/appShell/currentUiContext/currentUiContextModel';
 import type { SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { PluginReactNativeBundleCacheIdentity } from '@/components/plugins/reactNative/bundleCache';
 import {
@@ -84,7 +94,11 @@ import {
     type LocalServicePreviewState,
 } from '@/sync/domains/local/services/preview/store';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
-import { EMPTY_PLUGIN_UI_PROJECTION, normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
+import {
+    EMPTY_PLUGIN_UI_PROJECTION,
+    createPluginUiProjectedActionResolver,
+    normalizePluginUiProjection,
+} from '@/sync/domains/plugins/ui/projection';
 import type {
     PluginUiHostedWebProjection,
     PluginUiProjectionModel,
@@ -125,6 +139,7 @@ import {
     usePluginSurfaceDaemonInteraction,
     type BoundPluginSurfaceBinding,
     type BoundPluginSurfaceController,
+    type BoundPluginSurfaceMountedHostApiHandlersFactory,
     type BoundPluginSurfaceMountLifetime,
 } from './boundPluginSurfaceController';
 import {
@@ -531,6 +546,7 @@ function DeclarativePluginSurfaceWithDocumentSource(
             handleRequest: props.controller.hostApi.handleRequest,
             installedMethods: props.controller.installedMethods,
             getInstalledMethods: () => props.controller.hostApi.installedMethods,
+            getAdmissionMethods: () => props.controller.hostApi.admissionMethods,
             isCurrent: props.controller.isCurrent,
         });
         // The current context is pushed below; only controller identity is a
@@ -1078,6 +1094,13 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
     /** Host-private binding for watchdog persistence; never part of RenderContext. */
     crashReportScopeKey?: string;
     crashStateDisabled?: boolean;
+    /**
+     * Whether the projection carrying `crashStateDisabled` is the daemon's
+     * current truth rather than a retained offline snapshot. Forwarded intact:
+     * this host is the only path between the mount that computes the fact and
+     * the surface whose quarantine consumes it.
+     */
+    crashStateProjectionCurrent?: boolean;
     reportFailure?: (failure: PluginReactNativePendingFailure) => Promise<ReactNativeCrashReportResult>;
     resetCrashState?: () => Promise<ReactNativeCrashReportResult>;
     /** Composer-only private carrier; never part of the public RenderContext. */
@@ -1166,6 +1189,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             handleRequest: props.hostApi.handleRequest,
             installedMethods: props.hostApi.installedMethods,
             getInstalledMethods: () => props.hostApi.installedMethods,
+            getAdmissionMethods: () => props.hostApi.admissionMethods,
             isCurrent: props.mountLifetime.isCurrent,
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps -- the surface is read
@@ -1372,6 +1396,9 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             {...(props.crashStateToken ? { crashStateToken: props.crashStateToken } : {})}
             {...(props.crashReportScopeKey ? { crashReportScopeKey: props.crashReportScopeKey } : {})}
             {...(props.crashStateDisabled === undefined ? {} : { crashStateDisabled: props.crashStateDisabled })}
+            {...(props.crashStateProjectionCurrent === undefined
+                ? {}
+                : { crashStateProjectionCurrent: props.crashStateProjectionCurrent })}
             {...(props.reportFailure ? { reportFailure: props.reportFailure } : {})}
             {...(props.resetCrashState ? { resetCrashState: props.resetCrashState } : {})}
         />
@@ -1887,8 +1914,25 @@ export function PluginSurfaceHost(props: Readonly<(
             ? normalizePluginUiProjection(targetedMount?.pluginProjectionV2 ?? null)
             : composerBinding
                 ? normalizePluginUiProjection(composerMount?.pluginProjectionV2 ?? null)
-            : props.pluginUiProjection ?? null
+                : props.pluginUiProjection ?? null
     ), [composerBinding, composerMount?.pluginProjectionV2, props.pluginUiProjection, targetedBinding, targetedMount?.pluginProjectionV2]);
+    // The raw V2 Action map is the sole target source for the bound surface.
+    // This closure is an exact lookup over that producer-owned snapshot, not a
+    // second action registry or a synthesized legacy descriptor.
+    // A daemon refresh rebuilds the raw V2 object graph even when its Action
+    // authority is unchanged. The resolver is controller-facing, so retain it
+    // across that equivalent producer snapshot; a changed raw map remains the
+    // one fact that replaces the bound controller and its facade.
+    const mountedProjectedActionsKey = stableJsonStringify(
+        mountedPluginUiProjection?.actionsById ?? {},
+    );
+    const resolveContributedAction = React.useMemo(
+        () => createPluginUiProjectedActionResolver(mountedPluginUiProjection?.actionsById),
+        // `mountedProjectedActionsKey` includes every producer-owned Action
+        // descriptor exposed by this exact projection.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [mountedProjectedActionsKey],
+    );
     const projectionInteractionEnabled = selectedEmbeddedRenderer
         ? props.projectionInteractionEnabled !== false
             && selectedEmbeddedRenderer.availability.state === 'available'
@@ -2020,6 +2064,14 @@ export function PluginSurfaceHost(props: Readonly<(
     // Read the surrounding route/tab eligibility exactly once at the generalized
     // physical mount, then lend the fact to every renderer interaction boundary.
     const presentationFocusEligible = usePluginSurfaceFocusEligibility();
+    const inheritedCurrentUiContextFocusEligible = usePluginSurfaceCurrentUiContextEligibility();
+    // A targeted B is a physical presentation child of its parent A. It may
+    // inherit ordinary focus, but that inherited root fact must not make it a
+    // second semantic-current publisher alongside the selected page mount.
+    const currentUiContextFocusEligible = inheritedCurrentUiContextFocusEligible && targetedBinding === null;
+    const currentUiContextMountLifecycleActive = useCurrentUiContextMountLifecycleActive();
+    const currentUiContextMountPublisher = useCurrentUiContextMountPublisher();
+    const currentUiContextReader = useOptionalCurrentUiContextReader();
     const runtimeFormFactor = props.formFactor ?? resolvePluginUiRuntimeFormFactor({
         // The surrounding pane/cockpit owns reactive layout updates. The
         // terminal mount needs a synchronous current snapshot only; subscribing
@@ -2159,7 +2211,7 @@ export function PluginSurfaceHost(props: Readonly<(
     const composerSessionId = composerMount?.physicalTarget.kind === 'session'
         ? composerMount.physicalTarget.sessionId
         : props.sessionId;
-    const controllerFacts = targetedBinding
+    const baseControllerFacts = targetedBinding
         ? createTargetedPluginSurfaceBoundFacts({
             request: targetedRequest!,
             serverId,
@@ -2169,6 +2221,7 @@ export function PluginSurfaceHost(props: Readonly<(
             channel: surfaceChannel,
             projectionGeneration,
             pluginProjectionById: targetedMount?.pluginProjectionById ?? null,
+            pluginUiProjection: mountedPluginUiProjection,
             accountLifetime,
             parentLifetime: targetedMount?.parentLifetime ?? null,
             interactionEnabled: localControllerInteractionEnabled && destinationPlatformSupported,
@@ -2194,6 +2247,7 @@ export function PluginSurfaceHost(props: Readonly<(
                 resourceCapability,
                 ...(composerResourceContext === undefined ? {} : { resourceContext: composerResourceContext }),
                 pluginProjectionById: composerMount?.pluginProjectionById ?? null,
+                pluginUiProjection: mountedPluginUiProjection,
                 targetedContributions: composerBinding.catalogEntry.contributorTargetedContributions,
                 accountLifetime,
                 parentLifetime: composerMount?.parentLifetime ?? null,
@@ -2219,6 +2273,7 @@ export function PluginSurfaceHost(props: Readonly<(
             executionOrigin,
             resourceCapability,
             pluginProjectionById: mountedTargetInputs?.pluginProjectionById ?? null,
+            pluginUiProjection: mountedPluginUiProjection,
             targetedContributions,
             accountLifetime,
             mountInstanceKey: mountedInstanceKey,
@@ -2227,6 +2282,13 @@ export function PluginSurfaceHost(props: Readonly<(
                 && destinationPlatformSupported
                 && mountedTargetProjection.phase === 'ready',
         });
+    const controllerFacts = Object.freeze({
+        ...baseControllerFacts,
+        resolveContributedAction,
+        ...(currentUiContextReader
+            ? { readCurrentUiContext: currentUiContextReader.readCurrentUiContext }
+            : {}),
+    });
     // Generic and targeted mounts carry no private current Composer ref, but an
     // exact current mount can still address any live Composer ref through the
     // canonical document registry. The target-scoped projection is the only
@@ -2355,10 +2417,119 @@ export function PluginSurfaceHost(props: Readonly<(
         ? composerMount?.binding
         : mountedComposerBinding
             ?? (targetedBinding ? undefined : props.binding);
+    const baseCreateMountedHostApiHandlers = controllerBinding?.createMountedHostApiHandlers;
+    const createMountedHostApiHandlers = React.useCallback<BoundPluginSurfaceMountedHostApiHandlersFactory>((input) => {
+        const mountedBundle = baseCreateMountedHostApiHandlers?.(input);
+        // Factory construction happens during render. Creating this small
+        // closure is inert; the bound controller activates it only after the
+        // exact physical surface commits.
+        // A controller can exist briefly while its exact generated renderer is
+        // still unavailable. Allocate a provider publication only when the
+        // physically mounted renderer first publishes, so that transient
+        // controller replacement neither creates nor retires a second mount
+        // authority before any public context exists.
+        let mountPublication: CurrentUiContextMountPublication | null = null;
+        const getMountPublication = (): CurrentUiContextMountPublication | null => {
+            if (mountPublication === null && currentUiContextMountPublisher) {
+                mountPublication = currentUiContextMountPublisher.createMount();
+            }
+            return mountPublication;
+        };
+        let activated = false;
+        let eligible = false;
+        let hasRetainedEnrichment = false;
+        let retainedEnrichment: CurrentUiContextMountedEnrichment | null = null;
+        const canPublish = (): boolean => input.isCurrent() && activated && eligible;
+        const currentUiContext = currentUiContextMountPublisher
+            ? Object.freeze({
+                publish: (enrichment: CurrentUiContextMountedEnrichment | null): boolean => {
+                    if (!input.isCurrent()) return false;
+                    retainedEnrichment = enrichment;
+                    hasRetainedEnrichment = enrichment !== null;
+                    // A child may publish from its own committed layout effect
+                    // before this host's layout effect has delivered focus.
+                    // Retain only the exact mount's latest bounded data and
+                    // expose it once that incumbent presentation fact arrives.
+                    return !canPublish() || getMountPublication()?.publish(enrichment) === true;
+                },
+                clear: (): void => mountPublication?.clear(),
+                restore: (): boolean => {
+                    if (!canPublish() || !hasRetainedEnrichment) return false;
+                    return getMountPublication()?.publish(retainedEnrichment) === true;
+                },
+                dispose: (): void => {
+                    hasRetainedEnrichment = false;
+                    retainedEnrichment = null;
+                    mountPublication?.dispose();
+                    mountPublication = null;
+                },
+            })
+            : undefined;
+        const activate = mountedBundle?.activate || currentUiContext
+            ? (): void => {
+                if (activated) return;
+                mountedBundle?.activate?.();
+                activated = true;
+                currentUiContext?.restore();
+            }
+            : undefined;
+        const setCurrentUiContextEligibility = mountedBundle?.setCurrentUiContextEligibility || currentUiContext
+            ? (nextEligible: boolean): void => {
+                mountedBundle?.setCurrentUiContextEligibility?.(nextEligible);
+                eligible = nextEligible;
+                if (!activated) return;
+                if (eligible) {
+                    currentUiContext?.restore();
+                } else {
+                    currentUiContext?.clear();
+                }
+            }
+            : undefined;
+        return Object.freeze({
+            handlers: mountedBundle?.handlers ?? {},
+            ...(currentUiContext ? { currentUiContext } : {}),
+            ...(activate ? { activate } : {}),
+            ...(setCurrentUiContextEligibility ? { setCurrentUiContextEligibility } : {}),
+            ...(mountedBundle?.dispose ? { dispose: mountedBundle.dispose } : {}),
+        });
+    }, [baseCreateMountedHostApiHandlers, currentUiContextMountPublisher]);
+    const effectiveControllerBinding = React.useMemo<BoundPluginSurfaceBinding | undefined>(() => {
+        if (!baseCreateMountedHostApiHandlers && !currentUiContextMountPublisher) return controllerBinding;
+        return Object.freeze({
+            ...(controllerBinding ?? {}),
+            createMountedHostApiHandlers,
+        });
+    }, [
+        baseCreateMountedHostApiHandlers,
+        controllerBinding,
+        createMountedHostApiHandlers,
+        currentUiContextMountPublisher,
+    ]);
     const controller = useBoundPluginSurfaceController({
         facts: controllerFacts,
-        ...(controllerBinding ? { binding: controllerBinding } : {}),
+        ...(effectiveControllerBinding ? { binding: effectiveControllerBinding } : {}),
     });
+    React.useLayoutEffect(() => {
+        // Presentation focus remains available to every renderer, while the
+        // existing layout owner separately names the one semantic-current
+        // surface. Ambiguous pane roots deliberately publish no enrichment.
+        // Native inactive transitions are provider-owned retirement, including
+        // an accompanying focus loss. Foreground applies the latest focus fact
+        // once through this controller's existing retained publication path.
+        if (!currentUiContextMountLifecycleActive) return;
+        controller.setCurrentUiContextEligibility?.(currentUiContextFocusEligible);
+    }, [controller, currentUiContextFocusEligible, currentUiContextMountLifecycleActive]);
+    React.useLayoutEffect(() => () => {
+        // Controller replacement and physical unmount remain their existing
+        // publication-owner retirement paths, independent of app visibility.
+        controller.setCurrentUiContextEligibility?.(false);
+    }, [controller]);
+    React.useLayoutEffect(() => () => {
+        // A full-page subpath changes beneath the same physical adapter. Retire
+        // its prior semantic record during layout cleanup, before the retained
+        // child can publish its next location from a layout effect.
+        controller.clearCurrentUiContext();
+    }, [controller, props.subPath]);
     const physicalComposerSubscriptionPublisherSetter = composerBinding
         ? composerMount?.setComposerSubscriptionPublisher
         : mountedComposerPublisherCapable
@@ -2401,6 +2572,9 @@ export function PluginSurfaceHost(props: Readonly<(
             },
         })).catch(() => undefined);
     }, [controller, mountedSurfaceId, targetedBinding]);
+    const targetedSurfaceLaunchInputResetKey = targetedRequest?.input === undefined
+        ? 'absent'
+        : `present:${stableJsonStringify(targetedRequest.input)}`;
     const targetedSurfaceBoundaryResetKey = targetedBinding
         ? JSON.stringify([
             targetedBinding.mount.target.pluginId,
@@ -2413,6 +2587,7 @@ export function PluginSurfaceHost(props: Readonly<(
             targetedBinding.mount.selectedRenderer.identity.pluginId,
             targetedBinding.mount.selectedRenderer.identity.localId,
             targetedBinding.mount.selectedRenderer.renderer.kind,
+            targetedSurfaceLaunchInputResetKey,
         ])
         : undefined;
     const renderWithTargetedSurfaceBoundary = (child: React.ReactElement): React.ReactElement => {
@@ -2803,7 +2978,16 @@ export function PluginSurfaceHost(props: Readonly<(
                     ...(props.sessionId ? { sessionId: props.sessionId } : {}),
                 },
                 mount: surfaceMount,
-                methods: resolvedHostApi.installedMethods,
+                // The hosted guest NEGOTIATES ONCE and freezes the advertised
+                // set for the life of the mount, so this must be the STRUCTURAL
+                // set (`admissionMethods`), not the live-narrowed one. A mount
+                // that first handshakes while the daemon is unreachable would
+                // otherwise never regain `readResource`/`watchResource`. Live
+                // narrowing still applies per request: the one host-API owner
+                // answers a structurally installed but currently unreachable
+                // method with the retryable `unavailable` envelope. Same
+                // separation the React Native adapter already makes.
+                methods: resolvedHostApi.admissionMethods,
                 // §3.2/§3.3: the hosted-web binding carries the SAME exact
                 // target, semantic theme and translation bundle the React Native
                 // mount receives, resolved by the one context owner.
@@ -3225,6 +3409,12 @@ export function PluginSurfaceHost(props: Readonly<(
                 {...(exactGeneratedCrashState ? {
                     crashStateToken: exactGeneratedCrashState.token,
                     crashStateDisabled: exactGeneratedCrashState.disabled,
+                    // The same composed projection-currentness fact this mount
+                    // already uses for interaction. A retained offline snapshot
+                    // still carries the daemon's last known crash state, but it
+                    // is not current truth, so it cannot clear a quarantine the
+                    // local store can no longer speak for.
+                    crashStateProjectionCurrent: projectionInteractionEnabled !== false,
                 } : {})}
                 {...(crashReportScopeKey ? { crashReportScopeKey } : {})}
                 {...(reportReactNativeFailure ? { reportFailure: reportReactNativeFailure } : {})}

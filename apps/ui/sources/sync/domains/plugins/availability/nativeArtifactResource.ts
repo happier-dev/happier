@@ -48,7 +48,15 @@ type PluginNativeArtifactResourceRegistrationUnavailable =
 
 /** The native admission result belongs to the one registrar/registry seam. */
 export type PluginNativeArtifactResourceRegistrationResult =
-    | Readonly<{ kind: 'registered' }>
+    | Readonly<{
+        kind: 'registered';
+        /**
+         * Exact transport-origin fact returned only by a native adapter whose
+         * runtime origin differs from the Protocol default. Artifact preserves
+         * it without deriving, interpreting, or making it a cache identity.
+         */
+        frameOrigin?: string;
+    }>
     | PluginNativeArtifactResourceRegistrationUnavailable;
 
 /**
@@ -97,6 +105,12 @@ export type PluginNativeArtifactResourceHandle = Readonly<{
     token: string;
     /** A stable opaque native-frame origin partition for this Account/plugin/version. */
     storagePartitionId: string;
+    /**
+     * An adapter-validated actual native frame origin, when its local transport
+     * cannot use the platform's Protocol default. This is bridge routing only;
+     * Artifact custody/currentness remains unchanged.
+     */
+    frameOrigin?: string;
     /** The Protocol-native-frame table; Artifact never interprets it. */
     policyTable: HostedWebAssetNativePolicyTableV1;
     isCurrent: () => boolean;
@@ -662,6 +676,9 @@ export function createPluginNativeArtifactResourceRegistry(input: Readonly<{
             const handle: PluginNativeArtifactResourceHandle = Object.freeze({
                 token,
                 storagePartitionId: storagePartitionId(identity),
+                ...(registrationResult.frameOrigin === undefined
+                    ? {}
+                    : { frameOrigin: registrationResult.frameOrigin }),
                 policyTable: responseTable.table,
                 isCurrent: () => {
                     if (!registration.isCurrent()) registration.revoke();

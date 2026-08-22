@@ -107,6 +107,51 @@ describe('derivePendingRequestFlagsFromAgentState', () => {
 });
 
 describe('preserveSessionListRenderableStaleFields', () => {
+    it('reuses the previous renderable when the rebuilt one is field-identical', () => {
+        // A projection pass re-derives every renderable, so an unchanged session still arrives as a
+        // fresh object. Handing that on defeats identity all the way up the session list: the row is
+        // rebuilt around it, then the array, then the whole list re-renders. Measured on the preview
+        // build: ~4000 field-identical rebuilds per 12s idle, 99.8% of which changed nothing, and 18
+        // list re-renders for a single genuinely-changed session.
+        const metadataFields = {
+            path: '/repo',
+            homeDir: '/home/user',
+            host: 'host-a',
+            machineId: 'machine-a',
+            flavor: 'codex',
+        };
+        const previous = buildRenderable({
+            id: 's_identity',
+            metadata: { ...metadataFields },
+            metadataVersion: 7,
+        });
+        const rebuiltButEqual = buildRenderable({
+            id: 's_identity',
+            metadata: { ...metadataFields },
+            metadataVersion: 7,
+        });
+        expect(rebuiltButEqual).not.toBe(previous);
+
+        expect(preserveSessionListRenderableStaleFields(previous, rebuiltButEqual)).toBe(previous);
+    });
+
+    it('takes the new renderable when a field actually changed', () => {
+        const previous = buildRenderable({
+            id: 's_changed',
+            metadata: { path: '/repo', flavor: 'codex' },
+            metadataVersion: 7,
+        });
+        const changed = buildRenderable({
+            id: 's_changed',
+            metadata: { path: '/repo', flavor: 'claude' },
+            metadataVersion: 8,
+        });
+
+        const result = preserveSessionListRenderableStaleFields(previous, changed);
+
+        expect(result.metadata?.flavor).toBe('claude');
+    });
+
     it('keeps metadata-unavailable settled state across placeholder replacements', () => {
         const previous = buildRenderable({
             id: 's_unavailable',
@@ -517,6 +562,7 @@ describe('buildSessionListRenderableFromSession', () => {
             {
                 id: 'm-auth',
                 kind: 'agent-event',
+                localId: null,
                 seq: 946,
                 createdAt: 9_000,
                 event: {
@@ -565,6 +611,7 @@ describe('buildSessionListRenderableFromSession', () => {
             {
                 id: 'm-auth',
                 kind: 'agent-event',
+                localId: null,
                 seq: 946,
                 createdAt: 9_000,
                 event: {

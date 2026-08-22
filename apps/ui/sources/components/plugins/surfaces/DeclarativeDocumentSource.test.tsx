@@ -237,6 +237,7 @@ function createDocumentHost(input: Readonly<{
         }),
         context: async () => unexpectedHostApiCall('context'),
         watchContext: async () => unexpectedHostApiCall('watchContext'),
+        publishCurrentUiContext: () => unexpectedHostApiCall('publishCurrentUiContext'),
         activeComposer: async () => unexpectedHostApiCall('activeComposer'),
         readComposer: async () => unexpectedHostApiCall('readComposer'),
         watchComposer: async () => unexpectedHostApiCall('watchComposer'),

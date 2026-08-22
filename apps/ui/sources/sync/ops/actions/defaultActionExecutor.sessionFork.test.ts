@@ -178,7 +178,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor({ openSession });
@@ -223,7 +223,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const resolveServerIdForSessionId = vi.fn((sessionId: string) => sessionId === 'sess_parent' ? 'server-b' : null);
@@ -284,9 +284,14 @@ describe('createDefaultActionExecutor (session.fork)', () => {
         },
       },
       settings: {
+        sessionReplayEnabled: true,
         sessionReplayStrategy: 'summary_plus_recent',
         sessionReplaySummaryRunnerV1: runner,
         sessionReplayMaxSeedChars: 54_321,
+        // The summary runner is an LLM task and follows the execution-runs
+        // feature, which is experimental and off by default.
+        experiments: true,
+        featureToggles: { 'execution.runs': true },
       },
     });
 
@@ -315,6 +320,103 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     }));
   }, 60_000);
 
+  it('requests a native fork instead of falling back to Replay when the account disabled Replay', async () => {
+    forkSessionOpMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
+    openSessionForVoiceToolMock.mockResolvedValueOnce({});
+
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 1,
+          presence: 0,
+          metadata: { machineId: 'machine_1', flavor: 'codex', codexBackendMode: 'appServer' },
+        },
+      },
+      settings: { sessionReplayEnabled: false },
+    });
+
+    const executor = createDefaultActionExecutor();
+
+    const res = await executor.execute(
+      'session.fork' as any,
+      { sessionId: 'sess_parent' },
+      { surface: 'ui', placement: 'session_action_menu' } as any,
+    );
+
+    expect(res.ok).toBe(true);
+    // `auto` is what lets the daemon settle on Replay; the account turned Replay off.
+    expect(forkSessionOpMock).toHaveBeenCalledWith(expect.objectContaining({
+      parentSessionId: 'sess_parent',
+      strategy: 'native',
+    }));
+  }, 60_000);
+
+  it('refuses the fork when Replay is off and this Agent has no native fork route', async () => {
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 1,
+          presence: 0,
+          metadata: { machineId: 'machine_1', flavor: 'claude' },
+        },
+      },
+      settings: { sessionReplayEnabled: false },
+    });
+
+    const executor = createDefaultActionExecutor();
+
+    const res = await executor.execute(
+      'session.fork' as any,
+      { sessionId: 'sess_parent' },
+      { surface: 'ui', placement: 'session_action_menu' } as any,
+    );
+
+    expect(res).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    expect(forkSessionOpMock).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it('omits the replay summary runner when the execution-runs feature is off', async () => {
+    forkSessionOpMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
+    openSessionForVoiceToolMock.mockResolvedValueOnce({});
+
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 1,
+          presence: 0,
+          metadata: { machineId: 'machine_1' },
+        },
+      },
+      settings: {
+        sessionReplayEnabled: true,
+        sessionReplayStrategy: 'summary_plus_recent',
+        sessionReplaySummaryRunnerV1: {
+          v: 1,
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          modelId: 'default',
+          permissionMode: 'no_tools',
+        },
+        featureToggles: { 'execution.runs': false },
+      },
+    });
+
+    const executor = createDefaultActionExecutor();
+
+    const res = await executor.execute(
+      'session.fork' as any,
+      { sessionId: 'sess_parent' },
+      { surface: 'ui', placement: 'session_action_menu' } as any,
+    );
+
+    expect(res.ok).toBe(true);
+    // The summary runner is an LLM task; it follows the execution-runs feature
+    // exactly as it does on every other fork entry point.
+    expect(forkSessionOpMock.mock.calls[0]?.[0]).not.toHaveProperty('replaySummaryRunner');
+  }, 60_000);
+
   it('clamps an out-of-range replay seed budget to what the fork wire accepts', async () => {
     forkSessionOpMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
     openSessionForVoiceToolMock.mockResolvedValueOnce({});
@@ -330,7 +432,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
       },
       // The stored account setting permits a wider range than the fork wire schema, so an
       // unclamped forward would be rejected as invalid rather than bounded.
-      settings: { sessionReplayMaxSeedChars: 500_000 },
+      settings: { sessionReplayEnabled: true, sessionReplayMaxSeedChars: 500_000 },
     });
 
     const executor = createDefaultActionExecutor();
@@ -368,7 +470,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           metadata: {},
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -415,7 +517,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -461,7 +563,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -515,7 +617,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -575,7 +677,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -637,7 +739,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -679,7 +781,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -748,10 +850,96 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
+
+    const result = await executor.execute(
+      'session.rollback' as any,
+      {
+        sessionId: 'sess_parent',
+        target: { type: 'before_user_message', userMessageSeq: 3 },
+      },
+      { defaultSessionId: 'sess_parent', surface: 'ui' } as any,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(rollbackSessionConversationOpMock).toHaveBeenCalledWith({
+      sessionId: 'sess_parent',
+      target: { type: 'before_user_message', userMessageSeq: 3 },
+    });
+  });
+
+  it('delegates an external Agent rollback only through its current declaration and trusted turn evidence', async () => {
+    rollbackSessionConversationOpMock.mockResolvedValueOnce({
+      ok: true,
+      rolledBack: true,
+      target: { type: 'before_user_message', userMessageSeq: 3 },
+    });
+
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 4,
+          createdAt: 1,
+          updatedAt: 4,
+          active: false,
+          activeAt: 4,
+          metadataVersion: 0,
+          agentStateVersion: 0,
+          thinking: false,
+          thinkingAt: 0,
+          presence: 0,
+          rollbackEligibleTurnStarts: [3],
+          sessionTurns: {
+            v: 1,
+            sessionId: 'sess_parent',
+            latestTurnId: 'turn_2',
+            updatedAt: 4,
+            turns: [{
+              turnId: 'turn_2',
+              status: 'completed',
+              startedAt: 3,
+              updatedAt: 4,
+              terminalAt: 4,
+              transcriptAnchors: {
+                startUserMessageSeq: 3,
+                userMessageSeqs: [3],
+                startSeqInclusive: 3,
+                endSeqInclusive: 4,
+              },
+              rollback: { state: 'eligible', updatedAt: 4 },
+            }],
+          },
+          metadata: {
+            machineId: 'machine_1',
+            runtimeDescriptorV1: {
+              v: 1,
+              agentId: 'acme-lifecycle',
+              agent: { providerSessionId: 'acme-session-1' },
+            },
+          },
+        },
+      },
+      settings: { sessionReplayEnabled: true },
+    });
+
+    const executor = createDefaultActionExecutor({
+      currentAgentCapabilities: {
+        agentId: 'acme-lifecycle',
+        identity: { pluginId: 'acme.lifecycle', localId: 'acme-lifecycle' },
+        generation: 42,
+        capabilities: {
+          sessions: {
+            open: ['resume'],
+            delivery: ['newTurn'],
+            conversationRollback: true,
+          },
+        },
+      } as any,
+    });
 
     const result = await executor.execute(
       'session.rollback' as any,
@@ -807,7 +995,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           ...sessionOverrides,
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -845,7 +1033,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
     const request = {
       v: 1,

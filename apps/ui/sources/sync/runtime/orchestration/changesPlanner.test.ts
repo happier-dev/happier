@@ -177,6 +177,27 @@ describe('planSyncActionsFromChanges', () => {
         });
     });
 
+    it('plans a session-list refresh for attention standing organization hints', () => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({
+                cursor: 1,
+                kind: 'account',
+                entityId: 'session-organization',
+                hint: { sessionOrganization: true, scope: 'attentionStandings', sessionIds: ['s-standing'] },
+            }),
+        ]);
+
+        // Standing moves a row between the attention band and the rest of the list, so the list
+        // itself has to be re-read; a planner that only refreshed the organization snapshot would
+        // leave the band painting yesterday's membership.
+        expect(planned.invalidate.sessions).toBe(true);
+        expect(planned.sessionIdsToCatchUp).toEqual([]);
+        expect(planned.sessionOrganization).toMatchObject({
+            mode: 'snapshot',
+            assignmentSessionIds: ['s-standing'],
+        });
+    });
+
     it('records unknown kinds as unsupported without treating them as safe invalidations', () => {
         const planned = planSyncActionsFromChanges([
             buildChange({ cursor: 4, kind: 'unknown-change-kind' as ApiChangeEntry['kind'] }),

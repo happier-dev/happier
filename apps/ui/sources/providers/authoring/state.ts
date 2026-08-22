@@ -1,7 +1,9 @@
 import {
+    CUSTOM_PROVIDER_AUTHORING_PROTOCOLS_V1,
+    defaultCustomProviderCatalogParserV1,
     normalizeCustomProviderAdvancedTemplateV1,
     normalizeCustomProviderTemplateV1,
-    type ProviderCatalogParserV1,
+    type BundledProviderCatalogParserV1,
     type CustomProviderCredentialStyleV1,
     type CustomProviderSimpleFormV1,
     type CustomProviderTemplateV1,
@@ -18,7 +20,7 @@ export type CustomProviderAdvancedEndpointDraft = Readonly<{
     credentialHeader: string;
     publicHeadersText: string;
     probePathsText: string;
-    probeParser: ProviderCatalogParserV1;
+    probeParser: BundledProviderCatalogParserV1;
 }>;
 
 export type CustomProviderDraft = Readonly<{
@@ -35,7 +37,20 @@ export type CustomProviderDraft = Readonly<{
     manualModelsText: string;
 }>;
 
-const CUSTOM_PROTOCOLS: readonly CustomProviderPreset[] = ['openai-responses', 'openai-chat', 'anthropic'];
+/**
+ * The advanced form lays out one endpoint card per authoring protocol.
+ * MEMBERSHIP is owned by Protocol; only the on-screen ORDER is local, and the
+ * rank map is exhaustive over that membership, so a protocol added upstream
+ * cannot silently disappear from this screen.
+ */
+const CUSTOM_PROTOCOL_DISPLAY_RANK = {
+    'openai-responses': 0,
+    'openai-chat': 1,
+    anthropic: 2,
+} as const satisfies Record<CustomProviderPreset, number>;
+
+const CUSTOM_PROTOCOLS: readonly CustomProviderPreset[] = [...CUSTOM_PROVIDER_AUTHORING_PROTOCOLS_V1]
+    .sort((left, right) => CUSTOM_PROTOCOL_DISPLAY_RANK[left] - CUSTOM_PROTOCOL_DISPLAY_RANK[right]);
 
 function endpointDraft(protocol: CustomProviderPreset, enabled: boolean, baseUrl = ''): CustomProviderAdvancedEndpointDraft {
     const defaults = protocolDefaults(protocol);
@@ -48,7 +63,7 @@ function endpointDraft(protocol: CustomProviderPreset, enabled: boolean, baseUrl
         credentialHeader: '',
         publicHeadersText: protocol === 'anthropic' ? 'anthropic-version: 2023-06-01' : '',
         probePathsText: defaults.modelsPath,
-        probeParser: protocol === 'anthropic' ? 'anthropic-models' : 'openai-models',
+        probeParser: defaultCustomProviderCatalogParserV1(protocol),
     };
 }
 

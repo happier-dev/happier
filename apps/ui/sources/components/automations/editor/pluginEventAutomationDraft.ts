@@ -18,6 +18,7 @@ import {
     type ConnectedServiceBindingsV1,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
     type ExecutionRunDetachedStartRequestV1,
+    type MentionRefV1,
     type PluginEventAutomationSetupResultV1,
     type PluginMachineExecutionOriginV1,
     type SessionModelSelectionV1,
@@ -188,10 +189,18 @@ export function resolveCurrentPluginEventAutomationEligibleEvent(params: Readonl
 export function buildPlainPluginEventAutomationExecutionRecipe(params: Readonly<{
     templateVersion: number;
     prompt: string;
+    /**
+     * The composer references picked beside this prompt, in the same
+     * identity-only shape an interactive send persists. The Protocol template
+     * owner readmits them against the rendered program at dispatch, so this
+     * writer stores exactly what the composer produced.
+     */
+    mentions?: readonly MentionRefV1[];
     target: AutomationRunExecutionTargetV1;
 }>): AutomationRunExecutionRecipeV1 | null {
     const target = AutomationRunExecutionTargetV1Schema.safeParse(params.target);
     if (!target.success) return null;
+    const mentions = params.mentions ?? [];
     const recipe = AutomationRunExecutionRecipeV1Schema.safeParse({
         v: 1,
         templateVersion: params.templateVersion,
@@ -200,6 +209,7 @@ export function buildPlainPluginEventAutomationExecutionRecipe(params: Readonly<
             v: {
                 v: 1,
                 prompt: params.prompt,
+                ...(mentions.length > 0 ? { mentions: [...mentions] } : {}),
             },
         },
         triggerEvidence: null,

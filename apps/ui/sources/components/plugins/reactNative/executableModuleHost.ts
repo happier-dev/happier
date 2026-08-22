@@ -48,12 +48,17 @@ export type PluginUiExecutableModuleHost = Readonly<{
         createScope: () => PluginUiExecutableActivationScope<TApi>;
     }>): Promise<PluginUiExecutableModuleActivationResult>;
     replaceAuthority(authority: PluginUiExecutableAuthority | null): Promise<void>;
+    invalidateActivation(input: Readonly<{
+        identity: PluginReactNativeBundleCacheIdentity;
+        moduleReference: RepackInstalledArtifactModuleReference;
+    }>): Promise<void>;
     invalidatePlugin(pluginId: string): Promise<void>;
     unload(): Promise<void>;
 }>;
 
 export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHost {
     type ActiveActivation = Readonly<{
+        key: string;
         pluginId: string;
         fingerprint: string;
         cleanup?: () => void | Promise<void>;
@@ -61,12 +66,16 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
     }>;
     type PendingActivation = Readonly<{
         fingerprint: string;
+        authorityRevision: number;
+        pluginRevision: number;
+        activationRevision: number;
         promise: Promise<PluginUiExecutableModuleActivationResult>;
     }>;
 
     const activeByKey = new Map<string, ActiveActivation>();
     const pendingByKey = new Map<string, PendingActivation>();
     const pluginRevisions = new Map<string, number>();
+    const activationRevisions = new Map<string, number>();
     let authority: PluginUiExecutableAuthority | null = null;
     let authorityInitialized = false;
     let authorityRevision = 0;
@@ -110,6 +119,10 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
     const readPluginRevision = (pluginId: string): number => pluginRevisions.get(pluginId) ?? 0;
     const advancePluginRevision = (pluginId: string): void => {
         pluginRevisions.set(pluginId, readPluginRevision(pluginId) + 1);
+    };
+    const readActivationRevision = (key: string): number => activationRevisions.get(key) ?? 0;
+    const advanceActivationRevision = (key: string): void => {
+        activationRevisions.set(key, readActivationRevision(key) + 1);
     };
 
     async function disposeActivation(active: ActiveActivation): Promise<void> {
@@ -180,6 +193,7 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
 
         const key = activationKey(input);
         const startAuthorityRevision = authorityRevision;
+        const startActivationRevision = readActivationRevision(key);
         const fingerprint = activationFingerprint({ ...input, authorityRevision: startAuthorityRevision });
         const existing = activeByKey.get(key);
         if (existing?.fingerprint === fingerprint) {
@@ -190,7 +204,12 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
             await disposeActivation(existing);
         }
         const pending = pendingByKey.get(key);
-        if (pending?.fingerprint === fingerprint) {
+        if (
+            pending?.fingerprint === fingerprint
+            && pending.authorityRevision === startAuthorityRevision
+            && pending.pluginRevision === readPluginRevision(input.identity.pluginId)
+            && pending.activationRevision === startActivationRevision
+        ) {
             return await pending.promise;
         }
 
@@ -199,6 +218,7 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
             sameAuthority(authority, input.authority)
             && authorityRevision === startAuthorityRevision
             && readPluginRevision(input.identity.pluginId) === startPluginRevision
+            && readActivationRevision(key) === startActivationRevision
         );
 
         const promise = (async (): Promise<PluginUiExecutableModuleActivationResult> => {
@@ -246,6 +266,7 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
                 cleanup = activationResult as (() => void | Promise<void>) | undefined;
             } catch {
                 await disposeActivation({
+                    key,
                     pluginId: input.identity.pluginId,
                     fingerprint,
                     scope,
@@ -257,8 +278,9 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
                 });
             }
 
-            if (!isCurrent()) {
+            if (!isCurrent() || scope.isCurrent?.() === false) {
                 await disposeActivation({
+                    key,
                     pluginId: input.identity.pluginId,
                     fingerprint,
                     ...(cleanup ? { cleanup } : {}),
@@ -275,6 +297,7 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
                 await scope.commit();
             } catch {
                 await disposeActivation({
+                    key,
                     pluginId: input.identity.pluginId,
                     fingerprint,
                     ...(cleanup ? { cleanup } : {}),
@@ -287,8 +310,9 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
                 });
             }
 
-            if (!isCurrent()) {
+            if (!isCurrent() || scope.isCurrent?.() === false) {
                 await disposeActivation({
+                    key,
                     pluginId: input.identity.pluginId,
                     fingerprint,
                     ...(cleanup ? { cleanup } : {}),
@@ -302,6 +326,7 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
             }
 
             const nextActive: ActiveActivation = {
+                key,
                 pluginId: input.identity.pluginId,
                 fingerprint,
                 ...(cleanup ? { cleanup } : {}),
@@ -315,7 +340,13 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
             return Object.freeze({ ok: true });
         })();
 
-        pendingByKey.set(key, Object.freeze({ fingerprint, promise }));
+        pendingByKey.set(key, Object.freeze({
+            fingerprint,
+            authorityRevision: startAuthorityRevision,
+            pluginRevision: startPluginRevision,
+            activationRevision: startActivationRevision,
+            promise,
+        }));
         try {
             return await promise;
         } finally {
@@ -338,6 +369,11 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
     return Object.freeze({
         activate,
         replaceAuthority,
+        invalidateActivation: async (input) => {
+            const key = activationKey(input);
+            advanceActivationRevision(key);
+            await invalidateWhere((active) => active.key === key);
+        },
         invalidatePlugin: async (pluginId) => {
             advancePluginRevision(pluginId);
             await invalidateWhere((active) => active.pluginId === pluginId);

@@ -9,6 +9,7 @@ import {
   SessionModelTransitionRequestV1Schema,
   SessionModelTransitionResultV1Schema,
   type ActionExecutorDeps,
+  type ActionDefinitionV1,
   type ActionId,
   type ApprovalRequestV1,
   type SessionModelTransitionRequestV1,
@@ -40,7 +41,9 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveHappierReplayConfig } from '@/sync/domains/session/resume/happierReplayPrompt';
-import type { Settings } from '@/sync/domains/settings/settings';
+import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
+import { resolveSessionForkStrategyAvailability } from '@/sync/domains/sessionFork/forkUiSupport';
+import { resolveSessionForkReplayOptions } from '@/sync/domains/sessionFork/resolveSessionForkReplayOptions';
 import { resetVoiceAgentPersistenceState } from '@/voice/persistence/resetVoiceAgentPersistenceState';
 import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import { openSessionForVoiceTool } from '@/voice/tools/actionImpl/openSession';
@@ -64,6 +67,7 @@ import { updateSkillPromptBundle } from '@/sync/ops/promptLibrary/promptBundles'
 import { writePromptLibraryArtifactToExternalAsset } from '@/sync/ops/promptLibrary/exportPromptLibraryArtifact';
 import { installPromptRegistryItem } from '@/sync/ops/promptLibrary/installPromptRegistryItem';
 import { canRollbackConversation } from '@/sync/domains/sessionRollback/rollbackUiSupport';
+import type { CurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { completeSessionForkNavigation } from '@/sync/domains/sessionFork/completeSessionForkNavigation';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
@@ -89,6 +93,11 @@ import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/sett
   resolveServerNameForSessionId?: (sessionId: string) => string | null;
   openSession?: (sessionId: string, options?: OpenSessionOptions) => void | Promise<void>;
   runtimeActions?: CreateDefaultRuntimeActionExecutorInput;
+  listContributedActionDefinitions?: () => readonly ActionDefinitionV1[];
+  /** Optional surface-local policy composed with the canonical Action settings policy. */
+  isActionEnabled?: NonNullable<ActionExecutorDeps['isActionEnabled']>;
+  /** Current external Agent declaration supplied by a rendered lifecycle control. */
+  currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
   }>): ReturnType<typeof createActionExecutor> {
     type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
     type AgentsModelsListArgs = Readonly<{ agentId?: string; machineId?: string; limit?: number; backendTargetKey?: string }>;
@@ -110,8 +119,12 @@ import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/sett
   const executeReviewCommentAction = createReviewCommentsHttpActionExecutor();
 
   const deps: ActionExecutorDeps = {
+    listContributedActionDefinitions: opts?.listContributedActionDefinitions,
     isActionEnabled: (actionId: ActionId, ctx) =>
       {
+        if (opts?.isActionEnabled && !opts.isActionEnabled(actionId, ctx)) {
+          return false;
+        }
         if (
           !isActionEnabledByActionsSettings(actionId, resolveActionsSettingsSnapshot(), {
             surface: ctx.surface ?? null,
@@ -167,24 +180,39 @@ import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/sett
       const machineId = resolveSessionMachineId(sid, metadata);
 
       const settings = stateAny?.settings ?? null;
-      const replaySummaryRunner =
-        settings?.sessionReplayStrategy === 'summary_plus_recent'
-          ? (settings?.sessionReplaySummaryRunnerV1 ?? null)
-          : null;
-      // Clamp through the canonical replay-config owner. The stored account setting allows a
-      // wider range than the fork wire schema accepts, so forwarding it raw makes an otherwise
-      // valid preference fail validation instead of being bounded.
-      const replayMaxSeedChars = typeof settings?.sessionReplayMaxSeedChars === 'number'
-        ? resolveHappierReplayConfig(settings as Settings).maxSeedChars
-        : undefined;
+      const forkPoint = { type: 'latest' } as const;
+      // One fork policy for every surface. This executor has no strategy modal
+      // to show, so it reads the same availability the modal renders and asks
+      // for the exact route that modal would have offered. An unqualified
+      // request is what let the daemon settle on Replay for an account that
+      // turned Replay off.
+      const availability = resolveSessionForkStrategyAvailability({
+        session,
+        forkPoint,
+        replayEnabled: resolveHappierReplayConfig(settings ?? {}).enabled,
+        // Source-context continuation is a navigation to the New Session
+        // screen; this executor has no such route, so it is not one of its
+        // options rather than a route it silently fails to take.
+        agentSwitchingEnabled: false,
+        currentAgentCapabilities: opts?.currentAgentCapabilities,
+      });
+      if (!availability.native && !availability.replay) {
+        return { ok: false, errorCode: 'action_disabled', errorMessage: 'action_disabled' };
+      }
+      const replayOptions = resolveSessionForkReplayOptions({
+        settings,
+        executionRunsEnabled: resolveLocalFeaturePolicyEnabled('execution.runs', settings ?? {}),
+      });
 
       const result = await forkSessionOp({
         ...(machineId ? { machineId } : {}),
         serverId: resolvedServerId || undefined,
         parentSessionId: sid,
-        forkPoint: { type: 'latest' },
-        ...(typeof replayMaxSeedChars === 'number' ? { replayMaxSeedChars } : {}),
-        ...(replaySummaryRunner ? { replaySummaryRunner } : {}),
+        forkPoint,
+        // `auto` is the only value that can fall through to Replay, so it stays
+        // the request exactly while Replay is a route the account allows.
+        ...(availability.replay ? {} : { strategy: 'native' as const }),
+        ...replayOptions,
       } as any);
       if ((result as any)?.ok !== true) return result as any;
 
@@ -254,7 +282,11 @@ import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/sett
       if (!sid) return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
       const resolvedTarget = target ?? { type: 'latest_turn' };
       const session = (storage.getState() as any)?.sessions?.[sid] ?? null;
-      if (!canRollbackConversation({ session, target: resolvedTarget })) {
+      if (!canRollbackConversation({
+        session,
+        target: resolvedTarget,
+        currentAgentCapabilities: opts?.currentAgentCapabilities,
+      })) {
         return { ok: false, errorCode: 'action_disabled', errorMessage: 'action_disabled' };
       }
       return await rollbackSessionConversationOp({

@@ -9,6 +9,7 @@ import { isSessionExclusiveLocalControl } from '@/sync/domains/session/control/s
 import { deriveSessionInputReadinessState } from '@/sync/domains/session/control/deriveSessionInputReadinessState';
 import {
     getAgentCore,
+    isBundledAgentId,
 } from '@/agents/registry/registryCore';
 import type { AgentSessionComposerNonSteerableReason } from '@/agents/registry/registryUiBehavior';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -64,7 +65,7 @@ function getProviderInFlightSteerSupported(session: Session | null): boolean {
     const agentId = resolveAgentIdFromSessionMetadata(
         session ? readSessionOwnerMetadataView(session) : null,
     );
-    if (!agentId) return false;
+    if (!agentId || !isBundledAgentId(agentId)) return false;
     return getAgentCore(agentId).runtimeInput?.inFlightSteerSupported === true;
 }
 

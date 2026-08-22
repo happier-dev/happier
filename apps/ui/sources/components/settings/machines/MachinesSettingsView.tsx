@@ -6,7 +6,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RelayDriftActionCard } from '@/components/settings/server/RelayDriftActionCard';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { t } from '@/text';
 
@@ -21,7 +21,7 @@ type MachineSetupWizardStep = 'setup_this_computer' | 'remote_ssh_setup';
 export const MachinesSettingsView = React.memo(function MachinesSettingsView() {
     const router = useRouter();
     const viewModel = useMachinesSettingsViewModel();
-    const isDesktop = isTauriDesktop();
+    const isDesktop = isDesktopHost();
     const isBrowserWeb = Platform.OS === 'web' && !isDesktop;
     const setupPolicy = React.useMemo(() => resolveSetupSurfacePolicy(), []);
     const openSetupWizard = React.useCallback((params?: Readonly<{

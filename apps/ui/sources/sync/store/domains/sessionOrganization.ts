@@ -1,4 +1,5 @@
 import type {
+    SessionAttentionStanding,
     SessionOrganizationDisplayState as ProtocolSessionOrganizationDisplayState,
     SessionOrganizationOrderEntry,
     SessionOrganizationPin,
@@ -33,6 +34,7 @@ export type SessionOrganizationOptimisticRecord = Readonly<{
     before: Partial<Pick<
         SessionOrganizationDomain,
         | 'sessionOrganizationPinsBySessionKey'
+        | 'sessionOrganizationAttentionStandingsBySessionKey'
         | 'sessionOrganizationFoldersByFolderKey'
         | 'sessionOrganizationTagsByTagKey'
         | 'sessionOrganizationLabelsByLabelKey'
@@ -43,6 +45,7 @@ export type SessionOrganizationOptimisticRecord = Readonly<{
     after: Partial<Pick<
         SessionOrganizationDomain,
         | 'sessionOrganizationPinsBySessionKey'
+        | 'sessionOrganizationAttentionStandingsBySessionKey'
         | 'sessionOrganizationFoldersByFolderKey'
         | 'sessionOrganizationTagsByTagKey'
         | 'sessionOrganizationLabelsByLabelKey'
@@ -56,6 +59,7 @@ export type SessionOrganizationDomain = {
     sessionOrganizationSchemaVersionByServerId: Record<string, number>;
     sessionOrganizationSnapshotVersionByServerId: Record<string, number>;
     sessionOrganizationPinsBySessionKey: Record<string, SessionOrganizationPin>;
+    sessionOrganizationAttentionStandingsBySessionKey: Record<string, SessionAttentionStanding>;
     sessionOrganizationFoldersByFolderKey: Record<string, UiSessionOrganizationFolder>;
     sessionOrganizationFolderAssignmentsBySessionKey: Record<string, string | null>;
     sessionOrganizationTagsByTagKey: Record<string, UiSessionOrganizationTag>;
@@ -73,6 +77,7 @@ export type SessionOrganizationDomain = {
     setSessionOrganizationLoading: (serverId: string, loading: boolean) => void;
     setSessionOrganizationError: (serverId: string, error: string | null) => void;
     setSessionPinOptimistic: (serverId: string, sessionId: string, pin: SessionOrganizationPin | null) => string;
+    setSessionAttentionStandingOptimistic: (serverId: string, sessionId: string, standing: SessionAttentionStanding | null) => string;
     setSessionOrganizationFolderAssignmentOptimistic: (serverId: string, sessionId: string, folderId: string | null) => string;
     setSessionTagAssignmentsOptimistic: (serverId: string, sessionId: string, tagIds: readonly string[]) => string;
     upsertSessionOrganizationFolderOptimistic: (serverId: string, folder: UiSessionOrganizationFolder) => string;
@@ -465,6 +470,8 @@ function rebaseRemainingOptimisticRecords<S extends SessionOrganizationDomain>(
     remainingRecords: Record<string, SessionOrganizationOptimisticRecord>,
 ): Partial<S> {
     let pins = rolledBackRecord.before.sessionOrganizationPinsBySessionKey ?? state.sessionOrganizationPinsBySessionKey;
+    let attentionStandings = rolledBackRecord.before.sessionOrganizationAttentionStandingsBySessionKey
+        ?? state.sessionOrganizationAttentionStandingsBySessionKey;
     let folders = rolledBackRecord.before.sessionOrganizationFoldersByFolderKey ?? state.sessionOrganizationFoldersByFolderKey;
     let tags = rolledBackRecord.before.sessionOrganizationTagsByTagKey ?? state.sessionOrganizationTagsByTagKey;
     let labels = rolledBackRecord.before.sessionOrganizationLabelsByLabelKey ?? state.sessionOrganizationLabelsByLabelKey;
@@ -474,6 +481,11 @@ function rebaseRemainingOptimisticRecords<S extends SessionOrganizationDomain>(
 
     for (const record of sortOptimisticRecords(Object.values(remainingRecords))) {
         pins = applyRecordDelta(pins, record.before.sessionOrganizationPinsBySessionKey, record.after.sessionOrganizationPinsBySessionKey);
+        attentionStandings = applyRecordDelta(
+            attentionStandings,
+            record.before.sessionOrganizationAttentionStandingsBySessionKey,
+            record.after.sessionOrganizationAttentionStandingsBySessionKey,
+        );
         folders = applyRecordDelta(folders, record.before.sessionOrganizationFoldersByFolderKey, record.after.sessionOrganizationFoldersByFolderKey);
         tags = applyRecordDelta(tags, record.before.sessionOrganizationTagsByTagKey, record.after.sessionOrganizationTagsByTagKey);
         labels = applyRecordDelta(labels, record.before.sessionOrganizationLabelsByLabelKey, record.after.sessionOrganizationLabelsByLabelKey);
@@ -488,6 +500,7 @@ function rebaseRemainingOptimisticRecords<S extends SessionOrganizationDomain>(
 
     return {
         sessionOrganizationPinsBySessionKey: pins,
+        sessionOrganizationAttentionStandingsBySessionKey: attentionStandings,
         sessionOrganizationFoldersByFolderKey: folders,
         sessionOrganizationTagsByTagKey: tags,
         sessionOrganizationLabelsByLabelKey: labels,
@@ -525,6 +538,7 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
         sessionOrganizationSnapshotVersionByServerId: {},
         sessionOrganizationSchemaVersionByServerId: {},
         sessionOrganizationPinsBySessionKey: {},
+        sessionOrganizationAttentionStandingsBySessionKey: {},
         sessionOrganizationFoldersByFolderKey: {},
         sessionOrganizationFolderAssignmentsBySessionKey: {},
         sessionOrganizationTagsByTagKey: {},
@@ -547,6 +561,15 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                     serverId,
                     uiSnapshot.pins.map((pin) => [pin.sessionId, pin] as const),
                 );
+                // Standings only ride along when the request asked for them, so an absent
+                // array means "not fetched" and must not clear what the store already knows.
+                const attentionStandings = uiSnapshot.attentionStandings === undefined
+                    ? state.sessionOrganizationAttentionStandingsBySessionKey
+                    : replaceServerRecord(
+                        state.sessionOrganizationAttentionStandingsBySessionKey,
+                        serverId,
+                        uiSnapshot.attentionStandings.map((entry) => [entry.sessionId, entry] as const),
+                    );
                 const folders = options?.includeFolders === false
                     ? state.sessionOrganizationFoldersByFolderKey
                     : replaceRequestedServerRecord(
@@ -605,6 +628,7 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                         [serverId]: uiSnapshot.version,
                     },
                     sessionOrganizationPinsBySessionKey: pins,
+                    sessionOrganizationAttentionStandingsBySessionKey: attentionStandings,
                     sessionOrganizationFoldersByFolderKey: folders,
                     sessionOrganizationFolderAssignmentsBySessionKey: folderAssignments,
                     sessionOrganizationTagsByTagKey: tags,
@@ -642,6 +666,21 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
             set((current) => ({
                 ...addOptimisticRecord(current, record),
                 sessionOrganizationPinsBySessionKey: afterPins,
+            }) as Partial<S>);
+            return record.id;
+        },
+        setSessionAttentionStandingOptimistic: (serverId, sessionId, standing) => {
+            const key = buildSessionOrganizationServerKey(serverId, sessionId);
+            const state = get();
+            const afterStandings = setRecordValue(state.sessionOrganizationAttentionStandingsBySessionKey, key, standing ?? undefined);
+            const record = createOptimisticRecord({
+                serverId,
+                before: { sessionOrganizationAttentionStandingsBySessionKey: state.sessionOrganizationAttentionStandingsBySessionKey },
+                after: { sessionOrganizationAttentionStandingsBySessionKey: afterStandings },
+            });
+            set((current) => ({
+                ...addOptimisticRecord(current, record),
+                sessionOrganizationAttentionStandingsBySessionKey: afterStandings,
             }) as Partial<S>);
             return record.id;
         },
@@ -862,6 +901,7 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                         Object.entries(state.sessionOrganizationSchemaVersionByServerId).filter(([key]) => key !== serverId),
                     ),
                     sessionOrganizationPinsBySessionKey: removeServerRecordEntries(state.sessionOrganizationPinsBySessionKey, serverId),
+                    sessionOrganizationAttentionStandingsBySessionKey: removeServerRecordEntries(state.sessionOrganizationAttentionStandingsBySessionKey, serverId),
                     sessionOrganizationFoldersByFolderKey: removeServerRecordEntries(state.sessionOrganizationFoldersByFolderKey, serverId),
                     sessionOrganizationFolderAssignmentsBySessionKey: folderAssignments,
                     sessionOrganizationTagsByTagKey: removeServerRecordEntries(state.sessionOrganizationTagsByTagKey, serverId),

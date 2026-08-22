@@ -86,6 +86,43 @@ describe('buildSessionHandoffRecoveryPlan', () => {
         ).toBeNull();
     });
 
+    it('keeps an installed Agent identity and its runtime vendor resume id for source recovery', () => {
+        const runtimeDescriptorV1 = {
+            v: 1,
+            agentId: 'acme.agent',
+            agent: {
+                providerSessionId: 'external_vendor_session',
+            },
+        } as const;
+
+        expect(
+            buildSessionHandoffRecoveryPlan({
+                handoffId: 'handoff_external_agent',
+                sessionId: 'session_external_agent',
+                sourceMachineId: 'machine_1',
+                sourceMetadata: {
+                    host: 'machine.local',
+                    path: '/workspace',
+                    runtimeDescriptorV1,
+                } satisfies Metadata,
+                sessionStorageMode: 'persisted',
+            }),
+        ).toEqual({
+            handoffId: 'handoff_external_agent',
+            actions: ['restart_on_source', 'keep_stopped'],
+            sourceResume: {
+                sessionId: 'session_external_agent',
+                machineId: 'machine_1',
+                directory: '/workspace',
+                agent: 'acme.agent',
+                resume: 'external_vendor_session',
+                transcriptStorage: 'persisted',
+                serverId: null,
+                runtimeDescriptorV1,
+            },
+        });
+    });
+
     it('resolves the recovery agent from agentRuntimeDescriptorV1 when flavor is missing', () => {
         const sourceMetadata = {
             host: 'machine.local',

@@ -48,6 +48,24 @@ describe('sessionModeControl', () => {
     expect(res?.options.map((option) => option.id)).toEqual(['build', 'plan']);
   });
 
+  it('projects producer-declared modes for an external Agent', async () => {
+    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+    const metadata = createMetadata({
+      sessionModesV1: {
+        v: 1,
+        agentId: 'acme.agent',
+        updatedAt: 1,
+        currentModeId: 'build',
+        availableModes: [{ id: 'build', name: 'Build' }, { id: 'review', name: 'Review' }],
+      },
+    });
+
+    expect(computeSessionModePickerControl({ agentId: 'acme.agent', metadata })).toMatchObject({
+      currentModeId: 'build',
+      options: [{ id: 'build', name: 'Build' }, { id: 'review', name: 'Review' }],
+    });
+  });
+
   it('computeSessionModePickerControl marks pending when requested override differs from current (ACP)', async () => {
     const { computeSessionModePickerControl } = await import('./sessionModeControl');
     const metadata = createMetadata({

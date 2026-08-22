@@ -1,4 +1,4 @@
-import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { buildSendMessageMeta } from '@/sync/domains/messages/buildSendMessageMeta';
 import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
 import { resolveSentFrom } from '@/sync/domains/messages/sentFrom';
@@ -27,11 +27,11 @@ import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resol
 type LocalOutboundDeliveryStatus = 'queued' | 'accepted';
 
 export function resolveOutgoingUserMessageModel(params: Readonly<{
-    agentId: AgentId | null;
+    agentId: string | null;
     modelMode?: ModelMode | null;
     structuredModelSelection?: SessionModelSelectionV1 | null;
 }>): MessageMeta['model'] | undefined {
-    if (!params.agentId) return undefined;
+    if (!params.agentId || !isBundledAgentId(params.agentId)) return undefined;
     const agentCore = getAgentCore(params.agentId);
     if (params.structuredModelSelection) {
         return agentCore.model.supportsSelection
@@ -81,7 +81,7 @@ function buildHostAdmissionMeta(origin: SessionMessageHostAdmissionOrigin | unde
 export function buildOutgoingUserTextRecord(params: Readonly<{
     text: string;
     displayText?: string;
-    agentId: AgentId | null;
+    agentId: string | null;
     modelMode?: ModelMode | null;
     permissionMode: PermissionMode;
     settings: Record<string, unknown>;

@@ -1,9 +1,14 @@
 import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol';
 
-import { AGENT_IDS, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { AGENT_IDS, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { getAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/agentLocalAuthCatalog';
 import { createProjectedAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/createProjectedAgentLocalAuthPlugin';
+import type { BundledAgentUiBehaviorDescriptor } from '@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides';
+import {
+    resolveBundledAgentUiBehaviorProjection,
+    type AgentUiBehavior,
+} from '@/agents/registry/registryUiBehavior';
 import type {
     MergedBackendProjectionEntry,
     MergedProviderProjectionEntry,
@@ -28,6 +33,12 @@ export type ResolvedAgentCatalogEntry = Readonly<{
     channel: 'stable' | 'experimental' | 'plugin' | null;
     enabled: boolean | null;
     isBuiltIn: boolean;
+    /**
+     * Bundled presentation behavior projected only through an explicit
+     * built-in backing Agent. `agentId` remains the external Agent identity.
+     */
+    descriptor: BundledAgentUiBehaviorDescriptor | null;
+    behavior: AgentUiBehavior | null;
     authPlugin: AgentLocalAuthPlugin | null;
 }>;
 
@@ -38,7 +49,7 @@ const CANONICAL_AGENT_ID_BY_NORMALIZED = new Map<string, AgentId>(
 function normalizeAgentId(agentId: string | null | undefined): string {
     const trimmed = String(agentId ?? '').trim();
     if (!trimmed) return '';
-    if (isAgentId(trimmed)) return trimmed;
+    if (isBundledAgentId(trimmed)) return trimmed;
     return CANONICAL_AGENT_ID_BY_NORMALIZED.get(trimmed.toLowerCase()) ?? trimmed;
 }
 
@@ -93,13 +104,13 @@ function isBuiltInProvider(
     if (mergedProviderProjection?.isBuiltIn !== undefined) {
         return mergedProviderProjection.isBuiltIn === true;
     }
-    return isAgentId(agentId);
+    return isBundledAgentId(agentId);
 }
 
 function resolveProviderTargetKey(agentId: string, isBuiltIn: boolean): string | null {
     const normalizedProviderId = normalizeAgentId(agentId);
     if (!normalizedProviderId) return null;
-    if (isBuiltIn && isAgentId(normalizedProviderId)) {
+    if (isBuiltIn && isBundledAgentId(normalizedProviderId)) {
         return resolveBackendTargetKeyV2({ kind: 'backend', backendId: normalizedProviderId });
     }
     return null;
@@ -110,7 +121,7 @@ function resolveProviderTargetKeyFromSettingsBackend(
     isBuiltIn: boolean,
     settingsBackendProjection: MergedBackendProjectionEntry | null,
 ): string | null {
-    if (isBuiltIn && isAgentId(agentId)) {
+    if (isBuiltIn && isBundledAgentId(agentId)) {
         return resolveProviderTargetKey(agentId, isBuiltIn);
     }
     if (settingsBackendProjection?.backendId) {
@@ -125,10 +136,10 @@ function resolveBehaviorProviderId(
     primaryMergedBackendProjection: MergedBackendProjectionEntry | null,
 ): AgentId | null {
     const projectedCatalogAgentId = mergedProviderProjection?.catalogAgentId ?? primaryMergedBackendProjection?.catalogAgentId ?? null;
-    if (projectedCatalogAgentId && isAgentId(projectedCatalogAgentId)) {
+    if (projectedCatalogAgentId && isBundledAgentId(projectedCatalogAgentId)) {
         return projectedCatalogAgentId;
     }
-    if (isAgentId(agentId)) {
+    if (isBundledAgentId(agentId)) {
         return agentId;
     }
     return null;
@@ -147,7 +158,7 @@ function resolveProviderTitle(
         return primaryMergedBackendProjection.title;
     }
 
-    if (isAgentId(agentId)) {
+    if (isBundledAgentId(agentId)) {
         return t(getAgentCore(agentId).displayNameKey);
     }
 
@@ -167,7 +178,7 @@ function resolveProviderSubtitle(
         return primaryMergedBackendProjection.subtitle;
     }
 
-    if (isAgentId(agentId)) {
+    if (isBundledAgentId(agentId)) {
         return agentId;
     }
 
@@ -175,7 +186,7 @@ function resolveProviderSubtitle(
 }
 
 function resolveProviderIconName(agentId: string): string {
-    const providerCore = isAgentId(agentId) ? getAgentCore(agentId) : null;
+    const providerCore = getAgentCore(agentId);
     if (providerCore) {
         return providerCore.ui.agentPickerIconName;
     }
@@ -210,7 +221,7 @@ function resolveProviderChannel(
         return mergedProviderProjection.channel;
     }
 
-    if (!isAgentId(agentId)) {
+    if (!isBundledAgentId(agentId)) {
         return 'plugin';
     }
 
@@ -226,7 +237,7 @@ function resolveProviderEnabled(
         mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
     }>,
 ): boolean | null {
-    if (!backendTargetKey && !isAgentId(agentId)) {
+    if (!backendTargetKey && !isBundledAgentId(agentId)) {
         return null;
     }
     const targetKey = backendTargetKey ?? resolveBackendTargetKeyV2({ kind: 'backend', backendId: agentId });
@@ -311,6 +322,7 @@ export function getResolvedAgentCatalogEntries(params: Readonly<{
         );
         const isBuiltIn = isBuiltInProvider(agentId, mergedProviderProjection);
         const behaviorProviderId = resolveBehaviorProviderId(agentId, mergedProviderProjection, settingsBackendProjection);
+        const behaviorProjection = resolveBundledAgentUiBehaviorProjection(behaviorProviderId);
         const iconAgentId = resolveProviderIconAgentId(mergedProviderProjection, settingsBackendProjection, behaviorProviderId);
         const backendTargetKey = resolveProviderTargetKeyFromSettingsBackend(agentId, isBuiltIn, settingsBackendProjection);
         return {
@@ -328,6 +340,8 @@ export function getResolvedAgentCatalogEntries(params: Readonly<{
                 mergedProviderProjectionById: params.mergedProviderProjectionById,
             }),
             isBuiltIn,
+            descriptor: behaviorProjection?.descriptor ?? null,
+            behavior: behaviorProjection?.behavior ?? null,
             authPlugin: resolveAgentLocalAuthPlugin(agentId, behaviorProviderId, mergedProviderProjection),
         };
     });
@@ -354,6 +368,7 @@ export function resolveAgentCatalogProjection(agentId: string, params: Readonly<
     );
     const isBuiltIn = isBuiltInProvider(normalizedProviderId, mergedProviderProjection);
     const behaviorProviderId = resolveBehaviorProviderId(normalizedProviderId, mergedProviderProjection, settingsBackendProjection);
+    const behaviorProjection = resolveBundledAgentUiBehaviorProjection(behaviorProviderId);
     const iconAgentId = resolveProviderIconAgentId(mergedProviderProjection, settingsBackendProjection, behaviorProviderId);
     const backendTargetKey = resolveProviderTargetKeyFromSettingsBackend(normalizedProviderId, isBuiltIn, settingsBackendProjection);
     return {
@@ -371,6 +386,8 @@ export function resolveAgentCatalogProjection(agentId: string, params: Readonly<
             mergedProviderProjectionById: params.mergedProviderProjectionById,
         }),
         isBuiltIn,
+        descriptor: behaviorProjection?.descriptor ?? null,
+        behavior: behaviorProjection?.behavior ?? null,
         authPlugin: resolveAgentLocalAuthPlugin(normalizedProviderId, behaviorProviderId, mergedProviderProjection),
     };
 }

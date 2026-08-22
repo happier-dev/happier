@@ -106,7 +106,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 
 vi.mock('@/agents/catalog/catalog', () => ({
     DEFAULT_AGENT_ID: 'claude',
-    isAgentId: (value: unknown) => value === 'claude',
+    isBundledAgentId: (value: unknown) => value === 'claude',
     getAgentCore: () => ({ displayNameKey: 'Claude', ui: { agentPickerIconName: 'code-slash-outline' } }),
 }));
 

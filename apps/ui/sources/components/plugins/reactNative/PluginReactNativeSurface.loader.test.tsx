@@ -102,6 +102,40 @@ describe('PluginReactNativeSurface loader integration', () => {
         }
     });
 
+    it('names the plugin, the surface and the thrown error when an artifact load fails', async () => {
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        const { log } = await import('@/log');
+        const logged = vi.spyOn(log, 'log').mockImplementation(() => undefined);
+        const load = vi.fn(async () => {
+            throw new Error('happier plugin host runtime "react" is not installed');
+        });
+        const canonical = createCanonicalRenderContextFixture();
+
+        try {
+            await renderScreen(<PluginReactNativeSurface
+                surfaceId="surface_1"
+                decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+                renderContext={canonical.renderContext}
+                load={load}
+                loadPolicy={{ source: 'installedArtifact' }}
+                cacheKey="cache_load_failure_1"
+                loadTimeoutMs={1000}
+            />);
+            await flushHookEffects();
+
+            expect(load).toHaveBeenCalledTimes(1);
+            const messages = logged.mock.calls.map(([message]) => String(message));
+            const reported = messages.find((message) => message.includes('load_error'));
+            expect(reported).toBeDefined();
+            expect(reported).toContain('acme.preview');
+            expect(reported).toContain('surface_1');
+            expect(reported).toContain('happier plugin host runtime');
+        } finally {
+            logged.mockRestore();
+            canonical.dispose();
+        }
+    });
+
     it('projects a Re.Pack surface through the installed-artifact loader without a sibling startup protocol', async () => {
         const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
         const { createPluginReactNativeBundleCache } = await import('./bundleCache');
@@ -148,7 +182,7 @@ describe('PluginReactNativeSurface loader integration', () => {
                 },
             },
             loadInstalledBundle: createRepackInstalledArtifactModuleLoader({
-                resolveInstalledArtifactFileUrl: vi.fn(async () => 'file:///cache/ios.bundle.js'),
+                resolveInstalledArtifactFileUrl: vi.fn(async () => 'file:///cache/ios.bundle'),
             }),
         });
         const loaded = await loadPluginReactNativeBundleModule({

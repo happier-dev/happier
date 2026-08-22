@@ -71,6 +71,7 @@ type MachineCapabilitiesResponse = Readonly<{
                 }>;
                 actions: Readonly<{ test: boolean; pack: boolean }>;
             }>[];
+            pendingChanges?: readonly unknown[];
         } | null;
     }>>>;
 }>;
@@ -313,6 +314,7 @@ function createPluginDiagnosticRecord(params: Readonly<{
 function createMachineCapabilitiesState(
     installedPlugins: readonly InstalledPluginEntry[],
     developmentSources: NonNullable<NonNullable<MachineCapabilitiesResponse['results'][string]>['data']>['developmentSources'] = [],
+    pendingChanges: readonly unknown[] = [],
 ): LoadedMachineCapabilitiesState {
     return {
         status: 'loaded',
@@ -327,6 +329,7 @@ function createMachineCapabilitiesState(
                             installedPlugins,
                             developmentActions: { create: true, develop: true },
                             developmentSources,
+                            pendingChanges,
                         },
                     },
                 },
@@ -521,6 +524,22 @@ function createDeferred(): Readonly<{
         resolve = settle;
     });
     return { promise, resolve };
+}
+
+function findPendingChangeAction(
+    screen: Awaited<ReturnType<typeof renderSettingsView>>,
+    pendingChangeId: string,
+    actionId: 'approve' | 'reject',
+): Readonly<{ disabled: boolean; onPress: () => void }> | undefined {
+    return screen.findAllByType('ItemRowActions' as never)
+        .flatMap((node: Readonly<{ props: Readonly<{ overflowTriggerTestID?: string; actions?: readonly Readonly<{ id: string }>[] }> }>) => (
+            node.props.overflowTriggerTestID === `settings.plugins.management.pendingChanges.${pendingChangeId}.actions.overflow`
+                ? node.props.actions ?? []
+                : []
+        ))
+        .find((action: Readonly<{ id: string }>) => action.id === actionId) as
+        | Readonly<{ disabled: boolean; onPress: () => void }>
+        | undefined;
 }
 
 async function selectPluginManagementView(
@@ -851,7 +870,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     }),
     getAgentIconSource: () => null,
     getAgentIconTintColor: () => null,
-    isAgentId: (agentId: unknown) => agentId === 'claude' || agentId === 'codex',
+    isBundledAgentId: (agentId: unknown) => agentId === 'claude' || agentId === 'codex',
     resolveAgentIdFromConnectedServiceId: () => null,
 }));
 
@@ -875,7 +894,7 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
         getAllAgentCatalogDefinitions: () => [],
         getAgentCliRuntimeSpec: () => ({ binaryName: null }),
         getProviderCliInstallGuideUrl: () => null,
-        isAgentId: (agentId: unknown) => agentId === 'claude' || agentId === 'codex',
+        isBundledAgentId: (agentId: unknown) => agentId === 'claude' || agentId === 'codex',
         legacyCustomAcpCompat: {
             LEGACY_COMPAT_AGENT_IDS: ['customAcp'],
             getLegacyCustomAcpAgentLocalCliConfig: () => ({
@@ -1371,6 +1390,208 @@ describe('PluginSettingsHomeScreen', () => {
                 params: { pluginId: 'development-plugin' },
             },
         }));
+    });
+
+    it('lists a pending change this app never started and lets the present user decide it', async () => {
+        // The flagship agent-authored loop: an Agent prepares a plugin change
+        // through its Action, the daemon issues a pending id, and nothing in
+        // this app ever saw that id. Without this section the change is
+        // invisible and expires unanswered, because approving source-root and
+        // package trust is not delegable to an Agent.
+        const refresh = vi.fn();
+        const sourceRootPath = '/workspace/plugins/agent-authored';
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: createMachineCapabilitiesState([], [], [{
+                kind: 'sourceRootReviewRequired',
+                pendingChangeId: 'pending-agent-1',
+                review: { source: { kind: 'path', locator: sourceRootPath } },
+            }]),
+            refresh,
+        });
+        invokeWithAlertsMock.mockResolvedValue({
+            supported: true,
+            response: {
+                ok: true,
+                result: {
+                    action: 'changeStatus',
+                    pendingChangeId: 'pending-agent-1',
+                    status: {
+                        kind: 'sourceRootReviewRequired',
+                        pendingChangeId: 'pending-agent-1',
+                        review: { source: { kind: 'path', locator: sourceRootPath } },
+                    },
+                },
+            },
+        });
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce(createCommunityInstallReviewResult('pending-agent-1').change)
+            .mockResolvedValueOnce({
+                kind: 'committed',
+                pluginId: 'community-plugin',
+                desiredGeneration: 'generation-1',
+                appliedGeneration: 'generation-1',
+                pendingSurfaces: [],
+            });
+        modalConfirmMock.mockResolvedValueOnce(true);
+        modalShowMock.mockImplementationOnce((config: Readonly<{
+            props?: Readonly<{
+                onResolve?: (result: Readonly<{
+                    approved: boolean;
+                    optionalSelections: readonly Readonly<{ accessId: string; selected: boolean }>[];
+                }>) => void;
+            }>;
+        }>) => {
+            config.props?.onResolve?.({ approved: true, optionalSelections: [{ accessId: 'sessions', selected: true }] });
+            return 'plugin-install-review-modal';
+        });
+
+        const { PluginSettingsHomeScreen } = await import('./PluginSettingsHomeScreen');
+        const screen = await renderSettingsView(React.createElement(PluginSettingsHomeScreen));
+        await act(async () => {
+            await flushAsync();
+            await flushAsync();
+        });
+
+        // Listed on the plugin settings surface itself, not behind a tab: a
+        // decision waiting on this user is attention, not one view's content.
+        expect(screen.findRow('settings.plugins.management.pendingChanges.pending-agent-1')).toBeTruthy();
+
+        const approve = findPendingChangeAction(screen, 'pending-agent-1', 'approve');
+        expect(approve?.disabled).toBe(false);
+        await act(async () => {
+            approve?.onPress();
+            await flushAsync();
+            await flushAsync();
+            await flushAsync();
+            await flushAsync();
+        });
+
+        // The listed row is a projection that can be minutes old, so the change
+        // is re-read at its owner before the user is asked anything.
+        expect(invokeWithAlertsMock).toHaveBeenCalledWith(expect.objectContaining({
+            request: {
+                id: MARKETPLACE_CAPABILITY_ID,
+                method: 'changeStatus',
+                params: { pendingChangeId: 'pending-agent-1' },
+            },
+        }));
+        expect(modalConfirmMock).toHaveBeenCalledWith(
+            'settingsPlugins.developmentTrustSourceRootTitle',
+            expect.stringContaining(sourceRootPath),
+            expect.objectContaining({ confirmText: 'settingsPlugins.developmentTrustSourceRootConfirm' }),
+        );
+        // Same canonical decision seam the CLI and this screen's own flows use:
+        // source-root trust first, then the package review the daemon answers
+        // with. The Agent's id is carried through both, never re-created.
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            method: 'daemon.plugins.install.review.decide',
+            payload: {
+                v: 1,
+                pendingChangeId: 'pending-agent-1',
+                decision: 'trustSourceRoot',
+                actorEvidence: {
+                    kind: 'authenticatedLocalUser',
+                    interactionId: expect.any(String),
+                    occurredAtMs: expect.any(Number),
+                },
+            },
+        }));
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            method: 'daemon.plugins.install.review.decide',
+            payload: expect.objectContaining({
+                pendingChangeId: 'pending-agent-1',
+                decision: 'installAndTrust',
+                optionalSelections: [{ accessId: 'sessions', selected: true }],
+            }),
+        }));
+        expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a pending change through the same daemon change owner', async () => {
+        const refresh = vi.fn();
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: createMachineCapabilitiesState([], [], [
+                createCommunityInstallReviewResult('pending-agent-2').change,
+            ]),
+            refresh,
+        });
+        invokeWithAlertsMock.mockResolvedValue({
+            supported: true,
+            response: {
+                ok: true,
+                result: {
+                    action: 'changeStatus',
+                    pendingChangeId: 'pending-agent-2',
+                    status: createCommunityInstallReviewResult('pending-agent-2').change,
+                },
+            },
+        });
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ kind: 'cancelled' });
+        modalConfirmMock.mockResolvedValueOnce(true);
+
+        const { PluginSettingsHomeScreen } = await import('./PluginSettingsHomeScreen');
+        const screen = await renderSettingsView(React.createElement(PluginSettingsHomeScreen));
+        await act(async () => {
+            await flushAsync();
+            await flushAsync();
+        });
+
+        expect(screen.findRow('settings.plugins.management.pendingChanges.pending-agent-2')).toBeTruthy();
+        await act(async () => {
+            findPendingChangeAction(screen, 'pending-agent-2', 'reject')?.onPress();
+            await flushAsync();
+            await flushAsync();
+            await flushAsync();
+        });
+
+        // A rejection never fabricates approval evidence: it is the daemon's
+        // own cancel decision, carrying no actor evidence at all.
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            method: 'daemon.plugins.install.review.decide',
+            payload: { v: 1, pendingChangeId: 'pending-agent-2', decision: 'cancel' },
+        }));
+        expect(modalShowMock).not.toHaveBeenCalled();
+        expect(modalAlertMock).toHaveBeenCalledWith('common.success', 'settingsPlugins.pendingChangeRejected');
+    });
+
+    it('renders the change owner\'s own answer when a listed change is no longer decidable', async () => {
+        const refresh = vi.fn();
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: createMachineCapabilitiesState([], [], [
+                createCommunityInstallReviewResult('pending-agent-3').change,
+            ]),
+            refresh,
+        });
+        invokeWithAlertsMock.mockResolvedValue({
+            supported: true,
+            response: {
+                ok: true,
+                result: {
+                    action: 'changeStatus',
+                    pendingChangeId: 'pending-agent-3',
+                    status: { kind: 'expired' },
+                },
+            },
+        });
+
+        const { PluginSettingsHomeScreen } = await import('./PluginSettingsHomeScreen');
+        const screen = await renderSettingsView(React.createElement(PluginSettingsHomeScreen));
+        await act(async () => {
+            await flushAsync();
+            await flushAsync();
+        });
+        await act(async () => {
+            findPendingChangeAction(screen, 'pending-agent-3', 'approve')?.onPress();
+            await flushAsync();
+            await flushAsync();
+        });
+
+        // A stale row must never become an approval. The owner said the change
+        // is gone, so nothing is decided and the user is told the truth.
+        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
+        expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'settingsPlugins.pendingChangeExpired');
+        expect(refresh).toHaveBeenCalledTimes(1);
     });
 
     it('names the exact source root in a separate trust decision before the plugin install review', async () => {

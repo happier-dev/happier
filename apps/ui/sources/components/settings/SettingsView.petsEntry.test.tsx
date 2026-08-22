@@ -181,8 +181,8 @@ vi.mock('@/utils/system/requestReview', () => ({
     requestReview: vi.fn(),
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => false,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => false,
 }));
 
 describe('SettingsView pets entry', () => {

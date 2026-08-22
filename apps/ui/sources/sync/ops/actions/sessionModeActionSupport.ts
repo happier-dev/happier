@@ -1,5 +1,5 @@
 import type { ResolvedActionOption } from '@happier-dev/protocol';
-import { inferAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
 import {
   computeSessionModePickerControl,
@@ -17,7 +17,10 @@ export function normalizeRequestedSessionModeId(
 }
 
 export function resolveSessionModeActionControl(session: Readonly<{ metadata?: unknown }> | null | undefined): SessionModePickerControl | null {
-  const agentId = inferAgentIdFromSessionMetadata((session as any)?.metadata);
+  // A Session whose Agent identity cannot be read has no mode picker; it must
+  // not fall back to the default Agent's modes.
+  const agentId = resolveAgentIdFromSessionMetadata((session as any)?.metadata);
+  if (agentId === null) return null;
   return computeSessionModePickerControl({
     agentId,
     metadata: ((session as any)?.metadata ?? null) as any,

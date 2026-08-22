@@ -29,6 +29,11 @@ describe('buildSessionOrganizationProjection', () => {
             folderAssignmentsBySessionKey: { 'server-a:s1': 'folder-a' },
             tagsByTagKey: {},
             tagAssignmentsBySessionKey: { 'server-a:s1': ['tag-a'] },
+            attentionStandingsBySessionKey: {
+                'server-a:s1': { sessionId: 's1', standing: true, updatedAt: 5 },
+                'server-a:s2': { sessionId: 's2', standing: false, updatedAt: 6 },
+                'server-b:s3': { sessionId: 's3', standing: true, updatedAt: 7 },
+            },
             orderEntriesByScopeKey: {},
             labelsByLabelKey: {},
         }, 'server-a');
@@ -38,6 +43,12 @@ describe('buildSessionOrganizationProjection', () => {
         expect(projection.pinnedSessionIds).toEqual(['s1', 's2']);
         expect(projection.folderAssignmentsBySessionId).toEqual({ s1: 'folder-a' });
         expect(projection.tagAssignmentsBySessionId).toEqual({ s1: ['tag-a'] });
+        // An explicit `false` is the user's "remove from Needs attention": it must survive the
+        // projection intact, and another server's standings must not leak into this one.
+        expect(projection.attentionStandingsBySessionId).toEqual({
+            s1: { sessionId: 's1', standing: true, updatedAt: 5 },
+            s2: { sessionId: 's2', standing: false, updatedAt: 6 },
+        });
         expect(projection.pinsBySessionId.s3).toBeUndefined();
     });
 });

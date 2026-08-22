@@ -17,6 +17,7 @@ import {
     type OpenableContentViewerSelectorV1,
     type PluginContributionIdentityV1,
     type PluginProjectionInstalledPackageV2,
+    type PluginProjectedActionV2,
     type PluginJsonSchemaValidator,
     type PluginProjectedComposerAttachmentEntryV1,
     type PluginProjectedComposerControlEntryV1,
@@ -60,10 +61,10 @@ export type PluginUiSessionHeaderActionProjection = UnknownRecord & Readonly<{
     icon?: PluginUiIconTokenV1;
     /**
      * The registry resolves authored local identifiers before this projection
-     * reaches UI. Consumers retain that qualified semantic command verbatim,
+     * reaches UI. Consumers retain that qualified semantic action verbatim,
      * rather than recreating action or destination qualification locally.
      */
-    command: PluginUiResolvedSemanticCommandV1;
+    action: PluginUiResolvedSemanticCommandV1;
 }>;
 
 export type PluginUiHostedWebProjection = UnknownRecord & Readonly<{
@@ -99,7 +100,7 @@ export type PluginUiPageHeaderActionProjection = Readonly<{
     description?: PluginLocalizedStringV2;
     icon?: PluginUiIconTokenV1;
     order?: number;
-    command: PluginUiResolvedSemanticCommandV1;
+    action: PluginUiResolvedSemanticCommandV1;
 }>;
 
 export type PluginUiSurfacePlacementProjection = UnknownRecord & Readonly<{
@@ -202,6 +203,35 @@ export type PluginVoiceProviderProjection = UnknownRecord & Readonly<{
 }>;
 
 /**
+ * Daemon-admitted Action facts retained for the one client executable
+ * composition owner. This is a projection carrier, not a UI-local Action
+ * catalog or target normalizer.
+ */
+export type PluginUiActionProjection = UnknownRecord & PluginProjectedActionV2;
+
+/**
+ * One exact lookup over the daemon-admitted raw Action projection. Consumers
+ * receive no reconstructed target or availability decision: identity, key, and
+ * descriptor must agree or the lookup fails closed.
+ */
+export type PluginUiProjectedActionResolver = (
+    identity: PluginContributionIdentityV1,
+) => PluginProjectedActionV2 | null;
+
+export function createPluginUiProjectedActionResolver(
+    actionsById: Readonly<Record<string, PluginProjectedActionV2>> | null | undefined,
+): PluginUiProjectedActionResolver {
+    return (identity) => {
+        const action = actionsById?.[buildQualifiedPluginContributionKey(identity)] ?? null;
+        return action
+            && action.pluginId === identity.pluginId
+            && action.id === identity.localId
+            ? action
+            : null;
+    };
+}
+
+/**
  * One daemon-admitted Composer attachment declaration plus the exact
  * validator compiled for this UI projection's schema/generation lifetime.
  * The executable validator is host-private projection state, not a new wire
@@ -239,6 +269,7 @@ export type PluginUiProjectionModel = Readonly<{
     composerAttachmentsById: Readonly<Record<string, PluginUiComposerAttachmentProjection>>;
     composerControlsById: Readonly<Record<string, PluginProjectedComposerControlEntryV1>>;
     composerRegionsById: Readonly<Record<string, PluginProjectedComposerRegionEntryV1>>;
+    actionsById: Readonly<Record<string, PluginUiActionProjection>>;
     voiceProvidersById: Readonly<Record<string, PluginVoiceProviderProjection>>;
     unknownEntriesById: Readonly<Record<string, UnknownRecord>>;
 }>;
@@ -259,6 +290,7 @@ export const EMPTY_PLUGIN_UI_PROJECTION: PluginUiProjectionModel = Object.freeze
     composerAttachmentsById: Object.freeze({}),
     composerControlsById: Object.freeze({}),
     composerRegionsById: Object.freeze({}),
+    actionsById: Object.freeze({}),
     voiceProvidersById: Object.freeze({}),
     unknownEntriesById: Object.freeze({}),
 });
@@ -331,15 +363,15 @@ function resolveSessionHeaderAction(
     const icon = entry.icon === undefined
         ? null
         : PluginUiIconTokenV1Schema.safeParse(entry.icon);
-    const command = PluginUiResolvedSemanticCommandV1Schema.safeParse(entry.command);
-    if (!title.success || (icon !== null && !icon.success) || !command.success) {
+    const action = PluginUiResolvedSemanticCommandV1Schema.safeParse(entry.action);
+    if (!title.success || (icon !== null && !icon.success) || !action.success) {
         return null;
     }
     return Object.freeze({
         ...entry,
         title: title.data,
         ...(icon?.success ? { icon: icon.data } : {}),
-        command: command.data,
+        action: action.data,
     });
 }
 
@@ -349,8 +381,8 @@ function resolvePluginUiPageHeaderAction(
     const entry = asRecord(value);
     if (!entry) return null;
     // The daemon projection is strict at ingress. This consumer validates its
-    // public field leaves again but leaves the resolved command itself to the
-    // Protocol schema; it never recreates local-id qualification here.
+    // public field leaves again but leaves the resolved semantic action itself
+    // to the Protocol schema; it never recreates local-id qualification here.
     const id = PluginContributionLocalIdSchema.safeParse(entry.id);
     const title = PluginLocalizedStringV2Schema.safeParse(entry.title);
     const description = entry.description === undefined
@@ -364,14 +396,14 @@ function resolvePluginUiPageHeaderAction(
         : typeof entry.order === 'number' && Number.isInteger(entry.order)
             ? entry.order
             : false;
-    const command = PluginUiResolvedSemanticCommandV1Schema.safeParse(entry.command);
+    const action = PluginUiResolvedSemanticCommandV1Schema.safeParse(entry.action);
     if (
         !id.success
         || !title.success
         || (description !== null && !description.success)
         || (icon !== null && !icon.success)
         || order === false
-        || !command.success
+        || !action.success
     ) {
         return null;
     }
@@ -381,15 +413,15 @@ function resolvePluginUiPageHeaderAction(
         ...(description?.success ? { description: description.data } : {}),
         ...(icon?.success ? { icon: icon.data } : {}),
         ...(order === null ? {} : { order }),
-        command: command.data,
+        action: action.data,
     });
 }
 
 function resolvePluginUiPageHeaderActions(value: unknown): readonly PluginUiPageHeaderActionProjection[] {
     if (!Array.isArray(value)) return Object.freeze([]);
     return Object.freeze(value.flatMap((entry) => {
-        const action = resolvePluginUiPageHeaderAction(entry);
-        return action ? [action] : [];
+        const headerAction = resolvePluginUiPageHeaderAction(entry);
+        return headerAction ? [headerAction] : [];
     }));
 }
 
@@ -588,6 +620,11 @@ export function normalizePluginUiProjection(
     const composerRegionsById = Object.freeze({
         ...(projection.familiesById.composerRegions?.entriesById ?? {}),
     });
+    // The daemon Registry has already resolved availability, identity, and
+    // execution target. Keep these entries verbatim so the client executable
+    // owner consumes one canonical projection rather than rebuilding Actions
+    // from a feature-local declaration family.
+    const actionsById = Object.freeze({ ...projection.actionsById });
 
     const voiceProvidersById: Record<string, PluginVoiceProviderProjection> = {};
     const voiceProviderFamily = projection.familiesById.voiceProviders;
@@ -645,6 +682,7 @@ export function normalizePluginUiProjection(
             composerAttachmentsById,
             composerControlsById,
             composerRegionsById,
+            actionsById,
             voiceProvidersById: Object.freeze(voiceProvidersById),
         });
     }
@@ -770,6 +808,7 @@ export function normalizePluginUiProjection(
         composerAttachmentsById,
         composerControlsById,
         composerRegionsById,
+        actionsById,
         voiceProvidersById: Object.freeze(voiceProvidersById),
         unknownEntriesById: Object.freeze(unknownEntriesById),
     });

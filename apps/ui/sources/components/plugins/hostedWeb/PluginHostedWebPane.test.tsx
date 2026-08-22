@@ -2436,6 +2436,50 @@ describe('PluginHostedWebPane', () => {
         }
     });
 
+    it('mints a new bridge nonce when the bound page location changes', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const previousCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+        const randomUUID = vi.fn()
+            .mockReturnValueOnce('sub-path-one')
+            .mockReturnValueOnce('sub-path-two');
+        Object.defineProperty(globalThis, 'crypto', {
+            configurable: true,
+            value: { randomUUID },
+        });
+
+        try {
+            const screen = await renderScreen(
+                <PluginHostedWebPane
+                    contributionId="hostedWeb:acme.preview:preview-web"
+                    surfaceContext={surfaceContext}
+                    pluginUiProjection={projection}
+                    endpointUrl="https://preview.happier.test/plugin/acme/"
+                    platform="web"
+                    {...({ mountInstanceKey: 'mount-one', subPath: 'notes/one' } as any)}
+                />,
+            );
+            expect(new URL(String(findHostedWebIframe(screen).props.src)).searchParams.get('happierBridgeNonce')).toBe('sub-path-one');
+
+            // The same bound instance navigating to another plugin-local page is a
+            // new guest document. A nonce minted for the previous page must not
+            // stay valid for the frame that replaces it.
+            await screen.update(
+                <PluginHostedWebPane
+                    contributionId="hostedWeb:acme.preview:preview-web"
+                    surfaceContext={surfaceContext}
+                    pluginUiProjection={projection}
+                    endpointUrl="https://preview.happier.test/plugin/acme/"
+                    platform="web"
+                    {...({ mountInstanceKey: 'mount-one', subPath: 'notes/two' } as any)}
+                />,
+            );
+            expect(new URL(String(findHostedWebIframe(screen).props.src)).searchParams.get('happierBridgeNonce')).toBe('sub-path-two');
+        } finally {
+            if (previousCrypto) Object.defineProperty(globalThis, 'crypto', previousCrypto);
+            else Reflect.deleteProperty(globalThis, 'crypto');
+        }
+    });
+
     it('remounts a same-instance targeted hosted-web guest with a fresh nonce when launch input changes', async () => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const listeners = new Set<(event: MessageEvent) => void>();

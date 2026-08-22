@@ -162,7 +162,33 @@ function projectionInputs(
         mergedBackendProjectionById: {},
         discoveredBackendIds: [],
         pluginProjectionById: { [PLUGIN_ID]: plugin },
-        pluginProjectionV2: null,
+        pluginProjectionV2: {
+            v: 2,
+            generation: GENERATION,
+            installedPackagesById: {},
+            agentsById: {},
+            backendsById: {},
+            actionsById: {
+                [`${PLUGIN_ID}/${event.setupAction.identity.localId}`]: {
+                    id: event.setupAction.identity.localId,
+                    pluginId: PLUGIN_ID,
+                    title: event.setupAction.title,
+                    scopes: ['settings'],
+                    surfaces: ['plugin'],
+                    execution: { target: 'daemon' },
+                    placementBindings: [],
+                    priority: 0,
+                    dangerLevel: 'safe',
+                    available: true,
+                },
+            },
+            toolsById: {},
+            commandsById: {},
+            resourcesById: {},
+            settingsById: {},
+            familiesById: {},
+            diagnostics: [],
+        },
         automationEligibleEvents: [event],
         registryDiagnostics: [],
     };
@@ -299,6 +325,10 @@ describe('Plugin Event Automation setup orchestration', () => {
         const dispatched = dispatch.mock.calls[0]?.[0];
         expect(dispatched).not.toHaveProperty('targetedOperation');
         expect(dispatched).not.toHaveProperty('callerPluginId');
+        expect(dispatched?.resolveContributedAction?.({
+            pluginId: PLUGIN_ID,
+            localId: SETUP_ACTION_LOCAL_ID,
+        })).toMatchObject({ execution: { target: 'daemon' } });
 
         if (result.kind !== 'configured') throw new Error('expected configured Event setup');
         selectedOrigin = executionOrigin('github-materialization-b');

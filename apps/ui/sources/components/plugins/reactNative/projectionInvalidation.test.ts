@@ -6,25 +6,16 @@ import {
     createPluginReactNativeBundleCache,
     derivePluginReactNativeBundleCacheKey,
 } from './bundleCache';
-import { createPluginUiExecutableModuleHost } from './executableModuleHost';
 import { createPluginReactNativeModuleRegistry } from './moduleRegistry';
 import {
-    applyPluginUiReactNativeExecutableAuthorityInvalidation,
     createPluginUiReactNativeRuntimeProjectionReconciler,
 } from './projectionInvalidation';
-import type { PluginReactNativeLoaderBackend } from './loader';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
     type PluginUiProjectionModel,
     type PluginUiReactNativeBundleProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-
-const moduleReference = Object.freeze({
-    containerName: 'acme_preview_client_runtime',
-    modulePath: './clientRuntime',
-    exportName: 'activateClientRuntime',
-});
 
 function identity(projectionGeneration: number) {
     return Object.freeze({
@@ -106,45 +97,6 @@ describe('plugin UI React Native runtime projection invalidation owner', () => {
         expect(existsSync(new URL('./hotReload.test.ts', import.meta.url))).toBe(false);
         expect(existsSync(new URL('./runtimePolicy.ts', import.meta.url))).toBe(false);
         expect(existsSync(new URL('./runtimePolicy.test.ts', import.meta.url))).toBe(false);
-    });
-
-    it('retires active executable authority when the projection generation changes', async () => {
-        const cache = createPluginReactNativeBundleCache();
-        const cleanup = vi.fn();
-        const unwind = vi.fn();
-        const executableHost = createPluginUiExecutableModuleHost();
-        const generation12Identity = identity(12);
-        const authority = Object.freeze({
-            serverId: 'server-1', machineId: 'machine-1', projectionGeneration: 12,
-        });
-        cache.putInstalledArtifact({
-            identity: generation12Identity,
-            bytes: new Uint8Array([47, 47, 32, 98, 117, 110, 100, 108, 101]),
-            format: 'plainJs',
-        });
-        await executableHost.replaceAuthority(authority);
-        await expect(executableHost.activate({
-            cache,
-            identity: generation12Identity,
-            moduleReference,
-            backend: Object.freeze({
-                backendId: 'reactNativeWebModule',
-                available: true,
-                loadInstalledBundle: vi.fn(async () => async () => cleanup),
-            }) satisfies PluginReactNativeLoaderBackend,
-            hostPlatform: 'web',
-            authority,
-            createScope: () => ({ api: Object.freeze({}), commit: vi.fn(), unwind }),
-        })).resolves.toEqual({ ok: true });
-
-        await applyPluginUiReactNativeExecutableAuthorityInvalidation({
-            previous: model(12),
-            next: model(13),
-            executableHost,
-        });
-
-        expect(cleanup).toHaveBeenCalledTimes(1);
-        expect(unwind).toHaveBeenCalledTimes(1);
     });
 
     it('reconciles byte and loaded-module caches across current scoped projection sources', () => {

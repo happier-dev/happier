@@ -5,7 +5,7 @@ import Fuse from 'fuse.js';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { getPreferredLanguage, t } from '@/text';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 
 import { SETTINGS_PAGE_CATALOG, flattenSettingsPageCatalog } from '../pageCatalog';
@@ -157,7 +157,7 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
     const appShellPluginUiProjection = useAppShellPluginUiProjection();
     const useProfiles = Boolean(useSetting('useProfiles'));
     const devModeEnabled = Boolean(useLocalSetting('devModeEnabled'));
-    const tauriDesktop = isTauriDesktop();
+    const tauriDesktop = isDesktopHost();
 
     const usageReportingEnabled = useFeatureEnabled('usage.reporting');
     const executionRunsEnabled = useFeatureEnabled('execution.runs');

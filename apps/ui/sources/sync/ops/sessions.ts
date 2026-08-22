@@ -10,6 +10,7 @@ import { assertRpcResponseWithSuccess } from '../runtime/assertRpcResponseWithSu
 import { buildResumeHappySessionRpcParams, type ResumeHappySessionRpcParams } from '../domains/session/resume/resumeSessionPayload';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '../domains/session/spawn/spawnSessionRpcTimeout';
 import { storage } from '../domains/state/storage';
+import { readMachineDaemonCliVersionForServerScope } from '../domains/machines/readMachineDaemonCliVersionForServerScope';
 import { nowServerMs } from '../runtime/time';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -24,13 +25,11 @@ import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import { prepareAccountSettingsForDaemonSpawnIfNeeded } from './accountSettingsDaemonSpawnPreparation';
 import type {
-    BackendTargetRefV2Input,
     BackendTargetRefV1,
     CheckpointCodeRollbackRequest,
     CheckpointCodeRollbackResult,
     LlmTaskRunnerConfigV1,
     SessionAttachMetadataIdentityPolicy,
-    SessionContinueWithReplayRpcResult,
     SessionAuthoringValueV1,
     SessionInitialGoalRequestV1,
     SessionModelSelectionV1,
@@ -42,11 +41,7 @@ import type {
     SpawnSessionExecutionAuthorization,
     SpawnSessionResult,
 } from '@happier-dev/protocol';
-import { readBackendTargetRefV2 } from '@happier-dev/protocol';
-import type { AgentId } from '@/agents/catalog/catalog';
-import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 import {
-    SessionContinueWithReplayRpcResultSchema,
     CheckpointCodeRollbackResultSchema,
     SessionForkRpcResultSchema,
     SessionRollbackRpcResultSchema,
@@ -67,6 +62,7 @@ import {
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { buildResumeCapabilityOptionsFromUiState } from '@/agents/registry/registryUiBehavior';
 import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
+import { supportsSessionForkRequestId } from '@/utils/system/versionUtils';
 export {
     sessionScmBranchCheckout,
     sessionScmBranchCreate,
@@ -243,20 +239,25 @@ export interface ResumeSessionOptions {
     preferScopedMachineRpc?: boolean;
 }
 
-/**
- * Resume an inactive session by spawning a new CLI process that reconnects
- * to the existing Happy session and resumes the agent.
- */
-export async function resumeSession(options: ResumeSessionOptions): Promise<ResumeSessionResult> {
+async function runResumeSession(
+    options: ResumeSessionOptions,
+    presentation: 'explicit_resume' | 'ensure_pending_consumer',
+): Promise<ResumeSessionResult> {
     let providerSafeRpcRequired = false;
-    storage.getState().markSessionResuming(options.sessionId);
+    const shouldPresentAsResuming = presentation === 'explicit_resume'
+        || storage.getState().sessions[options.sessionId]?.active !== true;
+    if (shouldPresentAsResuming) {
+        storage.getState().markSessionResuming(options.sessionId);
+    }
     try {
         const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
         const session = storage.getState().sessions[options.sessionId];
         if (session?.archivedAt != null) {
             const unarchiveResult = await sessionUnarchiveWithServerScope(options.sessionId, { serverId });
             if (!unarchiveResult.success) {
-                storage.getState().clearSessionResuming(options.sessionId);
+                if (shouldPresentAsResuming) {
+                    storage.getState().clearSessionResuming(options.sessionId);
+                }
                 return {
                     type: 'error',
                     errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
@@ -294,7 +295,9 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
         const machineId = preferRequestedMachineTarget ? rawMachineId.trim() : machineTarget?.machineId ?? rawMachineId.trim();
         const directory = preferRequestedMachineTarget ? rawDirectory.trim() : machineTarget?.basePath ?? rawDirectory.trim();
         if (!machineId || !directory) {
-            storage.getState().clearSessionResuming(sessionId);
+            if (shouldPresentAsResuming) {
+                storage.getState().clearSessionResuming(sessionId);
+            }
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
@@ -356,14 +359,18 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             ...(preferScopedMachineRpc ? { preferScoped: true } : {}),
         });
         const normalizedResult = normalizeSpawnSessionResult(result);
-        if (normalizedResult.type === 'error') {
-            storage.getState().clearSessionResuming(sessionId);
-        } else {
-            storage.getState().armSessionResumingFallback(sessionId);
+        if (shouldPresentAsResuming) {
+            if (normalizedResult.type === 'error') {
+                storage.getState().clearSessionResuming(sessionId);
+            } else {
+                storage.getState().armSessionResumingFallback(sessionId);
+            }
         }
         return normalizedResult;
     } catch (error) {
-        storage.getState().clearSessionResuming(options.sessionId);
+        if (shouldPresentAsResuming) {
+            storage.getState().clearSessionResuming(options.sessionId);
+        }
         if (isAccountSettingsScopeChangedDuringSpawnPreparationError(error)) {
             return {
                 type: 'error',
@@ -399,87 +406,23 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
     }
 }
 
-export type ContinueSessionWithReplayOptions = Readonly<{
-    machineId: string;
-    serverId?: string | null;
-    directory: string;
-    agent: AgentId;
-    backendTarget?: BackendTargetRefV2Input;
-    approvedNewDirectoryCreation?: boolean;
-    permissionMode?: PermissionMode;
-    permissionModeUpdatedAt?: number;
-    modelSelection?: SessionModelSelectionV1;
-    replay: Readonly<{
-        previousSessionId: string;
-        strategy?: 'recent_messages' | 'summary_plus_recent';
-        recentMessagesCount?: number;
-        maxSeedChars?: number;
-        seedMode?: 'draft' | 'daemon_initial_prompt';
-        summaryRunner?: LlmTaskRunnerConfigV1;
-    }>;
-}>;
+/**
+ * Resume an inactive session by spawning a new CLI process that reconnects
+ * to the existing Happy session and resumes the agent.
+ */
+export async function resumeSession(options: ResumeSessionOptions): Promise<ResumeSessionResult> {
+    return await runResumeSession(options, 'explicit_resume');
+}
 
-export async function continueSessionWithReplay(options: ContinueSessionWithReplayOptions): Promise<SessionContinueWithReplayRpcResult> {
-    const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
-    const replayTarget = readMachineControlTargetForSession(options.replay.previousSessionId);
-    const machineId = replayTarget?.machineId ?? options.machineId;
-    const directory = replayTarget?.basePath ?? options.directory;
-    const canonicalAgent = isLegacyCompatAgentType(options.agent) ? undefined : options.agent;
-    const backendTarget = options.backendTarget
-        ? readBackendTargetRefV2(options.backendTarget)
-        : (canonicalAgent
-            ? readBackendTargetRefV2({ kind: 'builtInAgent', agentId: canonicalAgent } as const)
-            : undefined);
-    const legacyAgent = backendTarget?.kind === 'backend'
-        ? backendTarget.sourceKind === 'configured'
-            ? canonicalAgent
-            : backendTarget.backendId
-        : canonicalAgent;
-    try {
-        const raw = await machineRpcWithServerScope<unknown, unknown>({
-            machineId,
-            method: RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
-            payload: {
-                directory,
-                ...(legacyAgent ? { agent: legacyAgent } : {}),
-                ...(backendTarget ? { backendTarget } : {}),
-                approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
-                permissionMode: options.permissionMode,
-                permissionModeUpdatedAt: options.permissionModeUpdatedAt,
-                modelSelection: options.modelSelection,
-                replay: options.replay,
-            },
-            serverId,
-        });
-
-        const parsed = SessionContinueWithReplayRpcResultSchema.safeParse(raw);
-        if (!parsed.success) {
-            return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-                errorMessage: 'Unsupported replay response from daemon',
-            };
-        }
-        return parsed.data;
-    } catch (error) {
-        if (
-            isRpcMethodNotAvailableError(error)
-            || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
-        ) {
-            return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                errorMessage:
-                    `Daemon RPC is not available (RPC method not available). ` +
-                    `The daemon may be stopped, still starting, or not connected to the server.`,
-            };
-        }
-        return {
-            type: 'error',
-            errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-            errorMessage: error instanceof Error ? error.message : 'Failed to continue session with replay',
-        };
-    }
+/**
+ * Ask the daemon to prove that the durable Pending queue has a serviceable consumer.
+ * The daemon may adopt an existing runner or spawn a replacement when the UI's active
+ * snapshot is stale; an already-active snapshot must not be presented as a user resume.
+ */
+export async function ensureSessionRuntimeForPendingInput(
+    options: ResumeSessionOptions,
+): Promise<ResumeSessionResult> {
+    return await runResumeSession(options, 'ensure_pending_consumer');
 }
 
 export type ForkSessionOptions = Readonly<{
@@ -511,6 +454,18 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
             errorMessage: 'No reachable machine target found for session fork',
         };
     }
+    const state = storage.getState();
+    const daemonCliVersion = readMachineDaemonCliVersionForServerScope({
+        state,
+        machineId,
+        serverId,
+        activeServerId: state.profileScope?.serverId,
+    });
+    const requestId = supportsSessionForkRequestId(daemonCliVersion)
+        && typeof options.requestId === 'string'
+        && options.requestId.trim().length > 0
+        ? options.requestId
+        : null;
     const storedParentSession = storage.getState().sessions[options.parentSessionId];
     const storedParentOwnerMetadata = storedParentSession
         ? readSessionOwnerMetadataView(storedParentSession)
@@ -533,8 +488,8 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
                 strategy: options.strategy,
                 replaySummaryRunner: options.replaySummaryRunner,
                 replayMaxSeedChars: options.replayMaxSeedChars,
-                ...(typeof options.requestId === 'string' && options.requestId.trim().length > 0
-                    ? { requestId: options.requestId }
+                ...(requestId
+                    ? { requestId }
                     : {}),
             },
             serverId,

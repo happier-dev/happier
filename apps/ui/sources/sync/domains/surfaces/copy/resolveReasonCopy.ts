@@ -268,7 +268,6 @@ const PLUGIN_RUNTIME_KEYS = {
     entry_missing: 'pluginRuntime.missingRequirement',
     runtime_mismatch: 'pluginRuntime.missingRequirement',
     repack_script_manager_unavailable: 'pluginRuntime.missingRequirement',
-    transport_unavailable: 'pluginRuntime.unavailableGeneric',
 } as const satisfies Record<string, PluginRuntimeMessageKey>;
 
 type SimulatorPreviewMessageKey =

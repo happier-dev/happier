@@ -16,6 +16,7 @@ import {
 } from '@happier-dev/protocol';
 import {
     PluginUiJsonValueV1Schema,
+    type CurrentUiContextSnapshotV1,
     type PluginUiSelectedActionInputForReconstructionV1,
     type PluginUiTargetedContributionOperationV1,
     type PluginUiTargetedContributionsV1,
@@ -28,17 +29,31 @@ import type {
     PluginProjectionEntry,
 } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import {
+    resolvePluginUiClientActionRegistration,
+} from '@/components/plugins/reactNative/clientExecutableContributions';
+import {
     dispatchPluginSurfaceAction,
     type DispatchPluginSurfaceActionInput,
     type PluginSurfaceActionDispatchOutcome,
+    type PluginSurfaceContributedActionDescriptorResolver,
     type PluginSurfaceHostPresentedActionInvocation,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import {
+    createPluginActionCurrentIntentHandler,
+} from '@/components/plugins/surfaces/pluginSurfaceFeedback';
 import {
     machinePluginActionFormConnectedAccountOptionsResolve,
     type MachinePluginActionFormConnectedAccountOptionsResult,
 } from '@/sync/ops/machineContributionRegistryProjection';
 import { DEFAULT_INVOCATION_TIMEOUT_MS } from '@/components/appShell/plugins/pluginUiInvocationHost';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import {
+    resolvePluginProjectedActionPresentation,
+    type PluginProjectedActionPresentation,
+} from '@/sync/domains/plugins/ui/actionPresentation';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import { getPreferredLanguage } from '@/text';
 
 import {
     createActionInputForm,
@@ -92,9 +107,22 @@ export type PluginContributedActionHostFacts = Readonly<{
      * durable capability.
      */
     currentComposerIntent?: () => DaemonPluginHostPresentedComposerCurrentIntentV1 | null;
+    /**
+     * The one CurrentUiContextProvider reader, borrowed only when a registered
+     * client Action is dispatched. This generic controller never materializes a
+     * second context owner or retained snapshot.
+     */
+    readCurrentUiContext?: () => CurrentUiContextSnapshotV1 | null | undefined;
     signal?: AbortSignal;
     /** Placement-local currentness (route/session/composer/unmount/account). */
     isCurrent?: () => boolean;
+    /**
+     * Optional placement-owned admission fence for one exact Action. The
+     * controller remains the sole descriptor and dispatch owner; a concrete
+     * host supplies this only when its selected projection carries stricter
+     * per-Action currentness than the raw machine snapshot.
+     */
+    isActionCurrent?: (identity: Readonly<{ pluginId: string; localId: string }>) => boolean;
     /**
      * Captured Account lifetime for present-user forms. The controller borrows
      * its currentness and retirement only; it never receives Account data.
@@ -105,6 +133,18 @@ export type PluginContributedActionHostFacts = Readonly<{
 /** One atomic read of the host route facts and the normalized UI projection. */
 export type PluginContributedActionCurrentSnapshot = Readonly<{
     pluginProjectionById: Readonly<Record<string, PluginProjectionEntry>>;
+    /**
+     * The exact daemon V2 projection that supplied the fallback action map.
+     * The Action presentation resolver reads its translation bundle only; it
+     * never uses it to derive currentness, availability, or execution.
+     */
+    pluginUiProjection?: PluginUiProjectionModel | null;
+    /**
+     * Exact current raw V2 Action descriptor lookup. This controller carries
+     * it unchanged to the canonical dispatcher; it never derives a target
+     * from the legacy presentation projection or host facts.
+     */
+    resolveContributedAction?: PluginSurfaceContributedActionDescriptorResolver;
     /**
      * The one cold-admitted contribution snapshot for the mounted target. It is
      * absent outside a target-scoped Host API surface; selection never falls back
@@ -437,9 +477,21 @@ function sameSlashPresentation(
         && left.tokens.every((token, index) => token === right.tokens[index]);
 }
 
+function actionPresentationForResolver(
+    action: PluginProjectionAction,
+): PluginProjectedActionPresentation {
+    if (action.localizedPresentation) return action.localizedPresentation;
+    return {
+        title: action.title,
+        ...(action.description === null ? {} : { description: action.description }),
+        ...(action.inputHints === null ? {} : { inputHints: action.inputHints }),
+    };
+}
+
 function descriptorForAction(params: Readonly<{
     pluginId: string;
     action: PluginProjectionAction;
+    pluginUiProjection?: PluginUiProjectionModel | null;
     selector: PluginContributedActionSelector;
 }>): PluginContributedActionDescriptor | null {
     const identity = PluginContributionIdentityV1Schema.safeParse({
@@ -457,11 +509,17 @@ function descriptorForAction(params: Readonly<{
     ) {
         return null;
     }
+    const presentation = resolvePluginProjectedActionPresentation({
+        pluginId: params.pluginId,
+        presentation: actionPresentationForResolver(params.action),
+        projection: params.pluginUiProjection,
+        locale: getPreferredLanguage(),
+    });
     const base = {
         identity: identity.data,
         qualifiedActionId: buildQualifiedPluginContributionKey(identity.data),
-        title: params.action.title,
-        description: params.action.description,
+        title: presentation.title,
+        description: presentation.description,
         icon: params.action.icon,
         priority: params.action.priority ?? 0,
         placement: params.selector.placement,
@@ -469,10 +527,21 @@ function descriptorForAction(params: Readonly<{
         scope: params.selector.scope,
         scopes,
     };
-    const inputHints = params.action.inputHints ?? null;
+    const inputHints = presentation.inputHints;
     return inputHints?.fields.length
         ? { ...base, inputHints, kind: 'form' }
         : { ...base, inputHints, kind: 'direct' };
+}
+
+function presentationForExactBoundAction(
+    action: ExactBoundAction,
+) {
+    return resolvePluginProjectedActionPresentation({
+        pluginId: action.identity.pluginId,
+        presentation: actionPresentationForResolver(action.action),
+        projection: action.snapshot.pluginUiProjection,
+        locale: getPreferredLanguage(),
+    });
 }
 
 /**
@@ -653,7 +722,7 @@ export function createPluginContributedActionController(params: Readonly<{
     function hostStatus(snapshot: PluginContributedActionCurrentSnapshot):
         | Readonly<{
             kind: 'ready';
-            machineId: string;
+            machineId: string | null;
             serverId: string | null;
             expectedGeneration: string;
             accountLifetime: ActiveServerAccountScopeLifetime | null;
@@ -662,7 +731,7 @@ export function createPluginContributedActionController(params: Readonly<{
         | PluginContributedActionStaleOutcome {
         const machineId = readRequiredString(snapshot.host.machineId);
         const expectedGeneration = readExpectedGeneration(snapshot.host.expectedGeneration);
-        if (!machineId || !expectedGeneration) {
+        if (!expectedGeneration) {
             return { kind: 'unavailable', reason: 'host_unavailable' };
         }
         if (
@@ -679,6 +748,44 @@ export function createPluginContributedActionController(params: Readonly<{
             expectedGeneration,
             accountLifetime: snapshot.host.accountLifetime ?? null,
         };
+    }
+
+    function isActionCurrent(
+        snapshot: PluginContributedActionCurrentSnapshot,
+        identity: Readonly<{ pluginId: string; localId: string }>,
+    ): boolean {
+        try {
+            return snapshot.host.isActionCurrent?.(identity) !== false;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * The generic catalog owns placement, while the executable index owns
+     * whether a client target has committed. Daemon and legacy descriptors
+     * retain their established path; only a declared client Action joins the
+     * exact registration reader.
+     */
+    function hasCurrentClientActionRegistration(
+        snapshot: PluginContributedActionCurrentSnapshot,
+        identity: Readonly<{ pluginId: string; localId: string }>,
+    ): boolean {
+        let projectedAction: ReturnType<NonNullable<PluginContributedActionCurrentSnapshot['resolveContributedAction']>>;
+        try {
+            projectedAction = snapshot.resolveContributedAction?.(identity) ?? null;
+        } catch {
+            return false;
+        }
+        if (!projectedAction || projectedAction.execution.target !== 'client') return true;
+        const projectionGeneration = Number(readExpectedGeneration(snapshot.host.expectedGeneration));
+        return Number.isSafeInteger(projectionGeneration)
+            && projectionGeneration >= 0
+            && resolvePluginUiClientActionRegistration({
+                action: projectedAction,
+                projectionGeneration,
+                platform: resolvePluginUiClientExecutablePlatform(),
+            }) !== null;
     }
 
     /**
@@ -724,10 +831,17 @@ export function createPluginContributedActionController(params: Readonly<{
             return { kind: 'stale', reason: 'action_retired' };
         }
         const action = plugin.actions.find((candidate) => candidate.id === requested.identity.localId);
-        if (!action) return { kind: 'stale', reason: 'action_retired' };
+        if (
+            !action
+            || !isActionCurrent(snapshot, requested.identity)
+            || !hasCurrentClientActionRegistration(snapshot, requested.identity)
+        ) {
+            return { kind: 'stale', reason: 'action_retired' };
+        }
         const descriptor = descriptorForAction({
             pluginId: plugin.pluginId,
             action,
+            pluginUiProjection: snapshot.pluginUiProjection,
             selector: {
                 placement: requested.placement,
                 scope: requested.scope,
@@ -773,7 +887,13 @@ export function createPluginContributedActionController(params: Readonly<{
         // Snapshot placement is immutable presentation, while this narrow
         // current check admits only an actually UI-available target. It never
         // replaces the snapshot's action reference with another declaration.
-        if (!action || action.available !== true || !action.surfaces.includes('ui')) {
+        if (
+            !action
+            || !isActionCurrent(snapshot, identity.data)
+            || !hasCurrentClientActionRegistration(snapshot, identity.data)
+            || action.available !== true
+            || !action.surfaces.includes('ui')
+        ) {
             return { kind: 'stale', reason: 'action_retired' };
         }
         return { kind: 'resolved', value: { snapshot, identity: identity.data } };
@@ -799,6 +919,7 @@ export function createPluginContributedActionController(params: Readonly<{
         const descriptor = descriptorForAction({
             pluginId: plugin.pluginId,
             action,
+            pluginUiProjection: reference.value.snapshot.pluginUiProjection,
             // Retain only the first non-semantic placement to reuse the
             // descriptor, form, and currentness owner. A semantic
             // Composer/Message binding must never acquire this generic
@@ -901,6 +1022,19 @@ export function createPluginContributedActionController(params: Readonly<{
     ): Promise<PluginContributedActionInvocationOutcome> {
         const host = hostStatus(resolved.snapshot);
         if (host.kind !== 'ready') return host;
+        const projectedAction = resolved.snapshot.resolveContributedAction?.(resolved.identity) ?? null;
+        if (!projectedAction) return { kind: 'unavailable', reason: 'host_unavailable' };
+        const executionTarget = projectedAction.execution.target;
+        const projectionGeneration = Number(host.expectedGeneration);
+        if (
+            executionTarget === 'client'
+            && (!Number.isSafeInteger(projectionGeneration) || projectionGeneration < 0)
+        ) {
+            return { kind: 'unavailable', reason: 'host_unavailable' };
+        }
+        if (executionTarget === 'daemon' && !host.machineId) {
+            return { kind: 'unavailable', reason: 'host_unavailable' };
+        }
         const transportInput = PluginUiJsonValueV1Schema.safeParse(input);
         if (!transportInput.success) {
             // This is only the JSON transport boundary. The Action schema still
@@ -910,6 +1044,18 @@ export function createPluginContributedActionController(params: Readonly<{
         const invocation = resolveHostInvocation({ resolved, placement });
         if (invocation.kind !== 'resolved') return invocation;
         const dispatchSignal = signal ?? resolved.snapshot.host.signal;
+        const requestCurrentIntent = executionTarget === 'client' && projectedAction
+            ? createPluginActionCurrentIntentHandler({
+                requester: {
+                    pluginId: resolved.identity.pluginId,
+                    contributionId: resolved.identity.localId,
+                    generationId: host.expectedGeneration,
+                    invocationId: `ui-action:${host.expectedGeneration}`,
+                },
+                signal: dispatchSignal ?? new AbortController().signal,
+                isCurrent,
+            })
+            : undefined;
         try {
             const outcome = await dispatch({
                 // Catalog, Composer, and transcript host presentation never
@@ -917,18 +1063,36 @@ export function createPluginContributedActionController(params: Readonly<{
                 // receives only the current host intent carrier, if required.
                 action: resolved.identity,
                 input: transportInput.data,
-                contributedAction: {
-                    machineId: host.machineId,
-                    serverId: readRequiredString(resolved.snapshot.host.serverId) ?? null,
-                    expectedGeneration: host.expectedGeneration,
-                    ...(readRequiredString(resolved.snapshot.host.sessionId)
-                        ? { sessionId: readRequiredString(resolved.snapshot.host.sessionId)! }
-                        : {}),
-                    ...(invocation.invocation?.kind !== 'hostPresentedComposer'
-                        && resolved.snapshot.host.messageActionReference
-                        ? { messageActionReference: resolved.snapshot.host.messageActionReference }
-                        : {}),
-                },
+                ...(resolved.snapshot.resolveContributedAction
+                    ? { resolveContributedAction: resolved.snapshot.resolveContributedAction }
+                    : {}),
+                ...(executionTarget === 'client'
+                    ? {
+                        clientAction: {
+                            projectionGeneration,
+                            ...(requestCurrentIntent ? { requestCurrentIntent } : {}),
+                            ...(resolved.snapshot.host.readCurrentUiContext
+                                ? { currentUiContext: resolved.snapshot.host.readCurrentUiContext }
+                                : {}),
+                            ...(readRequiredString(resolved.snapshot.host.sessionId)
+                                ? { sessionId: readRequiredString(resolved.snapshot.host.sessionId)! }
+                                : {}),
+                        },
+                    }
+                    : {
+                        contributedAction: {
+                            machineId: host.machineId!,
+                            serverId: readRequiredString(resolved.snapshot.host.serverId) ?? null,
+                            expectedGeneration: host.expectedGeneration,
+                            ...(readRequiredString(resolved.snapshot.host.sessionId)
+                                ? { sessionId: readRequiredString(resolved.snapshot.host.sessionId)! }
+                                : {}),
+                            ...(invocation.invocation?.kind !== 'hostPresentedComposer'
+                                && resolved.snapshot.host.messageActionReference
+                                ? { messageActionReference: resolved.snapshot.host.messageActionReference }
+                                : {}),
+                        },
+                    }),
                 ...(invocation.invocation ? { invocation: invocation.invocation } : {}),
                 ...(dispatchSignal ? { signal: dispatchSignal } : {}),
                 isCurrent,
@@ -985,9 +1149,10 @@ export function createPluginContributedActionController(params: Readonly<{
                     context.signal,
                     current.value.descriptor.placement,
                 );
-                return context.signal.aborted
-                    ? { kind: 'stale', reason: 'action_retired' }
-                    : outcome;
+                // Dispatch owns settlement ordering. A presentation signal can
+                // prevent admission before dispatch, but cannot relabel a
+                // fulfilled canonical result observed afterward.
+                return outcome;
             },
         });
         return { ...form, action: resolved.descriptor };
@@ -1002,6 +1167,7 @@ export function createPluginContributedActionController(params: Readonly<{
         if (dynamicFields.length === 0) return resolved.descriptor.inputHints;
         const host = hostStatus(resolved.snapshot);
         if (host.kind !== 'ready') return host;
+        if (!host.machineId) return { kind: 'unavailable', reason: 'host_unavailable' };
         const optionsByPath = new Map<string, ActionInputHints['fields'][number]['options']>();
         for (const field of dynamicFields) {
             const result: MachinePluginActionFormConnectedAccountOptionsResult = await resolveConnectedAccountOptions(
@@ -1093,12 +1259,17 @@ export function createPluginContributedActionController(params: Readonly<{
         if (!plugin || plugin.pluginId !== operation.action.pluginId || plugin.enabled !== true) {
             return { kind: 'stale', reason: 'action_retired' };
         }
-        const action = plugin.actions.find((candidate) => candidate.id === operation.action.localId);
-        if (!action || action.available !== true || !action.surfaces.includes('plugin')) {
-            return { kind: 'stale', reason: 'action_retired' };
-        }
         const identity = PluginContributionIdentityV1Schema.safeParse(operation.action);
         if (!identity.success) return { kind: 'unavailable', reason: 'invalid_input' };
+        const action = plugin.actions.find((candidate) => candidate.id === operation.action.localId);
+        if (
+            !action
+            || !hasCurrentClientActionRegistration(snapshot, identity.data)
+            || action.available !== true
+            || !action.surfaces.includes('plugin')
+        ) {
+            return { kind: 'stale', reason: 'action_retired' };
+        }
         return {
             snapshot,
             targetedContributions,
@@ -1158,7 +1329,12 @@ export function createPluginContributedActionController(params: Readonly<{
             return { kind: 'stale', reason: 'action_retired' };
         }
         const action = plugin.actions.find((candidate) => candidate.id === identity.data.localId);
-        if (!action || action.available !== true || !action.surfaces.includes('plugin')) {
+        if (
+            !action
+            || !hasCurrentClientActionRegistration(snapshot, identity.data)
+            || action.available !== true
+            || !action.surfaces.includes('plugin')
+        ) {
             return { kind: 'stale', reason: 'action_retired' };
         }
         return {
@@ -1194,13 +1370,13 @@ export function createPluginContributedActionController(params: Readonly<{
 
     async function resolveExactBoundConnectedAccountOptions(
         resolved: ExactBoundAction,
+        inputHints: ActionInputHints,
         field: ActionInputHints['fields'][number],
         resolveCurrent: () => ExactBoundAction | PluginContributedActionUnavailableOutcome | PluginContributedActionStaleOutcome,
     ): Promise<ActionInputHints | PluginContributedActionUnavailableOutcome | PluginContributedActionStaleOutcome> {
-        const inputHints = resolved.action.inputHints;
-        if (!inputHints) return { kind: 'unavailable', reason: 'invalid_input' };
         const host = hostStatus(resolved.snapshot);
         if (host.kind !== 'ready') return host;
+        if (!host.machineId) return { kind: 'unavailable', reason: 'host_unavailable' };
         const result = await resolveConnectedAccountOptions(host.machineId, {
             serverId: host.serverId,
             expectedGeneration: host.expectedGeneration,
@@ -1244,7 +1420,8 @@ export function createPluginContributedActionController(params: Readonly<{
             resolved,
             isAdditionallyCurrent,
         );
-        const inputHints = resolved.action.inputHints;
+        const presentation = presentationForExactBoundAction(resolved);
+        const inputHints = presentation.inputHints;
         const fields = inputHints?.fields ?? [];
         if (fields.some((field) => field.widget === 'secret')) {
             return { kind: 'unavailable', reason: 'secret_input_unsupported' };
@@ -1286,7 +1463,7 @@ export function createPluginContributedActionController(params: Readonly<{
             return { kind: 'unavailable', reason: 'host_unavailable' };
         }
         const resolvedHints = accountFields[0]
-            ? await resolveExactBoundConnectedAccountOptions(resolved, accountFields[0], resolveCurrent)
+            ? await resolveExactBoundConnectedAccountOptions(resolved, inputHints, accountFields[0], resolveCurrent)
             : inputHints;
         if ('kind' in resolvedHints) return resolvedHints;
 
@@ -1307,8 +1484,8 @@ export function createPluginContributedActionController(params: Readonly<{
             PluginContributedActionStaleOutcome['reason']
         >({
             presentation: {
-                title: resolved.action.title,
-                description: resolved.action.description,
+                title: presentation.title,
+                description: presentation.description,
                 inputHints: resolvedHints,
             },
             accountLifetime: resolved.snapshot.host.accountLifetime,
@@ -1430,7 +1607,17 @@ export function createPluginContributedActionController(params: Readonly<{
                 if (plugin.enabled !== true || plugin.generation === null) continue;
                 if (String(plugin.generation) !== readExpectedGeneration(snapshot.host.expectedGeneration)) continue;
                 for (const action of plugin.actions) {
-                    const descriptor = descriptorForAction({ pluginId: plugin.pluginId, action, selector });
+                    const identity = { pluginId: plugin.pluginId, localId: action.id };
+                    if (
+                        !isActionCurrent(snapshot, identity)
+                        || !hasCurrentClientActionRegistration(snapshot, identity)
+                    ) continue;
+                    const descriptor = descriptorForAction({
+                        pluginId: plugin.pluginId,
+                        action,
+                        pluginUiProjection: snapshot.pluginUiProjection,
+                        selector,
+                    });
                     if (descriptor) actions.push(descriptor);
                 }
             }
@@ -1444,9 +1631,15 @@ export function createPluginContributedActionController(params: Readonly<{
                 if (plugin.enabled !== true || plugin.generation === null) continue;
                 if (String(plugin.generation) !== readExpectedGeneration(snapshot.host.expectedGeneration)) continue;
                 for (const action of plugin.actions) {
+                    const identity = { pluginId: plugin.pluginId, localId: action.id };
+                    if (
+                        !isActionCurrent(snapshot, identity)
+                        || !hasCurrentClientActionRegistration(snapshot, identity)
+                    ) continue;
                     const descriptor = descriptorForAction({
                         pluginId: plugin.pluginId,
                         action,
+                        pluginUiProjection: snapshot.pluginUiProjection,
                         selector: { placement: 'composer.slash', scope: 'session' },
                     });
                     if (!descriptor || !hasComposerSlashTokens(descriptor.slash)) continue;

@@ -6,21 +6,33 @@ import type { ConnectedServiceId } from '@happier-dev/protocol';
 import {
     AGENT_IDS as SHARED_AGENT_IDS,
     DEFAULT_AGENT_ID,
-    resolveAgentIdFromFlavor as resolveAgentIdFromFlavorShared,
-    resolveAgentIdFromSessionMetadata as resolveAgentIdFromSessionMetadataShared,
+    isBundledAgentId,
+    resolveAgentIdFromFlavor,
+    resolveAgentIdFromSessionMetadata,
     type AgentCore as SharedAgentCore,
     type AgentId,
     type AgentModelConfig,
     type AgentSessionStorage,
     type AgentToolsDelivery,
     type AgentToolsSupportLevel,
+    type BundledAgentId,
+    type SessionMetadataAgentId,
     type VendorResumeIdField,
 } from '@happier-dev/agents';
 
 import { BUNDLED_CANONICAL_AGENTS_CORE } from './generatedBundledPluginEntries';
 
-export type { AgentId };
-export type CanonicalAgentId = AgentId;
+export type { AgentId, BundledAgentId, SessionMetadataAgentId };
+
+/**
+ * Historical UI spelling of the bundled-Agent key.
+ *
+ * `@happier-dev/agents` owns the split: `BundledAgentId` is the closed set of
+ * Agents whose facts ship inside this build, while `AgentId` accepts any
+ * installed contribution id. Every UI record that is exhaustive over the
+ * bundled Agents keys on this alias; prefer `BundledAgentId` in new code.
+ */
+export type CanonicalAgentId = BundledAgentId;
 
 export type PermissionModeGroupId = 'claude' | 'codexLike';
 export type PermissionPromptProtocol = 'claude' | 'codexDecision';
@@ -28,7 +40,8 @@ export type PermissionPromptProtocol = 'claude' | 'codexDecision';
 export type MachineLoginKey = string;
 
 export type AgentCoreConfig = Readonly<{
-    id: AgentId;
+    /** A UI core exists only for a bundled Agent; external Agents ship their own. */
+    id: BundledAgentId;
     /**
      * Translation key for the agent display name in UI.
      * (Resolved via `t(...)` in UI modules.)
@@ -212,26 +225,35 @@ export const AGENTS_CORE = Object.freeze({
     ...CANONICAL_AGENTS_CORE,
 }) satisfies Readonly<Record<CanonicalAgentId, AgentCoreConfig>>;
 
-export const CANONICAL_AGENT_IDS = Object.freeze(
-    [...SHARED_AGENT_IDS] as CanonicalAgentId[],
+export const CANONICAL_AGENT_IDS: readonly CanonicalAgentId[] = Object.freeze(
+    [...SHARED_AGENT_IDS],
 );
 
-export const AGENT_IDS = Object.freeze(
-    [...SHARED_AGENT_IDS] as AgentId[],
-);
+/** Same list as {@link CANONICAL_AGENT_IDS}; retained for existing UI importers. */
+export const AGENT_IDS: readonly CanonicalAgentId[] = CANONICAL_AGENT_IDS;
 
-export { DEFAULT_AGENT_ID };
+export {
+    DEFAULT_AGENT_ID,
+    // `@happier-dev/agents` is the single owner of Agent identity. The UI reads
+    // these through the registry so no second predicate or resolver can drift
+    // from the bundled generated list.
+    isBundledAgentId,
+    resolveAgentIdFromFlavor,
+    resolveAgentIdFromSessionMetadata,
+};
 
-export function isAgentId(value: unknown): value is AgentId {
-    return typeof value === 'string' && (AGENT_IDS as readonly string[]).includes(value);
-}
-
-export function getAgentCore(id: AgentId): AgentCoreConfig {
-    const core = (CANONICAL_AGENTS_CORE as Partial<Record<AgentId, AgentCoreConfig>>)[id];
-    if (!core) {
-        throw new Error(`Unsupported UI agent core: ${id}`);
-    }
-    return core;
+/**
+ * UI presentation core for a bundled Agent.
+ *
+ * An externally installed Agent ships no bundled core, so an open `AgentId`
+ * resolves to `null` and the caller falls back to its plugin contribution.
+ * This must never throw: a crash here takes down every session surface that
+ * merely wanted a display name for an external Agent.
+ */
+export function getAgentCore(id: BundledAgentId): AgentCoreConfig;
+export function getAgentCore(id: AgentId): AgentCoreConfig | null;
+export function getAgentCore(id: AgentId): AgentCoreConfig | null {
+    return (CANONICAL_AGENTS_CORE as Partial<Record<AgentId, AgentCoreConfig>>)[id] ?? null;
 }
 
 export function getAllAgentProviderOwnedEnvironmentKeys(
@@ -248,16 +270,6 @@ export function getAllAgentProviderOwnedEnvironmentKeys(
         }
     }
     return keys;
-}
-
-export function resolveAgentIdFromFlavor(flavor: string | null | undefined): AgentId | null {
-    const resolved = resolveAgentIdFromFlavorShared(flavor);
-    return resolved && (SHARED_AGENT_IDS as readonly string[]).includes(resolved) && isAgentId(resolved) ? resolved : null;
-}
-
-export function resolveAgentIdFromSessionMetadata(metadata: unknown): AgentId | null {
-    const resolved = resolveAgentIdFromSessionMetadataShared(metadata);
-    return resolved && (SHARED_AGENT_IDS as readonly string[]).includes(resolved) && isAgentId(resolved) ? resolved : null;
 }
 
 export function resolveAgentIdFromCliDetectKey(detectKey: string | null | undefined): AgentId | null {

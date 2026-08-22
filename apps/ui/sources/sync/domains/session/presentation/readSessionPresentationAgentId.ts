@@ -1,7 +1,5 @@
 import {
-    isAgentId,
     resolveAgentIdFromSessionMetadata,
-    type AgentId,
 } from '@happier-dev/agents';
 import {
     SESSION_METADATA_LAYOUT_VERSION_V1,
@@ -19,14 +17,14 @@ type SessionPresentationAgentIdInput = Readonly<{
 
 export function readSessionPresentationAgentId(
     session: SessionPresentationAgentIdInput,
-): AgentId | null {
+): string | null {
     const metadataLayoutVersion = session.metadataLayoutVersion ?? 0;
     if (metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1) {
         const sharedMetadata = SessionSharedMetadataV1Schema.safeParse(session.metadata);
         const sharedAgentId = sharedMetadata.success
             ? sharedMetadata.data.agentPresentation?.agentId
             : null;
-        return isAgentId(sharedAgentId) ? sharedAgentId : null;
+        return sharedAgentId ?? null;
     }
     if (metadataLayoutVersion !== 0) {
         return null;

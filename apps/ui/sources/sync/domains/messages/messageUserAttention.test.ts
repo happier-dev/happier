@@ -7,6 +7,7 @@ import {
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import {
+    buildAgentTransitionDividerLocalId,
     createAgentEventMessageFixture,
     createAgentTransitionDividerEventFixture,
     createStoredAgentEventContentFixture,
@@ -42,11 +43,24 @@ describe('messageUserAttention — Agent-transition divider', () => {
 
     it('treats a stored transition divider content envelope as carrying no user attention', () => {
         const content = createStoredAgentEventContentFixture(createAgentTransitionDividerEventFixture());
+        const localId = buildAgentTransitionDividerLocalId('local-1');
 
-        expect(storedSessionMessageContentAttentionImpactOrNull(content))
+        expect(storedSessionMessageContentAttentionImpactOrNull(content, localId))
             .toEqual(SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT);
-        expect(storedSessionMessageAttentionImpact({ content }))
+        expect(storedSessionMessageAttentionImpact({ content, localId }))
             .toEqual(SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT);
+    });
+
+    it('does not silence a stored divider envelope carried by an ordinary localId', () => {
+        // The reserved namespace is refused by every generic ingress, so a
+        // sidecar under an ordinary localId cannot have come from the cutover
+        // and must not buy an attention exemption.
+        const content = createStoredAgentEventContentFixture(createAgentTransitionDividerEventFixture());
+
+        expect(storedSessionMessageContentAttentionImpactOrNull(content, 'local-1'))
+            .toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
+        expect(storedSessionMessageAttentionImpact({ content, localId: null }))
+            .toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
     });
 
     it('keeps ordinary passthrough agent messages attention-bearing', () => {
@@ -54,8 +68,10 @@ describe('messageUserAttention — Agent-transition divider', () => {
 
         expect(messageAttentionImpact(createAgentEventMessageFixture(ordinary)))
             .toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
-        expect(storedSessionMessageContentAttentionImpactOrNull(createStoredAgentEventContentFixture(ordinary)))
-            .toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
+        expect(storedSessionMessageContentAttentionImpactOrNull(
+            createStoredAgentEventContentFixture(ordinary),
+            buildAgentTransitionDividerLocalId('local-1'),
+        )).toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
     });
 
     it('does not silence a malformed or unknown-version transition sidecar', () => {

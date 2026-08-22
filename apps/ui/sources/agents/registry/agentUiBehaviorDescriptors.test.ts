@@ -90,7 +90,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             guidance: { includeInSessionGettingStartedCliExamples: true },
             mcpServers: { supportsDetectedConfigScan: true },
             externalSessions: {
-                supportsBackgroundFollow: true,
                 browse: {
                     order: 10,
                     sourceOptions: [
@@ -150,7 +149,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         expect(diagnostics).toEqual([]);
         expect(behavior.guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
         expect(behavior.mcpServers?.supportsDetectedConfigScan).toBe(true);
-        expect(behavior.externalSessions?.supportsBackgroundFollow).toBe(true);
         expect(behavior.externalSessions?.browse?.order).toBe(10);
         expect(behavior.externalSessions?.browse?.getSourceOptions?.({
             agentId: 'codex',
@@ -553,9 +551,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
     it('materializes OhMyPi generated browse behavior from descriptor data', () => {
         const generated = BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS.ohMyPi?.descriptor;
         expect(generated).toMatchObject({
-            mcpServers: { supportsDetectedConfigScan: true },
             externalSessions: {
-                supportsBackgroundFollow: false,
                 browse: {
                     order: 25,
                     sourceOptions: [
@@ -579,8 +575,10 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor(generated);
 
         expect(diagnostics).toEqual([]);
-        expect(behavior.mcpServers?.supportsDetectedConfigScan).toBe(true);
-        expect(behavior.externalSessions?.supportsBackgroundFollow).toBe(false);
+        // ohMyPi contributes no MCP discovery source, so the derived scan offer is
+        // absent: the settings screen must not offer a scan with nothing behind it.
+        expect(generated).not.toHaveProperty('mcpServers');
+        expect(behavior.mcpServers?.supportsDetectedConfigScan).toBeUndefined();
         expect(behavior.externalSessions?.browse?.order).toBe(25);
         expect(behavior.externalSessions?.browse?.getSourceOptions?.({
             agentId: 'ohMyPi',
@@ -872,7 +870,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             guidance: { includeInSessionGettingStartedCliExamples: true },
             mcpServers: { supportsDetectedConfigScan: true },
             externalSessions: {
-                supportsBackgroundFollow: true,
                 browse: {
                     order: 30,
                     sourceOptions: [
@@ -943,7 +940,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         expect(generated.behavior.payload?.buildSpawnEnvironmentVariables).toBeTypeOf('function');
         expect(behavior.guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
         expect(behavior.mcpServers?.supportsDetectedConfigScan).toBe(true);
-        expect(behavior.externalSessions?.supportsBackgroundFollow).toBe(true);
         expect(behavior.externalSessions?.browse?.order).toBe(30);
         const sourceOptions = behavior.externalSessions?.browse?.getSourceOptions?.({
             agentId: 'opencode' as any,

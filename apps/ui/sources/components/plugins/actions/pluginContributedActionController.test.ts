@@ -4,11 +4,20 @@ import type {
     PluginProjectionAction,
     PluginProjectionEntry,
 } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import {
+    PluginProjectedActionV2Schema,
+    type PluginProjectedActionV2,
+} from '@happier-dev/protocol';
 import type {
     DispatchPluginSurfaceActionInput,
     PluginSurfaceActionDispatchOutcome,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import type { MachinePluginActionFormConnectedAccountOptionsResult } from '@/sync/ops/machineContributionRegistryProjection';
+import {
+    EMPTY_PLUGIN_UI_PROJECTION,
+    type PluginUiProjectionModel,
+} from '@/sync/domains/plugins/ui/projection';
+import { setPreferredLanguageFromSettings } from '@/text';
 import type {
     PluginUiSelectActionInputRequestV1,
     PluginUiTargetedContributionOperationV1,
@@ -52,12 +61,44 @@ function action(input: Partial<PluginProjectionAction> & Readonly<{
         placementBindings: input.placementBindings ?? ['primary'],
         inputSchema: input.inputSchema ?? null,
         inputHints: input.inputHints ?? null,
+        ...(input.localizedPresentation ? { localizedPresentation: input.localizedPresentation } : {}),
         slash: input.slash ?? null,
         priority: input.priority ?? null,
         dangerLevel: input.dangerLevel ?? 'safe',
         confirmation: input.confirmation ?? null,
         available: input.available ?? true,
     };
+}
+
+/**
+ * The controller's presentation fixture remains deliberately legacy-shaped,
+ * while dispatch must receive the separate authoritative raw V2 descriptor.
+ * Keep that target explicit here instead of recreating the controller's old
+ * implicit daemon fallback in production code.
+ */
+function projectedDaemonAction(
+    pluginId: string,
+    action: PluginProjectionAction,
+): PluginProjectedActionV2 | null {
+    const projected = PluginProjectedActionV2Schema.safeParse({
+        id: action.id,
+        pluginId,
+        title: action.title,
+        ...(action.description ? { description: action.description } : {}),
+        ...(action.icon ? { icon: action.icon } : {}),
+        scopes: action.scopes,
+        surfaces: action.surfaces,
+        execution: { target: 'daemon' },
+        ...(action.placementBindings.length > 0 ? { placementBindings: action.placementBindings } : {}),
+        ...(action.inputSchema ? { inputSchema: action.inputSchema } : {}),
+        ...(action.inputHints ? { inputHints: action.inputHints } : {}),
+        ...(action.slash ? { slash: action.slash } : {}),
+        priority: action.priority ?? 0,
+        dangerLevel: action.dangerLevel,
+        ...(action.confirmation ? { confirmation: action.confirmation } : {}),
+        ...(action.available === null ? {} : { available: action.available }),
+    });
+    return projected.success ? projected.data : null;
 }
 
 function plugin(input: Readonly<{
@@ -146,14 +187,30 @@ function snapshot(
     input: Readonly<{
         pluginId?: string;
         targeted?: PluginUiTargetedContributionsV1 | null;
+        includeDescriptor?: boolean;
+        pluginUiProjection?: PluginUiProjectionModel | null;
     }> = {},
 ): PluginContributedActionCurrentSnapshot {
     const pluginId = input.pluginId ?? 'acme.channels';
     const operation = targetedOperation({ pluginId });
+    const rawActionsByLocalId = new Map(actions.flatMap((candidate) => {
+        const projected = projectedDaemonAction(pluginId, candidate);
+        return projected ? [[candidate.id, projected] as const] : [];
+    }));
     return {
         pluginProjectionById: {
             [pluginId]: plugin({ pluginId, actions }),
         },
+        ...(input.pluginUiProjection === undefined ? {} : { pluginUiProjection: input.pluginUiProjection }),
+        ...(input.includeDescriptor === false
+            ? {}
+            : {
+                resolveContributedAction: (identity) => (
+                    identity.pluginId === pluginId
+                        ? rawActionsByLocalId.get(identity.localId) ?? null
+                        : null
+                ),
+            }),
         targetedContributions: input.targeted ?? targetedContributions(operation),
         host: {
             machineId: MACHINE_ID,
@@ -670,7 +727,7 @@ describe('plugin contributed Action controller', () => {
         })).resolves.toEqual({ kind: 'unavailable', reason: 'invalid_input' });
     });
 
-    it('fails closed for absent mounted membership, secret-bearing, multi-Account, and invalid-draft selections', async () => {
+    it('fails closed for absent mounted membership, secret-bearing, and invalid Connected Account draft selections', async () => {
         const base = action({
             id: 'setup',
             scopes: ['settings'],
@@ -705,8 +762,7 @@ describe('plugin contributed Action controller', () => {
             widget: 'select' as const,
             connectedAccountOptions: true as const,
         });
-        await expect(make([{ ...base, inputHints: { fields: [accountField('one'), accountField('two')] } }]).selectActionInput(selectionRequest(operation))).resolves.toEqual({ kind: 'unavailable', reason: 'connected_account_ambiguous' });
-        await expect(make([base]).selectActionInput(selectionRequest(operation, { undeclared: true }))).resolves.toEqual({ kind: 'unavailable', reason: 'invalid_draft' });
+        await expect(make([{ ...base, inputHints: { fields: [accountField('one')] } }]).selectActionInput(selectionRequest(operation, { undeclared: true }))).resolves.toEqual({ kind: 'unavailable', reason: 'invalid_draft' });
     });
 
     it('does not open a secret-capable form without a captured Account lifetime', async () => {
@@ -815,6 +871,155 @@ describe('plugin contributed Action controller', () => {
         ]);
     });
 
+    it('requires a placement host to retain an Action before it lists or dispatches it', async () => {
+        let admitted = true;
+        const dispatch = vi.fn().mockResolvedValue({ ok: true, result: { refreshed: true } });
+        const current = snapshot([action({
+            id: 'refresh',
+            placementBindings: ['commandPalette'],
+            scopes: ['global'],
+        })]);
+        const controller = createPluginContributedActionController({
+            resolveCurrent: () => ({
+                ...current,
+                host: {
+                    ...current.host,
+                    isActionCurrent: (identity) => (
+                        admitted
+                        && identity.pluginId === 'acme.channels'
+                        && identity.localId === 'refresh'
+                    ),
+                },
+            }),
+            dispatch,
+        });
+
+        const [entry] = controller.list({ placement: 'commandPalette', scope: 'global' });
+        if (!entry) throw new Error('expected admitted Action');
+        expect(entry.qualifiedActionId).toBe('acme.channels/refresh');
+
+        admitted = false;
+
+        expect(controller.list({ placement: 'commandPalette', scope: 'global' })).toEqual([]);
+        await expect(controller.open(entry)).resolves.toEqual({
+            kind: 'stale',
+            reason: 'action_retired',
+        });
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it('forwards the current raw V2 Action resolver to canonical dispatch', async () => {
+        const dispatch = vi.fn().mockResolvedValue({ ok: true, result: { refreshed: true } });
+        const resolveContributedAction = vi.fn((identity): PluginProjectedActionV2 | null => (
+            identity.pluginId === 'acme.channels' && identity.localId === 'refresh'
+                ? {
+                    id: 'refresh',
+                    pluginId: 'acme.channels',
+                    title: 'Refresh',
+                    scopes: ['session'],
+                    surfaces: ['ui'],
+                    execution: { target: 'daemon' },
+                    placementBindings: ['primary'],
+                    priority: 0,
+                    dangerLevel: 'safe',
+                    available: true,
+                }
+                : null
+        ));
+        const current = {
+            ...snapshot([action({ id: 'refresh' })]),
+            resolveContributedAction,
+        };
+        const controller = createPluginContributedActionController({
+            resolveCurrent: () => current,
+            dispatch,
+        });
+        const [entry] = controller.list({ placement: 'primary', scope: 'session' });
+        if (!entry) throw new Error('expected current Action');
+
+        await expect(controller.open(entry)).resolves.toMatchObject({
+            kind: 'direct',
+            outcome: { ok: true, result: { refreshed: true } },
+        });
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+            action: { pluginId: 'acme.channels', localId: 'refresh' },
+            resolveContributedAction,
+        }));
+    });
+
+    it('fails closed instead of assuming an absent target descriptor is daemon-owned', async () => {
+        const dispatch = vi.fn().mockResolvedValue({ ok: true, result: { shouldNotRun: true } });
+        const controller = createPluginContributedActionController({
+            resolveCurrent: () => snapshot([action({ id: 'refresh' })], { includeDescriptor: false }),
+            dispatch,
+        });
+        const [entry] = controller.list({ placement: 'primary', scope: 'session' });
+        if (!entry) throw new Error('expected current Action');
+
+        await expect(controller.open(entry)).resolves.toEqual({
+            kind: 'unavailable',
+            reason: 'host_unavailable',
+        });
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it('omits a current client Action from the dynamic catalog before its executable registration commits', () => {
+        const dispatch = vi.fn().mockResolvedValue({ ok: true, result: { refreshed: true } });
+        const projectedAction: PluginProjectedActionV2 = {
+            id: 'refresh',
+            pluginId: 'acme.channels',
+            title: 'Refresh',
+            scopes: ['global'],
+            surfaces: ['ui'],
+            execution: {
+                target: 'client',
+                client: {
+                    artifactId: 'client-main',
+                    modulePath: './dist/client.js',
+                    exportName: 'activate',
+                },
+                platforms: ['web'],
+            },
+            placementBindings: ['commandPalette'],
+            priority: 0,
+            dangerLevel: 'writesRemote',
+            confirmation: {
+                title: 'Confirm refresh',
+                body: 'This changes remote state.',
+            },
+            available: true,
+        };
+        const initial = snapshot([action({
+            id: 'refresh',
+            scopes: ['global'],
+            placementBindings: ['commandPalette'],
+            dangerLevel: 'writesRemote',
+            confirmation: {
+                title: 'Confirm refresh',
+                body: 'This changes remote state.',
+            },
+        })]);
+        const current: PluginContributedActionCurrentSnapshot = {
+            ...initial,
+            resolveContributedAction: (identity) => (
+                identity.pluginId === projectedAction.pluginId && identity.localId === projectedAction.id
+                    ? projectedAction
+                    : null
+            ),
+            host: {
+                ...initial.host,
+                machineId: null,
+            },
+        };
+        const controller = createPluginContributedActionController({
+            resolveCurrent: () => current,
+            dispatch,
+        });
+
+        expect(controller.list({ placement: 'commandPalette', scope: 'global' })).toEqual([]);
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
     it('projects one current Action into every declared placement binding with its presentation metadata', () => {
         const multiPlacement = Object.assign(action({
             id: 'reconnect',
@@ -858,6 +1063,76 @@ describe('plugin contributed Action controller', () => {
                 priority: -10,
             }),
         ]);
+    });
+
+    it('resolves localized Action form presentation through the same host resolver as Voice', () => {
+        setPreferredLanguageFromSettings('es');
+        try {
+            const localized = action({
+                id: 'reconnect',
+                placementBindings: ['primary'],
+                inputHints: { fields: [] },
+                localizedPresentation: {
+                    title: { key: 'actions.reconnect.title', fallback: 'Reconnect' },
+                    description: { key: 'actions.reconnect.description', fallback: 'Reconnect the source.' },
+                    inputHints: {
+                        title: { key: 'actions.reconnect.form.title', fallback: 'Reconnect source' },
+                        fields: [{
+                            path: 'mode',
+                            title: { key: 'actions.reconnect.form.mode', fallback: 'Mode' },
+                            widget: 'select',
+                            options: [{
+                                value: 'safe',
+                                label: { key: 'actions.reconnect.form.mode.safe', fallback: 'Safe' },
+                            }],
+                        }],
+                    },
+                },
+            });
+            const pluginUiProjection: PluginUiProjectionModel = Object.freeze({
+                ...EMPTY_PLUGIN_UI_PROJECTION,
+                translationsByPluginId: Object.freeze({
+                    'acme.channels': Object.freeze({
+                        id: 'translations:acme.channels',
+                        pluginId: 'acme.channels',
+                        contributionKind: 'translations' as const,
+                        locales: ['en', 'es'],
+                        bundles: Object.freeze({
+                            en: Object.freeze({}),
+                            es: Object.freeze({
+                                'actions.reconnect.title': 'Volver a conectar',
+                                'actions.reconnect.description': 'Vuelve a conectar la fuente.',
+                                'actions.reconnect.form.title': 'Volver a conectar la fuente',
+                                'actions.reconnect.form.mode': 'Modo',
+                                'actions.reconnect.form.mode.safe': 'Seguro',
+                            }),
+                        }),
+                    }),
+                }),
+            });
+            const controller = createPluginContributedActionController({
+                resolveCurrent: () => snapshot([localized], { pluginUiProjection }),
+            });
+
+            expect(controller.list({ placement: 'primary', scope: 'session' })).toEqual([
+                expect.objectContaining({
+                    title: 'Volver a conectar',
+                    description: 'Vuelve a conectar la fuente.',
+                    kind: 'form',
+                    inputHints: {
+                        title: 'Volver a conectar la fuente',
+                        fields: [{
+                            path: 'mode',
+                            title: 'Modo',
+                            widget: 'select',
+                            options: [{ value: 'safe', label: 'Seguro' }],
+                        }],
+                    },
+                }),
+            ]);
+        } finally {
+            setPreferredLanguageFromSettings(null);
+        }
     });
 
     it('projects only exact composer-slash bindings through the controller and retires a withdrawn slash presentation', async () => {
@@ -1345,7 +1620,7 @@ describe('plugin contributed Action controller', () => {
     });
 
     it.each(['cancel', 'retire'] as const)(
-        'aborts the exact canonical handler signal when form retirement occurs via %s',
+        'aborts the exact canonical handler signal when form retirement occurs via %s without hiding a known success',
         async (retirement) => {
             let settleDispatch: (outcome: PluginSurfaceActionDispatchOutcome) => void = () => {
                 throw new Error('dispatch resolver was not initialized');
@@ -1392,13 +1667,75 @@ describe('plugin contributed Action controller', () => {
 
             settleDispatch({ ok: true, result: { completed: true } });
             await expect(submitting).resolves.toEqual({
-                kind: 'stale',
-                reason: 'action_retired',
+                kind: 'settled',
+                outcome: { ok: true, result: { completed: true } },
             });
         },
     );
 
-    it('keeps the exact form handler signal transitively bound to outer host retirement', async () => {
+    it('keeps a canonical success when the form retires in the microtask after dispatcher settlement', async () => {
+        let effectCount = 0;
+        let retireForm: (() => void) | null = null;
+        const dispatch = vi.fn(async (): Promise<PluginSurfaceActionDispatchOutcome> => {
+            effectCount += 1;
+            const outcome = { ok: true as const, result: { completed: true } };
+            // The dispatcher has fulfilled its canonical outcome before this
+            // presentation-local retirement is observed by either wrapper.
+            queueMicrotask(() => retireForm?.());
+            return outcome;
+        });
+        const controller = createPluginContributedActionController({
+            resolveCurrent: () => snapshot([action({
+                id: 'configure',
+                inputHints: {
+                    fields: [{ path: 'token', title: 'Token', widget: 'secret', required: true }],
+                },
+            })]),
+            dispatch,
+        });
+        const [entry] = controller.list({ placement: 'primary', scope: 'session' });
+        if (!entry) throw new Error('expected eligible Action');
+        const opened = await controller.open(entry);
+        if (opened.kind !== 'form') throw new Error('expected form Action');
+        retireForm = () => opened.form.retire();
+
+        opened.form.replaceInput({ token: 'settled-before-retirement' });
+
+        await expect(opened.form.submit()).resolves.toEqual({
+            kind: 'settled',
+            outcome: { ok: true, result: { completed: true } },
+        });
+        expect(effectCount).toBe(1);
+        expect(dispatch).toHaveBeenCalledOnce();
+        expect(opened.form.isRetired()).toBe(true);
+    });
+
+    it('retains presentation retirement as terminal when it wins before canonical dispatch', async () => {
+        const dispatch = vi.fn().mockResolvedValue({ ok: true, result: { completed: true } });
+        const controller = createPluginContributedActionController({
+            resolveCurrent: () => snapshot([action({
+                id: 'configure',
+                inputHints: {
+                    fields: [{ path: 'token', title: 'Token', widget: 'secret', required: true }],
+                },
+            })]),
+            dispatch,
+        });
+        const [entry] = controller.list({ placement: 'primary', scope: 'session' });
+        if (!entry) throw new Error('expected eligible Action');
+        const opened = await controller.open(entry);
+        if (opened.kind !== 'form') throw new Error('expected form Action');
+
+        opened.form.retire();
+
+        await expect(opened.form.submit()).resolves.toEqual({
+            kind: 'stale',
+            reason: 'action_retired',
+        });
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it('keeps the exact form handler signal transitively bound to outer host retirement without hiding a known success', async () => {
         let settleDispatch: (outcome: PluginSurfaceActionDispatchOutcome) => void = () => {
             throw new Error('dispatch resolver was not initialized');
         };
@@ -1442,12 +1779,12 @@ describe('plugin contributed Action controller', () => {
         expect(handlerSignal?.aborted).toBe(true);
         settleDispatch({ ok: true, result: { completed: true } });
         await expect(submitting).resolves.toEqual({
-            kind: 'stale',
-            reason: 'action_retired',
+            kind: 'settled',
+            outcome: { ok: true, result: { completed: true } },
         });
     });
 
-    it('aborts the exact canonical handler signal when the host-owned form deadline elapses', async () => {
+    it('aborts the exact canonical handler signal when the host-owned form deadline elapses without hiding a known success', async () => {
         vi.useFakeTimers();
         try {
             let settleDispatch: (outcome: PluginSurfaceActionDispatchOutcome) => void = () => {
@@ -1485,8 +1822,8 @@ describe('plugin contributed Action controller', () => {
             expect(handlerSignal?.aborted).toBe(true);
             settleDispatch({ ok: true, result: { completed: true } });
             await expect(submitting).resolves.toEqual({
-                kind: 'stale',
-                reason: 'action_retired',
+                kind: 'settled',
+                outcome: { ok: true, result: { completed: true } },
             });
         } finally {
             vi.useRealTimers();

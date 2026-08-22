@@ -1,4 +1,5 @@
 import type { BrowserControlViewState } from '../control';
+import { isLoopbackHostname } from '@happier-dev/protocol';
 
 /**
  * Presentation model for the toolbar SecurityOriginIndicator. The browser already TRACKS the
@@ -20,15 +21,6 @@ export type BrowserSecurityOriginModel = Readonly<{
     /** The host to render (`example.test`, `localhost:5173`), or `null` when unknown. */
     originLabel: string | null;
 }>;
-
-const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-
-function isLoopbackHostname(hostname: string): boolean {
-    const normalized = hostname.toLowerCase();
-    if (LOOPBACK_HOSTNAMES.has(normalized)) return true;
-    // 127.0.0.0/8 is entirely loopback.
-    return /^127(?:\.\d{1,3}){3}$/.test(normalized);
-}
 
 function parseOrigin(value: string): URL | null {
     try {

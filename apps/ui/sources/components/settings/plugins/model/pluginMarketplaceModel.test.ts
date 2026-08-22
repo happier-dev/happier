@@ -7,6 +7,8 @@ import {
     formatPluginInstallationReviewBody,
     isPluginMutationVisibleAfterRefresh,
     readPendingPluginChangeReview,
+    readPendingPluginChangeStatus,
+    readPendingPluginChanges,
     readPluginChangeKind,
     resolvePluginReadOnlySnapshotNotice,
     type InstalledPluginEntry,
@@ -544,5 +546,91 @@ describe('installed marketplace catalog formatting', () => {
             after,
             targetVersion: null,
         })).toBe(true);
+    });
+});
+
+describe('daemon-issued pending plugin changes', () => {
+    const sourceRootReview = {
+        pendingChangeId: 'pending-1',
+        review: { source: { kind: 'path', locator: '/workspace/plugins/agent-authored' } },
+    } as const;
+    const installationReview = { pendingChangeId: 'pending-2', review: completeReview } as const;
+    const sourceRootEntry = { kind: 'sourceRootReviewRequired', ...sourceRootReview } as const;
+    const installEntry = { kind: 'reviewRequired', ...installationReview } as const;
+
+    const stateWith = (pendingChanges: readonly unknown[]) => ({
+        status: 'loaded' as const,
+        snapshot: {
+            response: {
+                protocolVersion: 1 as const,
+                results: {
+                    'tool.plugins': {
+                        ok: true as const,
+                        checkedAt: 0,
+                        data: { installedPlugins: [], pendingChanges },
+                    },
+                },
+            },
+        },
+    });
+
+    it('lists both decision shapes and an already-decided change', () => {
+        expect(readPendingPluginChanges(
+            stateWith([sourceRootEntry, installEntry, { kind: 'applying', pendingChangeId: 'pending-3' }]) as never,
+        )).toEqual([
+            { kind: 'sourceRootReviewRequired', sourceRootReview },
+            { kind: 'reviewRequired', installationReview },
+            { kind: 'applying', pendingChangeId: 'pending-3' },
+        ]);
+    });
+
+    it('drops an entry it cannot fully type instead of offering it for approval', () => {
+        // A half-read review would let a user approve host access the app never
+        // rendered, so an unreadable entry is not listed at all.
+        expect(readPendingPluginChanges(stateWith([
+            { kind: 'reviewRequired', pendingChangeId: 'pending-4', review: { pluginId: 'example.plugin' } },
+            { kind: 'applying' },
+            { kind: 'terminal', pendingChangeId: 'pending-5' },
+            sourceRootEntry,
+        ]) as never)).toEqual([
+            { kind: 'sourceRootReviewRequired', sourceRootReview },
+        ]);
+    });
+
+    it('reports no pending changes for a machine whose snapshot predates the enumeration', () => {
+        expect(readPendingPluginChanges({
+            status: 'loaded',
+            snapshot: {
+                response: {
+                    protocolVersion: 1,
+                    results: { 'tool.plugins': { ok: true, checkedAt: 0, data: { installedPlugins: [] } } },
+                },
+            },
+        } as never)).toEqual([]);
+    });
+
+    it('projects every by-id rejoin arm the change owner can answer with', () => {
+        const status = (value: unknown) => readPendingPluginChangeStatus({
+            action: 'changeStatus',
+            pendingChangeId: 'pending-1',
+            status: value,
+        });
+
+        expect(status(sourceRootEntry)).toEqual({
+            kind: 'sourceRootReviewRequired',
+            sourceRootReview,
+        });
+        expect(status({ kind: 'applying', pendingChangeId: 'pending-1' }))
+            .toEqual({ kind: 'applying', pendingChangeId: 'pending-1' });
+        expect(status({ kind: 'expired' })).toEqual({ kind: 'expired' });
+        expect(status({ kind: 'daemonUnavailable' })).toEqual({ kind: 'daemonUnavailable' });
+        expect(status({
+            kind: 'terminal',
+            pendingChangeId: 'pending-1',
+            result: { kind: 'committed', pluginId: 'example.plugin' },
+        })).toEqual({ kind: 'terminal', pendingChangeId: 'pending-1', outcome: 'committed' });
+        expect(status({ kind: 'somethingElse', pendingChangeId: 'pending-1' })).toBeNull();
+        // A status read is never confused with the develop action's envelope.
+        expect(readPendingPluginChangeStatus({ action: 'develop', status: sourceRootEntry })).toBeNull();
     });
 });

@@ -9,14 +9,21 @@ export type AgentPickerOption = Readonly<{
     iconName: string;
 }>;
 
+/**
+ * Legacy picker rows are described entirely by bundled translation keys and a
+ * bundled icon name, so an externally installed Agent has no row to build here.
+ * It is offered through the backend catalog, which carries its own contributed
+ * presentation.
+ */
 export function getAgentPickerOptions(agentIds: readonly AgentId[]): readonly AgentPickerOption[] {
-    return agentIds.map((agentId) => {
+    return agentIds.flatMap((agentId) => {
         const core = getAgentCore(agentId);
-        return {
+        if (!core) return [];
+        return [{
             agentId,
             titleKey: core.displayNameKey,
             subtitleKey: core.subtitleKey,
             iconName: core.ui.agentPickerIconName,
-        };
+        }];
     });
 }

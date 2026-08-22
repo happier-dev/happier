@@ -2,11 +2,13 @@ import {
     projectSessionMetadataForAgentHandoff,
     resolveAgentIdFromSessionMetadata,
     resolveVendorHandoffIdFromSessionMetadata,
-    type AgentId,
+    isBundledAgentId,
 } from '@happier-dev/agents';
 import {
+    ExternalSessionAgentIdSchema,
     normalizeCodexBackendMode,
     readRuntimeDescriptorV1FromMetadata,
+    type ExternalSessionAgentId,
     type RuntimeDescriptorV1,
     type SessionHandoffStorageMode,
     type SessionHandoffTransportStrategy,
@@ -23,7 +25,7 @@ export type SessionHandoffSourceResumePlan = Readonly<{
     sessionId: string;
     machineId: string;
     directory: string;
-    agent: AgentId;
+    agent: ExternalSessionAgentId;
     resume?: string;
     transcriptStorage: 'direct' | 'persisted';
     serverId: string | null;
@@ -32,8 +34,10 @@ export type SessionHandoffSourceResumePlan = Readonly<{
     environmentVariables?: Record<string, string>;
 }>;
 
-function resolveRecoveryAgentId(metadata: Metadata): AgentId | null {
-    return resolveAgentIdFromSessionMetadata(metadata);
+function resolveRecoveryAgentId(metadata: Metadata): ExternalSessionAgentId | null {
+    const agentId = resolveAgentIdFromSessionMetadata(metadata);
+    const parsed = ExternalSessionAgentIdSchema.safeParse(agentId);
+    return parsed.success ? parsed.data : null;
 }
 
 export type SessionHandoffRecoveryPlan = Readonly<{
@@ -46,7 +50,7 @@ export type SessionHandoffRecoveryPlan = Readonly<{
         targetMachineId: string;
         serverId: string | null;
         sourceMetadataForHandoff: Metadata;
-        agentId: AgentId;
+        agentId: ExternalSessionAgentId;
         sessionStorageBefore: SessionHandoffStorageMode;
         sessionStorageAfter: SessionHandoffStorageMode;
         targetPath: string;
@@ -64,11 +68,23 @@ export type SessionHandoffRecoveryPlan = Readonly<{
     }>;
 }>;
 
-function resolveVendorResumeId(
-    agentId: AgentId,
-    metadata: ReturnType<typeof projectSessionMetadataForAgentHandoff>,
+function resolveRuntimeDescriptorVendorResumeId(
+    runtimeDescriptor: RuntimeDescriptorV1 | null,
 ): string | undefined {
-    return resolveVendorHandoffIdFromSessionMetadata(agentId, metadata) ?? undefined;
+    const providerSessionId = runtimeDescriptor?.agent.providerSessionId;
+    if (typeof providerSessionId !== 'string') return undefined;
+    const normalized = providerSessionId.trim();
+    return normalized || undefined;
+}
+
+function resolveVendorResumeId(
+    agentId: ExternalSessionAgentId,
+    metadata: ReturnType<typeof projectSessionMetadataForAgentHandoff>,
+    runtimeDescriptor: RuntimeDescriptorV1 | null,
+): string | undefined {
+    const descriptorResumeId = resolveRuntimeDescriptorVendorResumeId(runtimeDescriptor);
+    if (!isBundledAgentId(agentId)) return descriptorResumeId;
+    return resolveVendorHandoffIdFromSessionMetadata(agentId, metadata) ?? descriptorResumeId;
 }
 
 export function buildSessionHandoffRecoveryPlan(input: Readonly<{
@@ -85,11 +101,14 @@ export function buildSessionHandoffRecoveryPlan(input: Readonly<{
 
     const codexBackendMode = normalizeCodexBackendMode(input.sourceMetadata.codexBackendMode);
     const agentMetadata = projectSessionMetadataForAgentHandoff(input.sourceMetadata);
-    const sourceRecoveryPatch = buildSessionHandoffSourceRecoveryResumePatch({
-        agentId: agent,
-        metadata: agentMetadata,
-    });
-    const vendorResumeId = resolveVendorResumeId(agent, agentMetadata);
+    const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(input.sourceMetadata);
+    const sourceRecoveryPatch = isBundledAgentId(agent)
+        ? buildSessionHandoffSourceRecoveryResumePatch({
+            agentId: agent,
+            metadata: agentMetadata,
+        })
+        : null;
+    const vendorResumeId = resolveVendorResumeId(agent, agentMetadata, runtimeDescriptorV1);
 
     return {
         handoffId: input.handoffId,
@@ -102,11 +121,11 @@ export function buildSessionHandoffRecoveryPlan(input: Readonly<{
             ...(vendorResumeId ? { resume: vendorResumeId } : {}),
             transcriptStorage: input.sessionStorageMode,
             serverId: typeof input.serverId === 'string' ? input.serverId.trim() || null : null,
-            ...(readRuntimeDescriptorV1FromMetadata(input.sourceMetadata)
-                ? { runtimeDescriptorV1: readRuntimeDescriptorV1FromMetadata(input.sourceMetadata) }
+            ...(runtimeDescriptorV1
+                ? { runtimeDescriptorV1 }
                 : {}),
             ...(codexBackendMode ? { codexBackendMode } : {}),
-            ...(sourceRecoveryPatch.environmentVariables
+            ...(sourceRecoveryPatch?.environmentVariables
                 ? { environmentVariables: sourceRecoveryPatch.environmentVariables }
                 : {}),
         },

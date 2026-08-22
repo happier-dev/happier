@@ -11,6 +11,7 @@ import type {
     UiSessionOrganizationTag,
 } from './types';
 import type {
+    SessionAttentionStanding,
     SessionOrganizationOrderEntry,
     SessionOrganizationPin,
 } from '@happier-dev/protocol';
@@ -31,6 +32,7 @@ export function buildSessionOrganizationProjection(
     const folderAssignmentsBySessionId: Record<string, string | null> = {};
     const tagsById: Record<string, UiSessionOrganizationTag> = {};
     const tagAssignmentsBySessionId: Record<string, readonly string[]> = {};
+    const attentionStandingsBySessionId: Record<string, SessionAttentionStanding> = {};
     const orderEntriesByScopeKey: Record<string, readonly SessionOrganizationOrderEntry[]> = {};
     const labelsByLabelKey: Record<string, UiSessionOrganizationLabel> = {};
 
@@ -61,6 +63,11 @@ export function buildSessionOrganizationProjection(
             tagAssignmentsBySessionId[sessionId] = tagIds;
         }
     }
+    for (const [key, standing] of Object.entries(state.attentionStandingsBySessionKey)) {
+        if (readSessionOrganizationServerScopedId(key, serverId) === standing.sessionId) {
+            attentionStandingsBySessionId[standing.sessionId] = standing;
+        }
+    }
     const serverPrefix = `${String(serverId).trim()}:`;
     for (const [key, entries] of Object.entries(state.orderEntriesByScopeKey)) {
         if (key.startsWith(serverPrefix)) {
@@ -89,6 +96,7 @@ export function buildSessionOrganizationProjection(
         folderAssignmentsBySessionId,
         tagsById,
         tagAssignmentsBySessionId,
+        attentionStandingsBySessionId,
         orderEntriesByScopeKey,
         labelsByLabelKey,
     };

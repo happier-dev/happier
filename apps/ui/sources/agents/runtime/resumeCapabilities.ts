@@ -9,11 +9,11 @@
 import {
     evaluateVendorResumeEligibility,
     getAgentResumeConfig,
-    isAgentId,
+    isBundledAgentId,
     readNormalizedRuntimeDescriptor,
-    type AgentId,
     resolveAgentIdFromFlavor,
     resolveAgentIdFromSessionMetadata,
+    resolveVendorResumeIdFromSessionMetadata,
 } from '@happier-dev/agents';
 import {
     resolveLinkedExternalSessionMetadataV1,
@@ -21,6 +21,10 @@ import {
 } from '@happier-dev/protocol';
 import { deriveAcpBackendIdFromFlavor, isAcpFlavorPrefix } from './acpFlavor';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import {
+    supportsCurrentProjectedAgentSessionOpen,
+    type CurrentProjectedAgentCapabilities,
+} from '@/agents/backendCatalog/currentAgentCapabilities';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 
 export type ResumeCapabilityOptions = {
@@ -29,6 +33,12 @@ export type ResumeCapabilityOptions = {
         identity: PluginContributionIdentityV1;
         sourceKinds: readonly string[];
     }> | null;
+    /**
+     * Exact lifecycle declaration from a ready daemon V2 projection. It is
+     * required for non-bundled Agent resume paths; presentation backing is not
+     * a substitute for this current fact.
+     */
+    currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
 };
 
 function isConfiguredAcpBackendEnabled(backendId: string, options?: ResumeCapabilityOptions): boolean {
@@ -69,9 +79,12 @@ export function canAgentResume(agent: string | null | undefined, options?: Resum
         return backendId !== null && isConfiguredAcpBackendEnabled(backendId, options);
     }
 
-    const agentId = resolveAgentIdFromFlavor(agent);
+    const agentId = resolveExplicitAgentId(agent);
     if (!agentId) return false;
-    if (!isAgentId(agentId)) return false;
+    if (!isBundledAgentId(agentId)) {
+        return options?.currentAgentCapabilities?.agentId === agentId
+            && supportsCurrentProjectedAgentSessionOpen(options.currentAgentCapabilities, 'resume');
+    }
 
     const resume = getAgentResumeConfig(agentId);
     const field = resume && 'vendorResumeIdField' in resume ? resume.vendorResumeIdField : null;
@@ -113,12 +126,60 @@ function readFiniteNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function resolveDeclaredAgentIdForResume(metadata: SessionMetadata | null | undefined): AgentId | null {
+function resolveDeclaredAgentIdForResume(metadata: SessionMetadata | null | undefined): string | null {
     const runtimeProviderId = readNormalizedRuntimeDescriptor(metadata)?.providerId;
-    if (runtimeProviderId && isAgentId(runtimeProviderId)) return runtimeProviderId;
+    if (runtimeProviderId) return runtimeProviderId;
 
     const linkedAgentId = readExternalSessionLink(metadata)?.agentId;
-    return linkedAgentId && isAgentId(linkedAgentId) ? linkedAgentId : null;
+    return readNonEmptyString(linkedAgentId);
+}
+
+function resolveExplicitAgentId(agent: string | null | undefined): string | null {
+    return resolveAgentIdFromFlavor(agent) ?? readNonEmptyString(agent);
+}
+
+function matchesCurrentExternalLink(
+    metadata: SessionMetadata,
+    currentAgent: CurrentProjectedAgentCapabilities,
+    providerSessionId: string | null,
+): boolean {
+    const linkedSession = resolveLinkedExternalSessionMetadataV1(metadata);
+    if (!linkedSession.ok) {
+        return linkedSession.error === 'linked_session_not_found';
+    }
+
+    const qualifiedAgent = linkedSession.linkedSession.qualifiedIdentity?.agent;
+    return linkedSession.linkedSession.agentId === currentAgent.agentId
+        && qualifiedAgent !== undefined
+        && qualifiedAgent.pluginId === currentAgent.identity.pluginId
+        && qualifiedAgent.localId === currentAgent.identity.localId
+        && (providerSessionId === null || linkedSession.linkedSession.remoteSessionId === providerSessionId);
+}
+
+function resolveCurrentExternalAgentResumeCapability(
+    metadata: SessionMetadata,
+    agentId: string | null,
+    options?: ResumeCapabilityOptions,
+): Readonly<{
+    currentAgent: CurrentProjectedAgentCapabilities;
+    providerSessionId: string | null;
+}> | null {
+    if (!agentId || isBundledAgentId(agentId)) return null;
+    const currentAgent = options?.currentAgentCapabilities ?? null;
+    if (!currentAgent || currentAgent.agentId !== agentId) return null;
+
+    const descriptor = readNormalizedRuntimeDescriptor(metadata);
+    if (!descriptor || descriptor.providerId !== agentId) return null;
+    // One owner decides what a Session's native resume id is. Re-deriving it
+    // from the descriptor here is how this view and the daemon's spawn path
+    // could disagree about whether a Session is resumable.
+    const providerSessionId = resolveVendorResumeIdFromSessionMetadata(agentId, metadata);
+    if (!matchesCurrentExternalLink(metadata, currentAgent, providerSessionId)) return null;
+
+    return {
+        currentAgent,
+        providerSessionId,
+    };
 }
 
 function readForkLineage(metadata: Record<string, unknown>): Record<string, unknown> | null {
@@ -171,7 +232,12 @@ export function canResumeSessionWithOptions(metadata: SessionMetadata | null | u
 
     const agentId = resolveAgentIdFromSessionMetadata(metadata) ?? resolveAgentIdFromFlavor(flavor);
     if (!agentId) return false;
-    if (!isAgentId(agentId)) return false;
+    if (!isBundledAgentId(agentId)) {
+        const external = resolveCurrentExternalAgentResumeCapability(metadata, agentId, options);
+        return external !== null
+            && external.providerSessionId !== null
+            && supportsCurrentProjectedAgentSessionOpen(external.currentAgent, 'resume');
+    }
 
     const eligibilityInput = {
         agentId,
@@ -193,7 +259,6 @@ export function canContinueSessionWithFreshSpawn(
     metadata: SessionMetadata | null | undefined,
     options?: ResumeCapabilityOptions,
 ): boolean {
-    void options;
     if (!metadata) return false;
     const flavor = metadata.flavor;
 
@@ -202,7 +267,12 @@ export function canContinueSessionWithFreshSpawn(
 
     const agentId = resolveAgentIdFromSessionMetadata(metadata) ?? resolveAgentIdFromFlavor(flavor);
     if (!agentId) return false;
-    if (!isAgentId(agentId)) return false;
+    if (!isBundledAgentId(agentId)) {
+        const external = resolveCurrentExternalAgentResumeCapability(metadata, agentId, options);
+        return external?.providerSessionId === null
+            && supportsCurrentProjectedAgentSessionOpen(external?.currentAgent, 'create')
+            && canFreshSpawnMissingVendorResumeId(metadata);
+    }
 
     const resume = getAgentResumeConfig(agentId);
     const field = resume && 'vendorResumeIdField' in resume ? resume.vendorResumeIdField : null;
@@ -241,7 +311,7 @@ export function getAgentVendorResumeId(
     }
 
     const declaredAgentId = resolveDeclaredAgentIdForResume(metadata);
-    const explicitAgentId = resolveAgentIdFromFlavor(agent);
+    const explicitAgentId = resolveExplicitAgentId(agent);
     if (declaredAgentId && explicitAgentId && declaredAgentId !== explicitAgentId) {
         return null;
     }
@@ -250,7 +320,13 @@ export function getAgentVendorResumeId(
         ?? explicitAgentId
         ?? resolveAgentIdFromSessionMetadata(metadata);
     if (!agentId) return null;
-    if (!isAgentId(agentId)) return null;
+    if (!isBundledAgentId(agentId)) {
+        const external = resolveCurrentExternalAgentResumeCapability(metadata, agentId, options);
+        if (!external || !supportsCurrentProjectedAgentSessionOpen(external.currentAgent, 'resume')) {
+            return null;
+        }
+        return external.providerSessionId;
+    }
 
     const eligibilityInput = {
         agentId,

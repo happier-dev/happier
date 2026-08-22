@@ -145,7 +145,7 @@ describe('describeEffectiveModelMode', () => {
                 ...actual,
                 getAgentCore: (agentId: Parameters<typeof actual.getAgentCore>[0]) => {
                     const core = actual.getAgentCore(agentId);
-                    return agentId === 'gemini'
+                    return core && agentId === 'gemini'
                         ? { ...core, model: { ...core.model, defaultMode: null } }
                         : core;
                 },

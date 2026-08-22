@@ -18,6 +18,7 @@ import {
     formatAgentLikeIdForDisplay,
     getAllAgentProviderOwnedEnvironmentKeys,
     getAgentCore as getUiAgentCore,
+    isBundledAgentId,
     AGENT_IDS,
 } from './registryCore';
 import { buildAgentToolsUiConfig } from './buildAgentToolsUiConfig';
@@ -94,6 +95,27 @@ describe('agents/registryCore', () => {
             },
         })).toBe('claude');
         expect(resolveAgentIdFromSessionMetadata({ runtimeDescriptorV1: { v: 1, providerId: 'customAcp' } })).toBeNull();
+    });
+
+    it('preserves an installed external Agent identity from session metadata', () => {
+        expect(resolveAgentIdFromSessionMetadata({
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'acme.agent',
+                provider: {},
+            },
+        })).toBe('acme.agent');
+    });
+
+    it('preserves an installed external Agent identity from the canonical runtime descriptor', () => {
+        expect(resolveAgentIdFromSessionMetadata({
+            flavor: 'claude',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'acme.agent',
+                provider: {},
+            },
+        })).toBe('acme.agent');
     });
 
     it('resolves agent ids from cli detect keys and handles malformed values', () => {
@@ -241,6 +263,20 @@ describe('agents/registryCore', () => {
 
         const pi = getAgentModelConfig('pi');
         expect(pi.supportsSelection).toBe(true);
+    });
+
+    it('answers a typed unavailable for an Agent with no bundled UI core instead of throwing', () => {
+        // Every session surface reaches for a display core. Throwing here took
+        // the whole screen down for any externally installed Agent.
+        expect(getUiAgentCore('acme-external-agent')).toBeNull();
+        expect(getUiAgentCore('')).toBeNull();
+        expect(getUiAgentCore('claude')).not.toBeNull();
+    });
+
+    it('narrows the bundled predicate to the generated bundled list', () => {
+        expect(isBundledAgentId('claude')).toBe(true);
+        expect(isBundledAgentId('acme-external-agent')).toBe(false);
+        expect(isBundledAgentId(null)).toBe(false);
     });
 
     it('formats unknown backend/provider ids into readable fallback display titles', () => {

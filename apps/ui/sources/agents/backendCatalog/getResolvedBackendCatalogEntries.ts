@@ -7,7 +7,7 @@ import {
 
 import type { AgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
-import { getAgentCore, isAgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { LEGACY_COMPAT_PRIMARY_AGENT_ID, LEGACY_COMPAT_PRIMARY_AGENT_ID_NORMALIZED } from './legacyCompatAgents';
 import { formatBackendTargetKeyV2, resolveBackendTargetKeyV2 } from './backendTargetKeyV2';
 import {
@@ -85,7 +85,7 @@ function shouldCollapseProviderOwnedBackends(
 ): boolean {
     return enabledProviderIds.has(agentId)
         || providerProjection.isBuiltIn === true
-        || isAgentId(agentId);
+        || isBundledAgentId(agentId);
 }
 
 function buildCollapsedDiscoveredBackendIdSet(params: Readonly<{
@@ -265,7 +265,26 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
 }
 
 export function resolveCatalogAgentIdForBackendTarget(target: BackendTargetRefV2): AgentId | null {
-    return isAgentId(target.backendId) ? target.backendId : null;
+    return isBundledAgentId(target.backendId) ? target.backendId : null;
+}
+
+/**
+ * Resolves the operational Agent identity for a backend already selected from
+ * the dynamic catalog. `catalogAgentId` is a closed built-in UI backing and
+ * must not replace the projected Agent that owns the backend at runtime.
+ */
+export function resolveBackendTargetOperationalAgentId(params: Readonly<{
+    backendTarget: BackendTargetRefV2;
+    selectedEntry?: Pick<ResolvedBackendCatalogEntry, 'agentId'> | null;
+    mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
+}>): string | null {
+    const projectedAgentId = typeof params.selectedEntry?.agentId === 'string'
+        ? params.selectedEntry.agentId.trim()
+        : '';
+    if (projectedAgentId && params.mergedProviderProjectionById?.[projectedAgentId]) {
+        return projectedAgentId;
+    }
+    return resolveCatalogAgentIdForBackendTarget(params.backendTarget);
 }
 
 function readMergedProviderProjection(
@@ -288,10 +307,10 @@ function resolveProjectionCatalogAgentId(
     providerProjection: MergedProviderProjectionEntry | null,
 ): AgentId | null {
     const explicitAgentId = backendProjection?.catalogAgentId ?? providerProjection?.catalogAgentId ?? null;
-    if (explicitAgentId && isAgentId(explicitAgentId)) {
+    if (explicitAgentId && isBundledAgentId(explicitAgentId)) {
         return explicitAgentId;
     }
-    if (isAgentId(agentId)) {
+    if (isBundledAgentId(agentId)) {
         return agentId;
     }
     return null;
@@ -304,10 +323,10 @@ function resolveProjectionIconAgentId(
     fallbackAgentId: AgentId | null,
 ): AgentId | null {
     const explicitIconAgentId = backendProjection?.iconAgentId ?? providerProjection?.iconAgentId ?? null;
-    if (explicitIconAgentId && isAgentId(explicitIconAgentId)) {
+    if (explicitIconAgentId && isBundledAgentId(explicitIconAgentId)) {
         return explicitIconAgentId;
     }
-    if (isAgentId(agentId)) {
+    if (isBundledAgentId(agentId)) {
         return agentId;
     }
     return fallbackAgentId;
@@ -317,7 +336,7 @@ function createBuiltInTargetEntry(agentId: string, params: MergedProjectionInput
     if (!agentId || agentId === LEGACY_COMPAT_PRIMARY_AGENT_ID) {
         return null;
     }
-    const isBuiltInAgent = isAgentId(agentId);
+    const isBuiltInAgent = isBundledAgentId(agentId);
     const agentBackendProjection = readMergedBackendProjection(agentId, params);
     const backingAgentId = agentBackendProjection?.agentId ?? agentId;
     const agentProviderProjection = readMergedProviderProjection(backingAgentId, params);

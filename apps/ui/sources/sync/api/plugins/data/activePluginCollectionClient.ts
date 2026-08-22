@@ -1,6 +1,7 @@
 import {
     PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1,
     PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
+    PLUGIN_COLLECTION_LIMITS_V1,
     PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1,
     PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1,
     PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
@@ -23,7 +24,9 @@ import {
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
     createAccountScopedCryptoMaterialSnapshotV1,
     isValidPluginJsonSchemaValue,
+    measurePluginCollectionMutationRequestDecompositionV1,
     openPluginCollectionPrivatePayloadV1,
+    resolveEffectivePluginCollectionLimitsV1,
     sealPluginCollectionPrivatePayloadV1,
     type AccountScopedCryptoMaterial,
     type NormalizedPluginAccountCollectionContractV1,
@@ -31,10 +34,14 @@ import {
     type PluginCollectionIndexScalarValueV1,
     type PluginCollectionMutationConflictV1,
     type PluginCollectionRelationRestrictionContinuationV1,
+    type PluginCollectionEffectiveLimitsV1,
     type PluginCollectionMutationOperationV1,
+    type PluginCollectionMutationRequestMeasurementV1,
+    type PluginCollectionMutationRequestV1,
     type PluginCollectionMutationResultEntryV1,
     type PluginCollectionProjectionV1,
     type PluginCollectionQueryRangeV1,
+    type PluginCollectionQuotaDimensionV1,
     type PluginCollectionRowV1,
 } from '@happier-dev/protocol';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -48,6 +55,7 @@ import { isDataKeyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { getCachedServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import {
@@ -89,6 +97,15 @@ export type ActivePluginCollectionRejectedV1 = Readonly<{
     relationRestriction?: Readonly<{
         dependentCount: number;
         continuation: PluginCollectionRelationRestrictionContinuationV1;
+    }>;
+    /**
+     * Which limit the server actually enforced and its effective maximum. A
+     * caller that sized its batch through `limits`/`measureBatch` reacts to this
+     * by repacking against the named dimension instead of retrying blind.
+     */
+    quotaIncompatibility?: Readonly<{
+        dimension: PluginCollectionQuotaDimensionV1;
+        effectiveMaximum: number;
     }>;
 }>;
 
@@ -168,6 +185,15 @@ export type ActivePluginCollectionWatchOutcomeV1 =
     | Readonly<{ status: 'watching'; dispose(): void }>
     | ActivePluginCollectionUnavailableV1;
 
+export type ActivePluginCollectionLimitsOutcomeV1 =
+    | Readonly<{ status: 'ready'; limits: PluginCollectionEffectiveLimitsV1 }>
+    | ActivePluginCollectionUnavailableV1;
+
+export type ActivePluginCollectionMeasurementOutcomeV1 =
+    | Readonly<{ status: 'ready'; measurement: PluginCollectionMutationRequestMeasurementV1 }>
+    | ActivePluginCollectionUnavailableV1
+    | ActivePluginCollectionRejectedV1;
+
 export type ActivePluginCollectionClientForContractRefOutcomeV1<
     TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition> = PluginAccountCollectionValue<PluginAccountCollectionDefinition>,
 > =
@@ -194,6 +220,25 @@ export type ActivePluginCollectionClientV1<
         operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
         options?: ActivePluginCollectionOperationOptionsV1,
     ): Promise<ActivePluginCollectionMutationOutcomeV1>;
+    /**
+     * The limits in force for this bound collection: the connected deployment's
+     * published policy narrowed by the collection's admitted quota. Reading them
+     * costs no request, because only the already-cached server capability and
+     * the resolved contract decide the answer.
+     */
+    limits(
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionLimitsOutcomeV1>;
+    /**
+     * Measure what these mutations would cost on the wire, through the same
+     * seal-and-serialize path `mutate` uses, so a caller sizing multi-batch work
+     * never re-models the private envelope, the projection, or the request
+     * shell. More operations may be measured than one atomic batch can carry.
+     */
+    measureBatch(
+        operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionMeasurementOutcomeV1>;
     /** Register before the initial query; the wakeup carries no row content. */
     watch(onInvalidated: () => void): ActivePluginCollectionWatchOutcomeV1;
 }>;
@@ -220,12 +265,16 @@ function unavailable(reason: ActivePluginCollectionUnavailableReasonV1): ActiveP
 
 function rejected(
     code: string,
-    relationRestriction?: ActivePluginCollectionRejectedV1['relationRestriction'],
+    detail?: Readonly<{
+        relationRestriction?: ActivePluginCollectionRejectedV1['relationRestriction'];
+        quotaIncompatibility?: ActivePluginCollectionRejectedV1['quotaIncompatibility'];
+    }>,
 ): ActivePluginCollectionRejectedV1 {
     return {
         status: 'rejected',
         code,
-        ...(relationRestriction ? { relationRestriction } : {}),
+        ...(detail?.relationRestriction ? { relationRestriction: detail.relationRestriction } : {}),
+        ...(detail?.quotaIncompatibility ? { quotaIncompatibility: detail.quotaIncompatibility } : {}),
     };
 }
 
@@ -615,8 +664,18 @@ function mapMutationError(value: unknown): ActivePluginCollectionUnavailableV1 |
     if (!parsed.success) return unavailable('response-invalid');
     if (parsed.data.error === 'collection_relation_restricted') {
         return rejected(parsed.data.error, {
-            dependentCount: parsed.data.dependentCount,
-            continuation: parsed.data.continuation,
+            relationRestriction: {
+                dependentCount: parsed.data.dependentCount,
+                continuation: parsed.data.continuation,
+            },
+        });
+    }
+    if (parsed.data.error === 'collection_quota_incompatible') {
+        return rejected(parsed.data.error, {
+            quotaIncompatibility: {
+                dimension: parsed.data.dimension,
+                effectiveMaximum: parsed.data.effectiveMaximum,
+            },
         });
     }
     switch (parsed.data.error) {
@@ -795,65 +854,72 @@ export function createActivePluginCollectionClient<
         }
     };
 
+    /**
+     * The one place this client's logical mutations become a wire request.
+     * `mutate` and `measureBatch` share it so a surface that sizes its own
+     * batches measures exactly the bytes the mutation will send, private
+     * envelope and projection included, rather than modelling the expansion.
+     */
+    const sealMutationRequest = (
+        operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
+        operation: PreparedCollectionOperation,
+    ): PluginCollectionMutationRequestV1 | null => {
+        const wireOperations: PluginCollectionMutationOperationV1[] = [];
+        for (const candidate of operations) {
+            if (candidate.kind === 'delete' || candidate.kind === 'assert') {
+                const parsed = PluginCollectionRowIdV1Schema.safeParse(candidate.rowId);
+                if (!parsed.success || !Number.isSafeInteger(candidate.expectedRevision) || candidate.expectedRevision < 1) {
+                    return null;
+                }
+                wireOperations.push({
+                    kind: candidate.kind,
+                    rowId: parsed.data,
+                    expectedRevision: candidate.expectedRevision,
+                });
+                continue;
+            }
+            const split = splitLogicalPut<TValue>({
+                contract: params.contract,
+                validate,
+                value: candidate.value,
+                expectedRevision: candidate.expectedRevision,
+                encryptionMode: operation.encryptionMode,
+                material: operation.material,
+            });
+            if (!split) return null;
+            wireOperations.push(split);
+        }
+        const request = PluginCollectionMutationRequestV1Schema.safeParse({
+            pluginId: params.contract.pluginId,
+            collectionId: params.contract.collectionId,
+            writerContext: {
+                schemaVersion: params.contract.schemaVersion,
+                contractDigest: params.contract.contractDigest,
+            },
+            operations: wireOperations,
+        });
+        return request.success ? request.data : null;
+    };
+
     const mutate = async (
         operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
         options?: ActivePluginCollectionOperationOptionsV1,
     ): Promise<ActivePluginCollectionMutationOutcomeV1> => {
-        if (operations.length < 1 || operations.length > 100) return rejected('collection_mutation_invalid');
+        if (
+            operations.length < 1
+            || operations.length > PLUGIN_COLLECTION_LIMITS_V1.maximumMutationBatchRows
+        ) {
+            return rejected('collection_mutation_invalid');
+        }
         const prepared = await prepareCollectionOperation(options, params.accountLifetime);
         if (prepared.status === 'unavailable') return prepared;
         try {
-            const wireOperations: PluginCollectionMutationOperationV1[] = [];
-            for (const operation of operations) {
-                if (operation.kind === 'delete') {
-                    const parsed = PluginCollectionRowIdV1Schema.safeParse(operation.rowId);
-                    if (!parsed.success || !Number.isSafeInteger(operation.expectedRevision) || operation.expectedRevision < 1) {
-                        return rejected('collection_mutation_invalid');
-                    }
-                    wireOperations.push({
-                        kind: 'delete',
-                        rowId: parsed.data,
-                        expectedRevision: operation.expectedRevision,
-                    });
-                    continue;
-                }
-                if (operation.kind === 'assert') {
-                    const parsed = PluginCollectionRowIdV1Schema.safeParse(operation.rowId);
-                    if (!parsed.success || !Number.isSafeInteger(operation.expectedRevision) || operation.expectedRevision < 1) {
-                        return rejected('collection_mutation_invalid');
-                    }
-                    wireOperations.push({
-                        kind: 'assert',
-                        rowId: parsed.data,
-                        expectedRevision: operation.expectedRevision,
-                    });
-                    continue;
-                }
-                const split = splitLogicalPut<TValue>({
-                    contract: params.contract,
-                    validate,
-                    value: operation.value,
-                    expectedRevision: operation.expectedRevision,
-                    encryptionMode: prepared.operation.encryptionMode,
-                    material: prepared.operation.material,
-                });
-                if (!split) return rejected('collection_mutation_invalid');
-                wireOperations.push(split);
-            }
-            const request = PluginCollectionMutationRequestV1Schema.safeParse({
-                pluginId: params.contract.pluginId,
-                collectionId: params.contract.collectionId,
-                writerContext: {
-                    schemaVersion: params.contract.schemaVersion,
-                    contractDigest: params.contract.contractDigest,
-                },
-                operations: wireOperations,
-            });
-            if (!request.success) return rejected('collection_mutation_invalid');
+            const request = sealMutationRequest(operations, prepared.operation);
+            if (!request) return rejected('collection_mutation_invalid');
             const response = await requestCollectionOperation({
                 operation: prepared.operation,
                 path: PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1,
-                body: request.data,
+                body: request,
                 options,
             });
             if (response.status === 'unavailable') return response;
@@ -872,10 +938,86 @@ export function createActivePluginCollectionClient<
         }
     };
 
+    /**
+     * The scope facts `limits` needs without a request: this client's captured
+     * Account lifetime and the server whose published capability is in force.
+     * A stale scope answers with the same typed unavailability every other
+     * operation reports rather than a stale ceiling.
+     */
+    const currentServerScope = (
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Readonly<{ status: 'ready'; serverId: string }> | ActivePluginCollectionUnavailableV1 => {
+        if (options?.signal?.aborted) return unavailable('operation-cancelled');
+        const lifetime = params.accountLifetime ?? captureActiveServerAccountScopeLifetime();
+        if (!lifetime) return unavailable('no-active-account-scope');
+        if (!lifetime.isCurrent()) return unavailable('account-scope-changed');
+        const serverSnapshot = getActiveServerSnapshot();
+        if (serverSnapshot.serverId !== lifetime.scope.serverId) {
+            return unavailable('server-generation-changed');
+        }
+        return { status: 'ready', serverId: serverSnapshot.serverId };
+    };
+
+    const limits = async (
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionLimitsOutcomeV1> => {
+        const scope = currentServerScope(options);
+        if (scope.status === 'unavailable') return scope;
+        const featureSnapshot = getCachedServerFeaturesSnapshot({ serverId: scope.serverId });
+        return {
+            status: 'ready',
+            limits: resolveEffectivePluginCollectionLimitsV1({
+                deployment: featureSnapshot?.status === 'ready'
+                    ? featureSnapshot.features.capabilities.pluginDataCollections
+                    : undefined,
+                quota: params.contract.quota,
+            }),
+        };
+    };
+
+    const measureBatch = async (
+        operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionMeasurementOutcomeV1> => {
+        if (operations.length < 1) return rejected('collection_mutation_invalid');
+        const prepared = await prepareCollectionOperation(options, params.accountLifetime);
+        if (prepared.status === 'unavailable') return prepared;
+        try {
+            // A caller measures precisely because its candidates do not fit one
+            // request, so measurement seals in request-sized windows. Costs are
+            // additive and the shell is identical in every window, so the
+            // reported decomposition stays exact for any subset.
+            const window = PLUGIN_COLLECTION_LIMITS_V1.maximumMutationBatchRows;
+            const operationEncodedBytes: number[] = [];
+            let overheadEncodedBytes = 0;
+            for (let offset = 0; offset < operations.length; offset += window) {
+                const request = sealMutationRequest(
+                    operations.slice(offset, offset + window),
+                    prepared.operation,
+                );
+                if (!request) return rejected('collection_mutation_invalid');
+                const measured = measurePluginCollectionMutationRequestDecompositionV1(request);
+                overheadEncodedBytes = measured.overheadEncodedBytes;
+                operationEncodedBytes.push(...measured.operationEncodedBytes);
+            }
+            return {
+                status: 'ready',
+                measurement: Object.freeze({
+                    overheadEncodedBytes,
+                    operationEncodedBytes: Object.freeze(operationEncodedBytes),
+                }),
+            };
+        } finally {
+            prepared.operation.release();
+        }
+    };
+
     return Object.freeze({
         get,
         query,
         mutate,
+        limits,
+        measureBatch,
         watch(onInvalidated): ActivePluginCollectionWatchOutcomeV1 {
             const watch = watchActivePluginCollectionChanges({
                 pluginId: params.contract.pluginId,

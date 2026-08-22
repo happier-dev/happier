@@ -36,16 +36,21 @@ const mountedTranscriptConsumerIdentitiesByConsumerId = new Map<number, Readonly
 
 type TranscriptConsumerReleaseListener = (sessionId: string) => void;
 
-// Hoisted-function + globalThis-keyed storage (same pattern as sessionSurfaceVisibility.ts):
-// sync.ts subscribes during its own module evaluation and this module can sit inside an
-// import cycle with it, so a module-scoped `const` Set would hit the TDZ.
+// `sync.ts` subscribes during its own module evaluation and this module can sit inside an import
+// cycle with it, so a module-scoped `const` Set would hit the TDZ. A hoisted `var` (same pattern as
+// `state/warmCachePersistence.ts`) is initialized before any cyclic partner evaluates and is safe to
+// read from the hoisted accessor below.
+//
+// It deliberately does NOT live on `globalThis`: subscribers register for the lifetime of their
+// module instance and never unsubscribe (the `Sync` singleton subscribes in its constructor), so a
+// process-wide root would retain every superseded module generation — its listener closure pins that
+// generation's `Sync` and, transitively, its whole module graph. Keeping the set module-scoped keeps
+// the registry's lifetime identical to `mountedTranscriptConsumerIdentitiesByConsumerId` above.
+var transcriptConsumerReleaseListeners: Set<TranscriptConsumerReleaseListener> | undefined;
+
 function getTranscriptConsumerReleaseListeners(): Set<TranscriptConsumerReleaseListener> {
-    // Key inlined (not a module-scoped const) so this hoisted function is TDZ-safe.
-    const host = globalThis as typeof globalThis & {
-        __HAPPIER_TRANSCRIPT_CONSUMER_RELEASE_LISTENERS__?: Set<TranscriptConsumerReleaseListener>;
-    };
-    host.__HAPPIER_TRANSCRIPT_CONSUMER_RELEASE_LISTENERS__ ??= new Set<TranscriptConsumerReleaseListener>();
-    return host.__HAPPIER_TRANSCRIPT_CONSUMER_RELEASE_LISTENERS__;
+    transcriptConsumerReleaseListeners ??= new Set<TranscriptConsumerReleaseListener>();
+    return transcriptConsumerReleaseListeners;
 }
 
 function notifyTranscriptConsumerReleased(sessionId: string): void {

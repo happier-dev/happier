@@ -1,9 +1,11 @@
 import {
+    DEFAULT_OPENABLE_CONTENT_MAX_BYTES_V1,
     OpenableContentReadRequestV1Schema,
     OpenableContentReadResultV1Schema,
     OpenableContentRefV1Schema,
     OpenableContentStatRequestV1Schema,
     OpenableContentStatResultV1Schema,
+    type OpenableContentBodyV1,
     type OpenableContentReadRequestV1,
     type OpenableContentReadResultV1,
     type OpenableContentRefV1,
@@ -16,7 +18,7 @@ import type {
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { randomUUID } from '@/platform/randomUUID';
-import { getImageMimeTypeFromPath, isKnownBinaryPath } from '@/scm/utils/filePresentation';
+import { getImageMimeTypeFromPath, isBinaryContent, isKnownBinaryPath } from '@/scm/utils/filePresentation';
 import {
     workspaceReadFile,
     workspaceStatFile,
@@ -27,6 +29,7 @@ import type {
     PluginSurfaceHostApiHandlers,
     PluginSurfaceHostApiRequestOptions,
 } from './createPluginSurfaceHostApi';
+import { createPluginSurfaceHostApiError } from './createPluginSurfaceHostApi';
 
 /**
  * The only private host binding a selected workspace-file viewer receives.
@@ -51,11 +54,11 @@ function sameRef(left: OpenableContentRefV1, right: OpenableContentRefV1): boole
 }
 
 function staleSurface(): PluginUiJsonValueV1 {
-    return { code: 'stale_surface', diagnostics: ['plugin_surface_retired'] };
+    return createPluginSurfaceHostApiError('stale_surface', ['plugin_surface_retired']);
 }
 
 function invalidPayload(reason: string): PluginUiJsonValueV1 {
-    return { code: 'invalid_payload', diagnostics: [reason] };
+    return createPluginSurfaceHostApiError('invalid_payload', [reason]);
 }
 
 function currentOrStale(isCurrent: (() => boolean) | undefined): PluginUiJsonValueV1 | null {
@@ -95,44 +98,95 @@ function privateWorkspaceFileExtension(filePath: string): string | undefined {
     return `.${basename.slice(dot + 1).toLowerCase()}`;
 }
 
-function deriveContentKind(filePath: string): Readonly<{
+type OpenableContentKind = Readonly<{
     contentClass: 'text' | 'image' | 'binary';
     mimeType: string;
     extension?: string;
+}>;
+
+/**
+ * How far content classification may read.
+ *
+ * The daemon transfer refuses a file larger than the ceiling it is given, so a
+ * cheap prefix probe does not exist: a probe reads the whole file or nothing.
+ * `DEFAULT_OPENABLE_CONTENT_MAX_BYTES_V1` is therefore the honest bound — the
+ * canonical default an openable read already delivers, so classification never
+ * moves more bytes than the read it describes. Above it the filename answer
+ * stands, and the read below remains authoritative for the bytes it holds.
+ */
+const CONTENT_CLASSIFICATION_PROBE_MAX_BYTES = DEFAULT_OPENABLE_CONTENT_MAX_BYTES_V1;
+
+/**
+ * A filename cannot decide whether bytes are text. The extension tables answer
+ * only for the images and archives they list, and every unlisted extension —
+ * including every extension nobody has thought of — currently lands on `text`.
+ * `decidedByPath` marks that difference so only the undecided case pays for a
+ * content probe.
+ */
+function deriveContentKind(filePath: string): Readonly<{
+    kind: OpenableContentKind;
+    decidedByPath: boolean;
 }> {
     const normalizedPath = filePath.replaceAll('\\', '/');
     const imageMime = getImageMimeTypeFromPath(normalizedPath);
     const extension = privateWorkspaceFileExtension(normalizedPath);
+    const withExtension = extension ? { extension } : {};
     if (imageMime) {
         return {
-            contentClass: 'image',
-            mimeType: imageMime,
-            ...(extension ? { extension } : {}),
+            kind: { contentClass: 'image', mimeType: imageMime, ...withExtension },
+            decidedByPath: true,
         };
     }
     if (isKnownBinaryPath(normalizedPath)) {
         return {
-            contentClass: 'binary',
-            mimeType: 'application/octet-stream',
-            ...(extension ? { extension } : {}),
+            kind: { contentClass: 'binary', mimeType: 'application/octet-stream', ...withExtension },
+            decidedByPath: true,
         };
     }
     return {
-        contentClass: 'text',
-        mimeType: 'text/plain',
-        ...(extension ? { extension } : {}),
+        kind: { contentClass: 'text', mimeType: 'text/plain', ...withExtension },
+        decidedByPath: false,
     };
+}
+
+function decodeStrictUtf8(bytes: Uint8Array): string | null {
+    try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The one content question this owner answers from bytes: are they the UTF-8
+ * text a text viewer will be handed? Stat and read below both decide it here,
+ * so metadata and delivered content cannot disagree, and `isBinaryContent`
+ * stays the shared owner of the control-byte rule the built-in file viewer
+ * already applies.
+ */
+function classifyOpenableContentBytes(bytes: Uint8Array): 'text' | 'binary' {
+    const text = decodeStrictUtf8(bytes);
+    if (text === null) return 'binary';
+    return isBinaryContent(text) ? 'binary' : 'text';
 }
 
 function revisionFromWorkspaceStat(sizeBytes: number, modifiedMs: number): string {
     return `workspace-file:${sizeBytes}:${modifiedMs}`;
 }
 
-async function statWorkspaceOpenableContent(input: Readonly<{
+type WorkspaceOpenableContentMetadata =
+  | Readonly<{ status: 'ready'; sizeBytes: number; revision: string }>
+  | Readonly<{ status: 'unavailable' | 'unsupported' | 'cancelled' }>;
+
+/**
+ * The cheap host-owned facts. The read path guards itself with this alone, so
+ * its before/after revision checks never pay for content classification.
+ */
+async function statWorkspaceFileMetadata(input: Readonly<{
     target: WorkspaceFileSystemTarget;
     filePath: string;
     signal?: AbortSignal;
-}>): Promise<OpenableContentStatResultV1> {
+}>): Promise<WorkspaceOpenableContentMetadata> {
     try {
         const result = await awaitCancellable(
             workspaceStatFile(input.target, input.filePath, {
@@ -155,17 +209,87 @@ async function statWorkspaceOpenableContent(input: Readonly<{
         }
 
         const sizeBytes = Math.floor(result.sizeBytes);
-        const modifiedMs = result.modifiedMs;
-        const content = deriveContentKind(input.filePath);
         return {
             status: 'ready',
-            ...content,
             sizeBytes,
-            revision: revisionFromWorkspaceStat(sizeBytes, modifiedMs),
+            revision: revisionFromWorkspaceStat(sizeBytes, result.modifiedMs),
         };
     } catch {
         return input.signal?.aborted ? { status: 'cancelled' } : { status: 'unavailable' };
     }
+}
+
+/** One classification, bound to the exact revision whose bytes produced it. */
+type OpenableContentClassificationMemo = {
+    current: Readonly<{ revision: string; kind: OpenableContentKind }> | null;
+};
+
+async function classifyWorkspaceOpenableContent(input: Readonly<{
+    target: WorkspaceFileSystemTarget;
+    filePath: string;
+    sizeBytes: number;
+    revision: string;
+    memo: OpenableContentClassificationMemo;
+    signal?: AbortSignal;
+}>): Promise<OpenableContentKind> {
+    const derived = deriveContentKind(input.filePath);
+    // An empty file is valid UTF-8, so it needs no probe to be called text.
+    if (derived.decidedByPath || input.sizeBytes === 0) return derived.kind;
+    const memo = input.memo.current;
+    if (memo && memo.revision === input.revision) return memo.kind;
+    if (input.sizeBytes > CONTENT_CLASSIFICATION_PROBE_MAX_BYTES) return derived.kind;
+
+    const probe = await awaitCancellable(
+        workspaceReadFile(input.target, input.filePath, {
+            maxBytes: CONTENT_CLASSIFICATION_PROBE_MAX_BYTES,
+            ...(input.signal ? { signal: input.signal } : {}),
+        }),
+        input.signal,
+    );
+    // A failed, cancelled or raced probe is deliberately not memoized: the
+    // filename answer stands for this call and the next stat probes again.
+    if (probe === CANCELLED || !probe.success) return derived.kind;
+    const bytes = decodeBase64(probe.content, 'base64');
+    if (bytes.byteLength !== input.sizeBytes) return derived.kind;
+
+    const kind: OpenableContentKind = classifyOpenableContentBytes(bytes) === 'binary'
+        ? {
+            contentClass: 'binary',
+            mimeType: 'application/octet-stream',
+            ...(derived.kind.extension ? { extension: derived.kind.extension } : {}),
+        }
+        : derived.kind;
+    input.memo.current = Object.freeze({ revision: input.revision, kind });
+    return kind;
+}
+
+async function statWorkspaceOpenableContent(input: Readonly<{
+    target: WorkspaceFileSystemTarget;
+    filePath: string;
+    memo: OpenableContentClassificationMemo;
+    signal?: AbortSignal;
+}>): Promise<OpenableContentStatResultV1> {
+    const metadata = await statWorkspaceFileMetadata({
+        target: input.target,
+        filePath: input.filePath,
+        ...(input.signal ? { signal: input.signal } : {}),
+    });
+    if (metadata.status !== 'ready') return metadata;
+    const kind = await classifyWorkspaceOpenableContent({
+        target: input.target,
+        filePath: input.filePath,
+        sizeBytes: metadata.sizeBytes,
+        revision: metadata.revision,
+        memo: input.memo,
+        ...(input.signal ? { signal: input.signal } : {}),
+    });
+    if (input.signal?.aborted) return { status: 'cancelled' };
+    return {
+        status: 'ready',
+        ...kind,
+        sizeBytes: metadata.sizeBytes,
+        revision: metadata.revision,
+    };
 }
 
 function validatedStatResult(value: unknown): OpenableContentStatResultV1 {
@@ -195,12 +319,25 @@ export function createWorkspaceFileOpenableContentBinding(input: Readonly<{
         kind: 'workspaceFile',
         handle: `workspaceFile_${randomUUID()}`,
     });
+    // One slot, holding one revision's classification. A later revision
+    // replaces it rather than accumulating, so this binding never describes an
+    // edit it has not read.
+    const classification: OpenableContentClassificationMemo = { current: null };
 
     const stat = async (options?: PluginSurfaceHostApiRequestOptions): Promise<OpenableContentStatResultV1> => (
         await statWorkspaceOpenableContent({
             target: input.target,
             filePath,
+            memo: classification,
             ...(options?.signal ? { signal: options.signal } : {}),
+        })
+    );
+
+    const statMetadata = async (signal: AbortSignal | undefined): Promise<WorkspaceOpenableContentMetadata> => (
+        await statWorkspaceFileMetadata({
+            target: input.target,
+            filePath,
+            ...(signal ? { signal } : {}),
         })
     );
 
@@ -209,7 +346,7 @@ export function createWorkspaceFileOpenableContentBinding(input: Readonly<{
         options?: PluginSurfaceHostApiRequestOptions,
     ): Promise<OpenableContentReadResultV1> => {
         const signal = options?.signal;
-        const before = await stat({ ...(signal ? { signal } : {}) });
+        const before = await statMetadata(signal);
         if (before.status !== 'ready') return before;
         const readyBefore = before;
         if (readyBefore.revision !== request.expectedRevision) return { status: 'changed' };
@@ -227,7 +364,7 @@ export function createWorkspaceFileOpenableContentBinding(input: Readonly<{
             );
             if (readResult === CANCELLED) return { status: 'cancelled' };
 
-            const after = await stat({ ...(signal ? { signal } : {}) });
+            const after = await statMetadata(signal);
             if (after.status !== 'ready') return after;
             const readyAfter = after;
             if (readyAfter.revision !== readyBefore.revision) return { status: 'changed' };
@@ -244,16 +381,16 @@ export function createWorkspaceFileOpenableContentBinding(input: Readonly<{
             // not a stable snapshot. Do not reinterpret it as a usable read.
             if (bytes.byteLength !== readyAfter.sizeBytes) return { status: 'changed' };
 
-            const content = readyAfter.contentClass === 'text'
-                ? (() => {
-                    try {
-                        return { kind: 'utf8' as const, text: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
-                    } catch {
-                        return null;
-                    }
-                })()
-                : { kind: 'base64' as const, base64: encodeBase64(bytes, 'base64') };
-            if (!content) return { status: 'unsupported' };
+            // The bytes in hand are the authority, and they are classified by
+            // the same rule the stat metadata used. A file the filename could
+            // not decide is therefore delivered as the text or binary it
+            // actually is, instead of being refused as `unsupported` because a
+            // filename promised text.
+            const derived = deriveContentKind(filePath);
+            const text = derived.decidedByPath ? null : decodeStrictUtf8(bytes);
+            const content: OpenableContentBodyV1 = text !== null && !isBinaryContent(text)
+                ? { kind: 'utf8', text }
+                : { kind: 'base64', base64: encodeBase64(bytes, 'base64') };
             return {
                 status: 'ready',
                 content,

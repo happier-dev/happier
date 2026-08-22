@@ -179,19 +179,30 @@ describe('buildConnectedAccountPurposeTargetChoices', () => {
     expect(accountChoice).toEqual(expect.objectContaining({
       presentation: expect.objectContaining({
         primaryLabel: 'Personal OpenAI',
-        secondaryLabel: `Acme Gateway · ${opaqueAccount.ref.accountId}`,
+        secondaryLabel: 'Acme Gateway',
       }),
       selectable: true,
     }));
     expect(groupChoice).toEqual(expect.objectContaining({
       presentation: expect.objectContaining({
         primaryLabel: 'Acme Gateway',
-        secondaryLabel: opaqueGroup.ref.groupId,
       }),
       selectable: true,
     }));
-    expect(accountChoice?.presentation.primaryLabel).not.toContain(opaqueAccount.ref.accountId);
-    expect(groupChoice?.presentation.primaryLabel).not.toContain(opaqueGroup.ref.groupId);
+    // The opaque id keys the choice for routing and mutation, and appears in no
+    // field a person reads or a screen reader speaks.
+    for (const choice of [accountChoice, groupChoice]) {
+      for (const text of [
+        choice?.presentation.primaryLabel,
+        choice?.presentation.secondaryLabel,
+        choice?.presentation.accessibilityLabel,
+      ]) {
+        expect(text ?? '').not.toContain(opaqueAccount.ref.accountId);
+        expect(text ?? '').not.toContain(opaqueGroup.ref.groupId);
+      }
+    }
+    expect(accountChoice?.id).toContain(opaqueAccount.ref.accountId);
+    expect(groupChoice?.id).toContain(opaqueGroup.ref.groupId);
     expect(resolveConnectedAccountPurposeTargetDisplay(accountDisplayInput)).toBe('Personal OpenAI');
     expect(resolveConnectedAccountPurposeTargetDisplay(groupDisplayInput)).toBe('Acme Gateway');
   });

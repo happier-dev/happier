@@ -30,6 +30,7 @@ import {
     createSocketRpcRequestId,
 } from '@/sync/runtime/socketRpcCallCancellation';
 
+import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from './serverScopedRpcTypes';
 import type { ServerScopedMachineRpcParams, SocketRpcResult } from './serverScopedRpcTypes';
 import { isGuardedMachineRpcMethod, resolveTransferPolicyAllowsMachineRpcDirect } from './guardedMachineRpcPolicy';
 import {
@@ -122,7 +123,7 @@ async function withMachineRpcAbort<T>(
 }
 
 function resolveMachineRpcTimeoutMs(timeoutMs: number | undefined): number {
-    return typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 30_000;
+    return typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS;
 }
 
 async function withMachineRpcTimeout<T>(

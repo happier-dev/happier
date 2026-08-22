@@ -1,13 +1,20 @@
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
-import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
+import type {
+    CurrentUiContextSnapshotV1,
+    PluginUiJsonValueV1,
+} from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy/evaluate';
 import { comparePluginContributionOrder } from '@/sync/domains/plugins/contributionOrder';
 import {
     dispatchPluginSurfaceAction,
     type PluginSurfaceActionDispatchOutcome,
+    type PluginSurfaceContributedActionDescriptorResolver,
     type PluginSurfaceContributedActionTransport,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import {
+    createPluginActionCurrentIntentHandler,
+} from '@/components/plugins/surfaces/pluginSurfaceFeedback';
 
 import {
     canUsePluginBrowserProjectionEntry,
@@ -67,13 +74,16 @@ export async function executePluginBrowserAction(params: Readonly<{
     sessionId?: string | null;
     input: unknown;
     policyContext?: PluginUiPolicyEvaluationContext;
+    resolveContributedAction?: PluginSurfaceContributedActionDescriptorResolver;
     execute?: PluginBrowserActionTransport;
+    signal?: AbortSignal;
+    isCurrent?: () => boolean;
+    readCurrentUiContext?: () => CurrentUiContextSnapshotV1 | null | undefined;
 }>): Promise<PluginSurfaceActionDispatchOutcome> {
     const machineId = normalizeMachineId(params.machineId);
     if (
         !params.action
         || params.generation === null
-        || !machineId
         || !canUsePluginBrowserProjectionEntry(params.action, params.policyContext)
     ) {
         return { ok: false, code: 'unavailable', reason: 'plugin_browser_action_unavailable' };
@@ -83,16 +93,61 @@ export async function executePluginBrowserAction(params: Readonly<{
         return { ok: false, code: 'invalid_payload', reason: 'plugin_browser_action_input_invalid' };
     }
 
+    // This adapter reads the raw descriptor only to retain its browser-specific
+    // daemon-context precondition. The canonical dispatcher remains the sole
+    // owner of target selection and client-action failure semantics.
+    const projectedAction = params.resolveContributedAction?.(params.action.actionIdentity) ?? null;
+    if (projectedAction?.execution.target === 'daemon' && !machineId) {
+        return { ok: false, code: 'unavailable', reason: 'plugin_browser_action_unavailable' };
+    }
+    const isCurrent = params.isCurrent ?? (() => true);
+    const requestCurrentIntent = projectedAction?.execution.target === 'client'
+        ? createPluginActionCurrentIntentHandler({
+            requester: {
+                pluginId: projectedAction.pluginId,
+                contributionId: projectedAction.id,
+                generationId: String(params.generation),
+                invocationId: `ui-action:${params.generation}`,
+            },
+            ...(params.signal ? { signal: params.signal } : {}),
+            isCurrent,
+        })
+        : undefined;
+
     return await dispatchPluginSurfaceAction({
         callerPluginId: params.action.pluginId,
         action: params.action.actionIdentity,
         input: input.data as PluginUiJsonValueV1,
-        contributedAction: {
-            machineId,
-            serverId: params.serverId ?? null,
-            expectedGeneration: String(params.generation),
-            ...(params.sessionId ? { sessionId: params.sessionId } : {}),
-            ...(params.execute ? { execute: params.execute } : {}),
-        },
+        ...(params.resolveContributedAction
+            ? { resolveContributedAction: params.resolveContributedAction }
+            : {}),
+        ...(projectedAction?.execution.target === 'daemon'
+            ? {
+                contributedAction: {
+                    machineId: machineId!,
+                    serverId: params.serverId ?? null,
+                    expectedGeneration: String(params.generation),
+                    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+                    ...(params.execute ? { execute: params.execute } : {}),
+                },
+            }
+            : {}),
+        ...(projectedAction?.execution.target === 'client'
+            && typeof params.generation === 'number'
+            && Number.isInteger(params.generation)
+            && params.generation >= 0
+            ? {
+                clientAction: {
+                    projectionGeneration: params.generation,
+                    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+                    ...(requestCurrentIntent ? { requestCurrentIntent } : {}),
+                    ...(params.readCurrentUiContext
+                        ? { currentUiContext: params.readCurrentUiContext }
+                        : {}),
+                },
+            }
+            : {}),
+        ...(params.signal ? { signal: params.signal } : {}),
+        isCurrent,
     });
 }

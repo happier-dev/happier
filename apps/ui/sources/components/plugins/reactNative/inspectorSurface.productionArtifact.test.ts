@@ -32,14 +32,14 @@ import { createReactNativeWebLoaderBackend } from './webLoaderBackend.web';
  * bundler/environment conflict — see that file's doc comment), this file
  * reads the ACTUAL bytes `FIX-RNWEB-SERVING.md`'s real `vite build` run
  * produced on disk
- * (`packages/plugins/inspector/dist/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs`,
+ * (`packages/plugins/inspector/dist/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs.bundle`,
  * the same file the Inspector manifest renderer and generated
  * `ui-artifacts.json` web entry register for real byte-serving) and runs it
  * through the SAME real loader
  * a connecting web client uses in production. The compiled output has ZERO
  * bare `react`/`react-native-web` imports (the host-runtime-externals
  * plugin inlines `globalThis[...]` reads at every use site instead — real
- * ESM, verified directly: `grep -c '^import ' entry.mjs` is 0), so a
+ * ESM, verified directly: `grep -c '^import ' entry.mjs.bundle` is 0), so a
  * `data:` URI `import()` (Node's `blob:`-unsupported substitute, same
  * established pattern `webLoaderBackend.test.ts` uses) can load it exactly
  * like a real browser's `import()` of a `blob:` URL would.
@@ -86,7 +86,7 @@ function installRealHostRuntimeExternalsForTesting(): void {
 
 const PRODUCTION_ARTIFACT_PATH = fileURLToPath(
     new URL(
-        '../../../../../../packages/plugins/inspector/dist/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs',
+        '../../../../../../packages/plugins/inspector/dist/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs.bundle',
         import.meta.url,
     ),
 );
@@ -117,7 +117,7 @@ afterEach(() => {
 });
 
 describe('inspector RN-web PRODUCTION artifact — real built bytes through the real web loader', () => {
-    it('the built entry.mjs on disk matches the generated artifact graph digest', () => {
+    it('the built entry.mjs.bundle on disk matches the generated artifact graph digest', () => {
         const bytes = readFileSync(PRODUCTION_ARTIFACT_PATH);
         const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 
@@ -134,7 +134,7 @@ describe('inspector RN-web PRODUCTION artifact — real built bytes through the 
         expect(digest).toBe(entryFile?.digest);
     });
 
-    it('loads the real production entry.mjs bytes through createReactNativeWebLoaderBackend', async () => {
+    it('loads the real production entry.mjs.bundle bytes through createReactNativeWebLoaderBackend', async () => {
         installRealHostRuntimeExternalsForTesting();
         const sourceText = readFileSync(PRODUCTION_ARTIFACT_PATH, 'utf8');
         // The real compiled output has no bare package imports left to resolve

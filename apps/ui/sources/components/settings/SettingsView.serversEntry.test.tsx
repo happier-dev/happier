@@ -112,12 +112,12 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (action: () => void) => shared.deferOnWebSpy(action),
 }));
 
-vi.mock('@/utils/platform/tauri', async () => {
-    const actual = await vi.importActual<typeof import('@/utils/platform/tauri')>('@/utils/platform/tauri');
+vi.mock('@/utils/platform/desktopHost', async () => {
+    const actual = await vi.importActual<typeof import('@/utils/platform/desktopHost')>('@/utils/platform/desktopHost');
     return {
         ...actual,
-        isTauriDesktop: () => tauriDesktopState.value,
-        invokeTauri: vi.fn(async () => false),
+        isDesktopHost: () => tauriDesktopState.value,
+        invokeDesktopHost: vi.fn(async () => false),
     };
 });
 

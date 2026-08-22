@@ -1,9 +1,27 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
     PluginAccountAvailabilityIntentReadResponseV1Schema,
     PluginMachineMaterializationV1Schema,
 } from '@happier-dev/protocol/plugins/availability';
+
+// The app build emits this module; vitest resolves the platform-neutral empty
+// variant. Standing in one host-bundled entry is a build-artifact boundary, not
+// a substitute for any reader logic under test.
+vi.mock('./generatedBundledPluginUiArtifacts', () => ({
+    BUNDLED_PLUGIN_UI_APP_ARTIFACTS: Object.freeze([Object.freeze({
+        pluginId: 'happier.fixture',
+        contributionId: 'fixture-list-page-native',
+        tier: 'reactNative' as const,
+        platform: 'web' as const,
+        digest: `sha256:${'d'.repeat(64)}`,
+        releaseVersion: '0.0.0',
+        files: Object.freeze([Object.freeze({
+            relativePath: 'react-native-web/fixture-list-page-native/entry.mjs.bundle',
+            asset: 'fixture-web-entry',
+        })]),
+    })]),
+}));
 
 import {
     createPluginAccountAvailabilityReader,
@@ -107,6 +125,68 @@ function snapshot(overrides: Partial<PluginAccountAvailabilitySnapshot> = {}): P
 }
 
 describe('Plugin Account Availability reader', () => {
+    const hostBundledSlot = {
+        pluginId: 'happier.fixture',
+        contributionId: 'fixture-list-page-native',
+        tier: 'reactNative' as const,
+        platform: 'web' as const,
+    };
+
+    it('admits the app-package coordinate for a host-bundled plugin the Account can never hold a release for', () => {
+        const reader = createPluginAccountAvailabilityReader({ scope, snapshot: snapshot() });
+
+        expect(reader.readCurrentArtifact(hostBundledSlot)).toEqual({
+            kind: 'available',
+            availabilityCursor: 42,
+            artifact: {
+                pluginId: 'happier.fixture',
+                contributionId: 'fixture-list-page-native',
+                tier: 'reactNative',
+                platform: 'web',
+                digest: `sha256:${'d'.repeat(64)}`,
+                releaseVersion: '0.0.0',
+            },
+        });
+    });
+
+    it('never lets host-bundled bytes override an Account intent that exists for the same plugin', () => {
+        const response = intentRead();
+        const intent = response.intent;
+        if (!intent) throw new Error('Fixture requires a current intent.');
+        const reader = createPluginAccountAvailabilityReader({
+            scope,
+            snapshot: {
+                ...snapshot(),
+                intentReads: [{
+                    pluginId: 'happier.fixture',
+                    response: {
+                        ...response,
+                        intent: { ...intent, pluginId: 'happier.fixture', enabled: false },
+                        release: response.release
+                            ? {
+                                ...response.release,
+                                ref: { pluginId: 'happier.fixture', version: '1.2.3' },
+                                normalizedManifest: {
+                                    ...response.release.normalizedManifest,
+                                    id: 'happier.fixture',
+                                },
+                            }
+                            : response.release,
+                        uiArtifacts: response.uiArtifacts.map((link) => ({
+                            ...link,
+                            release: { pluginId: 'happier.fixture', version: '1.2.3' },
+                        })),
+                    },
+                }],
+            },
+        });
+
+        expect(reader.readCurrentArtifact(hostBundledSlot)).toEqual({
+            kind: 'unavailable',
+            code: 'artifact_not_current',
+        });
+    });
+
     it('projects only Account currentness/materialization facts and never a byte-source or renderer URL selector', () => {
         const reader = createPluginAccountAvailabilityReader({ scope, snapshot: snapshot() });
 

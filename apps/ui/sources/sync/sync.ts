@@ -8,7 +8,7 @@ import {
     apiSocket,
 } from '@/sync/api/session/apiSocket';
 import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
-import { resumeSession } from '@/sync/ops';
+import { ensureSessionRuntimeForPendingInput } from '@/sync/ops';
 import {
     isTokenOnlyAuthCredentials,
     type AuthCredentials,
@@ -61,7 +61,6 @@ import {
     loadSyncTuning,
     type SyncTuning,
 } from '@/sync/runtime/syncTuning';
-import { registerSessionTranscriptDerivedCacheClear } from '@/sync/runtime/sessionTranscriptDerivedCaches';
 import {
     clearResolvedStaleTranscriptMessageIds,
     clearDeferredTranscriptStateForSession,
@@ -146,7 +145,7 @@ import type {
     ManagedEndpointSupervisor,
     ManagedEndpointSupervisorState,
 } from '@happier-dev/connection-supervisor';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { resolveSentFrom } from './domains/messages/sentFrom';
 import {
     NormalizedMessage,
@@ -841,14 +840,12 @@ function readExternalSessionLinkFromSession(
     );
 }
 
-function wakeInactiveSessionAfterCommittedPrompt(params: Readonly<{
+function ensureSessionRuntimeAfterCommittedPrompt(params: Readonly<{
     sessionId: string;
     session: Session;
     seq: number;
     tag: string;
 }>): void {
-    if (params.session.active === true) return;
-
     const controlTarget = readMachineControlTargetForSession(params.sessionId);
     const metadata = readSessionOwnerMetadataView(params.session);
     const machineId = normalizeNonEmptyString(controlTarget?.machineId)
@@ -866,7 +863,7 @@ function wakeInactiveSessionAfterCommittedPrompt(params: Readonly<{
     if (!resumeOptions) return;
 
     fireAndForget(
-        resumeSession({
+        ensureSessionRuntimeForPendingInput({
             ...resumeOptions,
             initialTranscriptAfterSeq: Math.max(0, params.seq - 1),
         }),
@@ -1032,6 +1029,7 @@ type SessionOrganizationSyncState = Pick<
     | 'sessionOrganizationFolderAssignmentsBySessionKey'
     | 'sessionOrganizationTagsByTagKey'
     | 'sessionOrganizationTagAssignmentsBySessionKey'
+    | 'sessionOrganizationAttentionStandingsBySessionKey'
     | 'sessionOrganizationOrderEntriesByScopeKey'
     | 'sessionOrganizationLabelsByLabelKey'
 >;
@@ -1047,6 +1045,7 @@ function resolveOrganizationPinnedSessionIdsForServer(state: SessionOrganization
         folderAssignmentsBySessionKey: state.sessionOrganizationFolderAssignmentsBySessionKey,
         tagsByTagKey: state.sessionOrganizationTagsByTagKey,
         tagAssignmentsBySessionKey: state.sessionOrganizationTagAssignmentsBySessionKey,
+        attentionStandingsBySessionKey: state.sessionOrganizationAttentionStandingsBySessionKey,
         orderEntriesByScopeKey: state.sessionOrganizationOrderEntriesByScopeKey,
         labelsByLabelKey: state.sessionOrganizationLabelsByLabelKey,
     }, normalizedServerId).pinnedSessionIds];
@@ -1095,7 +1094,7 @@ class Sync {
       private resumeInFlight: Promise<void> | null = null;
       private accountChangeWakeQueuedAfterResume = false;
       private pendingOutboxRearmInFlightByScope = new Map<string, Promise<void>>();
-      private readonly usesPersistentDesktopSync = isTauriDesktop();
+      private readonly usesPersistentDesktopSync = isDesktopHost();
       private isForeground = this.usesPersistentDesktopSync || AppState.currentState === 'active';
       public encryptionCache = new EncryptionCache();
     private sessionsSync: InvalidateSync;
@@ -1238,9 +1237,31 @@ class Sync {
         });
         installSyncPerformanceTelemetryGlobal(syncPerformanceTelemetry);
         installSyncReliabilityTelemetryGlobal(syncReliabilityTelemetry);
-        registerSessionTranscriptDerivedCacheClear((sessionId) => {
-            this.encryptionCache.clearSessionCache(sessionId);
-        });
+        // Decrypted plaintext deliberately does NOT hang off the transcript-derived-cache
+        // seam.
+        //
+        // That seam exists for memo caches whose entries root store objects — the
+        // per-session message arrays in `sync/store/hooks.ts` keep a `SessionMessages`
+        // entry alive through `sourceRef`s, so dropping the store entry without clearing
+        // them frees nothing. A `DecryptedMessage` is a plain record and roots none of
+        // that, so it never belonged to that concern.
+        //
+        // Registering it here conflated two lifetimes and cost far more than it saved:
+        // bounded retention eviction (`evictSessionMessages`) fires the seam, so every
+        // evicted transcript ALSO threw away plaintext whose validity had not changed —
+        // the cache is keyed by `(messageId, ciphertext fingerprint)` and stays correct
+        // across an eviction. Returning to the session then paid full decryption again.
+        //
+        // Measured on remote-dev 2026-08-18 (same defect, same wiring), returning to a
+        // session parked past the retention grace: before, `toDecrypt 368, cached 0` —
+        // 0% hit, 1574ms of decryption, 3685ms to first paint. After removing this
+        // registration: `toDecrypt 0, cached 368` — 100% hit, 213ms, 1967ms to first
+        // paint, on the identical scenario.
+        //
+        // The two lifetimes that genuinely invalidate plaintext still clear it, each at
+        // its own owner: a session key change (`initializeSessionEncryption`) and session
+        // deletion (`removeSessionEncryption`). Size is bounded by the cache's own
+        // `maxMessageBytes` LRU budget. Nothing here needs a third opinion.
         registerAccountSettingsDaemonSpawnPreparation(this.prepareAccountSettingsForDaemonSpawn);
         this.syncJsThreadLagTelemetryRuntime();
         // Bounded transcript retention: sweep is triggered by transcript-surface
@@ -1800,7 +1821,7 @@ class Sync {
     }
 
     private getWebSyncClientIdentity(): WebSyncClientIdentity | null {
-        if (Platform.OS !== 'web' || isTauriDesktop()) return null;
+        if (Platform.OS !== 'web' || isDesktopHost()) return null;
         if (this.webSyncClientIdentity) return this.webSyncClientIdentity;
         if (typeof globalThis.sessionStorage === 'undefined' || typeof globalThis.localStorage === 'undefined') {
             return null;
@@ -2864,6 +2885,7 @@ class Sync {
             }
             const canUseActiveSessionRuntimeRpc = session.active === true
                 && canUseSessionUserMessageRuntimeRpc(session);
+            let runtimeRpcFallbackRequiresEnsure = false;
             if (selectedComposerAttachment && !canUseActiveSessionRuntimeRpc) {
                 removePendingMessageCreatedForSend();
                 throw composerAttachmentRuntimeRequiredError();
@@ -2977,6 +2999,7 @@ class Sync {
                             );
                             return { localId: queued.localId, persistence: 'pending' as const };
                         }
+                        runtimeRpcFallbackRequiresEnsure = true;
                 }
             }
 
@@ -3044,12 +3067,14 @@ class Sync {
 	            // across devices.
 	            await publishNextPromptPermissionModeIfNeeded();
 
-            wakeInactiveSessionAfterCommittedPrompt({
-                sessionId,
-                session,
-                seq: ack.seq,
-                tag: 'Sync.sendMessage.wakeAfterSend',
-            });
+            if (session.active !== true || runtimeRpcFallbackRequiresEnsure) {
+                ensureSessionRuntimeAfterCommittedPrompt({
+                    sessionId,
+                    session,
+                    seq: ack.seq,
+                    tag: 'Sync.sendMessage.wakeAfterSend',
+                });
+            }
 
 	            // Server ACK means the user message is committed (or idempotently confirmed).
 	            // Do NOT clear optimistic thinking here: the agent can still be mid-turn (streaming / tool calls).
@@ -3451,7 +3476,7 @@ class Sync {
             abortSession: (targetSessionId) => this.abortSession(targetSessionId),
             updatePendingRequestedAction: (targetSessionId, localId, requestedAction) =>
                 this.updatePendingRequestedAction(targetSessionId, localId, requestedAction),
-            resumeSession: (options) => resumeSession(options),
+            ensureSessionRuntimeForPendingInput: (options) => ensureSessionRuntimeForPendingInput(options),
             refreshSessionForSubmit: (targetSessionId, options) =>
                 this.refreshSessionForSubmit(targetSessionId, options),
             canWakeMachineId,
@@ -5022,7 +5047,7 @@ class Sync {
 
     public fetchUserMessageHistoryPage = async (
         sessionId: string,
-        opts: { beforeSeq?: number | null; limit?: number } = {},
+        opts: { beforeSeq?: number | null; limit?: number; turnProjection?: boolean } = {},
     ): Promise<FetchUserMessageHistoryPageResult> => {
         const normalizedSessionId = String(sessionId ?? '').trim();
         if (!normalizedSessionId) return { status: 'not_ready' };
@@ -5036,6 +5061,7 @@ class Sync {
             sessionId: normalizedSessionId,
             beforeSeq: opts.beforeSeq,
             limit: opts.limit,
+            ...(opts.turnProjection === true ? { turnProjection: true } : {}),
             sessionEncryptionMode: session?.encryptionMode === 'plain' ? 'plain' : 'e2ee',
             request: this.createSessionMessagesRequest(normalizedSessionId),
             getSessionEncryption: (id) => this.encryption?.getSessionEncryption(id) ?? null,
@@ -7034,6 +7060,31 @@ class Sync {
                           throw new Error(page.error);
                       }
 
+                      // Discontinuity admission runs BEFORE normalization, row application and the
+                      // cursor commit. `truncated` means the provider could not serve history
+                      // continuous with the cursor we asked from — a physical source replacement or
+                      // rotation — so the returned rows are NOT older history for the accepted
+                      // transcript. Splicing them in and committing their `nextCursor` would publish
+                      // replacement data as if it were the session's own past and permanently
+                      // strand the real prefix behind an unaccounted cursor.
+                      //
+                      // Apply zero rows, keep the accepted cursor, and delegate to the SAME
+                      // replacement hydration the tail catch-up already uses
+                      // (`catchUpExternalSessionMessages`): it fences the replaced authority and
+                      // re-reads the source from its head. No second recovery state machine.
+                      if (page.truncated === true) {
+                          await this.fetchExternalSessionMessages(params.sessionId, externalSessionLink, {
+                              replaceExisting: true,
+                          });
+                          return {
+                              loaded: 0,
+                              hasMore: this.externalSessionHasMoreOlderBySessionId.get(params.sessionId)
+                                  ?? knownHasMore
+                                  ?? true,
+                              status: 'not_ready',
+                          };
+                      }
+
                       const normalizedMessages = normalizeExternalSessionTranscriptMessages(page.items, {
                           agentId: externalSessionLink.agentId,
                           remoteSessionId: externalSessionLink.remoteSessionId,
@@ -8412,6 +8463,7 @@ class Sync {
                                     includeFolders: plan.includeFolders,
                                     includeTags: plan.includeTags,
                                     includeLabels: plan.includeLabels,
+                                    includeAttentionStandings: true,
                                     assignmentSessionIds: plan.assignmentSessionIds,
                                     folderIds: plan.folderIds,
                                     tagIds: plan.tagIds,
@@ -8956,14 +9008,14 @@ class Sync {
 
     public commitAckedOutboundUserMessage(params: AckedOutboundUserMessageCommitInput): void {
         const localId = params.localId || null;
-        if (params.removePending !== false && localId) {
-            storage.getState().removePendingMessage(params.sessionId, localId);
-        }
 
-        // A successful ACK may arrive after the server's authoritative
-        // whole-session deletion. Preserve the pending cleanup above, but never
-        // normalize/apply into a carrier whose local shell has been retired.
+        // A successful ACK may arrive after the server's authoritative whole-session deletion.
+        // There is no carrier to normalize into, so retire the pending row here and stop — this is
+        // the one path where a standalone removal is the ONLY writer.
         if (!storage.getState().sessions[params.sessionId]) {
+            if (params.removePending !== false && localId) {
+                storage.getState().removePendingMessage(params.sessionId, localId);
+            }
             return;
         }
 
@@ -8971,8 +9023,13 @@ class Sync {
             seq: params.ack.seq,
         });
         if (committed) {
+            // `applyMessages` retires the matching pending projection in the SAME store update, so
+            // the transcript never publishes a frame carrying NEITHER row for this utterance. The
+            // removal that used to run BEFORE this was a second writer whose only observable effect
+            // was that empty frame — the send flicker, seen from the data side.
             this.commitAckedSessionMessage(params.sessionId, committed);
         } else if (localId) {
+            // Nothing to apply, so the pending row has no twin arriving: retire it directly.
             storage.getState().removePendingMessage(params.sessionId, localId);
         }
     }

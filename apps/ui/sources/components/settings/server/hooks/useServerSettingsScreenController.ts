@@ -55,7 +55,7 @@ import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeature
 import { clearPendingNotificationNav, getPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
 import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import { createEndpointReadinessProbe } from '@/sync/runtime/connectivity/createEndpointReadinessProbe';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { buildTerminalConnectAuthRedirectHref } from '@/utils/path/terminalConnectUrl';
 
 type SearchParams = Readonly<{ url?: string | string[]; auto?: string | string[]; source?: string | string[] }>;
@@ -218,7 +218,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
                 endpointUrl: normalized,
                 readiness: result,
                 platformOs: Platform.OS,
-                isDesktopShell: isTauriDesktop(),
+                isDesktopShell: isDesktopHost(),
             }));
 
             const message = typeof result.errorMessage === 'string' ? result.errorMessage : '';
@@ -239,7 +239,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
                             errorMessage: 'Network request failed',
                         },
                         platformOs: Platform.OS,
-                        isDesktopShell: isTauriDesktop(),
+                        isDesktopShell: isDesktopHost(),
                     }));
                 }
                 setError(t('server.failedToConnectToServer'));

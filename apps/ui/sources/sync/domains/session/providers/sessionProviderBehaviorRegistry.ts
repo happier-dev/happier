@@ -1,4 +1,4 @@
-import { AGENT_IDS, resolveAgentIdFromFlavor, type AgentId } from '@/agents/registry/registryCore';
+import { AGENT_IDS, isBundledAgentId, resolveAgentIdFromFlavor, type AgentId } from '@/agents/registry/registryCore';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
@@ -49,7 +49,7 @@ function listSessionProviderBehaviors(params: Readonly<{ flavor: string | null; 
     const primaryAgentId = resolveAgentIdFromSessionMetadata(params.metadata) ?? resolveAgentIdFromFlavor(params.flavor);
     const orderedBehaviors: SessionProviderBehavior[] = [];
 
-    if (primaryAgentId) {
+    if (primaryAgentId && isBundledAgentId(primaryAgentId)) {
         const primaryBehavior = SESSION_PROVIDER_BEHAVIORS[primaryAgentId];
         if (primaryBehavior) orderedBehaviors.push(primaryBehavior);
     }

@@ -14,7 +14,7 @@ const preflightModels = {
         description: 'openai',
     }],
     supportsFreeform: true,
-} as const;
+};
 
 describe('sessionModelsSeed', () => {
     it('builds a seed only for the preflight catalog belonging to the spawned dynamic target', () => {
@@ -67,6 +67,44 @@ describe('sessionModelsSeed', () => {
         expect(seeded.sessionModelsV1).toEqual({ v: 1, ...seed });
         expect(seeded.acpSessionModelsV1).toEqual({ v: 1, ...seed });
         expect(computeNextSessionModelsSeedMetadata({ metadata: seeded, seed })).toBe(seeded);
+    });
+
+    it('carries model-scoped option descriptors into both seeded metadata aliases', () => {
+        const thinking = {
+            id: 'reasoning_effort',
+            name: 'Thinking',
+            type: 'select',
+            currentValue: 'medium',
+            options: [
+                { value: 'low', name: 'Low' },
+                { value: 'high', name: 'High' },
+            ],
+        };
+        const seed = buildSessionModelsSeedRequest({
+            agentId: 'pi',
+            currentTargetKey: 'backend:pi',
+            preflightTargetKey: 'backend:pi',
+            preflightModels: {
+                availableModels: [{
+                    id: 'openai/gpt-4o-mini',
+                    name: 'GPT-4o mini',
+                    modelOptions: [thinking],
+                }],
+                supportsFreeform: true,
+            },
+            currentModelId: 'openai/gpt-4o-mini',
+            hasCuratedStaticModels: false,
+            updatedAt: 123,
+        });
+        if (!seed) throw new Error('expected a seed for the spawned dynamic target');
+
+        const seeded = computeNextSessionModelsSeedMetadata({
+            metadata: { path: '/repo', host: 'host' } as Metadata,
+            seed,
+        });
+
+        expect(seeded.sessionModelsV1?.availableModels[0]?.modelOptions).toEqual([thinking]);
+        expect(seeded.acpSessionModelsV1?.availableModels[0]?.modelOptions).toEqual([thinking]);
     });
 
     it('publishes through the selected server metadata authority', async () => {

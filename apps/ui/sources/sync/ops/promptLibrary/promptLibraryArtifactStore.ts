@@ -3,16 +3,17 @@ import type { PromptLibraryArtifactStore } from '@happier-dev/protocol';
 import { storage } from '@/sync/domains/state/storage';
 import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import { sync } from '@/sync/sync';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 
 export const uiPromptLibraryArtifactStore: PromptLibraryArtifactStore = {
   read: async (artifactId, options) => {
-    options?.signal?.throwIfAborted();
+    throwIfAborted(options?.signal);
     const local = storage.getState().artifacts[artifactId] ?? null;
     if (local?.body === undefined) {
       const full = await sync.fetchArtifactWithBody(artifactId);
       if (full) storage.getState().updateArtifact(full);
     }
-    options?.signal?.throwIfAborted();
+    throwIfAborted(options?.signal);
     const artifact = storage.getState().artifacts[artifactId] ?? null;
     if (!artifact) return null;
     return {
@@ -22,14 +23,14 @@ export const uiPromptLibraryArtifactStore: PromptLibraryArtifactStore = {
     };
   },
   update: async ({ artifactId, header, body, signal }) => {
-    signal?.throwIfAborted();
+    throwIfAborted(signal);
     await sync.updateArtifactWithHeader(artifactId, header as ArtifactHeader, body);
-    signal?.throwIfAborted();
+    throwIfAborted(signal);
   },
   create: async ({ header, body, signal }) => {
-    signal?.throwIfAborted();
+    throwIfAborted(signal);
     const artifactId = await sync.createArtifactWithHeader(header as ArtifactHeader, body);
-    signal?.throwIfAborted();
+    throwIfAborted(signal);
     return artifactId;
   },
 };

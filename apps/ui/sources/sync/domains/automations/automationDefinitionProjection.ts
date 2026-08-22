@@ -97,15 +97,16 @@ function hasConsistentAutomationDefinitionExecutionRecipe(
 }
 
 /**
- * Current direct recipes are correlated to their enclosing definition
- * revision before any consumer can use their target as a session link.
+ * The definition owner projects the existing-Session association on every V3
+ * response, so summaries and direct reads share one source instead of the
+ * summary path re-deriving it. Current direct recipes are still correlated to
+ * their enclosing definition revision before the association is used.
  */
 export function readAutomationDefinitionExistingSessionId(
     detail: AutomationV3DefinitionDetail,
 ): string | null {
     if (!hasConsistentAutomationDefinitionExecutionRecipe(detail)) return null;
-    const target = detail.executionRecipe?.target;
-    return target?.kind === 'existingSession' ? target.sessionId : null;
+    return detail.existingSessionId;
 }
 
 function linkedExistingSessionId(detail: AutomationV3DefinitionDetail): string | null {
@@ -312,7 +313,12 @@ function attachConversationDetail(
     };
 }
 
-/** Creates one safe, content-free store record from the list projection. */
+/**
+ * Creates one safe, content-free store record from the list projection. The
+ * bounded list already carries the owner-projected existing-Session
+ * association, so a session-scoped consumer never has to read private
+ * definition detail to answer an association question.
+ */
 export function createAutomationDefinitionSummary(
     summary: AutomationV3DefinitionListItem,
 ): AutomationDefinition {
@@ -322,7 +328,7 @@ export function createAutomationDefinitionSummary(
             kind: 'unloaded',
             templateVersion: summary.templateVersion,
         },
-        linkedExistingSessionId: null,
+        linkedExistingSessionId: summary.existingSessionId,
     };
 }
 
@@ -348,7 +354,9 @@ export function markAutomationDefinitionContentUnavailable(
             templateVersion: summary.templateVersion,
             code: 'automation_stored_content_unavailable',
         },
-        linkedExistingSessionId: null,
+        // Revoking unreadable private content must not also drop the bounded
+        // association the definition owner already published.
+        linkedExistingSessionId: currentSummary.existingSessionId,
     };
 }
 

@@ -80,7 +80,9 @@ export function resolveManagedServerAuthMode(server: Pick<McpServerCatalogEntryV
 }
 
 export function formatDetectedWarning(warning: DaemonMcpServersDetectWarningV1): string {
-    const base = `${warning.provider} · ${warning.code}`;
+    // A detection warning that no agent owns carries no provider segment at all,
+    // rather than rendering an absent agent id.
+    const base = warning.provider ? `${warning.provider} · ${warning.code}` : warning.code;
     if (warning.path) return `${base} · ${warning.path}`;
     if (warning.detail) return `${base} · ${warning.detail}`;
     return base;

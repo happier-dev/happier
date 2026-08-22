@@ -1,6 +1,10 @@
-import { projectSessionMetadataForAgentHandoff } from '@happier-dev/agents';
+import {
+    isBundledAgentId,
+    projectSessionMetadataForAgentHandoff,
+} from '@happier-dev/agents';
 import {
     applyRuntimeDescriptorSessionMetadata,
+    clearSessionStateFieldFromMetadata,
     projectCurrentAgentSessionView,
 } from '@happier-dev/agents/session/state/metadataWriters';
 import {
@@ -8,11 +12,12 @@ import {
     readLinkedExternalSessionV1FromMetadata,
     removeLinkedExternalSessionMetadataV1,
     normalizeSessionHandoffWorkspaceRootPath,
+    type ExternalSessionAgentId,
     type ExternalSessionsSource,
     type RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 
-import { getAgentBehavior, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentBehavior } from '@/agents/catalog/catalog';
 
 import type { Metadata } from '../domains/state/storageTypes';
 
@@ -23,7 +28,7 @@ type SessionHandoffTransportStrategy = 'direct_peer' | 'server_routed_stream';
 export function buildSessionHandoffMetadataPatch(input: Readonly<{
     metadata: MetadataRecord;
     sourceMetadataForHandoff?: MetadataRecord;
-    agentId: AgentId;
+    agentId: ExternalSessionAgentId;
     sourceMachineId: string;
     targetMachineId: string;
     sessionStorageBefore: SessionHandoffStorageMode;
@@ -40,37 +45,45 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
     );
     const targetWorkspaceRootPath = normalizeSessionHandoffWorkspaceRootPath(input.targetPath);
 
-    // Handoff moves the SAME Agent to another machine, so its current
-    // projections stay true and are carried. The projector still seals the
-    // one-flat-vendor-key invariant: any other Agent's stale resume key or
-    // continuity proof is dropped before the target's id is written.
-    let next: MetadataRecord = projectCurrentAgentSessionView({
+    const builtInAgentId = isBundledAgentId(input.agentId) ? input.agentId : null;
+    const targetMetadata = {
         ...input.metadata,
         machineId: input.targetMachineId,
         path: input.targetPath,
-    }, {
-        agentId: input.agentId,
-        nativeResumeIdentity: {
-            v: 1,
-            vendorResumeId: input.targetRemoteSessionId,
-            continuityProof: null,
-        },
-        // The provider patch below is the authoritative descriptor writer for a
-        // handoff, so the projector leaves the slot empty rather than round-tripping
-        // the source descriptor through a second normalization.
-        agentScopedCurrentState: 'carry',
-    }) as MetadataRecord;
+    };
+    // Bundled Agents retain their existing projector and provider-owned patch.
+    // An installed Agent has no bundled behavior to consult: preserve the daemon
+    // result's declared identity and descriptor while clearing stale flat resume
+    // state through the same canonical metadata writer.
+    let next: MetadataRecord = builtInAgentId
+        ? projectCurrentAgentSessionView(targetMetadata, {
+            agentId: builtInAgentId,
+            nativeResumeIdentity: {
+                v: 1,
+                vendorResumeId: input.targetRemoteSessionId,
+            },
+            // The provider patch below is the authoritative descriptor writer for a
+            // handoff, so the projector leaves the slot empty rather than round-tripping
+            // the source descriptor through a second normalization.
+            agentScopedCurrentState: 'carry',
+        }) as MetadataRecord
+        : clearSessionStateFieldFromMetadata(
+            { ...targetMetadata, flavor: input.agentId },
+            'identity.providerSessionId',
+        ) as MetadataRecord;
 
-    const providerPatch = getAgentBehavior(input.agentId).sessionHandoff?.buildProviderPatch?.({
-        agentId: input.agentId,
-        metadata: projectSessionMetadataForAgentHandoff(next),
-        sourceMetadataForHandoff: input.sourceMetadataForHandoff
-            ? projectSessionMetadataForAgentHandoff(input.sourceMetadataForHandoff)
-            : undefined,
-        targetRemoteSessionId: input.targetRemoteSessionId,
-        targetDirectSource: input.targetDirectSource,
-        targetRuntimeDescriptor: input.targetRuntimeDescriptor,
-    }) ?? null;
+    const providerPatch = builtInAgentId
+        ? getAgentBehavior(builtInAgentId).sessionHandoff?.buildProviderPatch?.({
+            agentId: builtInAgentId,
+            metadata: projectSessionMetadataForAgentHandoff(next),
+            sourceMetadataForHandoff: input.sourceMetadataForHandoff
+                ? projectSessionMetadataForAgentHandoff(input.sourceMetadataForHandoff)
+                : undefined,
+            targetRemoteSessionId: input.targetRemoteSessionId,
+            targetDirectSource: input.targetDirectSource,
+            targetRuntimeDescriptor: input.targetRuntimeDescriptor,
+        }) ?? null
+        : null;
 
     for (const key of providerPatch?.clearMetadataKeys ?? []) {
         delete next[key];
@@ -80,11 +93,12 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
         Object.assign(next, providerPatch.metadataPatch);
     }
 
-    next = applyRuntimeDescriptorSessionMetadata(
-        next,
-        providerPatch?.runtimeDescriptor ?? null,
-    );
-    if (!providerPatch?.runtimeDescriptor) {
+    const runtimeDescriptor = providerPatch?.runtimeDescriptor
+        ?? (!builtInAgentId ? input.targetRuntimeDescriptor ?? null : null);
+    const externalSessionRuntimeDescriptor = providerPatch?.externalSessionRuntimeDescriptor
+        ?? (!builtInAgentId ? input.targetRuntimeDescriptor : undefined);
+    next = applyRuntimeDescriptorSessionMetadata(next, runtimeDescriptor);
+    if (!runtimeDescriptor) {
         delete next.agentRuntimeDescriptorV1;
     }
 
@@ -98,8 +112,8 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
             remoteSessionId: input.targetRemoteSessionId,
             source: input.targetDirectSource,
             linkedAtMs: input.completedAtMs,
-            ...(providerPatch?.externalSessionRuntimeDescriptor
-                ? { runtimeDescriptorV1: providerPatch.externalSessionRuntimeDescriptor }
+            ...(externalSessionRuntimeDescriptor
+                ? { runtimeDescriptorV1: externalSessionRuntimeDescriptor }
                 : {}),
           },
         });

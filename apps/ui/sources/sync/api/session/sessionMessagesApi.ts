@@ -20,6 +20,15 @@ export type BuildSessionMessagesPathParams = Readonly<{
     role?: SessionMessageRole;
     /** Multi-role filter; ignored by servers that predate it. */
     roles?: readonly SessionMessageRole[];
+    /**
+     * Turn projection: one row per prompt plus that turn's final reply.
+     *
+     * Only send it when the server advertises `capabilities.session.messages.turns` — an older
+     * server ignores the unknown parameter and would silently return the ordinary listing,
+     * which is a different row set than the caller asked for. With the projection on, `limit`
+     * counts TURNS rather than rows.
+     */
+    projection?: 'turns';
 }>;
 
 function appendFiniteInteger(params: URLSearchParams, key: string, value: number | undefined): void {
@@ -34,6 +43,9 @@ export function buildSessionMessagesPath(params: BuildSessionMessagesPathParams)
     }
     if (params.roles && params.roles.length > 0) {
         query.set('roles', params.roles.join(','));
+    }
+    if (params.projection) {
+        query.set('projection', params.projection);
     }
     appendFiniteInteger(query, 'limit', params.limit);
     appendFiniteInteger(query, 'beforeSeq', params.beforeSeq);

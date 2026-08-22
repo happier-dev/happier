@@ -6,6 +6,7 @@ import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storage
 import type {
     PluginReactNativeWatchdogPersistence,
     PluginReactNativeWatchdogSnapshot,
+    PluginReactNativeWatchdogSnapshotRead,
 } from './watchdog';
 
 type WatchdogStringStorage = Readonly<{
@@ -19,24 +20,54 @@ const NATIVE_STORAGE_BASE_ID = 'plugin-react-native-watchdog';
 const SNAPSHOT_KEY = 'pending-v3';
 const WEB_SNAPSHOT_BASE_KEY = 'happier:plugin-react-native-watchdog:pending-v3';
 
-function readStorageValue(storage: WatchdogStringStorage, key: string): string | null {
+type WatchdogStoredValue =
+    | Readonly<{ durability: 'available'; value: string }>
+    | Readonly<{ durability: 'absent' }>
+    | Readonly<{ durability: 'unavailable' }>;
+
+const STORAGE_ABSENT: WatchdogStoredValue = Object.freeze({ durability: 'absent' });
+const STORAGE_UNAVAILABLE: WatchdogStoredValue = Object.freeze({ durability: 'unavailable' });
+
+/**
+ * A key this store answered for and does not hold is `absent`; a store that
+ * cannot be asked at all is `unavailable`. The watchdog needs that difference
+ * to tell "nothing was quarantined" from "the quarantine cannot be read".
+ */
+function readStorageValue(storage: WatchdogStringStorage, key: string): WatchdogStoredValue {
+    if (!storage.getString && !storage.getItem) {
+        return STORAGE_UNAVAILABLE;
+    }
     try {
         const value = storage.getString?.(key) ?? storage.getItem?.(key) ?? null;
-        return typeof value === 'string' ? value : null;
+        if (typeof value === 'string') {
+            return Object.freeze({ durability: 'available' as const, value });
+        }
+        return value === null || value === undefined ? STORAGE_ABSENT : STORAGE_UNAVAILABLE;
     } catch {
-        return null;
+        return STORAGE_UNAVAILABLE;
     }
 }
 
-function writeStorageValue(storage: WatchdogStringStorage, key: string, value: string): void {
+function writeStorageValue(
+    storage: WatchdogStringStorage,
+    key: string,
+    value: string,
+): 'available' | 'unavailable' {
     try {
         if (storage.set) {
             storage.set(key, value);
-            return;
+            return 'available';
         }
-        storage.setItem?.(key, value);
+        if (storage.setItem) {
+            storage.setItem(key, value);
+            return 'available';
+        }
+        return 'unavailable';
     } catch {
-        // Persistence is best-effort; the watchdog must still contain crashes in memory.
+        // The write is still best-effort for the running mount, which stays
+        // quarantined in memory, but the watchdog must know this snapshot never
+        // became durable truth.
+        return 'unavailable';
     }
 }
 
@@ -57,20 +88,27 @@ export function createPluginReactNativeWatchdogStoragePersistence(params: Readon
     key: string;
 }>): PluginReactNativeWatchdogPersistence {
     return Object.freeze({
-        readSnapshot: () => {
+        readSnapshot: (): PluginReactNativeWatchdogSnapshotRead => {
             const raw = readStorageValue(params.storage, params.key);
-            if (!raw) {
-                return null;
+            if (raw.durability !== 'available') {
+                return Object.freeze({ durability: raw.durability });
             }
             try {
-                return JSON.parse(raw) as unknown;
+                return Object.freeze({
+                    durability: 'available' as const,
+                    snapshot: JSON.parse(raw.value) as unknown,
+                });
             } catch {
-                return null;
+                // Stored bytes exist but cannot be interpreted. That is a
+                // quarantine this UI cannot account for, not an absent one.
+                return Object.freeze({ durability: 'unavailable' as const });
             }
         },
-        writeSnapshot: (snapshot: PluginReactNativeWatchdogSnapshot) => {
-            writeStorageValue(params.storage, params.key, JSON.stringify(snapshot));
-        },
+        writeSnapshot: (snapshot: PluginReactNativeWatchdogSnapshot) => writeStorageValue(
+            params.storage,
+            params.key,
+            JSON.stringify(snapshot),
+        ),
     });
 }
 

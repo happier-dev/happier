@@ -321,7 +321,10 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
                 for (const tagId of readHintStringArray(change, 'tagIds')) organizationTagIds.add(tagId);
                 for (const scope of readOrganizationOrderScopes(change)) organizationOrderScopes.set(`${scope.scopeKind}:${scope.scopeKey}`, scope);
                 const hintScope = isRecord(change.hint) && typeof change.hint.scope === 'string' ? change.hint.scope : '';
-                if (hintScope === 'pins') {
+                // A standing change moves rows between the attention band and the rest of the
+                // list exactly the way a pin change moves them in and out of the pinned group,
+                // so the session list has to be re-read for both.
+                if (hintScope === 'pins' || hintScope === 'attentionStandings') {
                     invalidateSessions = true;
                 }
                 organizationIncludeFolders = organizationIncludeFolders || hintScope === 'folders' || hintScope === 'folderAssignments';
@@ -366,7 +369,10 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
                 for (const tagId of readHintStringArray(change, 'tagIds')) organizationTagIds.add(tagId);
                 for (const scope of readOrganizationOrderScopes(change)) organizationOrderScopes.set(`${scope.scopeKind}:${scope.scopeKey}`, scope);
                 const hintScope = isRecord(change.hint) && typeof change.hint.scope === 'string' ? change.hint.scope : '';
-                if (hintScope === 'pins') {
+                // A standing change moves rows between the attention band and the rest of the
+                // list exactly the way a pin change moves them in and out of the pinned group,
+                // so the session list has to be re-read for both.
+                if (hintScope === 'pins' || hintScope === 'attentionStandings') {
                     invalidateSessions = true;
                 }
                 organizationIncludeFolders = organizationIncludeFolders || hintScope === 'folders' || hintScope === 'folderAssignments';

@@ -21,6 +21,17 @@ import {
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
 
+import type { BundledPluginUiAppArtifactInventory } from './bundledPluginUiArtifactInventory';
+import { BUNDLED_PLUGIN_UI_APP_ARTIFACTS } from './generatedBundledPluginUiArtifacts';
+
+/**
+ * The app build emits an empty inventory for platforms with no packaged plugin
+ * UI, so the generated constant widens to the declared inventory contract here
+ * rather than to that build's empty tuple.
+ */
+const HOST_BUNDLED_PLUGIN_UI_ARTIFACTS: BundledPluginUiAppArtifactInventory =
+    BUNDLED_PLUGIN_UI_APP_ARTIFACTS;
+
 export type PluginAccountAvailabilitySnapshot = Readonly<{
     /** The canonical AccountChange ordering fact for this complete projection. */
     availabilityCursor: number;
@@ -601,11 +612,68 @@ function classifyMaterializationRelease(
     });
 }
 
+/**
+ * The host-bundled authority arm.
+ *
+ * A first-party plugin that ships inside the host binary has no Account
+ * intent and no Account release: the daemon publishes releases only for
+ * installed distributions, and an Account intent is a present-user Settings
+ * action. Requiring one before its own app-package bytes may be selected is
+ * not fail-closed, it is fail-always — it withheld every React Native surface
+ * of every host-bundled plugin, on every client.
+ *
+ * The app build's generated immutable inventory is therefore the coordinate
+ * authority for exactly those slots, mirroring the host-bundled provenance arm
+ * the UI projection union already owns. It is consulted only where an Account
+ * intent can never exist: the moment the Account holds any intent read for the
+ * plugin, that intent stays the sole authority and app-package bytes can
+ * neither override nor revive it.
+ */
+function readHostBundledArtifactAdmission(
+    state: AvailabilityProjectionState | null,
+    scope: ServerAccountScope,
+    slot: PluginAccountAvailabilityArtifactSlot,
+): PluginAccountAvailabilityArtifactAdmission | null {
+    if (!state) return null;
+    const snapshot = readProjectionForScope(state, scope);
+    if (!snapshot) return null;
+    if (snapshot.intentReads.some((projection) => projection.pluginId === slot.pluginId)) {
+        return null;
+    }
+    const candidates = HOST_BUNDLED_PLUGIN_UI_ARTIFACTS.filter((candidate) => (
+        candidate.pluginId === slot.pluginId
+        && candidate.contributionId === slot.contributionId
+        && candidate.tier === slot.tier
+        && candidate.platform === slot.platform
+    ));
+    if (candidates.length === 0) return null;
+    if (candidates.length !== 1) {
+        return Object.freeze({ kind: 'unavailable', code: 'artifact_slot_ambiguous' });
+    }
+    const candidate = candidates[0]!;
+    // No Account-hosted provenance is ever carried here: these bytes are in the
+    // app package, and the Artifact lease remains the only integrity/graph owner.
+    return Object.freeze({
+        kind: 'available',
+        availabilityCursor: snapshot.availabilityCursor,
+        artifact: Object.freeze({
+            pluginId: candidate.pluginId,
+            contributionId: candidate.contributionId,
+            tier: candidate.tier,
+            platform: candidate.platform,
+            digest: candidate.digest,
+            releaseVersion: candidate.releaseVersion,
+        }),
+    });
+}
+
 function readCurrentArtifactAdmission(
     state: AvailabilityProjectionState | null,
     scope: ServerAccountScope,
     slot: PluginAccountAvailabilityArtifactSlot,
 ): PluginAccountAvailabilityArtifactAdmission {
+    const hostBundled = readHostBundledArtifactAdmission(state, scope, slot);
+    if (hostBundled) return hostBundled;
     const current = readCurrentReleaseAdmission(state, scope, slot.pluginId);
     if (current.kind !== 'available') {
         return current;

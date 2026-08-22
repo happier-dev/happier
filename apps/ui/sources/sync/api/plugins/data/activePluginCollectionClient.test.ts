@@ -2,10 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER,
     ACCOUNT_STORED_CONTENT_PLUGIN_DATA_PROTOCOL_VERSION,
+    PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
+    FeaturesResponseSchema,
     createAccountScopedCryptoMaterialSnapshotV1,
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
+    measurePluginCollectionMutationRequestEncodedBytesV1,
     normalizePluginAccountCollectionContractV1,
     openPluginCollectionPrivatePayloadV1,
+    PluginCollectionMutationRequestV1Schema,
     sealPluginCollectionPrivatePayloadV1,
 } from '@happier-dev/protocol';
 
@@ -39,6 +43,40 @@ const contract = normalizePluginAccountCollectionContractV1({
         uiQueries: [],
         relations: [],
         migrations: [],
+    },
+});
+
+const quotaContract = normalizePluginAccountCollectionContractV1({
+    pluginId: 'example.channels',
+    contribution: {
+        id: 'channel-state',
+        schemaVersion: 1,
+        rowIdField: 'id',
+        identityFields: [],
+        schema: {
+            type: 'object',
+            properties: {
+                id: { type: 'string', maxLength: 256 },
+                status: { type: 'string', enum: ['enabled', 'disabled'] },
+                title: { type: 'string', maxLength: 256 },
+                pendingMachineReconciliation: { type: 'boolean' },
+                privateNote: { type: 'string', maxLength: 256 },
+            },
+            required: ['id', 'status', 'title'],
+            additionalProperties: false,
+        },
+        serverReadable: ['status', 'title'],
+        indexes: [{
+            id: 'by-status',
+            fields: [
+                { field: 'status', direction: 'asc' },
+                { field: 'id', direction: 'asc' },
+            ],
+        }],
+        uiQueries: [],
+        relations: [],
+        migrations: [],
+        quota: { maxRows: 250, maxRowEncodedBytes: 32 * 1024 },
     },
 });
 
@@ -849,5 +887,224 @@ describe('active Account Collection direct client', () => {
         }]);
         expect(invalidated).toHaveBeenCalledTimes(1);
         watch.dispose();
+    });
+    it('reports the deployment-effective Collection limits a plugin UI must plan against', async () => {
+        const harness = await loadClient();
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({
+            serverId: 'server-a',
+            snapshot: {
+                status: 'ready',
+                features: FeaturesResponseSchema.parse({
+                    features: {},
+                    capabilities: {
+                        pluginDataCollections: {
+                            maxRowEncodedBytes: 256 * 1024,
+                            maxBatchBytes: 4 * 1024 * 1024,
+                            maxBatchRows: 40,
+                            maxAccountRows: 5_000,
+                            maxAccountBytes: 64 * 1024 * 1024,
+                        },
+                    },
+                }),
+            },
+        });
+
+        await expect(harness.createActivePluginCollectionClient({ contract }).limits()).resolves.toEqual({
+            status: 'ready',
+            limits: {
+                maxRowEncodedBytes: 256 * 1024,
+                maxBatchBytes: 4 * 1024 * 1024,
+                maxBatchRows: 40,
+                maxAccountRows: 5_000,
+                maxAccountBytes: 64 * 1024 * 1024,
+                basis: 'deployment',
+            },
+        });
+        expect(harness.transport).not.toHaveBeenCalled();
+    });
+
+    it('narrows the deployment Collection limits by the admitted contract quota', async () => {
+        const harness = await loadClient();
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({
+            serverId: 'server-a',
+            snapshot: {
+                status: 'ready',
+                features: FeaturesResponseSchema.parse({
+                    features: {},
+                    capabilities: {
+                        pluginDataCollections: {
+                            maxRowEncodedBytes: 256 * 1024,
+                            maxBatchBytes: 4 * 1024 * 1024,
+                            maxBatchRows: 40,
+                            maxAccountRows: 5_000,
+                            maxAccountBytes: 64 * 1024 * 1024,
+                        },
+                    },
+                }),
+            },
+        });
+
+        await expect(harness.createActivePluginCollectionClient({
+            contract: quotaContract,
+        }).limits()).resolves.toEqual({
+            status: 'ready',
+            limits: {
+                maxRowEncodedBytes: 32 * 1024,
+                maxBatchBytes: 4 * 1024 * 1024,
+                maxBatchRows: 40,
+                maxAccountRows: 250,
+                maxAccountBytes: 64 * 1024 * 1024,
+                basis: 'deployment',
+            },
+        });
+    });
+
+    it('falls back to the shipped deployment policy when no capability is published', async () => {
+        const harness = await loadClient();
+
+        await expect(harness.createActivePluginCollectionClient({ contract }).limits()).resolves.toEqual({
+            status: 'ready',
+            limits: {
+                ...PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
+                basis: 'default',
+            },
+        });
+    });
+
+    it('reports the Collection limits unavailable once the captured Account scope retires', async () => {
+        const harness = await loadClient();
+        const collection = harness.createActivePluginCollectionClient({ contract });
+        harness.retireScope();
+
+        await expect(collection.limits()).resolves.toEqual({
+            status: 'unavailable',
+            reason: 'account-scope-changed',
+        });
+    });
+
+    it('measures a candidate batch through the same sealed request the mutation sends', async () => {
+        const harness = await loadClient({
+            currentness: e2eeCurrentness,
+            credentials: e2eeCredentials,
+            responseForDataPath: () => new Response(JSON.stringify({
+                status: 'updated',
+                results: [
+                    { rowId: 'channel-1', revision: 1, deleted: false },
+                    { rowId: 'channel-2', revision: 1, deleted: false },
+                ],
+                changeCursor: 21,
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+        });
+        const collection = harness.createActivePluginCollectionClient({ contract });
+        const operations = [
+            {
+                kind: 'put' as const,
+                expectedRevision: 'absent' as const,
+                value: {
+                    id: 'channel-1',
+                    status: 'enabled' as const,
+                    title: 'First',
+                    privateNote: 'a'.repeat(8),
+                },
+            },
+            {
+                kind: 'put' as const,
+                expectedRevision: 'absent' as const,
+                value: {
+                    id: 'channel-2',
+                    status: 'enabled' as const,
+                    title: 'Second',
+                    privateNote: 'b'.repeat(250),
+                },
+            },
+        ];
+
+        const measured = await collection.measureBatch(operations);
+        await collection.mutate(operations);
+
+        expect(measured.status).toBe('ready');
+        if (measured.status !== 'ready') return;
+        expect(measured.measurement.operationEncodedBytes).toHaveLength(2);
+        // The second row's private payload is far larger, and only a real seal
+        // of the real E2EE envelope can show that on the wire.
+        expect(measured.measurement.operationEncodedBytes[1]!).toBeGreaterThan(
+            measured.measurement.operationEncodedBytes[0]! + 240,
+        );
+        const mutationCall = harness.transport.mock.calls.find(([path]) => path === '/v1/plugins/data/mutate');
+        const sentRequest = PluginCollectionMutationRequestV1Schema.parse(
+            JSON.parse(String(mutationCall?.[1]?.body)),
+        );
+        expect(
+            measured.measurement.overheadEncodedBytes
+            + measured.measurement.operationEncodedBytes.reduce((total, bytes) => total + bytes, 0)
+            - 1,
+        ).toBe(measurePluginCollectionMutationRequestEncodedBytesV1(sentRequest));
+    });
+
+    it('measures more candidate operations than one atomic batch may carry', async () => {
+        const harness = await loadClient({
+            currentness: e2eeCurrentness,
+            credentials: e2eeCredentials,
+            responseForDataPath: () => {
+                throw new Error('Measuring a candidate batch must not issue a mutation');
+            },
+        });
+        const operations = Array.from({ length: 256 }, (_, index) => ({
+            kind: 'put' as const,
+            expectedRevision: 'absent' as const,
+            value: {
+                id: `channel-${String(index).padStart(3, '0')}`,
+                status: 'enabled' as const,
+                title: `Channel ${index}`,
+                privateNote: 'n'.repeat(120),
+            },
+        }));
+
+        const measured = await harness.createActivePluginCollectionClient({ contract })
+            .measureBatch(operations);
+
+        expect(measured.status).toBe('ready');
+        if (measured.status !== 'ready') return;
+        expect(measured.measurement.operationEncodedBytes).toHaveLength(256);
+        expect(measured.measurement.operationEncodedBytes.every((bytes) => bytes > 0)).toBe(true);
+        expect(measured.measurement.overheadEncodedBytes).toBeGreaterThan(0);
+        expect(harness.transport.mock.calls.some(([path]) => path === '/v1/plugins/data/mutate')).toBe(false);
+    });
+
+    it('rejects measuring a batch the collection contract cannot encode', async () => {
+        const harness = await loadClient();
+
+        await expect(harness.createActivePluginCollectionClient({ contract }).measureBatch([{
+            kind: 'put',
+            expectedRevision: 'absent',
+            value: { id: 'channel-1', status: 'unknown', title: 'Invalid status' },
+        } as never])).resolves.toEqual({
+            status: 'rejected',
+            code: 'collection_mutation_invalid',
+        });
+    });
+    it('carries the server quota incompatibility a batch planner must react to', async () => {
+        const harness = await loadClient({
+            responseForDataPath: () => new Response(JSON.stringify({
+                error: 'collection_quota_incompatible',
+                dimension: 'maxBatchBytes',
+                effectiveMaximum: 4 * 1024 * 1024,
+            }), { status: 413, headers: { 'Content-Type': 'application/json' } }),
+        });
+
+        await expect(harness.createActivePluginCollectionClient({ contract }).mutate([{
+            kind: 'put',
+            expectedRevision: 'absent',
+            value: { id: 'channel-1', status: 'enabled', title: 'Too large for one batch' },
+        }])).resolves.toEqual({
+            status: 'rejected',
+            code: 'collection_quota_incompatible',
+            quotaIncompatibility: {
+                dimension: 'maxBatchBytes',
+                effectiveMaximum: 4 * 1024 * 1024,
+            },
+        });
     });
 });

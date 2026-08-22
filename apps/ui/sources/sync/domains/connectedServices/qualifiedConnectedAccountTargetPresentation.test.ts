@@ -45,10 +45,43 @@ describe('presentQualifiedConnectedAccountTarget', () => {
 
     expect(presentation).toEqual({
       primaryLabel: 'Work account',
-      secondaryLabel: 'External Gateway · work@example.com · provider-account-42 · account_opaque_123',
-      accessibilityLabel: 'External Gateway · Work account · work@example.com · provider-account-42 · account_opaque_123',
+      secondaryLabel: 'External Gateway · work@example.com · provider-account-42',
+      accessibilityLabel: 'External Gateway · Work account · work@example.com · provider-account-42',
     });
     expect(presentation.accessibilityLabel).not.toContain('secret-never-presented');
+  });
+
+  it('never routes a canonical account or pool id into visible or assistive output', () => {
+    // The canonical ids stay structured: they key routing, list rows and
+    // mutation payloads, and a user cannot recognise an account by one.
+    const accountPresentation = presentQualifiedConnectedAccountTarget({
+      target: { kind: 'account', account: account.ref },
+      accounts: [account],
+      groups: [group],
+      labelsByKey: {},
+      serviceTitle: 'External Gateway',
+    });
+    const groupPresentation = presentQualifiedConnectedAccountTarget({
+      target: { kind: 'group', service, groupId: group.ref.groupId },
+      accounts: [account],
+      groups: [group],
+      labelsByKey: {},
+      serviceTitle: 'External Gateway',
+    });
+
+    for (const presentation of [accountPresentation, groupPresentation]) {
+      for (const text of [
+        presentation.primaryLabel,
+        presentation.secondaryLabel ?? '',
+        presentation.accessibilityLabel,
+      ]) {
+        expect(text).not.toContain(account.ref.accountId);
+        expect(text).not.toContain(group.ref.groupId);
+      }
+    }
+    // The provider-side identity is still offered, so two unnamed accounts of
+    // one service stay distinguishable without an internal id.
+    expect(accountPresentation.accessibilityLabel).toContain('provider-account-42');
   });
 
   it('does not promote opaque account or pool ids to the primary label', () => {
@@ -79,13 +112,11 @@ describe('presentQualifiedConnectedAccountTarget', () => {
 
     expect(accountPresentation).toEqual({
       primaryLabel: 'External Gateway',
-      secondaryLabel: 'account_opaque_123',
-      accessibilityLabel: 'External Gateway · account_opaque_123',
+      accessibilityLabel: 'External Gateway',
     });
     expect(groupPresentation).toEqual({
       primaryLabel: 'External Gateway',
-      secondaryLabel: 'pool_opaque_456',
-      accessibilityLabel: 'External Gateway · pool_opaque_456',
+      accessibilityLabel: 'External Gateway',
     });
   });
 });

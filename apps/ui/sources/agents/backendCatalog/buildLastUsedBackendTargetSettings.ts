@@ -4,7 +4,7 @@ import {
     type PersistedBackendTargetRefV2,
 } from '@happier-dev/protocol';
 
-import { isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 
 export type LastUsedBackendTargetSettingsDelta = Readonly<{
     lastUsedBackendTarget: PersistedBackendTargetRefV2;
@@ -17,7 +17,7 @@ export type LastUsedBackendTargetSettingsDelta = Readonly<{
  */
 export function buildLastUsedBackendTargetSettings(params: Readonly<{
     backendTarget: BackendTargetRefV2;
-    selectedBuiltInAgentId: AgentId;
+    selectedBuiltInAgentId: AgentId | null;
 }>): LastUsedBackendTargetSettingsDelta {
     const lastUsedBackendTarget = writePersistedBackendTargetRefV2(params.backendTarget);
     if (lastUsedBackendTarget.kind === 'agent') {
@@ -26,9 +26,9 @@ export function buildLastUsedBackendTargetSettings(params: Readonly<{
             lastUsedBackendTarget,
         };
     }
-    if (!params.backendTarget.configuredBackendId && isAgentId(params.backendTarget.backendId)) {
+    if (!params.backendTarget.configuredBackendId && isBundledAgentId(params.backendTarget.backendId)) {
         return {
-            lastUsedAgent: params.selectedBuiltInAgentId,
+            lastUsedAgent: params.selectedBuiltInAgentId ?? params.backendTarget.backendId,
             lastUsedBackendTarget,
         };
     }

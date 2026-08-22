@@ -47,18 +47,15 @@ const historyGapRecoveryUi = vi.hoisted(() => ({
 }));
 
 installAutomationScreensCommonModuleMocks({
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key: string) => ({
-                'settingsPlugins.eventAutomationComposer.historyGapRecoveryTitle': 'History gap needs attention',
-                'settingsPlugins.eventAutomationComposer.historyGapRecoverySubtitle': 'Reset the source baseline to resume observing new Events.',
-                'settingsPlugins.eventAutomationComposer.historyGapRecoveryUnavailable': 'The source recovery action is not available on its current watcher.',
-                'settingsPlugins.eventAutomationComposer.historyGapRecoveryFailureTitle': 'Source recovery needs another try',
-                'settingsPlugins.eventAutomationComposer.historyGapRecoveryFailureBody': 'The recovery was not confirmed. The source still needs attention.',
-                'common.retry': 'Retry',
-            }[key] ?? key),
-        });
+    text: {
+        translate: (key: string) => ({
+            'settingsPlugins.eventAutomationComposer.historyGapRecoveryTitle': 'History gap needs attention',
+            'settingsPlugins.eventAutomationComposer.historyGapRecoverySubtitle': 'Reset the source baseline to resume observing new Events.',
+            'settingsPlugins.eventAutomationComposer.historyGapRecoveryUnavailable': 'The source recovery action is not available on its current watcher.',
+            'settingsPlugins.eventAutomationComposer.historyGapRecoveryFailureTitle': 'Source recovery needs another try',
+            'settingsPlugins.eventAutomationComposer.historyGapRecoveryFailureBody': 'The recovery was not confirmed. The source still needs attention.',
+            'common.retry': 'Retry',
+        }[key] ?? key),
     },
 });
 
@@ -105,6 +102,7 @@ function automation(input: Partial<PluginEventAutomationDefinition> = {}): Plugi
         description: null,
         enabled: true,
         targetType: 'newSession',
+        existingSessionId: null,
         templateVersion: 3,
         nextRunAt: null,
         lastRunAt: null,
@@ -240,7 +238,33 @@ function projectionInputs(
         mergedBackendProjectionById: {},
         discoveredBackendIds: [],
         pluginProjectionById: { [PLUGIN_ID]: plugin },
-        pluginProjectionV2: null,
+        pluginProjectionV2: {
+            v: 2,
+            generation: GENERATION,
+            installedPackagesById: {},
+            agentsById: {},
+            backendsById: {},
+            actionsById: {
+                [`${PLUGIN_ID}/${action.identity.localId}`]: {
+                    id: action.identity.localId,
+                    pluginId: PLUGIN_ID,
+                    title: action.title,
+                    scopes: ['settings'],
+                    surfaces: ['plugin'],
+                    execution: { target: 'daemon' },
+                    placementBindings: [],
+                    priority: 0,
+                    dangerLevel: 'safe',
+                    available: true,
+                },
+            },
+            toolsById: {},
+            commandsById: {},
+            resourcesById: {},
+            settingsById: {},
+            familiesById: {},
+            diagnostics: [],
+        },
         automationEligibleEvents: [event],
         registryDiagnostics: [],
     };
@@ -394,6 +418,10 @@ describe('automation history-gap recovery status', () => {
                 expectedImmutableGenerationId: 'github-generation-a',
             },
         }));
+        expect(dispatch.mock.calls[0]?.[0]?.resolveContributedAction?.({
+            pluginId: PLUGIN_ID,
+            localId: ACTION_LOCAL_ID,
+        })).toMatchObject({ execution: { target: 'daemon' } });
 
         currentAutomation = automation({
             sourceStatus: {

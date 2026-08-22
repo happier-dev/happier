@@ -5,12 +5,13 @@ import {
     DEFAULT_AGENT_ID,
     getAllAgentProviderOwnedEnvironmentKeys,
     getAgentCore as getExpoAgentCore,
-    isAgentId,
+    isBundledAgentId,
     resolveAgentIdFromCliDetectKey,
     resolveAgentIdFromConnectedServiceId,
     resolveAgentIdFromFlavor,
     resolveAgentIdFromSessionMetadata,
     type AgentId,
+    type BundledAgentId,
 } from '@/agents/registry/registryCore';
 
 import type { AgentUiConfig } from '@/agents/registry/registryUi';
@@ -37,7 +38,7 @@ import {
 
 export { AGENT_IDS, DEFAULT_AGENT_ID };
 export { getAllAgentProviderOwnedEnvironmentKeys };
-export type { AgentId, MachineLoginKey };
+export type { AgentId, BundledAgentId, MachineLoginKey };
 
 export type AgentCatalogEntry = Readonly<{
     id: AgentId;
@@ -50,11 +51,13 @@ function registryUi(): typeof RegistryUi {
     return RegistryUi;
 }
 
-export function getAgentCore(id: AgentId): AgentCoreConfig {
+export function getAgentCore(id: BundledAgentId): AgentCoreConfig;
+export function getAgentCore(id: AgentId): AgentCoreConfig | null;
+export function getAgentCore(id: AgentId): AgentCoreConfig | null {
     return getExpoAgentCore(id);
 }
 
-export function resolveBundledAgentIdFromContributionIdentity(identity: unknown): AgentId | null {
+export function resolveBundledAgentIdFromContributionIdentity(identity: unknown): BundledAgentId | null {
     const parsed = PluginContributionIdentityV1Schema.safeParse(identity);
     if (!parsed.success) return null;
     for (const agentId of AGENT_IDS) {
@@ -70,7 +73,7 @@ export function resolveBundledAgentIdFromContributionIdentity(identity: unknown)
 }
 
 export function getAgentUi(id: AgentId): AgentUiConfig {
-    return registryUi().CANONICAL_AGENTS_UI[id];
+    return registryUi().getAgentUiConfig(id);
 }
 
 export function getAgentIconSource(agentId: string): ReturnType<RegistryUiModule['getAgentIconSource']> {
@@ -110,7 +113,7 @@ export function getAgentBehavior(id: AgentId): AgentUiBehavior {
     return resolveAgentUiBehavior(id);
 }
 
-export function getAgent(id: AgentId): AgentCatalogEntry {
+export function getAgent(id: BundledAgentId): AgentCatalogEntry {
     return {
         id,
         core: getAgentCore(id),
@@ -120,7 +123,7 @@ export function getAgent(id: AgentId): AgentCatalogEntry {
 }
 
 export {
-    isAgentId,
+    isBundledAgentId,
     resolveAgentIdFromFlavor,
     resolveAgentIdFromSessionMetadata,
     resolveAgentIdFromCliDetectKey,

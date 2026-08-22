@@ -188,9 +188,9 @@ describe('QualifiedAccountDetailView', () => {
     });
 
     it('names the account by its provider email when the caller resolved no label', async () => {
-        // The caller falls back to the raw account id when it has no label, so the
-        // screen must rank the provider email above that id instead of titling
-        // itself with an opaque identifier.
+        // With no user label the presenter ranks the provider email first, so the
+        // screen must title itself with that email and never with an opaque
+        // account identifier the user cannot recognise.
         const screen = await renderDetail({
             account: { service: SERVICE, accountId: 'acct-77' },
             presentation: {
@@ -356,7 +356,9 @@ describe('QualifiedAccountDetailView', () => {
         await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
 
         // Disconnect is irreversible, so the prompt names every identity the user
-        // could recognise the account by — label, email AND the account id.
+        // could RECOGNISE the account by — its label, provider email and
+        // provider-side account identity. The canonical account id is never one
+        // of them: the shared presenter deliberately does not emit it.
         const body = modalState.confirmSpy.mock.calls[0]?.[1];
         expect(body).toContain('Work account · work@example.com · work');
     });

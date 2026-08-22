@@ -33,16 +33,16 @@ function createSession(overrides: Partial<Session> = {}): Session {
 function createPort() {
     const enqueuePendingMessage = vi.fn(async () => ({ localId: 'pending-1', accepted: true }));
     const updatePendingRequestedAction = vi.fn(async () => undefined);
-    const resumeSession = vi.fn(async () => ({ type: 'success' as const }));
+    const ensureSessionRuntimeForPendingInput = vi.fn(async () => ({ type: 'success' as const }));
     const sendMessage = vi.fn(async () => ({ localId: 'direct-1', seq: 2 }));
     const port: SessionSubmitPort = {
         enqueuePendingMessage,
         updatePendingRequestedAction,
-        resumeSession,
+        ensureSessionRuntimeForPendingInput,
         sendMessage,
         isSessionTargetRemoteToActiveServer: () => false,
     };
-    return { port, enqueuePendingMessage, updatePendingRequestedAction, resumeSession, sendMessage };
+    return { port, enqueuePendingMessage, updatePendingRequestedAction, ensureSessionRuntimeForPendingInput, sendMessage };
 }
 
 function submitOptions(session: Session) {
@@ -441,7 +441,7 @@ describe('submitSessionUserMessage Pending action ownership', () => {
                 claudeSessionId: 'claude-1', claudeTranscriptPath: '/tmp/claude-1.jsonl',
             },
         });
-        const { port, updatePendingRequestedAction, resumeSession } = createPort();
+        const { port, updatePendingRequestedAction, ensureSessionRuntimeForPendingInput } = createPort();
 
         await submitSessionUserMessage(port, {
             ...submitOptions(session),
@@ -451,8 +451,8 @@ describe('submitSessionUserMessage Pending action ownership', () => {
             resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
         });
 
-        expect(updatePendingRequestedAction).toHaveBeenCalledBefore(resumeSession);
-        expect(resumeSession).toHaveBeenCalledWith(expect.objectContaining({
+        expect(updatePendingRequestedAction).toHaveBeenCalledBefore(ensureSessionRuntimeForPendingInput);
+        expect(ensureSessionRuntimeForPendingInput).toHaveBeenCalledWith(expect.objectContaining({
             executionAuthorization: { provenance: 'user_request', requestId: 'durable-wake-1' },
         }));
     });
@@ -485,9 +485,9 @@ describe('submitSessionUserMessage Pending action ownership', () => {
             errorCode: 'action-conflict',
             errorMessage: 'action not persisted',
         });
-        expect(actionFailure.resumeSession).not.toHaveBeenCalled();
+        expect(actionFailure.ensureSessionRuntimeForPendingInput).not.toHaveBeenCalled();
 
-        const wakeFailures: SessionSubmitPort['resumeSession'][] = [
+        const wakeFailures: SessionSubmitPort['ensureSessionRuntimeForPendingInput'][] = [
             async () => ({
                 type: 'error' as const,
                 errorCode: 'DAEMON_RPC_UNAVAILABLE' as const,
@@ -495,9 +495,9 @@ describe('submitSessionUserMessage Pending action ownership', () => {
             }),
             async () => { throw new Error('wake response lost'); },
         ];
-        for (const resumeSession of wakeFailures) {
+        for (const ensureSessionRuntimeForPendingInput of wakeFailures) {
             const wakeFailure = createPort();
-            wakeFailure.port.resumeSession = vi.fn(resumeSession);
+            wakeFailure.port.ensureSessionRuntimeForPendingInput = vi.fn(ensureSessionRuntimeForPendingInput);
 
             await expect(submitSessionUserMessage(wakeFailure.port, {
                 ...submitOptions(session),
@@ -511,7 +511,7 @@ describe('submitSessionUserMessage Pending action ownership', () => {
                 localId: 'durable-wake-failed',
                 wake: { attempted: true, state: 'failed' },
             });
-            expect(wakeFailure.updatePendingRequestedAction).toHaveBeenCalledBefore(wakeFailure.port.resumeSession as ReturnType<typeof vi.fn>);
+            expect(wakeFailure.updatePendingRequestedAction).toHaveBeenCalledBefore(wakeFailure.port.ensureSessionRuntimeForPendingInput as ReturnType<typeof vi.fn>);
         }
     });
 });

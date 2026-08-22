@@ -349,9 +349,10 @@ describe('QualifiedPoolDetailView', () => {
         const { screen } = await renderPoolDetail();
         // No user label: the provider email names the account (the plugin display
         // name only wins when there is no email), so a pool member reads exactly as
-        // the same account reads on the accounts list.
+        // the same account reads on the accounts list. The canonical account id
+        // keys the row and never appears on either line.
         expect(memberBlock(screen, 'work').title).toBe('work@example.com');
-        expect(memberBlock(screen, 'work').identityLabel).toBe('Codex · work');
+        expect(memberBlock(screen, 'work').identityLabel).toBe('Codex');
 
         const labelled = await renderScreen(
             <QualifiedPoolDetailView
@@ -364,7 +365,7 @@ describe('QualifiedPoolDetailView', () => {
         );
         await flush(2);
         expect(memberBlock(labelled, 'work').title).toBe('Primary');
-        expect(memberBlock(labelled, 'work').identityLabel).toBe('Codex · work@example.com · work');
+        expect(memberBlock(labelled, 'work').identityLabel).toBe('Codex · work@example.com');
     });
 
     it('falls back to the provider email, never the raw account id, for an account with no name', async () => {
@@ -382,11 +383,13 @@ describe('QualifiedPoolDetailView', () => {
         await flush(2);
 
         expect(memberBlock(screen, 'work').title).toBe('work@example.com');
-        expect(memberBlock(screen, 'work').identityLabel).toBe('Codex · work');
-        // Nothing better exists for `backup`, so the service title remains the
-        // primary label and its opaque id is relegated to the identity line.
+        expect(memberBlock(screen, 'work').identityLabel).toBe('Codex');
+        // Nothing recognisable exists for `backup`, so the service title remains
+        // the primary label and the identity line stays empty. The opaque id is
+        // NOT a fallback: it keys the row, and a user cannot recognise an
+        // account by it on screen or through a screen reader.
         expect(memberBlock(screen, 'backup').title).toBe('Codex');
-        expect(memberBlock(screen, 'backup').identityLabel).toBe('backup');
+        expect(memberBlock(screen, 'backup').identityLabel ?? '').not.toContain('backup');
     });
 
     it('offers each membership candidate with its name and identity line', async () => {
@@ -397,9 +400,11 @@ describe('QualifiedPoolDetailView', () => {
             title: string;
             subtitle?: string;
         }>;
+        // The canonical id keys each option for the mutation and appears nowhere
+        // in the title or subtitle a person reads.
         expect(options.map((option) => option.id)).toEqual(['work', 'backup', 'spare']);
-        expect(options[0]).toMatchObject({ title: 'work@example.com', subtitle: 'Codex · work' });
-        expect(options[1]).toMatchObject({ title: 'backup@example.com', subtitle: 'Codex · backup' });
+        expect(options[0]).toMatchObject({ title: 'work@example.com', subtitle: 'Codex' });
+        expect(options[1]).toMatchObject({ title: 'backup@example.com', subtitle: 'Codex' });
     });
 
     it('toggling a member enable switch patches that member', async () => {

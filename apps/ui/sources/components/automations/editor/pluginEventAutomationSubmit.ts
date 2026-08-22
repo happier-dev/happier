@@ -4,6 +4,7 @@ import {
     arePluginMachineExecutionOriginsEqual,
     type AutomationV3AssignmentInput,
     type ExecutionRunDetachedStartRequestV1,
+    type MentionRefV1,
     type SessionServerStartSpawnDraftV1,
 } from '@happier-dev/protocol';
 
@@ -150,6 +151,8 @@ export async function submitPluginEventAutomation(params: Readonly<{
     automationEditId: string | null | undefined;
     metadata: PluginEventAutomationMetadata | null;
     prompt: string;
+    /** The composer references picked beside `prompt`, persisted with it. */
+    mentions?: readonly MentionRefV1[];
     targetKind: PluginEventAutomationTargetKind;
     executionTargetServerId: string | null | undefined;
     buildNewSessionSpawn: (currentSpawn: SessionServerStartSpawnDraftV1 | null) => SessionServerStartSpawnDraftV1 | null;
@@ -227,6 +230,7 @@ export async function submitPluginEventAutomation(params: Readonly<{
     const executionRecipe = buildPlainPluginEventAutomationExecutionRecipe({
         templateVersion,
         prompt: params.prompt,
+        ...(params.mentions ? { mentions: params.mentions } : {}),
         target: target.target,
     });
     if (!executionRecipe) return unavailable('target');

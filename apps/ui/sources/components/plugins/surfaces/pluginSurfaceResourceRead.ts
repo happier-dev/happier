@@ -12,8 +12,12 @@ import {
     mapMachinePluginUiResourceTransportFailure,
 } from '@/sync/ops/machineContributionRegistryProjection';
 import { decodeBase64 } from '@/encryption/base64';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
-import type { PluginSurfaceHostApiRequestOptions } from './createPluginSurfaceHostApi';
+import {
+    createPluginSurfaceHostApiError,
+    type PluginSurfaceHostApiRequestOptions,
+} from './createPluginSurfaceHostApi';
 
 /**
  * The mounted `readResource` handler (§3.6).
@@ -54,15 +58,6 @@ export type PluginContextualResourceBinding = PluginSurfaceResourceBinding;
  * fencing its late delivery; a caller cancellation remains independently
  * observable through the same transport signal.
  */
-export function composePluginSurfaceResourceSignal(
-    lifetimeSignal: AbortSignal | undefined,
-    callerSignal: AbortSignal | undefined,
-): AbortSignal | undefined {
-    if (lifetimeSignal === undefined) return callerSignal;
-    if (callerSignal === undefined) return lifetimeSignal;
-    return AbortSignal.any([lifetimeSignal, callerSignal]);
-}
-
 type JsonRecord = Readonly<Record<string, PluginUiJsonValueV1>>;
 
 function readJsonRecord(value: PluginUiJsonValueV1 | undefined): JsonRecord | null {
@@ -180,7 +175,7 @@ function errorPayload(
     code: 'unavailable' | 'invalid_payload',
     reason: string,
 ): PluginUiJsonValueV1 {
-    return { code, diagnostics: [reason] };
+    return createPluginSurfaceHostApiError(code, [reason]);
 }
 
 function resourceAbortPayload(isCurrent: (() => boolean) | undefined): PluginUiJsonValueV1 {
@@ -215,7 +210,9 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
         if (input.isCurrent?.() === false) {
             return errorPayload('unavailable', 'plugin_surface_retired');
         }
-        const signal = composePluginSurfaceResourceSignal(input.lifetimeSignal, options?.signal);
+        const mergedSignal = mergeAbortSignals([input.lifetimeSignal, options?.signal]);
+        const signal = mergedSignal.signal;
+        try {
         if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
 
         let outcome: Awaited<ReturnType<PluginSurfaceResourceReadTransport>>;
@@ -253,5 +250,8 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
             digest: outcome.result.digest,
             bytesBase64: outcome.result.bytesBase64,
         };
+        } finally {
+            mergedSignal.dispose();
+        }
     };
 }

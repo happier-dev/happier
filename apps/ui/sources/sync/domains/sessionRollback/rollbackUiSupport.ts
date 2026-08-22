@@ -1,16 +1,23 @@
+import { readMessageDisplayText } from '@/sync/domains/messages/messageDisplayText';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { evaluateAgentSessionCapabilitySupport, inferAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import {
     readSessionRollbackRangesV1FromMetadata,
     type SessionRollbackTarget,
     type TurnChangeSet,
 } from '@happier-dev/protocol';
+import {
+    supportsAgentLifecycleCapability,
+    type CurrentProjectedAgentCapabilities,
+} from '@/agents/backendCatalog/currentAgentCapabilities';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type TranscriptRollbackAction = Readonly<{
     target: SessionRollbackTarget;
     restoredDraftText: string | null;
+    /** Exact declaration rechecked by the execution boundary for external Agents. */
+    currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
     checkpointCodeRollback?: Readonly<{
         conversationRollbackSupported: boolean;
         turnId: string;
@@ -42,19 +49,24 @@ function listTrustedRuntimeTurnStartSeqs(session: Session | null | undefined): R
     return startSeqs;
 }
 
-function hasConversationRollbackCapability(session: Session | null | undefined): boolean {
+function hasConversationRollbackCapability(
+    session: Session | null | undefined,
+    currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null,
+): boolean {
     if (!session || session.accessLevel === 'view') return false;
     const metadata = readSessionOwnerMetadataView(session);
-    const agentId = inferAgentIdFromSessionMetadata(metadata);
-    return evaluateAgentSessionCapabilitySupport({
-        agentId,
+    return supportsAgentLifecycleCapability({
+        agentId: resolveAgentIdFromSessionMetadata(metadata),
         capability: 'sessionRollback.conversation',
         metadata,
-    }) === 'supported';
+        sessionActive: session.active === true,
+        currentAgentCapabilities,
+    });
 }
 
 export function resolveConversationRollbackSupport(params: Readonly<{
     session: Session | null | undefined;
+    currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
 }>): Readonly<{
     supportsLatestTurnRollback: boolean;
     supportsRollbackToPoint: boolean;
@@ -66,28 +78,26 @@ export function resolveConversationRollbackSupport(params: Readonly<{
             supportsRollbackToPoint: false,
         };
     }
-    const metadata = readSessionOwnerMetadataView(session);
-    const agentId = inferAgentIdFromSessionMetadata(metadata);
-    const conversationSupport = evaluateAgentSessionCapabilitySupport({
-        agentId,
-        capability: 'sessionRollback.conversation',
-        metadata,
-    });
+    const conversationSupported = hasConversationRollbackCapability(
+        session,
+        params.currentAgentCapabilities,
+    );
     return {
-        supportsLatestTurnRollback: conversationSupport === 'supported',
-        supportsRollbackToPoint: conversationSupport === 'supported',
+        supportsLatestTurnRollback: conversationSupported,
+        supportsRollbackToPoint: conversationSupported,
     };
 }
 
 export function canRollbackConversation(params: Readonly<{
     session: Session | null | undefined;
     target?: SessionRollbackTarget;
+    currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
 }>): boolean {
     const target = params.target ?? { type: 'latest_turn' };
     if (target.type === 'before_user_message') {
         const userMessageSeq = readFiniteSeq(target.userMessageSeq);
         return userMessageSeq != null
-            && hasConversationRollbackCapability(params.session)
+            && hasConversationRollbackCapability(params.session, params.currentAgentCapabilities)
             && listTrustedRuntimeTurnStartSeqs(params.session).has(userMessageSeq);
     }
     const support = resolveConversationRollbackSupport(params);
@@ -191,11 +201,18 @@ export function resolveTranscriptRollbackActions(params: Readonly<{
     messagesById: Readonly<Record<string, Message>>;
     rollbackRanges: readonly SessionRollbackRangeV1[];
     turnChangeSets?: readonly TurnChangeSet[];
+    currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
 }>): Readonly<Record<string, TranscriptRollbackAction>> {
-    const support = resolveConversationRollbackSupport({ session: params.session });
+    const support = resolveConversationRollbackSupport({
+        session: params.session,
+        currentAgentCapabilities: params.currentAgentCapabilities,
+    });
     const sessionId = params.session?.id ?? null;
     const turnChangeSets = params.turnChangeSets ?? [];
-    const capabilitySupportsConversationRollback = hasConversationRollbackCapability(params.session);
+    const capabilitySupportsConversationRollback = hasConversationRollbackCapability(
+        params.session,
+        params.currentAgentCapabilities,
+    );
     const conversationRollbackSupported = support.supportsRollbackToPoint
         || support.supportsLatestTurnRollback
         || capabilitySupportsConversationRollback;
@@ -209,9 +226,16 @@ export function resolveTranscriptRollbackActions(params: Readonly<{
             if (seq == null) continue;
             const action = {
                 target: { type: 'before_user_message', userMessageSeq: seq },
-                restoredDraftText: message.text,
+                restoredDraftText: readMessageDisplayText(message),
+                ...(params.currentAgentCapabilities
+                    ? { currentAgentCapabilities: params.currentAgentCapabilities }
+                    : {}),
             } satisfies TranscriptRollbackAction;
-            if (!canRollbackConversation({ session: params.session, target: action.target })) continue;
+            if (!canRollbackConversation({
+                session: params.session,
+                target: action.target,
+                currentAgentCapabilities: params.currentAgentCapabilities,
+            })) continue;
             actions[messageId] = withCheckpointRollbackEvidence(
                 action,
                 sessionId
@@ -248,6 +272,9 @@ export function resolveTranscriptRollbackActions(params: Readonly<{
         [latestActiveMessageId]: withCheckpointRollbackEvidence({
             target: { type: 'latest_turn' },
             restoredDraftText: null,
+            ...(params.currentAgentCapabilities
+                ? { currentAgentCapabilities: params.currentAgentCapabilities }
+                : {}),
         }, checkpointCodeRollback),
     };
 }

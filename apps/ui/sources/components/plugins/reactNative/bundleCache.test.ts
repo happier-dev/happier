@@ -788,18 +788,42 @@ describe('React Native bundle cache', () => {
         expect(secondRead?.bytes).not.toBe(firstRead?.bytes);
     });
 
-    it('rejects Hermes bytecode with a typed diagnostic', () => {
+    it('rejects Hermes bytecode arriving through the canonical verified-artifact write path', () => {
+        // The lease sink is the only production writer, so the artifact format
+        // has to be read off the verified entry bytes there. Hermes bytecode
+        // opens with the 64-bit little-endian magic 0x1F1903C103BC1FC6 and can
+        // reach this path under a plain `.js` entry path.
         const cache = createPluginReactNativeBundleCache();
+        const hermesBytes = new Uint8Array([
+            0xc6, 0x1f, 0xbc, 0x03, 0xc1, 0x03, 0x19, 0x1f,
+            0x5b, 0x00, 0x00, 0x00,
+        ]);
+        const cacheSink = createPluginReactNativeArtifactLeaseCacheSink({
+            cache,
+            lifetime: {
+                scope: persistentIdentity.accountScope,
+                isCurrent: () => true,
+                onRetire: () => ({ dispose: () => undefined }),
+            },
+        });
 
-        expect(cache.putInstalledArtifact({
+        expect(cacheSink.writeVerifiedArtifact({
             identity,
-            bytes: new Uint8Array([0xc6, 0x1f, 0xbc, 0x03]),
-            format: 'hermesBytecode',
+            accountScope: persistentIdentity.accountScope,
+            bytes: hermesBytes,
+            entryRelativePath: 'native/index.js',
+            files: [{
+                relativePath: 'native/index.js',
+                digest: computePluginUiArtifactSha256DigestV1(hermesBytes),
+                byteSize: hermesBytes.byteLength,
+                bytes: hermesBytes,
+            }],
         })).toEqual({
             ok: false,
             code: 'hermes_bytecode_unsupported',
             diagnostics: ['hermes_bytecode_unsupported'],
         });
+        expect(cache.readInstalledArtifact(identity)).toBeNull();
     });
 
 });

@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import { type BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
@@ -63,9 +63,9 @@ function getBackendTargetLabel(target: BackendTargetRefV2, backendEntries: reado
     const resolved = backendEntries.find((entry) => entry.backendTargetKey === resolveBackendTargetKeyV2(target)) ?? null;
     if (resolved) return resolved.title;
 
-    if (!target.configuredBackendId && isAgentId(target.backendId)) {
+    if (!target.configuredBackendId) {
         const core = getAgentCore(target.backendId as AgentId);
-        const displayName = t(core.displayNameKey).trim();
+        const displayName = core ? t(core.displayNameKey).trim() : '';
         return displayName ? `${displayName} (${target.backendId})` : target.backendId;
     }
 

@@ -1,6 +1,6 @@
 import { readCanonicalPaddedBase64DecodedLength } from '@happier-dev/protocol';
 
-import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
+import { invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
 
 import {
     desktopWebViewAvailabilitySupportsBrowsing,
@@ -513,12 +513,12 @@ function unavailableDesktopBrowserCaptureSnapshotResultForAvailability(
 }
 
 export async function readDesktopWebViewNativeAvailability(): Promise<DesktopWebViewNativeAvailability> {
-    if (!isTauriDesktop()) {
+    if (!isDesktopHost()) {
         return unavailableDesktopWebViewNativeAvailability('tauri_host_unavailable');
     }
 
     try {
-        const payload = await invokeTauri<unknown>(DESKTOP_BROWSER_GET_AVAILABILITY_COMMAND);
+        const payload = await invokeDesktopHost<unknown>(DESKTOP_BROWSER_GET_AVAILABILITY_COMMAND);
         return normalizeDesktopWebViewNativeAvailability(payload);
     } catch {
         return unavailableDesktopWebViewNativeAvailability('desktop_webview_native_command_unavailable');
@@ -535,12 +535,12 @@ async function invokeDesktopBrowserCommand(
         | DesktopBrowserBoundsPayload
         | DesktopBrowserPointerPassthroughPayload,
 ): Promise<DesktopBrowserCommandResult> {
-    if (!isTauriDesktop()) {
+    if (!isDesktopHost()) {
         return unavailableDesktopBrowserCommandResult('tauri_host_unavailable');
     }
 
     try {
-        const payload = await invokeTauri<unknown>(command, { request });
+        const payload = await invokeDesktopHost<unknown>(command, { request });
         return normalizeDesktopBrowserCommandResult(payload);
     } catch {
         return unavailableDesktopBrowserCommandResult('desktop_webview_native_command_unavailable');
@@ -598,12 +598,12 @@ export function evalDesktopBrowserScript(
 export async function readDesktopBrowserPageInfo(
     request: Omit<DesktopBrowserViewCommandRequest, 'url'>,
 ): Promise<DesktopBrowserPageInfoResult> {
-    if (!isTauriDesktop()) {
+    if (!isDesktopHost()) {
         return unavailableDesktopBrowserPageInfoResult('tauri_host_unavailable');
     }
 
     try {
-        const payload = await invokeTauri<unknown>(DESKTOP_BROWSER_GET_PAGE_INFO_COMMAND, { request });
+        const payload = await invokeDesktopHost<unknown>(DESKTOP_BROWSER_GET_PAGE_INFO_COMMAND, { request });
         return normalizeDesktopBrowserPageInfoResult(payload);
     } catch {
         return unavailableDesktopBrowserPageInfoResult('desktop_webview_native_command_unavailable');
@@ -638,12 +638,12 @@ function normalizeDesktopBrowserDrainDiagnosticsResult(payload: unknown): Deskto
 export async function drainDesktopBrowserDiagnostics(
     request: Omit<DesktopBrowserViewCommandRequest, 'url'>,
 ): Promise<DesktopBrowserDrainDiagnosticsResult> {
-    if (!isTauriDesktop()) {
+    if (!isDesktopHost()) {
         return unavailableDesktopBrowserDrainDiagnosticsResult('tauri_host_unavailable');
     }
 
     try {
-        const payload = await invokeTauri<unknown>(DESKTOP_BROWSER_DRAIN_DIAGNOSTICS_COMMAND, { request });
+        const payload = await invokeDesktopHost<unknown>(DESKTOP_BROWSER_DRAIN_DIAGNOSTICS_COMMAND, { request });
         return normalizeDesktopBrowserDrainDiagnosticsResult(payload);
     } catch {
         return unavailableDesktopBrowserDrainDiagnosticsResult('desktop_webview_native_command_unavailable');
@@ -673,7 +673,7 @@ function normalizeCaptureClip(
 export async function captureDesktopBrowserSnapshot(
     request: DesktopBrowserCaptureSnapshotRequest,
 ): Promise<DesktopBrowserCaptureSnapshotResult> {
-    if (!isTauriDesktop()) {
+    if (!isDesktopHost()) {
         return unavailableDesktopBrowserCaptureSnapshotResult('tauri_host_unavailable', 'captureUnsupported');
     }
 
@@ -687,7 +687,7 @@ export async function captureDesktopBrowserSnapshot(
     };
 
     try {
-        const payload = await invokeTauri<unknown>(DESKTOP_BROWSER_CAPTURE_SNAPSHOT_COMMAND, { request: nativeRequest });
+        const payload = await invokeDesktopHost<unknown>(DESKTOP_BROWSER_CAPTURE_SNAPSHOT_COMMAND, { request: nativeRequest });
         return normalizeDesktopBrowserCaptureSnapshotResult(payload, nativeRequest);
     } catch {
         return unavailableDesktopBrowserCaptureSnapshotResult(
@@ -838,12 +838,12 @@ function normalizeDesktopBrowserCaptureRecordingFrameResult(
 export async function captureDesktopBrowserRecordingFrame(
     request: DesktopBrowserCaptureRecordingFrameRequest,
 ): Promise<DesktopBrowserCaptureRecordingFrameResult> {
-    if (!isTauriDesktop()) {
+    if (!isDesktopHost()) {
         return unavailableDesktopBrowserCaptureRecordingFrameResult('tauri_host_unavailable', 'captureUnsupported');
     }
 
     try {
-        const payload = await invokeTauri<unknown>(DESKTOP_BROWSER_CAPTURE_RECORDING_FRAME_COMMAND, { request });
+        const payload = await invokeDesktopHost<unknown>(DESKTOP_BROWSER_CAPTURE_RECORDING_FRAME_COMMAND, { request });
         return normalizeDesktopBrowserCaptureRecordingFrameResult(payload, request);
     } catch {
         return unavailableDesktopBrowserCaptureRecordingFrameResult(

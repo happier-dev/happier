@@ -152,6 +152,31 @@ export function useSession(id: string): Session | null {
   return getStorage()(useShallow((state) => state.sessions[id] ?? null));
 }
 
+/**
+ * The exact Session fields used to derive a displayed title. Current UI context
+ * needs this projection, not turn-lifecycle facts such as `thinking` or
+ * `agentState`, so it remains stable for updates that cannot change its output.
+ */
+export type SessionDisplayNameSource = Readonly<Pick<
+  Session,
+  'id' | 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView'
+>>;
+
+export function useSessionDisplayNameSource(sessionId: string): SessionDisplayNameSource | null {
+  return getStorage()(
+    useShallow((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return null;
+      return {
+        id: session.id,
+        metadata: session.metadata,
+        metadataLayoutVersion: session.metadataLayoutVersion,
+        ownerMetadataView: session.ownerMetadataView,
+      };
+    }),
+  );
+}
+
 export type SessionReferenceTarget = Readonly<{
   /**
    * `true` only when this viewer has positive evidence the session is gone. A cache miss is not
@@ -298,9 +323,20 @@ export function useSessionMetadata(sessionId: string): Session['metadata'] | nul
  * `action-draft` row present that put a whole-session subscription in the transcript producer, so
  * every unrelated session-field write re-ran the option hook — MEASURED at 1 render per write, and 0
  * once it reads this instead.
+ *
+ * V-3 (2026-08-18): it resolves the OWNER view, not raw `metadata`. `machineId` is an owner key, so
+ * a layout-v1 session's shared `metadata` cannot carry it and the raw read answered `null` for every
+ * such session. `readSessionOwnerMetadataView` is the layout owner and returns `metadata` unchanged
+ * on layout 0, so this is strictly the same answer where the old read had one and a real answer
+ * where it did not. Callers that need this id keep asking one hook rather than each re-deciding
+ * where the id lives — the agent-transition divider row was the second such decision and is now a
+ * consumer.
  */
 export function useSessionMachineId(sessionId: string): string | null {
-  return getStorage()((state) => resolveSessionMachineId(state.sessions[sessionId]?.metadata));
+  return getStorage()((state) => {
+    const session = state.sessions[sessionId];
+    return session ? resolveSessionMachineId(readSessionOwnerMetadataView(session)) : null;
+  });
 }
 
 export type SessionInteractionSource = Readonly<{
@@ -817,6 +853,7 @@ type SessionOrganizationProjectionCacheEntry = Readonly<{
   folderAssignmentsBySessionKey: StorageState['sessionOrganizationFolderAssignmentsBySessionKey'];
   tagsByTagKey: StorageState['sessionOrganizationTagsByTagKey'];
   tagAssignmentsBySessionKey: StorageState['sessionOrganizationTagAssignmentsBySessionKey'];
+  attentionStandingsBySessionKey: StorageState['sessionOrganizationAttentionStandingsBySessionKey'];
   orderEntriesByScopeKey: StorageState['sessionOrganizationOrderEntriesByScopeKey'];
   labelsByLabelKey: StorageState['sessionOrganizationLabelsByLabelKey'];
   value: SessionOrganizationProjection;
@@ -838,6 +875,7 @@ function readSessionOrganizationProjectionCached(
     && cached.folderAssignmentsBySessionKey === state.sessionOrganizationFolderAssignmentsBySessionKey
     && cached.tagsByTagKey === state.sessionOrganizationTagsByTagKey
     && cached.tagAssignmentsBySessionKey === state.sessionOrganizationTagAssignmentsBySessionKey
+    && cached.attentionStandingsBySessionKey === state.sessionOrganizationAttentionStandingsBySessionKey
     && cached.orderEntriesByScopeKey === state.sessionOrganizationOrderEntriesByScopeKey
     && cached.labelsByLabelKey === state.sessionOrganizationLabelsByLabelKey
   ) {
@@ -852,6 +890,7 @@ function readSessionOrganizationProjectionCached(
     folderAssignmentsBySessionKey: state.sessionOrganizationFolderAssignmentsBySessionKey,
     tagsByTagKey: state.sessionOrganizationTagsByTagKey,
     tagAssignmentsBySessionKey: state.sessionOrganizationTagAssignmentsBySessionKey,
+    attentionStandingsBySessionKey: state.sessionOrganizationAttentionStandingsBySessionKey,
     orderEntriesByScopeKey: state.sessionOrganizationOrderEntriesByScopeKey,
     labelsByLabelKey: state.sessionOrganizationLabelsByLabelKey,
   }, serverId);
@@ -863,6 +902,7 @@ function readSessionOrganizationProjectionCached(
     folderAssignmentsBySessionKey: state.sessionOrganizationFolderAssignmentsBySessionKey,
     tagsByTagKey: state.sessionOrganizationTagsByTagKey,
     tagAssignmentsBySessionKey: state.sessionOrganizationTagAssignmentsBySessionKey,
+    attentionStandingsBySessionKey: state.sessionOrganizationAttentionStandingsBySessionKey,
     orderEntriesByScopeKey: state.sessionOrganizationOrderEntriesByScopeKey,
     labelsByLabelKey: state.sessionOrganizationLabelsByLabelKey,
     value,

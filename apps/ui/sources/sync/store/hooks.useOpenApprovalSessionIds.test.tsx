@@ -59,6 +59,7 @@ function automation(params: AutomationFixture): AutomationDefinition {
             schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null },
         },
         targetType: params.targetType,
+        existingSessionId: params.linkedExistingSessionId ?? null,
         templateVersion,
         nextRunAt: params.nextRunAt ?? null,
         lastRunAt: params.lastRunAt ?? null,

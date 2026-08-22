@@ -17,6 +17,10 @@ import { dispatchPluginSurfaceAction } from '@/components/plugins/surfaces/plugi
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { isPluginEventAutomationDefinition } from '@/sync/domains/automations/automationTypes';
+import {
+    createPluginUiProjectedActionResolver,
+    normalizePluginUiProjection,
+} from '@/sync/domains/plugins/ui/projection';
 
 type HistoryGapRecoveryOutcome =
     | Readonly<{ kind: 'settled' }>
@@ -187,9 +191,14 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
     ) {
         return { kind: 'stale' };
     }
+    const resolveContributedAction = createPluginUiProjectedActionResolver(
+        params.inputs?.pluginProjectionV2?.actionsById,
+    );
     let actionSnapshot!: PluginContributedActionCurrentSnapshot;
     actionSnapshot = {
         pluginProjectionById: params.inputs!.pluginProjectionById,
+        pluginUiProjection: normalizePluginUiProjection(params.inputs!.pluginProjectionV2 ?? null),
+        resolveContributedAction,
         host: {
             machineId: origin.machineTarget.target.machineId,
             serverId: origin.machineTarget.serverId,
@@ -333,6 +342,7 @@ export async function recoverAutomationHistoryGap(params: Readonly<{
         const outcome = await (params.dispatch ?? dispatchPluginSurfaceAction)({
             action: action.identity,
             input,
+            resolveContributedAction: current.actionSnapshot.resolveContributedAction,
             contributedAction: {
                 machineId: current.origin.machineTarget.target.machineId,
                 serverId: current.origin.machineTarget.serverId,

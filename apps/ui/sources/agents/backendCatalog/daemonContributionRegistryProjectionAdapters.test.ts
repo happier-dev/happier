@@ -149,6 +149,24 @@ describe('daemon contribution registry projection adapters', () => {
     });
 
     it('adapts plugin projection v2 registry metadata', () => {
+        const authorization: NonNullable<
+            PluginProjectionV2['actionsById'][string]['authorization']
+        > = {
+            packageTrust: {
+                packageIdentity: 'package:acme.review:generation-42',
+                reviewedPackageIdentity: 'package:acme.review:generation-42',
+            },
+            generation: {
+                targetGeneration: 'generation-42',
+                desiredGeneration: 'generation-42',
+                appliedGeneration: 'generation-42',
+                targetGenerationMode: 'current',
+            },
+            resourceSelections: [],
+            scopedGrants: [],
+            serviceAvailability: [],
+            operatingSystemAuthorization: [],
+        };
         const projection: PluginProjectionV2 = {
             v: 2,
             generation: 42,
@@ -197,6 +215,7 @@ describe('daemon contribution registry projection adapters', () => {
                     description: 'Refresh Acme resources',
                     scopes: ['settings'],
                     surfaces: ['agent'],
+                    execution: { target: 'daemon' },
                     placementBindings: ['detailsPanel'],
                     inputHints: {
                         title: 'Refresh Acme',
@@ -214,6 +233,7 @@ describe('daemon contribution registry projection adapters', () => {
                         body: { key: 'actions.refresh.body', fallback: 'This changes remote resources.' },
                         confirmLabel: { key: 'actions.refresh.confirm', fallback: 'Refresh' },
                     },
+                    authorization,
                     available: true,
                 },
                 'acme.review.refresh-provider-state': {
@@ -222,6 +242,7 @@ describe('daemon contribution registry projection adapters', () => {
                     title: 'Refresh provider state',
                     scopes: ['session'],
                     surfaces: ['plugin'],
+                    execution: { target: 'daemon' },
                     inputSchema: {
                         type: 'object',
                         properties: { repository: { type: 'string' } },
@@ -350,6 +371,7 @@ describe('daemon contribution registry projection adapters', () => {
                         body: { key: 'actions.refresh.body', fallback: 'This changes remote resources.' },
                         confirmLabel: { key: 'actions.refresh.confirm', fallback: 'Refresh' },
                     },
+                    authorization,
                 }),
                 expect.objectContaining({
                     id: 'acme.review.refresh-provider-state',

@@ -77,6 +77,44 @@ function filterUncommittedPendingMessages<S extends PendingDomainDependencies>(
     ));
 }
 
+/**
+ * The other half of {@link filterUncommittedPendingMessages}, at the same owner.
+ *
+ * That filter can DROP a pending projection once its committed twin exists, but it can never add
+ * one, so it only closes the "both rows" hole. This closes the "neither row" hole: a bulk server
+ * write speaks for exactly the rows it names, and a locally owned direct-send projection is not one
+ * of them ({@link isLocallyOwnedUncommittedOutboundProjection}). Dropping it because a snapshot
+ * omitted it publishes a transcript with neither row for that utterance.
+ *
+ * `sync/engine/pending/pendingQueueV2.ts#shouldPreserveUnscopedLocalOutbound` answers a DIFFERENT
+ * question one layer up — which rows a given snapshot speaks for — and normally means the store
+ * never sees such a snapshot at all. This is the store's own invariant, not a second copy of that
+ * decision: the store may not drop a row it owns, whoever hands it the snapshot.
+ */
+function retainLocallyOwnedOutboundProjections<S extends PendingDomain & PendingDomainDependencies>(
+    state: S,
+    sessionId: string,
+    nextMessages: PendingMessage[],
+    nextDiscarded: readonly DiscardedPendingMessage[],
+): PendingMessage[] {
+    const existing = state.sessionPending[sessionId]?.messages;
+    if (!existing || existing.length === 0) return nextMessages;
+
+    const serverKnownIds = new Set<string>();
+    const serverKnownLocalIds = new Set<string>();
+    for (const message of [...nextMessages, ...nextDiscarded]) {
+        serverKnownIds.add(message.id);
+        serverKnownLocalIds.add(message.localId ?? message.id);
+    }
+    const retained = existing.filter((message) => (
+        !serverKnownIds.has(message.id)
+        && !serverKnownLocalIds.has(message.localId ?? message.id)
+        && isLocallyOwnedUncommittedOutboundProjection(state, sessionId, message)
+    ));
+    if (retained.length === 0) return nextMessages;
+    return [...nextMessages, ...retained];
+}
+
 function isPendingMessageAlreadyCommitted<S extends PendingDomainDependencies>(
     state: S,
     sessionId: string,
@@ -85,6 +123,45 @@ function isPendingMessageAlreadyCommitted<S extends PendingDomainDependencies>(
     if (!message.localId) return false;
     if (shouldPreservePendingProjectionAfterCommittedUserLocalId(message)) return false;
     return collectCommittedUserLocalIds(state, sessionId, new Set([message.localId])).size > 0;
+}
+
+/**
+ * A LOCALLY OWNED outbound projection the server pending queue never learned about.
+ *
+ * `pruneServerPendingMessages` retires every projection the server queue speaks for. A DIRECT send
+ * (`sync/sync.ts`, active-session RPC/socket accept) creates a projection the queue never learns
+ * about: a `pending-changed` count of 0 says nothing about it. Retiring it there publishes a
+ * transcript frame carrying NEITHER row for that utterance — the list renders one row shorter than
+ * both the before and the after state, which is the send flicker seen from the data side.
+ *
+ * Such a row is retired by the ARRIVAL of its committed twin (`applyMessages` does that in one store
+ * update), never by server pending state, which never owned it.
+ *
+ * "Locally owned" is checked, not assumed:
+ *  - `pendingOutboxScope` present means the row is a DURABLE outbox projection and the server queue
+ *    addresses it through that scope, so server pending state IS authoritative for it.
+ *  - `pendingDeliveryStatus` present means the server has already reported on this row's delivery,
+ *    so the queue knows it and may retire it.
+ *  - `deliveryStatus` is deliberately NOT consulted: it records how far THIS device's send has got,
+ *    not who owns the row, and a send spends real time in every one of its states. Consulting it
+ *    would disagree with `pendingQueueV2#shouldPreserveUnscopedLocalOutbound`, which preserves an
+ *    unscoped `local_outbound` row the snapshot does not name regardless of `deliveryStatus`.
+ *
+ * A retention rule about ownership, not a delay: the row leaves the moment its twin EXISTS, and an
+ * owner-driven retirement (cancel, discard, delete, send failure) still removes it immediately
+ * through `removePendingMessage`.
+ */
+function isLocallyOwnedUncommittedOutboundProjection<S extends PendingDomainDependencies>(
+    state: S,
+    sessionId: string,
+    message: PendingMessage,
+): boolean {
+    if (message.source !== 'local_outbound') return false;
+    if (message.pendingOutboxScope !== undefined) return false;
+    if (message.pendingDeliveryStatus !== undefined) return false;
+    const localId = message.localId ?? message.id;
+    if (!localId) return false;
+    return collectCommittedUserLocalIds(state, sessionId, new Set([localId])).size === 0;
 }
 
 function arePendingValuesEqual(left: unknown, right: unknown): boolean {
@@ -121,7 +198,12 @@ function replacePendingBucket<S extends PendingDomain & PendingDomainDependencie
         isLoaded: boolean;
     }>,
 ): S {
-    const filteredMessages = filterUncommittedPendingMessages(state, sessionId, snapshot.messages);
+    const filteredMessages = retainLocallyOwnedOutboundProjections(
+        state,
+        sessionId,
+        filterUncommittedPendingMessages(state, sessionId, snapshot.messages),
+        snapshot.discarded,
+    );
     const existing = state.sessionPending[sessionId];
     const previousMessages = existing?.messages ?? [];
     const previousDiscarded = existing?.discarded ?? [];
@@ -195,6 +277,9 @@ export function createPendingDomain<S extends PendingDomain & PendingDomainDepen
             if (!existing || existing.messages.length === 0) return state;
             const nextMessages = existing.messages.filter((message) => {
                 if (message.source === 'server_pending') return false;
+                // The server pending queue never spoke for this row, so a queue-empty notice is not
+                // a receipt for it. Retiring it here is the "neither row" frame.
+                if (isLocallyOwnedUncommittedOutboundProjection(state, sessionId, message)) return true;
                 const acceptedOrdinaryServerProjection =
                     message.source === 'local_outbound'
                     && message.deliveryStatus === 'accepted'

@@ -64,8 +64,8 @@ vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
     }),
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => settingsState.tauriDesktop,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => settingsState.tauriDesktop,
 }));
 
 vi.mock('@/sync/domains/state/storage', async () => {

@@ -1,16 +1,21 @@
 import {
     PLUGIN_UI_HOST_METHODS_V1,
     PluginUiHostMethodV1Schema,
+    PluginUiHostApiErrorPayloadV1Schema,
+    PluginUiHostApiResponseEnvelopeV1Schema,
     PluginUiSurfaceContextV1Schema,
     type PluginUiHostApiErrorCodeV1,
+    type PluginUiHostApiErrorPayloadV1,
     type PluginUiHostApiRequestMethodV1,
     type PluginUiHostApiRequestEnvelopeV1,
+    type PluginUiHostApiResponseEnvelopeV1,
     type PluginUiHostMethodV1,
     type PluginUiJsonValueV1,
     type PluginUiSurfaceContextV1,
     type PluginUiSelectActionInputResultV1,
     type PluginUiTargetedContributionOperationV1,
 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginErrorData } from '@happier-dev/plugin-sdk';
 
 /**
  * The CALLER's cancellation for one in-flight request (§3.4).
@@ -89,11 +94,102 @@ export type PluginSurfaceHostApiHandlers = Partial<
     >
 >;
 
-function errorPayload(
+/**
+ * `handleRequest` is an incumbent host-local raw-JSON seam: declarative
+ * controls consume its result directly, while both physical transports settle
+ * it below. Keep host failures ordinary strict JSON at that seam, but retain
+ * their local producer identity until the one shared settlement point. This
+ * lexical WeakMap never serializes or crosses a bundle/transport boundary, so
+ * an Action result is always classified by provenance rather than its JSON
+ * members (including a domain `{ code: 'timeout' }`).
+ */
+const pluginSurfaceHostApiErrorPayloads = new WeakMap<object, PluginUiHostApiErrorPayloadV1>();
+
+/**
+ * Creates a host-owned raw failure for direct host-local consumers. Its
+ * identity is retained only until the shared physical-transport settlement
+ * below; the returned value itself remains ordinary strict JSON.
+ */
+export function createPluginSurfaceHostApiError(
     code: PluginUiHostApiErrorCodeV1,
     diagnostics: readonly string[] = [],
 ): PluginUiJsonValueV1 {
-    return { code, diagnostics: [...diagnostics] };
+    const payload = PluginUiHostApiErrorPayloadV1Schema.parse({
+        code,
+        diagnostics: diagnostics.flatMap((diagnostic) => {
+            const normalized = diagnostic.trim();
+            return normalized.length > 0 ? [normalized] : [];
+        }),
+    });
+    const result = Object.freeze({
+        code: payload.code,
+        diagnostics: Object.freeze([...payload.diagnostics]),
+    }) satisfies PluginUiJsonValueV1;
+    pluginSurfaceHostApiErrorPayloads.set(result, payload);
+    return result;
+}
+
+/**
+ * Projects the shared mounted-host failure vocabulary to the one public SDK
+ * exception shape consumed by both physical transports.
+ */
+export function createPluginSurfaceHostApiPluginErrorData(
+    code: PluginUiHostApiErrorCodeV1,
+    diagnostics: readonly string[] = [],
+): PluginErrorData {
+    return {
+        name: 'PluginError',
+        code,
+        retryable: code === 'unavailable' || code === 'timeout',
+        ...(diagnostics.length === 0
+            ? {}
+            : {
+                diagnostics: diagnostics.map((diagnostic) => ({
+                    code: diagnostic,
+                    severity: 'error' as const,
+                })),
+            }),
+    };
+}
+
+function readPluginSurfaceHostApiError(
+    value: PluginUiJsonValueV1,
+): PluginUiHostApiErrorPayloadV1 | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return pluginSurfaceHostApiErrorPayloads.get(value) ?? null;
+}
+
+/**
+ * Converts one mounted-host settlement into the Protocol-owned response
+ * envelope. Both physical transports consume this single boundary, so a
+ * plugin Action result is never classified from the shape of its JSON.
+ */
+export async function settlePluginSurfaceHostApiRequest(
+    request: PluginUiHostApiRequestEnvelopeV1,
+    invoke: () => PluginUiJsonValueV1 | Promise<PluginUiJsonValueV1>,
+): Promise<PluginUiHostApiResponseEnvelopeV1> {
+    const base = {
+        version: 1 as const,
+        requestId: request.requestId,
+        surface: request.surface,
+        method: request.method,
+    };
+    try {
+        const payload = await invoke();
+        const error = readPluginSurfaceHostApiError(payload);
+        return PluginUiHostApiResponseEnvelopeV1Schema.parse(error
+            ? { ...base, kind: 'error' as const, payload: error }
+            : { ...base, kind: 'result' as const, payload });
+    } catch {
+        return PluginUiHostApiResponseEnvelopeV1Schema.parse({
+            ...base,
+            kind: 'error',
+            payload: {
+                code: 'internal_error',
+                diagnostics: ['host_api_handler_failed'],
+            },
+        });
+    }
 }
 
 export type CreatePluginSurfaceHostApiInput = Readonly<{
@@ -134,7 +230,7 @@ function createDisabledPluginSurfaceHostApi(
     diagnostics: readonly string[],
 ): PluginSurfaceHostApiV1 {
     const failClosed = (): PluginUiJsonValueV1 =>
-        errorPayload('invalid_payload', diagnostics);
+        createPluginSurfaceHostApiError('invalid_payload', diagnostics);
     return Object.freeze({
         platform: 'web',
         channel: 'store',
@@ -197,18 +293,35 @@ export function createPluginSurfaceHostApi(
             options?: PluginSurfaceHostApiRequestOptions,
         ): PluginUiJsonValueV1 | Promise<PluginUiJsonValueV1> => {
             if (input.isCurrent?.() === false) {
-                return errorPayload('stale_surface', ['plugin_surface_retired']);
+                return createPluginSurfaceHostApiError('stale_surface', ['plugin_surface_retired']);
             }
             const releasedMethod = PluginUiHostMethodV1Schema.safeParse(request.method);
             if (releasedMethod.success && !resolveLiveInstalledMethods().includes(releasedMethod.data)) {
-                return errorPayload('unsupported_method', [`host_api_method_not_installed:${request.method}`]);
+                // Structural absence and transient narrowing are different
+                // facts. A daemon-owned method this mount installs is
+                // re-advertised on reconnect without replacing the mount, so
+                // answering `unsupported_method` would hand the caller a
+                // permanent capability verdict it must never revisit; the
+                // retryable `unavailable` envelope keeps recovery reachable.
+                return installedMethods.includes(releasedMethod.data)
+                    ? createPluginSurfaceHostApiError(
+                        'unavailable',
+                        [`host_api_method_unavailable:${request.method}`],
+                    )
+                    : createPluginSurfaceHostApiError(
+                        'unsupported_method',
+                        [`host_api_method_not_installed:${request.method}`],
+                    );
             }
             if (request.method === 'context') return surfaceContext;
 
             const handler = handlers[request.method];
             if (handler) return handler(request, options);
             if (input.fallback) return input.fallback(request, options);
-            return errorPayload('unsupported_method', [`host_api_method_not_installed:${request.method}`]);
+            return createPluginSurfaceHostApiError(
+                'unsupported_method',
+                [`host_api_method_not_installed:${request.method}`],
+            );
         },
     });
 }

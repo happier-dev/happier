@@ -560,4 +560,61 @@ describe('deriveSessionSubagents: sidechain rows after the owning session runtim
             toolCreatedAt: NOW_MS - MINUTE_MS,
         })).toBe('running');
     });
+
+    /**
+     * The launch acknowledgement is the harder half of the same rule.
+     *
+     * A generic sub-agent tool is launched ASYNCHRONOUSLY: the call completes within milliseconds
+     * carrying only `status: 'async_launched'` while the agent runs on, so
+     * `deriveSubAgentSidechainSubagents` reads that completed call as `running` rather than as an
+     * answer. That reading is what keeps a live agent honest — and it is exactly what would leave a
+     * dead one claiming work forever, because the agent is a child of the session process and
+     * nothing can supersede the acknowledgement once that process is gone.
+     *
+     * Retirement is therefore stated against the DERIVED status rather than against the tool state,
+     * which is what makes these rows reachable at all: their tool state is `completed`.
+     */
+    function deriveAsyncLaunchedSidechainStatus(session: any): string | undefined {
+        const subagents = deriveSubagents({
+            session,
+            nowMs: NOW_MS,
+            messages: [
+                createToolMessage({
+                    id: 'message_async_launch',
+                    name: 'Agent',
+                    state: 'completed',
+                    createdAt: NOW_MS - 30 * MINUTE_MS,
+                    input: { prompt: 'Audit the corridor' },
+                    // The transcript normalizer JSON-encodes the raw `toolUseResult`, so this is the
+                    // shape the reducer actually hands the derivation.
+                    result: JSON.stringify({
+                        isAsync: true,
+                        status: 'async_launched',
+                        agentId: 'aec7336148831a599',
+                        description: 'Audit the corridor',
+                    }),
+                    toolExtras: { id: 'tool_async_launch' },
+                }),
+            ],
+        });
+        return subagents.find((subagent) => subagent.kind === 'subagent_sidechain')?.status;
+    }
+
+    it('retires an async-launched sidechain once the owning session runtime is durably gone', () => {
+        expect(deriveAsyncLaunchedSidechainStatus({
+            metadata: { flavor: 'claude' },
+            active: false,
+            activeAt: NOW_MS - 20 * MINUTE_MS,
+            presence: NOW_MS - 20 * MINUTE_MS,
+        })).toBe('terminated');
+    });
+
+    it('keeps an async-launched sidechain running while its session runtime is still attached', () => {
+        expect(deriveAsyncLaunchedSidechainStatus({
+            metadata: { flavor: 'claude' },
+            active: true,
+            activeAt: NOW_MS - 1_000,
+            presence: 'online',
+        })).toBe('running');
+    });
 });

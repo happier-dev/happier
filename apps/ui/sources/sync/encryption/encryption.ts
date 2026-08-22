@@ -132,6 +132,9 @@ export class Encryption {
     // We always seal them with secretbox using the master secret (legacy) or machine key (dataKey).
     private readonly automationTemplateEncryption: Encryptor & Decryptor;
     private readonly contentKeyPair: LibsodiumKeyPair;
+    // The secret behind `fallbackEncryption`. Sessions opened without their own
+    // data key are sealed with it, so it is also their input-equality material.
+    private readonly masterSecret: Uint8Array;
     readonly anonID: string;
     readonly contentDataKey: Uint8Array;
 
@@ -162,6 +165,7 @@ export class Encryption {
     ) {
         this.anonID = anonID;
         this.contentKeyPair = contentKeyPair;
+        this.masterSecret = masterSecret;
         this.fallbackEncryption = useDataKeyFallback
             ? new AES256Encryption(masterSecret, {
                 nativeCryptoWorker: this.createNativeJsonDecryptWorkerBinding(),
@@ -355,7 +359,10 @@ export class Encryption {
             const sessionEnc = new SessionEncryption(
                 sessionId,
                 encryptor,
-                this.cache
+                this.cache,
+                // Whichever secret actually seals this Session: its own data key,
+                // or the account secret behind the fallback encryptor.
+                dataKey ?? this.masterSecret,
             );
             this.sessionEncryptions.set(sessionId, sessionEnc);
             this.sessionKeyFingerprints.set(sessionId, fingerprint);

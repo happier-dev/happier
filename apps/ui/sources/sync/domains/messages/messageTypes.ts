@@ -55,6 +55,12 @@ export type ModeSwitchMessage = {
     realID?: string | null;
     seq?: number;
     transcriptBlockIndex?: number;
+    /**
+     * The submitting client's row key. Load-bearing on this kind: the
+     * Agent-transition divider is only readable at its reserved localId, so an
+     * agent-event row that drops it can never be a divider.
+     */
+    localId: string | null;
     createdAt: number;
     event: AgentEvent;
     meta?: MessageMeta;

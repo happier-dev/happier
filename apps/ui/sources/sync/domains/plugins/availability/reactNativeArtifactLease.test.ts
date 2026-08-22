@@ -169,7 +169,7 @@ function fixture(input: Readonly<{
 }> = {}) {
     const artifactContributionId = input.artifactContributionId ?? 'native-preview';
     const accountHosted = input.accountHosted ?? false;
-    const entryPath = 'react-native/acme/ios.bundle.js';
+    const entryPath = 'react-native/acme/ios.bundle';
     const chunkPath = 'react-native/acme/chunk.js';
     const entryBytes = new TextEncoder().encode('globalThis.__acmeEntry = true;');
     const chunkBytes = new TextEncoder().encode('globalThis.__acmeChunk = true;');
@@ -396,6 +396,59 @@ describe('React Native Artifact lease acquisition', () => {
         expect(acquired.isCurrent()).toBe(true);
         expect(acquired).not.toHaveProperty('lease');
         acquired.dispose();
+    });
+
+    it('keeps a client Action anchored to its exact Action identity instead of coercing it into Voice', async () => {
+        const current = fixture({ artifactContributionId: 'client-action-bundle' });
+        const clientContribution = {
+            family: 'actions',
+            action: { pluginId: current.cacheIdentity.pluginId, localId: 'open-preview' },
+        } as const;
+        const actionIdentity = {
+            ...current.cacheIdentity,
+            contributionId: clientContribution.action.localId,
+        } as const;
+        const daemonResponse = {
+            ...current.daemonResponse,
+            artifactOwnerKind: 'clientContribution' as const,
+            cacheIdentity: actionIdentity,
+            clientContribution,
+            artifact: {
+                ...current.daemonResponse.artifact,
+                contributionId: clientContribution.action.localId,
+            },
+        };
+        const cache = createPluginReactNativeBundleCache();
+        const fetchDaemonArtifactBytes = vi.fn(async () => daemonResponse);
+        const producer = createPluginReactNativeArtifactAvailabilityProducer({
+            getCache: () => cache,
+            appExact: inactiveAppExactSource,
+            fetchDaemonArtifactBytes,
+        });
+
+        const acquired = await producer.acquire({
+            reader: current.reader,
+            artifactGraph: current.graph,
+            cacheIdentity: actionIdentity,
+            accountLifetime: permanentlyCurrentLifetime,
+            artifactOwnerKind: 'clientContribution',
+            clientContribution,
+            daemon: {
+                origin: current.origin,
+                serverId: scope.serverId,
+            },
+            isCurrent: () => true,
+        });
+
+        expect(acquired).toMatchObject({ kind: 'available' });
+        expect(fetchDaemonArtifactBytes).toHaveBeenCalledWith({
+            origin: current.origin,
+            serverId: scope.serverId,
+            identity: actionIdentity,
+            artifactOwnerKind: 'clientContribution',
+            clientContribution,
+        });
+        if (acquired.kind === 'available') acquired.dispose();
     });
 
     it('uses an app-packaged exact Inspector Artifact before the daemon source', async () => {

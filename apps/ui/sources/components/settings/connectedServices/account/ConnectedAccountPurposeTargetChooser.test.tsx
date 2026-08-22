@@ -187,11 +187,18 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
     expect(dropdown.props.items).toEqual(expect.arrayContaining([
       expect.objectContaining({
         title: 'Personal OpenAI',
-        subtitle: 'Acme Gateway account · 35f1d8ec-633c-4bda-9e0d-7055ac95b8af',
-        accessibilityLabel: 'Acme Gateway account · Personal OpenAI · 35f1d8ec-633c-4bda-9e0d-7055ac95b8af',
+        subtitle: 'Acme Gateway account',
+        accessibilityLabel: 'Acme Gateway account · Personal OpenAI',
         disabled: false,
       }),
     ]));
+    // The canonical accountId is routing identity, not copy: it may key the row
+    // and its testID, but no field a user reads or a screen reader speaks.
+    for (const item of dropdown.props.items) {
+      expect(item.title).not.toContain('35f1d8ec-633c-4bda-9e0d-7055ac95b8af');
+      expect(item.subtitle ?? '').not.toContain('35f1d8ec-633c-4bda-9e0d-7055ac95b8af');
+      expect(item.accessibilityLabel ?? '').not.toContain('35f1d8ec-633c-4bda-9e0d-7055ac95b8af');
+    }
     expect(screen.tree.findAll((node) => (
       node.props?.testID === `${props.testID}:reload`
     ))[0]?.props.subtitle).toBe('settingsProviders.status.disabled');
@@ -233,7 +240,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
     const dropdown = screen.tree.findByType(DropdownMenu);
 
     expect(dropdown.props.itemTrigger.itemProps.accessibilityLabel).toBe(
-      'Use OpenAI upstream account · Acme Gateway account · Personal OpenAI · 35f1d8ec-633c-4bda-9e0d-7055ac95b8af',
+      'Use OpenAI upstream account · Acme Gateway account · Personal OpenAI',
     );
 
     featureRuntimeState.status = 'loading';

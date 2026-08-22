@@ -17,7 +17,7 @@ import { LocalRelayRuntimeControlSection } from '@/components/settings/server/lo
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
 import { resolveKnownLocalRelayUrl } from '@/sync/domains/server/url/resolveKnownLocalRelayUrl';
 import { useServerSettingsScreenController } from '@/components/settings/server/hooks/useServerSettingsScreenController';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { t } from '@/text';
 import { buildRelaySetupWizardHref } from '@/utils/routes/setupWizardHref';
@@ -47,7 +47,7 @@ export function ServerSettingsScreen() {
     const styles = stylesheet;
     const router = useRouter();
     const controller = useServerSettingsScreenController();
-    const isDesktop = isTauriDesktop();
+    const isDesktop = isDesktopHost();
     const isWeb = Platform.OS === 'web';
     const setupPolicy = React.useMemo(() => resolveSetupSurfacePolicy(), []);
     const [localRelayUrl, setLocalRelayUrl] = React.useState<string | null>(null);

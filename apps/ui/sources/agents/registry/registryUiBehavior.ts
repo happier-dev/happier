@@ -16,10 +16,11 @@ import {
 } from '@happier-dev/protocol';
 import type { CodexBackendMode } from '@happier-dev/protocol';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
-import type { AgentCoreConfig, AgentId, CanonicalAgentId } from './registryCore';
+import type { AgentCoreConfig, AgentId, BundledAgentId, CanonicalAgentId } from './registryCore';
 import {
     CANONICAL_AGENT_IDS,
     getAgentCore,
+    isBundledAgentId,
     resolveAgentIdFromFlavor,
     resolveAgentIdFromSessionMetadata,
 } from './registryCore';
@@ -37,12 +38,18 @@ import type { PendingInputServerWireMode } from '@/sync/engine/pending/pendingIn
 import {
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS,
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES,
+    type BundledAgentUiBehaviorDescriptor,
 } from './generatedBundledPluginEntries.uiBehaviorOverrides';
 import {
     createAgentUiBehaviorFromDescriptor,
 } from './agentUiBehaviorDescriptors';
+import {
+    resolveProjectedAgentUiBehaviorEntry,
+    type ProjectedAgentUiBehaviorEntry,
+} from './agentUiBehaviorProjection';
 import { LEGACY_COMPAT_PRIMARY_AGENT_ID } from '@/agents/backendCatalog/legacyCompatAgents';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 
 type CapabilityResults = Partial<Record<CapabilityId, CapabilityDetectResult>>;
 
@@ -140,6 +147,12 @@ export type AgentBackendTransportContext = Readonly<{
 }>;
 
 export type AgentUiBehavior = Readonly<{
+    /**
+     * The bundled Agent that owns this behavior. It is deliberately absent
+     * for the neutral unknown fallback so callers cannot mistake an unknown
+     * external identity for a built-in Agent.
+     */
+    agentId?: CanonicalAgentId;
     pendingDelivery?: Readonly<{
         resolveLabelKey?: (ctx: Readonly<{
             agentId: AgentLookupId;
@@ -228,7 +241,6 @@ export type AgentUiBehavior = Readonly<{
         getRelevantInstallableDepKeys?: (ctx: NewSessionRelevantInstallableDepsContext) => readonly string[];
     }>;
     externalSessions?: Readonly<{
-        supportsBackgroundFollow?: boolean;
         browse?: Readonly<{
             order?: number;
             getSourceOptions?: (ctx: {
@@ -370,6 +382,7 @@ function mergeMessageBehavior(
 function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBehavior {
     const message = mergeMessageBehavior(a.message, b.message);
     return {
+        ...(b.agentId ? { agentId: b.agentId } : a.agentId ? { agentId: a.agentId } : {}),
         ...(a.pendingDelivery || b.pendingDelivery
             ? { pendingDelivery: { ...(a.pendingDelivery ?? {}), ...(b.pendingDelivery ?? {}) } }
             : {}),
@@ -444,7 +457,7 @@ function buildDefaultAgentUiBehaviorFromCore(core: Pick<AgentCoreConfig, 'permis
     };
 }
 
-function buildDefaultAgentUiBehavior(agentId: AgentId): AgentUiBehavior {
+function buildDefaultAgentUiBehavior(agentId: BundledAgentId): AgentUiBehavior {
     return buildDefaultAgentUiBehaviorFromCore(getAgentCore(agentId));
 }
 
@@ -461,7 +474,10 @@ function resolveGeneratedAgentUiBehavior(agentId: CanonicalAgentId): AgentUiBeha
 export const CANONICAL_AGENTS_UI_BEHAVIOR: Readonly<Record<CanonicalAgentId, AgentUiBehavior>> = Object.freeze(
     Object.fromEntries(
         CANONICAL_AGENT_IDS.map((id: CanonicalAgentId) => {
-            const base = buildDefaultAgentUiBehavior(id);
+            const base: AgentUiBehavior = {
+                agentId: id,
+                ...buildDefaultAgentUiBehavior(id),
+            };
             const descriptorBehavior = resolveGeneratedAgentUiBehavior(id);
             const generatedOverride = CANONICAL_AGENTS_UI_BEHAVIOR_OVERRIDES[id] ?? {};
             return [
@@ -485,7 +501,7 @@ const UNKNOWN_AGENT_UI_BEHAVIOR: AgentUiBehavior = Object.freeze({
             usePermissionUpdates: false,
             forceReadOnlyAfterStop: true,
             supportsExecPolicyAmendment: false,
-            stopHandling: 'denyAndAbortRun',
+            stopHandling: 'denyAndAbortRun' as const,
         },
     },
     newSession: {
@@ -493,23 +509,75 @@ const UNKNOWN_AGENT_UI_BEHAVIOR: AgentUiBehavior = Object.freeze({
     },
 });
 
-function isCanonicalAgentId(value: unknown): value is CanonicalAgentId {
-    return typeof value === 'string' && (CANONICAL_AGENT_IDS as readonly string[]).includes(value);
+export type BundledAgentUiBehaviorProjection = Readonly<{
+    descriptor: BundledAgentUiBehaviorDescriptor;
+    behavior: AgentUiBehavior;
+}>;
+
+/**
+ * Resolves behavior only for an explicitly declared bundled backing Agent.
+ * Callers retain their own Agent identity: this is presentation projection,
+ * never an alias for session/runtime/handoff ownership.
+ */
+export function resolveBundledAgentUiBehaviorProjection(
+    agentId: string | null | undefined,
+): BundledAgentUiBehaviorProjection | null {
+    if (!isBundledAgentId(agentId)) return null;
+    const descriptor = BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS[agentId];
+    if (!descriptor) return null;
+    return {
+        descriptor,
+        behavior: CANONICAL_AGENTS_UI_BEHAVIOR[agentId],
+    };
 }
 
 function resolveKnownAgentUiBehavior(agentId: string | null | undefined): AgentUiBehavior | null {
-    if (isCanonicalAgentId(agentId)) {
+    if (isBundledAgentId(agentId)) {
         return CANONICAL_AGENTS_UI_BEHAVIOR[agentId];
     }
     return null;
 }
 
-export function resolveAgentUiBehavior(agentId: string | null | undefined): AgentUiBehavior {
+/**
+ * The neutral fallback is the floor an installed Agent's own descriptor
+ * builds on, so a declared field wins and an undeclared one keeps the safe
+ * default. Interpreted entries are stable while published, so the merged
+ * result is retained per entry rather than rebuilt on every read.
+ */
+const PROJECTED_AGENT_UI_BEHAVIOR_BY_ENTRY = new WeakMap<ProjectedAgentUiBehaviorEntry, AgentUiBehavior>();
+
+function resolveProjectedAgentUiBehavior(
+    agentId: string | null | undefined,
+    machineId: string | null | undefined,
+): AgentUiBehavior | null {
+    const entry = resolveProjectedAgentUiBehaviorEntry(agentId, machineId);
+    if (!entry) return null;
+    const retained = PROJECTED_AGENT_UI_BEHAVIOR_BY_ENTRY.get(entry);
+    if (retained) return retained;
+    const merged = Object.freeze(mergeAgentUiBehavior(UNKNOWN_AGENT_UI_BEHAVIOR, entry.behavior));
+    PROJECTED_AGENT_UI_BEHAVIOR_BY_ENTRY.set(entry, merged);
+    return merged;
+}
+
+/**
+ * `machineId` narrows the projected half to the machine that owns the render.
+ * A bundled Agent's behavior ships in this binary and is identical everywhere,
+ * so it ignores the machine; an installed Agent's descriptor is a per-machine
+ * fact and two machines can hold different versions of it. Callers that know
+ * the owning machine — every Session-scoped read — pass it so a Session on one
+ * machine can never render with another machine's declaration.
+ */
+export function resolveAgentUiBehavior(
+    agentId: string | null | undefined,
+    machineId?: string | null,
+): AgentUiBehavior {
     const behavior = resolveKnownAgentUiBehavior(agentId);
     if (behavior) {
         return behavior;
     }
-    return UNKNOWN_AGENT_UI_BEHAVIOR;
+    // An Agent that ships a descriptor is projected from it; the neutral
+    // fallback is reserved for one that ships none.
+    return resolveProjectedAgentUiBehavior(agentId, machineId) ?? UNKNOWN_AGENT_UI_BEHAVIOR;
 }
 
 export function resolveAgentUiBehaviorFromFlavor(flavor: unknown): AgentUiBehavior | null {
@@ -519,7 +587,9 @@ export function resolveAgentUiBehaviorFromFlavor(flavor: unknown): AgentUiBehavi
 
 export function resolveAgentUiBehaviorFromSessionMetadata(metadata: unknown): AgentUiBehavior | null {
     const agentId = resolveAgentIdFromSessionMetadata(metadata);
-    return agentId ? resolveAgentUiBehavior(agentId) : null;
+    // The Session's own metadata already carries the machine that runs it, so
+    // the machine-scoped read costs no call-site change anywhere.
+    return agentId ? resolveAgentUiBehavior(agentId, resolveSessionMachineId(metadata)) : null;
 }
 
 export function resolvePendingDeliveryLabelKeyForSession(ctx: Readonly<{
@@ -527,9 +597,10 @@ export function resolvePendingDeliveryLabelKeyForSession(ctx: Readonly<{
     localId: string | null;
     detail: PendingDeliveryDetailV1 | undefined;
 }>): TranslationKey | null {
-    const agentId = resolveAgentIdFromSessionMetadata(readSessionOwnerMetadataView(ctx.session));
+    const ownerMetadata = readSessionOwnerMetadataView(ctx.session);
+    const agentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
     if (!agentId) return null;
-    return resolveAgentUiBehavior(agentId).pendingDelivery?.resolveLabelKey?.({
+    return resolveAgentUiBehavior(agentId, resolveSessionMachineId(ownerMetadata)).pendingDelivery?.resolveLabelKey?.({
         agentId,
         session: ctx.session,
         localId: ctx.localId,
@@ -542,9 +613,10 @@ export function resolvePendingDeliveryTransientActionForSession(ctx: Readonly<{
     localId: string;
     wireMode: PendingInputServerWireMode;
 }>): PendingDeliveryTransientAction | null {
-    const agentId = resolveAgentIdFromSessionMetadata(readSessionOwnerMetadataView(ctx.session));
+    const ownerMetadata = readSessionOwnerMetadataView(ctx.session);
+    const agentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
     if (!agentId) return null;
-    return resolveAgentUiBehavior(agentId).pendingDelivery?.resolveTransientAction?.({
+    return resolveAgentUiBehavior(agentId, resolveSessionMachineId(ownerMetadata)).pendingDelivery?.resolveTransientAction?.({
         agentId,
         session: ctx.session,
         localId: ctx.localId,
@@ -553,9 +625,11 @@ export function resolvePendingDeliveryTransientActionForSession(ctx: Readonly<{
 }
 
 export function isAttachedSessionTerminalAvailableForSession(session: Session): boolean {
-    const agentId = resolveAgentIdFromSessionMetadata(readSessionOwnerMetadataView(session));
+    const ownerMetadata = readSessionOwnerMetadataView(session);
+    const agentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
     if (!agentId) return false;
-    const isAvailable = resolveAgentUiBehavior(agentId).attachedSessionTerminal?.isAvailable;
+    const isAvailable = resolveAgentUiBehavior(agentId, resolveSessionMachineId(ownerMetadata))
+        .attachedSessionTerminal?.isAvailable;
     return isAvailable?.({ agentId, session }) === true;
 }
 
@@ -595,7 +669,8 @@ export function classifyAgentSessionComposerNonSteerablePayload(opts: {
             : '')
         || buildAgentUniverseBackendTargetKey(agentId);
 
-    return resolveAgentUiBehavior(agentId).sessionComposer?.classifyNonSteerablePayload?.({
+    return resolveAgentUiBehavior(agentId, resolveSessionMachineId(ownerMetadata))
+        .sessionComposer?.classifyNonSteerablePayload?.({
         agentId,
         agentTargetKey,
         session: opts.session,
@@ -727,7 +802,11 @@ function readCanonicalBackendTarget(input: BackendTargetRefV2Input | undefined):
 function resolveAgentIdFromBackendTarget(input: BackendTargetRefV2Input | undefined): AgentId | null {
     const target = readCanonicalBackendTarget(input);
     if (!target || target.kind !== 'backend' || target.sourceKind === 'configured') return null;
-    return isCanonicalAgentId(target.backendId) ? target.backendId : null;
+    // An Agent-sourced backend target carries the Agent's own id, which may be an
+    // externally installed contribution. `resolveAgentUiBehavior` already answers
+    // with the neutral behavior when no bundled behavior is contributed, so there
+    // is nothing left for a bundled-id filter to decide here.
+    return target.backendId;
 }
 
 export function buildBackendTransportFieldsFromUiState(opts: Readonly<{

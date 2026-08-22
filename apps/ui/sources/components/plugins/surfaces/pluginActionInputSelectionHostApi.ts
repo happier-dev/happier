@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import {
     createPluginContributedActionController,
     type PluginContributedActionHostFacts,
@@ -23,10 +24,12 @@ import {
     type SessionServerStartDraftComposerOutcome,
 } from '@/components/sessions/new/serverStartDraftComposer';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
-import type {
-    PluginSurfaceHostApiMethodHandler,
-    PluginSurfaceHostApiRequestOptions,
+import {
+    createPluginSurfaceHostApiError,
+    type PluginSurfaceHostApiMethodHandler,
+    type PluginSurfaceHostApiRequestOptions,
 } from './createPluginSurfaceHostApi';
 
 /**
@@ -37,12 +40,15 @@ import type {
  */
 export function projectPluginActionInputSelectionFacts(input: Readonly<{
     pluginProjectionById?: Readonly<Record<string, PluginProjectionEntry>> | null;
+    /** Exact mounted projection used only to resolve Action presentation text. */
+    pluginUiProjection?: PluginUiProjectionModel | null;
     targetedContributions?: PluginUiTargetedContributionsV1 | null;
     targetPluginId?: string | null;
 }>): Readonly<{
     targetedContributions: PluginUiTargetedContributionsV1 | null;
     hasPluginProjection: boolean;
     pluginProjectionById: Readonly<Record<string, PluginProjectionEntry>>;
+    pluginUiProjection: PluginUiProjectionModel | null;
 }> {
     const targetPluginId = typeof input.targetPluginId === 'string' && input.targetPluginId.length > 0
         ? input.targetPluginId
@@ -70,6 +76,7 @@ export function projectPluginActionInputSelectionFacts(input: Readonly<{
         targetedContributions,
         hasPluginProjection: input.pluginProjectionById !== undefined && input.pluginProjectionById !== null,
         pluginProjectionById: Object.freeze(pluginProjectionById),
+        pluginUiProjection: input.pluginUiProjection ?? null,
     });
 }
 
@@ -84,7 +91,7 @@ function errorPayload(
     code: PluginUiHostApiErrorCodeV1,
     diagnostic: string,
 ): PluginUiJsonValueV1 {
-    return { code, diagnostics: [diagnostic] };
+    return createPluginSurfaceHostApiError(code, [diagnostic]);
 }
 
 function selectionFailure(
@@ -103,14 +110,6 @@ function selectionFailure(
         case 'submission_in_flight':
             return errorPayload('unavailable', outcome.reason);
     }
-}
-
-function combinedSignal(
-    hostSignal: AbortSignal | undefined,
-    requestSignal: AbortSignal | undefined,
-): AbortSignal | undefined {
-    if (hostSignal && requestSignal) return AbortSignal.any([hostSignal, requestSignal]);
-    return hostSignal ?? requestSignal;
 }
 
 function readBoundedSelectionResult(value: unknown): PluginUiJsonValueV1 {
@@ -193,6 +192,8 @@ async function composeDefaultSessionServerStartDraft(params: Parameters<PluginSe
  */
 export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
     pluginProjectionById?: Readonly<Record<string, PluginProjectionEntry>>;
+    /** Exact mounted projection used only to resolve Action presentation text. */
+    pluginUiProjection?: PluginUiProjectionModel | null;
     targetedContributions?: PluginUiTargetedContributionsV1 | null;
     host: PluginContributedActionHostFacts;
     isCurrent: () => boolean;
@@ -203,6 +204,7 @@ export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
     const present = input.present ?? presentActionInputForm;
     const selectionFacts = projectPluginActionInputSelectionFacts({
         pluginProjectionById: input.pluginProjectionById,
+        pluginUiProjection: input.pluginUiProjection,
         targetedContributions: input.targetedContributions,
         targetPluginId: input.host.targetPluginId,
     });
@@ -212,7 +214,9 @@ export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
         }
         const parsed = PluginUiSelectActionInputRequestV1Schema.safeParse(request.payload);
         if (!parsed.success) return errorPayload('invalid_payload', 'select_action_input_request_invalid');
-        const signal = combinedSignal(input.host.signal, options?.signal);
+        const mergedSignal = mergeAbortSignals([input.host.signal, options?.signal]);
+        const signal = mergedSignal.signal;
+        try {
         const hostIsCurrent = () => input.isCurrent()
             && input.host.isCurrent?.() !== false
             && input.host.accountLifetime?.isCurrent() !== false;
@@ -250,6 +254,7 @@ export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
             resolveCurrent: () => ({
                 pluginProjectionById,
                 targetedContributions,
+                pluginUiProjection: selectionFacts.pluginUiProjection,
                 host: {
                     ...input.host,
                     ...(signal ? { signal } : {}),
@@ -302,6 +307,9 @@ export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
         } finally {
             detachAbort();
             selected.form.retire();
+        }
+        } finally {
+            mergedSignal.dispose();
         }
     };
 }

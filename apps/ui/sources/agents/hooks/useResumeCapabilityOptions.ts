@@ -1,13 +1,13 @@
 import * as React from 'react';
 
-import type { AgentId } from '@/agents/registry/registryCore';
+import { readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { buildResumeCapabilityOptionsFromUiState } from '@/agents/registry/registryUiBehavior';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import type { Settings } from '@/sync/domains/settings/settings';
 
 export function useResumeCapabilityOptions(opts: {
-    agentId?: AgentId | null;
+    agentId?: string | null;
     machineId: string | null | undefined;
     serverId?: string | null;
     settings: Settings;
@@ -31,6 +31,14 @@ export function useResumeCapabilityOptions(opts: {
             sourceKinds: externalSessions.sources.map((source) => source.sourceKind),
         };
     }, [opts.agentId, projection.inputs, projection.phase]);
+    const currentAgentCapabilities = React.useMemo(() => (
+        projection.phase === 'ready'
+            ? readCurrentProjectedAgentCapabilities({
+                projection: projection.inputs?.pluginProjectionV2,
+                agentId: opts.agentId,
+            })
+            : null
+    ), [opts.agentId, projection.inputs?.pluginProjectionV2, projection.phase]);
 
     const resumeCapabilityOptions = React.useMemo(() => {
         const base = buildResumeCapabilityOptionsFromUiState({
@@ -40,8 +48,9 @@ export function useResumeCapabilityOptions(opts: {
         return {
             ...base,
             linkedSessionCurrentAgent,
+            currentAgentCapabilities,
         };
-    }, [linkedSessionCurrentAgent, opts.settings]);
+    }, [currentAgentCapabilities, linkedSessionCurrentAgent, opts.settings]);
 
     return { resumeCapabilityOptions };
 }

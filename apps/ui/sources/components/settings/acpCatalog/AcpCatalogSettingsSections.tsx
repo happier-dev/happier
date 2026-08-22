@@ -59,7 +59,7 @@ export const AcpCatalogSettingsSections = React.memo(function AcpCatalogSettings
                 {BUILT_IN_GENERIC_ACP_AGENT_IDS.map((agentId) => {
                     const builtInAcp = getBuiltInAcpConfig(agentId);
                     const core = getAgentCore(agentId);
-                    if (!builtInAcp) return null;
+                    if (!builtInAcp || !core) return null;
                     return (
                         <Item
                             key={agentId}

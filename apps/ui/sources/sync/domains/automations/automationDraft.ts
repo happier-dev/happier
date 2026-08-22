@@ -1,3 +1,5 @@
+import { AUTOMATION_INT_COLUMN_MAX } from '@happier-dev/protocol';
+
 export type NewSessionAutomationDraft = Readonly<{
     enabled: boolean;
     name: string;
@@ -9,6 +11,28 @@ export type NewSessionAutomationDraft = Readonly<{
 }>;
 
 export const LEGACY_DEFAULT_NEW_SESSION_AUTOMATION_NAME = 'Scheduled Session';
+
+const MINUTES_PER_DAY = 24 * 60;
+
+/**
+ * The authored interval cadence ceiling, expressed in the unit the interval
+ * picker edits: the widest whole-day cadence the Protocol's shared
+ * `Automation.everyMs` column ceiling can hold. Offering a wider cadence would
+ * only produce a save the canonical server schedule admission rejects.
+ */
+export const MAX_AUTOMATION_INTERVAL_MINUTES =
+    Math.floor(AUTOMATION_INT_COLUMN_MAX / 60_000 / MINUTES_PER_DAY) * MINUTES_PER_DAY;
+
+/**
+ * The one clamp for an authored interval cadence. The picker, the draft
+ * sanitizer, the settings form, and both submit builders share it so a cadence
+ * chosen on one surface cannot be silently narrowed by whichever surface holds
+ * or saves it next.
+ */
+export function clampAutomationIntervalMinutes(value: number): number {
+    if (!Number.isFinite(value)) return 1;
+    return Math.min(Math.max(Math.floor(value), 1), MAX_AUTOMATION_INTERVAL_MINUTES);
+}
 
 export const DEFAULT_NEW_SESSION_AUTOMATION_DRAFT: NewSessionAutomationDraft = {
     enabled: false,
@@ -37,7 +61,7 @@ function normalizeEveryMinutes(input: unknown): number {
     if (typeof input !== 'number' || !Number.isFinite(input)) {
         return DEFAULT_NEW_SESSION_AUTOMATION_DRAFT.everyMinutes;
     }
-    return Math.min(Math.max(Math.floor(input), 1), 24 * 60);
+    return clampAutomationIntervalMinutes(input);
 }
 
 function normalizeScheduleKind(input: unknown): 'interval' | 'cron' {

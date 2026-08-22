@@ -5,12 +5,27 @@ import {
     type DaemonHostedWebFrameCapabilityV1,
 } from '@happier-dev/protocol';
 
-import { readDesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebViewBridge';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
 
 function exactCapability(value: unknown): DaemonHostedWebFrameCapabilityV1 | null {
     const parsed = DaemonHostedWebFrameCapabilityV1Schema.safeParse(value);
     return parsed.success ? Object.freeze({ ...parsed.data }) : null;
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasExactlyKeys(value: Readonly<Record<string, unknown>>, expected: readonly string[]): boolean {
+    const actual = Object.keys(value);
+    return actual.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
+}
+
+function readNativeHostedArtifactFrameCapability(value: unknown): DaemonHostedWebFrameCapabilityV1 | null {
+    if (!isRecord(value) || value.kind !== 'available' || !hasExactlyKeys(value, ['kind', 'capability'])) {
+        return null;
+    }
+    return exactCapability(value.capability);
 }
 
 /**
@@ -22,13 +37,17 @@ export async function resolveHostedWebFrameCapability(): Promise<DaemonHostedWeb
     if (Platform.OS !== 'web') return null;
 
     // The packaged Tauri host owns a direct Wry child view rather than a DOM
-    // iframe. The incumbent native platform fact, rather than Tauri shell
-    // detection alone, decides whether that physical Artifact adapter exists.
-    if (isTauriDesktop()) {
-        const availability = await readDesktopWebViewNativeAvailability();
-        return availability.platform === 'macos'
-            ? exactCapability({ platform: 'desktop', adapter: 'wry' })
-            : null;
+    // iframe. Its restricted Artifact-native owner, rather than the general
+    // browser's profile capability or UI-side OS inference, decides whether
+    // this exact physical adapter exists.
+    if (isDesktopHost()) {
+        try {
+            return readNativeHostedArtifactFrameCapability(await invokeDesktopHost<unknown>(
+                'desktop_hosted_artifact_get_frame_capability',
+            ));
+        } catch {
+            return null;
+        }
     }
 
     const document = globalThis.document;

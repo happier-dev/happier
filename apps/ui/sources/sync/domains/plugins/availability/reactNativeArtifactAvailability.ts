@@ -118,9 +118,14 @@ export function createPluginReactNativeArtifactAvailabilityProducer(
                             artifactOwnerKind: 'renderer' as const,
                             crashStateToken: input.crashStateToken,
                         }
-                        : {
-                            artifactOwnerKind: 'voiceProvider' as const,
-                        }),
+                        : input.artifactOwnerKind === 'voiceProvider'
+                            ? {
+                                artifactOwnerKind: 'voiceProvider' as const,
+                            }
+                            : {
+                                artifactOwnerKind: 'clientContribution' as const,
+                                clientContribution: input.clientContribution,
+                            }),
                     appExact: dependencies.appExact,
                     persistent,
                     ...(input.daemon

@@ -16,17 +16,22 @@ async function presentPluginContributedActionOpen(
     if (signal?.aborted) return { kind: 'stale', reason: 'host_retired' };
     try {
         const opened = await open();
-        // A direct Action can settle while the retained composer surface has
-        // already lost authority. Its stale outcome must not present feedback
-        // in the newly current surface.
+        // The controller returns `direct` only after canonical Action dispatch
+        // has settled. A later presentation retirement must not relabel that
+        // known effect as stale, because consumers can otherwise retry it.
+        if (opened.kind === 'direct') {
+            if (showUnavailableFeedback && !opened.outcome.ok && !signal?.aborted) {
+                Modal.alert(t('common.error'), t('pluginRuntime.unavailableGeneric'));
+            }
+            return opened;
+        }
         if (signal?.aborted) return { kind: 'stale', reason: 'host_retired' };
         if (opened.kind === 'form') {
             presentActionInputForm({ form: opened.form, signal });
             return opened;
         }
         if (showUnavailableFeedback && (
-            (opened.kind === 'direct' && !opened.outcome.ok)
-            || opened.kind === 'stale'
+            opened.kind === 'stale'
             || opened.kind === 'unavailable'
         )) {
             Modal.alert(t('common.error'), t('pluginRuntime.unavailableGeneric'));

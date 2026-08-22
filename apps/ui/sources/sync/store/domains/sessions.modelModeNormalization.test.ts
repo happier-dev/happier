@@ -174,6 +174,38 @@ describe('sessions domain: modelMode normalization', () => {
         expect(get().sessions.s1.modelModeUpdatedAt).toBe(1001);
     });
 
+    it('drops a local model selection the Agent transition explicitly cleared', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1000);
+        const { get, domain } = createHarness();
+
+        domain.applySessions([{
+            id: 's1',
+            createdAt: 1,
+            active: false,
+            activeAt: 1,
+            metadata: { flavor: 'gemini' },
+        } as any]);
+        domain.updateSessionModelMode('s1', 'gemini-2.5-flash' as any);
+        expect(get().sessions.s1.modelMode).toBe('gemini-2.5-flash');
+
+        // The cutover to an Agent that accepts freeform model ids: the local
+        // selection is not "invalid" for Claude, so the selectability clamp
+        // cannot catch it. Only the transition's own cleared intent can.
+        domain.applySessions([{
+            id: 's1',
+            createdAt: 1,
+            active: false,
+            activeAt: 1,
+            metadata: {
+                flavor: 'claude',
+                modelSelectionIntentV1: { v: 1, updatedAt: 2000, selection: null },
+            },
+        } as any]);
+
+        expect(get().sessions.s1.modelMode).toBe('default');
+        expect(get().sessions.s1.modelModeUpdatedAt).toBe(2000);
+    });
+
     it('stamps modelModeUpdatedAt when updating the session model mode locally', () => {
         const { get, domain } = createHarness();
 

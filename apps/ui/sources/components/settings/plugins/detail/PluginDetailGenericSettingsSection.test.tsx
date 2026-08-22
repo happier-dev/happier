@@ -153,6 +153,12 @@ const ACCOUNT_SECRET_STATUS_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.
 const OPENCODE_SECRET_INPUT_ID = `settings.plugins.detail.${OPENCODE_PLUGIN_ID}.settings.${OPENCODE_GROUP_ID}.${OPENCODE_SERVER_PASSWORD_SETTING_ID}.input`;
 const OPENCODE_SECRET_SAVE_ID = `settings.plugins.detail.${OPENCODE_PLUGIN_ID}.settings.${OPENCODE_GROUP_ID}.${OPENCODE_SERVER_PASSWORD_SETTING_ID}.save`;
 const OPENCODE_SECRET_STATUS_ID = `settings.plugins.detail.${OPENCODE_PLUGIN_ID}.settings.${OPENCODE_GROUP_ID}.${OPENCODE_SERVER_PASSWORD_SETTING_ID}.status`;
+const EXTERNAL_NOTIFICATION_PLUGIN_ID = 'examples.action-contract-producer';
+const EXTERNAL_NOTIFICATION_GROUP_ID = 'notification-channel/webhook';
+const EXTERNAL_NOTIFICATION_SECTION_ID = `${EXTERNAL_NOTIFICATION_GROUP_ID}/configuration`;
+const EXTERNAL_NOTIFICATION_ENDPOINT_FIELD_ID = 'webhook.endpoint';
+const EXTERNAL_NOTIFICATION_ENDPOINT_INPUT_ID = `settings.plugins.detail.${EXTERNAL_NOTIFICATION_PLUGIN_ID}.settings.${EXTERNAL_NOTIFICATION_SECTION_ID}.${EXTERNAL_NOTIFICATION_ENDPOINT_FIELD_ID}.input`;
+const EXTERNAL_NOTIFICATION_ENDPOINT_SAVE_ID = `settings.plugins.detail.${EXTERNAL_NOTIFICATION_PLUGIN_ID}.settings.${EXTERNAL_NOTIFICATION_SECTION_ID}.${EXTERNAL_NOTIFICATION_ENDPOINT_FIELD_ID}.save`;
 
 const ACCOUNT_RECOVERY_DECLARATION: PluginPortableReleaseManifestV1 = PluginManifestV2Schema.parse({
     schemaVersion: 2,
@@ -275,6 +281,55 @@ function createProjection(
             presentation: { sections: [], subagentSections: [] },
             target: { kind: 'plugin' },
             fields,
+        }],
+    };
+}
+
+/** Exact daemon-projected shape produced for an external channel's Account settings. */
+function createExternalNotificationChannelProjection(): PluginProjectionEntry {
+    return {
+        pluginId: EXTERNAL_NOTIFICATION_PLUGIN_ID,
+        immutableGenerationId: 'external-notification-generation-1',
+        title: 'Document Reviewer Target',
+        description: null,
+        version: '0.1.0',
+        enabled: true,
+        generation: 1,
+        generationLabel: '1',
+        status: null,
+        provenance: {
+            sourceKind: 'package',
+            sourceLabel: '@example/happier-action-contract-producer',
+            trustPolicy: 'trusted',
+        },
+        diagnostics: [],
+        actions: [],
+        resources: [],
+        editableSettingsGroups: [{
+            id: EXTERNAL_NOTIFICATION_GROUP_ID,
+            pluginId: EXTERNAL_NOTIFICATION_PLUGIN_ID,
+            version: 1,
+            title: 'Document review webhook',
+            scope: { kind: 'account' },
+            presentation: {
+                sections: [{
+                    id: 'configuration',
+                    title: 'Document review webhook',
+                    fields: [EXTERNAL_NOTIFICATION_ENDPOINT_FIELD_ID],
+                }],
+                subagentSections: [],
+            },
+            target: { kind: 'plugin' },
+            fields: [{
+                key: EXTERNAL_NOTIFICATION_ENDPOINT_FIELD_ID,
+                control: 'text',
+                valueType: 'string',
+                valueSchema: { type: 'string', minLength: 1 },
+                title: 'Webhook URL',
+                secretCustody: null,
+                redaction: 'none',
+                clearWhenEmpty: 'persist',
+            }],
         }],
     };
 }
@@ -697,6 +752,69 @@ describe('PluginDetailGenericSettingsSection', () => {
         expect(machinePluginSettingsGetMock).toHaveBeenCalledTimes(2);
         expect(screen.findByTestId(ENDPOINT_INPUT_ID)?.props.value).toBe(endpoint);
         expect(screen.findByTestId('plugin-declarative-field:root.endpoint')?.props.value).toBe(endpoint);
+    });
+
+    it('renders an external notification channel through the canonical Account Plugin Settings record', async () => {
+        const accountTarget = { kind: 'account' as const, serverIdentityId: 'server-identity-1' };
+        scopedSettingsReadMock.mockImplementation((input: Readonly<{ scope?: Readonly<{ kind?: string }> }>) => (
+            input.scope?.kind === 'account'
+                ? Promise.resolve({
+                    status: 'ready' as const,
+                    snapshot: {
+                        scope: { kind: 'account' as const },
+                        target: accountTarget,
+                        revision: { kind: 'account' as const, value: 4 },
+                        values: {
+                            [EXTERNAL_NOTIFICATION_ENDPOINT_FIELD_ID]: 'https://review.example.test/hooks/ready',
+                        },
+                    },
+                })
+                : undefined
+        ));
+        scopedSettingsWriteMock.mockResolvedValue({
+            status: 'ready',
+            snapshot: {
+                scope: { kind: 'account' },
+                target: accountTarget,
+                revision: { kind: 'account', value: 5 },
+                values: {
+                    [EXTERNAL_NOTIFICATION_ENDPOINT_FIELD_ID]: 'https://review.example.test/hooks/updated',
+                },
+            },
+        });
+
+        const { screen } = await renderSection(createExternalNotificationChannelProjection());
+
+        expect(scopedSettingsReadMock).toHaveBeenCalledWith(expect.objectContaining({
+            pluginId: EXTERNAL_NOTIFICATION_PLUGIN_ID,
+            scope: { kind: 'account' },
+            target: accountTarget,
+            fields: [expect.objectContaining({ key: EXTERNAL_NOTIFICATION_ENDPOINT_FIELD_ID })],
+        }));
+        expect(screen.getTextContent()).toContain('Document review webhook');
+        expect(screen.findByTestId(EXTERNAL_NOTIFICATION_ENDPOINT_INPUT_ID)?.props.value)
+            .toBe('https://review.example.test/hooks/ready');
+
+        await act(async () => {
+            screen.changeTextByTestId(
+                EXTERNAL_NOTIFICATION_ENDPOINT_INPUT_ID,
+                'https://review.example.test/hooks/updated',
+            );
+        });
+        expect(screen.findByTestId(EXTERNAL_NOTIFICATION_ENDPOINT_SAVE_ID)?.props.disabled).toBe(false);
+        await act(async () => {
+            screen.pressByTestId(EXTERNAL_NOTIFICATION_ENDPOINT_SAVE_ID);
+            await Promise.resolve();
+        });
+
+        expect(scopedSettingsWriteMock).toHaveBeenCalledWith(expect.objectContaining({
+            pluginId: EXTERNAL_NOTIFICATION_PLUGIN_ID,
+            scope: { kind: 'account' },
+            target: accountTarget,
+            fieldId: EXTERNAL_NOTIFICATION_ENDPOINT_FIELD_ID,
+            mutation: { kind: 'set', value: 'https://review.example.test/hooks/updated' },
+            expectedRevision: { kind: 'account', value: 4 },
+        }));
     });
 
     it('renders an Account-custodied field through SavedSecret without exposing its value', async () => {

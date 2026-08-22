@@ -561,7 +561,7 @@ describe('React Native bundle loader adapter', () => {
             identity: legacyIdentity,
             bytes: entryBytes,
             files: [{
-                relativePath: 'react-native/inspector-app-native/ios.bundle.js',
+                relativePath: 'react-native/inspector-app-native/ios.bundle',
                 digest: computePluginUiArtifactSha256DigestV1(entryBytes),
                 byteSize: entryBytes.byteLength,
                 bytes: entryBytes,
@@ -581,7 +581,7 @@ describe('React Native bundle loader adapter', () => {
 
     it('loads a generated native graph from its declared entry path without treating the entry as a sibling chunk', async () => {
         const cache = createPluginReactNativeBundleCache();
-        const entryRelativePath = 'react-native/native-preview/ios.bundle.js';
+        const entryRelativePath = 'react-native/native-preview/ios.bundle';
         const entryBytes = new TextEncoder().encode('// generated native entry');
         const chunkBytes = new TextEncoder().encode('// generated native chunk');
         cache.putInstalledArtifact({
@@ -610,10 +610,10 @@ describe('React Native bundle loader adapter', () => {
             removeResolver: vi.fn(),
             loadScript: vi.fn(async (scriptId: string) => {
                 expect(await registeredResolver?.(scriptId)).toMatchObject({
-                    url: 'file:///cache/ios.bundle.js',
+                    url: 'file:///cache/ios.bundle',
                     absolute: true,
                 });
-                expect(await registeredResolver?.('ios.bundle.js')).toBeUndefined();
+                expect(await registeredResolver?.('ios.bundle')).toBeUndefined();
                 expect(await registeredResolver?.(
                     'src_ui_renderSurface_tsx',
                     'happier_native_preview',
@@ -628,7 +628,7 @@ describe('React Native bundle loader adapter', () => {
             file?: Readonly<{ relativePath: string }>;
         }>) => input.file?.relativePath.endsWith('.chunk.bundle')
             ? 'file:///cache/src_ui_renderSurface_tsx.chunk.bundle'
-            : 'file:///cache/ios.bundle.js');
+            : 'file:///cache/ios.bundle');
         const backend = createRepackScriptManagerBackendFromClient({
             client: {
                 ScriptManager: { shared: scriptManager },

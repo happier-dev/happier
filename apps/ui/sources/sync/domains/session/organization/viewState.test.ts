@@ -41,6 +41,7 @@ describe('buildSessionOrganizationListViewState', () => {
                 tagAssignmentsBySessionId: {
                     'session-1': ['tag_urgent', 'tag_unknown_label', 'missing_tag'],
                 },
+                attentionStandingsBySessionId: {},
                 orderEntriesByScopeKey: {},
                 labelsByLabelKey: {},
             },
@@ -130,6 +131,9 @@ describe('buildSessionOrganizationListViewState', () => {
                 tagAssignmentsBySessionId: {
                     'session-1': ['tag-private-id'],
                 },
+                attentionStandingsBySessionId: {
+                    'session-1': { sessionId: 'session-1', standing: false, updatedAt: 3 },
+                },
                 orderEntriesByScopeKey: {
                     group: [{
                         scopeKind: 'group',
@@ -188,6 +192,11 @@ describe('buildSessionOrganizationListViewState', () => {
                 tagId: 'tag-private-id',
                 display: locked,
             }]);
+        // Standing is a plain boolean the surfaces join with the account default; it is keyed the
+        // same way as every other session-scoped slice so a `false` cannot be read as "absent".
+        expect(state.attentionStandingOverridesBySessionKey).toEqual({
+            'server-a:session-1': false,
+        });
     });
 });
 

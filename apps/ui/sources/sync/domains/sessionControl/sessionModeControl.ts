@@ -1,4 +1,3 @@
-import type { AgentId } from '@/agents/catalog/catalog';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import {
@@ -15,9 +14,11 @@ import { tLoose } from '@/text';
 
 import { parseSessionModesState, parseSessionModeOverrideState } from './schema';
 
-export function supportsSessionModeOverrides(agentId: AgentId): boolean {
-    const kind = getAgentCore(agentId).sessionModes.kind;
-    return kind !== 'none';
+export function supportsSessionModeOverrides(agentId: string): boolean {
+    // An Agent with no bundled core contributes its session modes through its
+    // own plugin; the static bundled table has nothing to say about it.
+    const kind = getAgentCore(agentId)?.sessionModes.kind;
+    return kind !== undefined && kind !== 'none';
 }
 
 export type SessionModeOption = Readonly<{
@@ -51,11 +52,11 @@ function computeLegacyRequestedModeIdFromPermissionMode(metadata: Metadata | nul
 }
 
 function computeStaticSessionModePickerControl(params: {
-    agentId: AgentId;
+    agentId: string;
     metadata: Metadata | null | undefined;
 }): SessionModePickerControl | null {
     const core = getAgentCore(params.agentId);
-    if (core.sessionModes.kind !== 'staticAgentModes') return null;
+    if (core?.sessionModes.kind !== 'staticAgentModes') return null;
     const staticOptionsRaw = core.sessionModes.staticOptions ?? [];
     if (!Array.isArray(staticOptionsRaw) || staticOptionsRaw.length === 0) return null;
 
@@ -100,12 +101,9 @@ function computeStaticSessionModePickerControl(params: {
 }
 
 function computeDynamicSessionModePickerControlInternal(params: {
-    agentId: AgentId;
+    agentId: string;
     metadata: Metadata | null | undefined;
 }): SessionModePickerControl | null {
-    const kind = getAgentCore(params.agentId).sessionModes.kind;
-    if (kind !== 'acpAgentModes' && kind !== 'acpPolicyPresets') return null;
-
     const state = parseSessionModesState(
         readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODES_STATE_KEY, LEGACY_ACP_SESSION_MODES_STATE_KEY),
     );
@@ -143,11 +141,11 @@ function computeDynamicSessionModePickerControlInternal(params: {
 }
 
 export function computeSessionModePickerControl(params: {
-    agentId: AgentId;
+    agentId: string;
     metadata: Metadata | null | undefined;
 }): SessionModePickerControl | null {
-    if (!supportsSessionModeOverrides(params.agentId)) return null;
-    return computeDynamicSessionModePickerControlInternal(params) ?? computeStaticSessionModePickerControl(params);
+    return computeDynamicSessionModePickerControlInternal(params)
+        ?? (supportsSessionModeOverrides(params.agentId) ? computeStaticSessionModePickerControl(params) : null);
 }
 
 export const computeAcpSessionModePickerControl = computeSessionModePickerControl;

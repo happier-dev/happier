@@ -31,11 +31,15 @@ export type QualifiedConnectedAccountPresentationGroup = Readonly<{
 }>;
 
 export type QualifiedConnectedAccountTargetPresentation = Readonly<{
-  /** The human-facing name; never an opaque target id when a service title exists. */
+  /** The human-facing name; never a canonical account or pool id. */
   primaryLabel: string;
   /** Supplemental, non-secret facts that distinguish targets with the same name. */
   secondaryLabel?: string;
-  /** Complete, de-duplicated target identity for assistive technology. */
+  /**
+   * De-duplicated target identity for assistive technology. It carries the same
+   * recognisable facts a sighted user reads, never a canonical id: an assistive
+   * reader must not be the only surface that speaks an opaque internal handle.
+   */
   accessibilityLabel: string;
 }>;
 
@@ -84,6 +88,14 @@ function createPresentation(input: Readonly<{
  * Present a target owned by Qualified Connected Accounts. The caller supplies
  * the daemon-projected author title for its service; this owner only combines
  * that title with user labels and non-secret account/group identities.
+ *
+ * The canonical `accountId`/`groupId` are deliberately absent from every field
+ * this returns. They are routing and mutation identity — list keys, test ids,
+ * navigation params and request payloads — and a user cannot recognise a target
+ * by one, so presenting one is noise on a visible row and an opaque handle in a
+ * screen reader. Distinguishing facts come from the provider side instead: the
+ * user label, then the provider email, display name and provider-reported
+ * account id, then the service title.
  */
 export function presentQualifiedConnectedAccountTarget(input: Readonly<{
   target: QualifiedConnectedAccountPurposeBindingTargetV1;
@@ -121,7 +133,7 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
     const email = nonEmptyText(account.providerIdentity?.email);
     const providerAccountId = nonEmptyText(account.providerIdentity?.accountId);
     const displayName = nonEmptyText(account.displayName);
-    const primaryLabel = userLabel ?? email ?? displayName ?? serviceTitle;
+    const primaryLabel = userLabel ?? email ?? displayName ?? providerAccountId ?? serviceTitle;
     return createPresentation({
       serviceTitle,
       primaryLabel,
@@ -129,7 +141,6 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
         primaryLabel === serviceTitle ? null : serviceTitle,
         email,
         providerAccountId,
-        account.ref.accountId,
       ],
     });
   }
@@ -153,7 +164,6 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
     primaryLabel,
     secondaryParts: [
       primaryLabel === serviceTitle ? null : serviceTitle,
-      group.ref.groupId,
     ],
   });
 }

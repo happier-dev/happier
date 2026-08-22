@@ -12,6 +12,7 @@ const syncSpies = vi.hoisted(() => ({
     cancelAutomationRun: vi.fn(async () => null),
 }));
 const routeParamsState = vi.hoisted(() => ({ id: 'a1', runId: 'run-1' }));
+const routerPushSpy = vi.hoisted(() => vi.fn());
 const runsState = vi.hoisted(() => ({
     list: [] as any[],
 }));
@@ -40,6 +41,7 @@ installAutomationScreensCommonModuleMocks({
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const expoRouterMock = createExpoRouterMock({
             params: () => ({ id: routeParamsState.id, runId: routeParamsState.runId }),
+            router: { push: routerPushSpy },
         });
         return {
             ...expoRouterMock.module,
@@ -48,48 +50,59 @@ installAutomationScreensCommonModuleMocks({
             },
         };
     },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key: string, params?: Record<string, unknown>) => {
-                if (key === 'runs.runLabel') return `run ${String(params?.runId ?? '')}`;
-                if (key === 'automations.detail.runMeta.scheduled') return `Scheduled: ${String(params?.time ?? '')}`;
-                if (key === 'automations.detail.runMeta.occurred') return `Occurred: ${String(params?.time ?? '')}`;
-                if (key === 'automations.detail.runMeta.invoked') return `Invoked: ${String(params?.time ?? '')}`;
-                if (key === 'automations.detail.runMeta.admitted') return `Admitted: ${String(params?.time ?? '')}`;
-                if (key === 'automations.detail.runMeta.originTitle') return 'Origin';
-                if (key === 'automations.detail.runMeta.origin.pluginEvent') return 'Event';
-                if (key === 'automations.detail.runMeta.origin.scheduled') return 'Scheduled';
-                if (key === 'automations.detail.runMeta.origin.manual') return 'Manual';
-                if (key === 'automations.detail.runMeta.origin.conversation') return 'Conversation';
-                if (key === 'automations.detail.runMeta.occurrenceTitle') return 'Occurrence';
-                if (key === 'automations.detail.runMeta.sourceTitle') return 'Observation source';
-                if (key === 'automations.detail.runMeta.updated') return `Updated: ${String(params?.time ?? '')}`;
-                if (key === 'automations.detail.runMeta.error') return `Error: ${String(params?.message ?? '')}`;
-                if (key === 'automations.detail.runDetail.title') return 'Admitted details';
-                if (key === 'automations.detail.runDetail.recipe') return 'Admitted recipe';
-                if (key === 'automations.detail.runDetail.templateVersion') return 'Template version';
-                if (key === 'automations.detail.runDetail.event') return 'Event';
-                if (key === 'automations.detail.runDetail.sourceInstance') return 'Source instance';
-                if (key === 'automations.detail.runDetail.filter') return 'Filter';
-                if (key === 'automations.detail.runDetail.filterMatched') return 'Matched';
-                if (key === 'automations.detail.runDetail.payload') return 'Payload';
-                if (key === 'automations.detail.runDetail.target') return 'Frozen target';
-                if (key === 'automations.detail.runDetail.existingSession') return `Existing session: ${String(params?.sessionId ?? '')}`;
-                if (key === 'automations.detail.runDetail.prompt') return 'Frozen prompt';
-                if (key === 'automations.detail.runDetail.result') return 'Final result';
-                if (key === 'automations.detail.runDetail.resultAbsent') return 'No final result was recorded.';
-                if (key === 'automations.detail.runDetail.failureDetail') return 'Failure detail';
-                if (key === 'automations.detail.runDetail.failureDetailAbsent') return 'No private failure detail was recorded.';
-                if (key === 'automations.detail.runDetail.currentnessUnavailable') return 'Private Run detail is temporarily unavailable while account encryption changes.';
-                if (key === 'automations.detail.runDetail.materialUnavailable') return 'This device does not have the current Account encryption key.';
-                if (key === 'automations.detail.runDetail.modeMismatch') return 'Retained private detail uses a different Account encryption mode.';
-                if (key === 'automations.detail.runDetail.contentInvalid') return 'Retained private detail is invalid.';
-                if (key === 'automations.detail.runDetail.invalidTemplate') return 'The admitted template was invalid. This Run will not dispatch or retry.';
-                if (key === 'automations.detail.runDetail.outcomeUnknown') return 'Dispatch outcome is unknown. Happier will not dispatch the frozen target again.';
-                return key;
-            },
-        });
+    text: {
+        translate: (key: string, params?: Record<string, unknown>) => {
+            if (key === 'runs.runLabel') return `run ${String(params?.runId ?? '')}`;
+            if (key === 'automations.detail.runMeta.scheduled') return `Scheduled: ${String(params?.time ?? '')}`;
+            if (key === 'automations.detail.runMeta.occurred') return `Occurred: ${String(params?.time ?? '')}`;
+            if (key === 'automations.detail.runMeta.invoked') return `Invoked: ${String(params?.time ?? '')}`;
+            if (key === 'automations.detail.runMeta.admitted') return `Admitted: ${String(params?.time ?? '')}`;
+            if (key === 'automations.detail.runMeta.originTitle') return 'Origin';
+            if (key === 'automations.detail.runMeta.origin.pluginEvent') return 'Event';
+            if (key === 'automations.detail.runMeta.origin.scheduled') return 'Scheduled';
+            if (key === 'automations.detail.runMeta.origin.manual') return 'Manual';
+            if (key === 'automations.detail.runMeta.origin.conversation') return 'Conversation';
+            if (key === 'automations.detail.runMeta.occurrenceTitle') return 'Occurrence';
+            if (key === 'automations.detail.runMeta.sourceTitle') return 'Observation source';
+            if (key === 'automations.detail.runMeta.updated') return `Updated: ${String(params?.time ?? '')}`;
+            if (key === 'automations.detail.runMeta.error') return `Error: ${String(params?.message ?? '')}`;
+            if (key === 'automations.detail.runMeta.state.queued') return 'Queued';
+            if (key === 'automations.detail.runMeta.state.claimed') return 'Claimed';
+            if (key === 'automations.detail.runMeta.state.running') return 'Running';
+            if (key === 'automations.detail.runMeta.state.succeeded') return 'Succeeded';
+            if (key === 'automations.detail.runMeta.state.failed') return 'Failed';
+            if (key === 'automations.detail.runMeta.state.cancelled') return 'Cancelled';
+            if (key === 'automations.detail.runMeta.state.expired') return 'Expired';
+            if (key === 'automations.detail.runMeta.state.dispatch_failed') return 'Dispatch failed';
+            if (key === 'automations.detail.runMeta.state.skipped') return 'Skipped';
+            if (key === 'automations.detail.runMeta.state.missed') return 'Missed';
+            if (key === 'automations.detail.runMeta.state.outcome_uncertain') return 'Outcome uncertain';
+            if (key === 'automations.detail.runDetail.title') return 'Admitted details';
+            if (key === 'automations.detail.runDetail.recipe') return 'Admitted recipe';
+            if (key === 'automations.detail.runDetail.templateVersion') return 'Template version';
+            if (key === 'automations.detail.runDetail.event') return 'Event';
+            if (key === 'automations.detail.runDetail.sourceInstance') return 'Source instance';
+            if (key === 'automations.detail.runDetail.filter') return 'Filter';
+            if (key === 'automations.detail.runDetail.filterMatched') return 'Matched';
+            if (key === 'automations.detail.runDetail.payload') return 'Payload';
+            if (key === 'automations.detail.runDetail.target') return 'Frozen target';
+            if (key === 'automations.detail.runDetail.existingSession') return `Existing session: ${String(params?.sessionId ?? '')}`;
+            if (key === 'automations.detail.runDetail.prompt') return 'Frozen prompt';
+            if (key === 'automations.detail.runDetail.result') return 'Final result';
+            if (key === 'automations.detail.runDetail.resultAbsent') return 'No final result was recorded.';
+            if (key === 'automations.detail.runDetail.failureDetail') return 'Failure detail';
+            if (key === 'automations.detail.runDetail.failureDetailAbsent') return 'No private failure detail was recorded.';
+            if (key === 'automations.detail.runDetail.currentnessUnavailable') return 'Private Run detail is temporarily unavailable while account encryption changes.';
+            if (key === 'automations.detail.runDetail.materialUnavailable') return 'This device does not have the current Account encryption key.';
+            if (key === 'automations.detail.runDetail.modeMismatch') return 'Retained private detail uses a different Account encryption mode.';
+            if (key === 'automations.detail.runDetail.contentInvalid') return 'Retained private detail is invalid.';
+            if (key === 'automations.detail.runDetail.invalidTemplate') return 'The admitted template was invalid. This Run will not dispatch or retry.';
+            if (key === 'executionRuns.details.timestamps.started') return 'Started';
+            if (key === 'executionRuns.details.timestamps.finished') return 'Finished';
+            if (key === 'runs.openSession') return 'Open session';
+            if (key === 'automations.detail.runDetail.outcomeUnknown') return 'Dispatch outcome is unknown. Happier will not dispatch the frozen target again.';
+            return key;
+        },
     },
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -198,12 +211,46 @@ describe('AutomationRunDetailScreen', () => {
         });
     });
 
+    it('surfaces the Run lifecycle times and keeps the produced Session reachable', async () => {
+        runsState.list = [{
+            ...runsState.list[0],
+            state: 'succeeded',
+            startedAt: 20,
+            finishedAt: 30,
+            errorCode: null,
+            producedSessionId: 'session-produced-1',
+        }];
+        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
+            ...runsState.list[0],
+            triggerEvidenceEnvelope: null,
+            executionInputEnvelope: null,
+            resultEnvelope: null,
+            legacySummaryCiphertext: null,
+        }));
+        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const text = screen.getTextContent();
+        expect(text).toContain('Started');
+        expect(text).toContain('Finished');
+        expect(text).toContain('session-produced-1');
+
+        const producedSession = screen.findAllByProps({ testID: 'automation-run-detail-produced-session' })[0];
+        expect(producedSession).toBeTruthy();
+        producedSession?.props.onPress?.();
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/session-produced-1');
+    });
+
     it('uses the built-in run cache before attempting a root-page refresh', async () => {
         const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
 
         const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
 
-        expect(screen.getTextContent()).toContain('FAILED');
+        expect(screen.getTextContent()).toContain('Failed');
         expect(screen.getTextContent()).toContain('Error: executor_unavailable');
         expect(screen.getTextContent()).toContain('Occurred:');
         expect(screen.getTextContent()).toContain('Admitted:');
@@ -228,7 +275,7 @@ describe('AutomationRunDetailScreen', () => {
             expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
         });
 
-        expect(screen.getTextContent()).toContain('FAILED');
+        expect(screen.getTextContent()).toContain('Failed');
         expect(screen.findAllByProps({ testID: 'automation-run-detail-load-error' })).toHaveLength(0);
     });
 
@@ -400,7 +447,7 @@ describe('AutomationRunDetailScreen', () => {
         });
         expect(screen.findByTestId('automation-run-detail-load-error')).toBeTruthy();
         const rendered = screen.getTextContent();
-        expect(rendered).not.toContain('RUNNING');
+        expect(rendered).not.toContain('Running');
         expect(rendered).not.toContain('account-a-direct-status');
         expect(rendered).not.toContain('Account A private evidence');
         expect(rendered).not.toContain('account-a-private-source');
@@ -437,6 +484,37 @@ describe('AutomationRunDetailScreen', () => {
         expect(rendered).not.toContain('sealed-trigger-evidence');
         expect(rendered).not.toContain('sealed-execution-recipe');
         expect(rendered).not.toContain('sealed-result');
+    });
+
+    it('names every Run state in product language instead of painting the raw state token', async () => {
+        runsState.list = [{
+            ...runsState.list[0],
+            state: 'outcome_uncertain',
+            errorCode: 'execution_run_cancelled_outcome_unknown',
+            executionDispatchState: 'outcomeUnknown',
+            finishedAt: 12,
+            updatedAt: 12,
+        }];
+        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
+            ...runsState.list[0],
+            triggerEvidenceEnvelope: null,
+            executionInputEnvelope: null,
+            resultEnvelope: null,
+            legacySummaryCiphertext: null,
+        }));
+        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
+        await vi.waitFor(() => {
+            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
+        });
+
+        const rendered = screen.getTextContent();
+        expect(rendered).toContain('Outcome uncertain');
+        expect(rendered).not.toContain('OUTCOME_UNCERTAIN');
+        expect(rendered).not.toContain('outcome_uncertain');
+        // The ratified uncertain-outcome sentence stays the only explanation of this state.
+        expect(rendered).toContain('Dispatch outcome is unknown. Happier will not dispatch the frozen target again.');
     });
 
     it('does not let an older direct response regress the bounded Run projection', async () => {
@@ -488,7 +566,7 @@ describe('AutomationRunDetailScreen', () => {
             await pendingDirect;
         });
 
-        expect(screen.getTextContent()).toContain('CANCELLED');
+        expect(screen.getTextContent()).toContain('Cancelled');
         expect(screen.getTextContent()).not.toContain('stale-direct-status');
         expect(screen.getTextContent()).not.toContain('stale private prompt');
         expect(screen.findAllByType('Item' as any).find((item: any) => item.props.title === 'common.cancel')).toBeUndefined();
@@ -588,7 +666,7 @@ describe('AutomationRunDetailScreen', () => {
             await initialDirect;
         });
 
-        expect(screen.getTextContent()).toContain('CANCELLED');
+        expect(screen.getTextContent()).toContain('Cancelled');
         expect(screen.getTextContent()).not.toContain('stale-direct-after-cancel');
         expect(screen.findAllByType('Item' as any).find((item: any) => item.props.title === 'common.cancel')).toBeUndefined();
     });

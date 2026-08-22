@@ -131,6 +131,93 @@ describe('React Native exact Artifact daemon transport', () => {
         });
     });
 
+    it('carries an exact Action anchor through the generic client-contribution arm', async () => {
+        const clientContribution = {
+            family: 'actions',
+            action: { pluginId: identity.pluginId, localId: 'open-preview' },
+        } as const;
+        const actionIdentity = {
+            ...identity,
+            contributionId: clientContribution.action.localId,
+        } as const;
+        guardedMachineRpc.mockResolvedValue({
+            ok: false,
+            code: 'artifact_unavailable',
+            diagnostics: [],
+        });
+
+        await expect(fetchReactNativeExactArtifactBytesViaMachineRpc({
+            origin,
+            serverId: 'server-a',
+            identity: actionIdentity,
+            artifactOwnerKind: 'clientContribution',
+            clientContribution,
+        })).resolves.toEqual({
+            ok: false,
+            code: 'artifact_unavailable',
+            diagnostics: [],
+        });
+
+        expect(guardedMachineRpc).toHaveBeenCalledWith({
+            machineId: 'machine-a',
+            serverId: 'server-a',
+            method: RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ,
+            payload: {
+                artifactFamily: 'reactNative',
+                artifactOwnerKind: 'clientContribution',
+                machineId: 'machine-a',
+                cacheIdentity: actionIdentity,
+                clientContribution,
+            },
+        });
+    });
+
+    it('rejects a generic client-contribution response echoed for another Action', async () => {
+        const clientContribution = {
+            family: 'actions',
+            action: { pluginId: identity.pluginId, localId: 'open-preview' },
+        } as const;
+        const actionIdentity = {
+            ...identity,
+            contributionId: clientContribution.action.localId,
+        } as const;
+        const replacedContribution = {
+            family: 'actions' as const,
+            action: { pluginId: identity.pluginId, localId: 'replaced-preview' },
+        };
+        guardedMachineRpc.mockResolvedValue({
+            ok: true,
+            artifactFamily: 'reactNative',
+            artifactOwnerKind: 'clientContribution',
+            cacheIdentity: {
+                ...actionIdentity,
+                contributionId: replacedContribution.action.localId,
+            },
+            clientContribution: replacedContribution,
+            artifact: {
+                pluginId: identity.pluginId,
+                contributionId: replacedContribution.action.localId,
+                artifactKind: 'reactNativeBundle',
+                digest: identity.artifactDigest,
+                format: 'plainJs',
+                byteSize: 1,
+            },
+            bytesBase64: 'YQ==',
+        });
+
+        await expect(fetchReactNativeExactArtifactBytesViaMachineRpc({
+            origin,
+            serverId: 'server-a',
+            identity: actionIdentity,
+            artifactOwnerKind: 'clientContribution',
+            clientContribution,
+        })).resolves.toEqual({
+            ok: false,
+            code: 'artifact_unavailable',
+            diagnostics: ['react_native_artifact_bytes_response_client_contribution_mismatch'],
+        });
+    });
+
     it('accepts an echoed targeted-surface crash token without collapsing it into a destination', async () => {
         const targetedCrashStateToken = {
             mount: {

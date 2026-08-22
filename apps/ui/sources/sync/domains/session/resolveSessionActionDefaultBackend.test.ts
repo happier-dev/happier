@@ -123,9 +123,40 @@ import { resolveSessionActionDefaultBackend } from './resolveSessionActionDefaul
       session: {
         id: 's1',
         metadata: {
-          agent: 'coderabbit',
+          agent: 'acme.review-bot',
         },
       } as any,
+    })).toBeNull();
+  });
+
+  it('fails closed for an external runtime descriptor when resolving a built-in default', () => {
+    expect(resolveSessionActionDefaultBackend({
+      session: {
+        id: 's1',
+        metadata: {
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'acme.agent',
+            provider: {},
+          },
+        },
+      } as any,
+    })).toBeNull();
+  });
+
+  it('does not replace an external runtime owner with the first enabled built-in backend', () => {
+    expect(resolveSessionActionDefaultBackend({
+      session: {
+        id: 's1',
+        metadata: {
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'acme.review-bot',
+            provider: {},
+          },
+        },
+      } as any,
+      enabledAgentIds: ['claude', 'codex'],
     })).toBeNull();
   });
 

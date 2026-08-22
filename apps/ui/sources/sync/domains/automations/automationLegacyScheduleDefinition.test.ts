@@ -19,6 +19,7 @@ const scheduleDefinition = {
         },
     },
     targetType: 'existingSession' as const,
+    existingSessionId: null,
     templateVersion: 4,
     nextRunAt: 1_786_261_200_000,
     lastRunAt: 1_786_257_600_000,

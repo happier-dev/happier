@@ -9,7 +9,7 @@ import {
 } from '@happier-dev/protocol';
 import { getAgentStaticModels } from '@happier-dev/agents';
 
-import { isAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
@@ -90,7 +90,7 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
         reviewCurrentState?: () => Promise<void>;
     }> | null>(null);
     const nativeModels = React.useMemo(() => {
-        if (!props.runtimeAgentId || !isAgentId(props.runtimeAgentId)) return [];
+        if (!props.runtimeAgentId || !isBundledAgentId(props.runtimeAgentId)) return [];
         return getAgentStaticModels(props.runtimeAgentId).map((model) => {
             const key = serializeModelVisibilityRefV1({
                 scope: 'agent', agentTargetKey: props.agentTargetKey,

@@ -19,6 +19,10 @@ import { presentActionInputForm } from '@/components/plugins/actions/presentActi
 import { dispatchPluginSurfaceAction } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
+import {
+    createPluginUiProjectedActionResolver,
+    normalizePluginUiProjection,
+} from '@/sync/domains/plugins/ui/projection';
 
 import {
     createPluginEventAutomationAuthoringDraft,
@@ -96,9 +100,14 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
     ) {
         return { kind: 'stale', reason: 'event_retired' };
     }
+    const resolveContributedAction = createPluginUiProjectedActionResolver(
+        inputs.pluginProjectionV2?.actionsById,
+    );
     let actionSnapshot!: PluginContributedActionCurrentSnapshot;
     actionSnapshot = {
         pluginProjectionById: inputs.pluginProjectionById,
+        pluginUiProjection: normalizePluginUiProjection(inputs.pluginProjectionV2 ?? null),
+        resolveContributedAction,
         host: {
             machineId: origin.machineTarget.target.machineId,
             serverId: origin.machineTarget.serverId,
@@ -237,6 +246,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         const outcome = await dispatch({
             action: current.event.setupAction.identity,
             input,
+            resolveContributedAction: current.actionSnapshot.resolveContributedAction,
             contributedAction: {
                 machineId: current.origin.machineTarget.target.machineId,
                 serverId: current.origin.machineTarget.serverId,

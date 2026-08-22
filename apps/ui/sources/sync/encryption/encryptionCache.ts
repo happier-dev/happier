@@ -29,11 +29,27 @@ export class EncryptionCache {
     private machineMetadataCache = new Map<string, CacheEntry<MachineMetadata>>();
     private daemonStateCache = new Map<string, CacheEntry<any>>();
     private messageBytes = 0;
-    
+    /**
+     * Recency ticket. `Date.now()` cannot order a batch: hundreds of decrypted messages
+     * land inside one millisecond, every entry ties, and "least recently used" collapses
+     * into "whatever iterated first" — which is how a warm re-open evicted the very
+     * messages it had just cached. A counter is exact, monotonic, and costs nothing.
+     */
+    private accessTicket = 0;
+
     // Configuration
     private readonly maxAgentStates = 1000;
     private readonly maxMetadata = 1000;
-    private readonly maxMessages = 1000;
+    /**
+     * Messages have NO entry cap. `maxMessageBytes` already bounds the resource that
+     * matters, and a 1000-entry cap fired an order of magnitude earlier — so a single
+     * ordinary transcript evicted every other session's decrypted content and re-opening
+     * any of them paid full decryption again.
+     *
+     * The other caches keep their caps: they are keyed by `id:version`, so a stuck writer
+     * could mint unbounded distinct keys for one subject. Messages are keyed by message id
+     * and are naturally bounded by the transcripts actually retained.
+     */
     private readonly maxMachineMetadata = 500;
     private readonly maxDaemonStates = 500;
     private readonly maxMessageBytes: number;
@@ -50,7 +66,7 @@ export class EncryptionCache {
         const key = `${sessionId}:${version}`;
         const entry = this.agentStateCache.get(key);
         if (entry) {
-            entry.accessTime = Date.now();
+            this.touch(this.agentStateCache, key, entry);
             return entry.data;
         }
         return null;
@@ -63,7 +79,7 @@ export class EncryptionCache {
         const key = `${sessionId}:${version}`;
         this.agentStateCache.set(key, {
             data,
-            accessTime: Date.now()
+            accessTime: ++this.accessTicket
         });
         
         // Evict if over limit
@@ -77,7 +93,7 @@ export class EncryptionCache {
         const key = `${sessionId}:${version}`;
         const entry = this.metadataCache.get(key);
         if (entry) {
-            entry.accessTime = Date.now();
+            this.touch(this.metadataCache, key, entry);
             return entry.data;
         }
         return null;
@@ -90,7 +106,7 @@ export class EncryptionCache {
         const key = `${sessionId}:${version}`;
         this.metadataCache.set(key, {
             data,
-            accessTime: Date.now()
+            accessTime: ++this.accessTicket
         });
         
         // Evict if over limit
@@ -106,7 +122,7 @@ export class EncryptionCache {
             if (entry.fingerprint !== fingerprint) {
                 return null;
             }
-            entry.accessTime = Date.now();
+            this.touch(this.messageCache, messageId, entry);
             return entry.data;
         }
         return null;
@@ -121,17 +137,17 @@ export class EncryptionCache {
             this.messageBytes -= previous.bytes;
         }
         const bytes = estimateDecryptedMessageBytes(data);
+        this.messageCache.delete(messageId);
         this.messageCache.set(messageId, {
             data,
-            accessTime: Date.now(),
+            accessTime: ++this.accessTicket,
             fingerprint,
             sessionId: normalizeSessionCacheId(sessionId),
             bytes,
         });
         this.messageBytes += bytes;
         
-        // Evict if over limit
-        this.evictOldestMessage(this.maxMessages);
+        // Bounded by bytes only — see `maxMessageBytes`.
         this.evictOldestMessagesToByteBudget();
     }
 
@@ -142,7 +158,7 @@ export class EncryptionCache {
         const key = `${machineId}:${version}`;
         const entry = this.machineMetadataCache.get(key);
         if (entry) {
-            entry.accessTime = Date.now();
+            this.touch(this.machineMetadataCache, key, entry);
             return entry.data;
         }
         return null;
@@ -155,7 +171,7 @@ export class EncryptionCache {
         const key = `${machineId}:${version}`;
         this.machineMetadataCache.set(key, {
             data,
-            accessTime: Date.now()
+            accessTime: ++this.accessTicket
         });
         
         // Evict if over limit
@@ -169,7 +185,7 @@ export class EncryptionCache {
         const key = `${machineId}:${version}`;
         const entry = this.daemonStateCache.get(key);
         if (entry) {
-            entry.accessTime = Date.now();
+            this.touch(this.daemonStateCache, key, entry);
             return entry.data;
         }
         return undefined;
@@ -182,7 +198,7 @@ export class EncryptionCache {
         const key = `${machineId}:${version}`;
         this.daemonStateCache.set(key, {
             data,
-            accessTime: Date.now()
+            accessTime: ++this.accessTicket
         });
         
         // Evict if over limit
@@ -293,15 +309,36 @@ export class EncryptionCache {
         return null;
     }
 
-    private evictOldestMessage(maxSize: number): void {
-        const evicted = this.evictOldest(this.messageCache, maxSize);
-        if (!evicted) return;
-        this.messageBytes = Math.max(0, this.messageBytes - evicted.bytes);
+    /**
+     * Marks an entry as most-recently-used. Re-inserting moves it to the END of the Map,
+     * so insertion order and LRU order are the same thing and the least-recently-used
+     * entry is always simply the first — no scan to find it.
+     */
+    private touch<TEntry extends { accessTime: number }>(
+        cache: Map<string, TEntry>,
+        key: string,
+        entry: TEntry,
+    ): void {
+        entry.accessTime = ++this.accessTicket;
+        cache.delete(key);
+        cache.set(key, entry);
     }
 
+    /**
+     * Sheds to the byte budget in one pass.
+     *
+     * This used to call `evictOldestMessage(size - 1)` in a loop, and each of those ran a
+     * full O(size) scan to find its victim — quadratic in the number of entries displaced,
+     * exactly when a large transcript is streaming in. Insertion order is LRU order now,
+     * so the victim is the first key and each eviction is O(1).
+     */
     private evictOldestMessagesToByteBudget(): void {
         while (this.messageBytes > this.maxMessageBytes && this.messageCache.size > 1) {
-            this.evictOldestMessage(this.messageCache.size - 1);
+            const oldestKey = this.messageCache.keys().next().value;
+            if (oldestKey === undefined) return;
+            const evicted = this.messageCache.get(oldestKey);
+            this.messageCache.delete(oldestKey);
+            if (evicted) this.messageBytes = Math.max(0, this.messageBytes - evicted.bytes);
         }
     }
 }

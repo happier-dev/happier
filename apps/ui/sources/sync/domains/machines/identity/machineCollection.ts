@@ -15,48 +15,13 @@
  * `MAX_REPLACEMENT_CHAIN_LENGTH`, so a scan costs no more than the index build it replaced and
  * allocates nothing.
  */
-export type MachineIdentityRecord = Readonly<{ id?: string | null }>;
+export {
+    findMachineInCollection,
+    type MachineCollection,
+    type MachineIdentityRecord,
+} from '@happier-dev/protocol';
 
-export type MachineCollection<TMachine extends MachineIdentityRecord> =
-    | ReadonlyArray<TMachine>
-    | Readonly<Record<string, TMachine>>
-    | ReadonlyMap<string, TMachine>;
-
-/**
- * Find the machine registered under `machineId`, in either shape.
- *
- * The record and map branches accept an entry only when its own `id` matches the key it is filed
- * under. Every shape therefore resolves a machine by its identity rather than by whatever key it
- * was stored under — which also keeps a normalised key (`machineById`, whose keys are trimmed)
- * answering exactly as the list built from the same machines does — and an inherited property
- * (`constructor`, `__proto__`) can never be mistaken for a machine.
- *
- * The list branch resolves the **last** matching entry, matching the `new Map(machines.map(...))`
- * index this replaced. Every production list is produced from an id-keyed record, so at most one
- * entry per id exists and the direction is unobservable; the parity tests assert both shapes agree.
- */
-export function findMachineInCollection<TMachine extends MachineIdentityRecord>(
-    machines: MachineCollection<TMachine> | null | undefined,
-    machineId: string,
-): TMachine | null {
-    if (!machines) return null;
-
-    if (machines instanceof Map) {
-        const mapped = machines.get(machineId);
-        return mapped && mapped.id === machineId ? mapped : null;
-    }
-
-    if (Array.isArray(machines)) {
-        for (let index = machines.length - 1; index >= 0; index -= 1) {
-            const machine = machines[index];
-            if (machine && machine.id === machineId) return machine;
-        }
-        return null;
-    }
-
-    const machine = (machines as Readonly<Record<string, TMachine>>)[machineId];
-    return machine && machine.id === machineId ? machine : null;
-}
+import type { MachineCollection, MachineIdentityRecord } from '@happier-dev/protocol';
 
 /**
  * Materialise the collection for the few resolutions that genuinely have to *scan* — matching a

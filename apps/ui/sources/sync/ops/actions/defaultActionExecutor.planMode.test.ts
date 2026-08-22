@@ -100,7 +100,10 @@ vi.mock('@/sync/domains/state/storage', async () => {
     getState: () => ({
       settings: { actionsSettingsV1: { v: 1, actions: {} } },
       sessions: {
-        s1: { id: 's1', metadata: { path: '/tmp/project', host: 'localhost' } },
+        // The Agent identity is declared explicitly. It used to be implied by a
+        // metadata reader that coerced an unreadable identity to Claude, so this
+        // fixture silently exercised that coercion instead of mode publishing.
+        s1: { id: 's1', metadata: { path: '/tmp/project', host: 'localhost', flavor: 'claude' } },
         s_acp: {
           id: 's_acp',
           metadata: {

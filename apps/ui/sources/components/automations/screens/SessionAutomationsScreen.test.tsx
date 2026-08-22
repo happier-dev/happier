@@ -32,6 +32,7 @@ type AutomationListItem = Readonly<{
         templateVersion: number;
         value: Readonly<{ templateCiphertext: string }>;
     }>;
+    existingSessionId: string | null;
     linkedExistingSessionId: string | null;
 }>;
 
@@ -63,6 +64,7 @@ function createScheduleDefinition(input: Readonly<{
         detail: input.detail === 'unloaded'
             ? { kind: 'unloaded', templateVersion }
             : { kind: 'available', templateVersion, value: { templateCiphertext: 'template' } },
+        existingSessionId: input.linkedExistingSessionId ?? null,
         linkedExistingSessionId: input.linkedExistingSessionId ?? null,
     };
 }
@@ -152,24 +154,21 @@ installAutomationScreensCommonModuleMocks({
             ),
         });
     },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key: string) => {
-                const labels: Record<string, string> = {
-                    'automations.session.emptyTitle': 'No automations yet',
-                    'automations.session.emptyBody': 'Create an automation to trigger work for this session.',
-                    'automations.session.addAutomation': 'Add automation',
-                    'automations.session.addEventAutomation': 'Add event automation',
-                    'common.actions': 'Actions',
-                    'common.error': 'Error',
-                    'automations.session.failedToLoad': 'Failed to load automations',
-                    'sessionInfo.automationsTitle': 'Automations',
-                    'session.inactiveNotResumableNoticeTitle': 'This session can’t be resumed',
-                };
-                return labels[key] ?? key;
-            },
-        });
+    text: {
+        translate: (key: string) => {
+            const labels: Record<string, string> = {
+                'automations.session.emptyTitle': 'No automations yet',
+                'automations.session.emptyBody': 'Create an automation to trigger work for this session.',
+                'automations.session.addAutomation': 'Add automation',
+                'automations.session.addEventAutomation': 'Add event automation',
+                'common.actions': 'Actions',
+                'common.error': 'Error',
+                'automations.session.failedToLoad': 'Failed to load automations',
+                'sessionInfo.automationsTitle': 'Automations',
+                'session.inactiveNotResumableNoticeTitle': 'This session can’t be resumed',
+            };
+            return labels[key] ?? key;
+        },
     },
 });
 
@@ -377,6 +376,31 @@ describe('SessionAutomationsScreen', () => {
             resolveDetail?.();
             await pendingDetail;
         });
+    });
+
+    it('answers the session association without an account-wide private detail fan-out', async () => {
+        const accountWideCount = 200;
+        automationsState.list = Array.from({ length: accountWideCount }, (_unused, index) => (
+            createScheduleDefinition({
+                id: `a${index}`,
+                name: `Automation ${index}`,
+                targetType: 'existingSession',
+                detail: 'unloaded',
+                linkedExistingSessionId: index === 0 ? 's1' : `s-other-${index}`,
+            })
+        ));
+
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        // eslint-disable-next-line no-console
+        console.log('[measure] private detail requests =', syncSpies.refreshAutomationDefinitionDetail.mock.calls.length, 'for', accountWideCount, 'account automations');
+        expect(syncSpies.refreshAutomationDefinitionDetail).not.toHaveBeenCalled();
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('Automation 0');
     });
 
     it('navigates to add automation for the session when the reachable target comes from project state', async () => {

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 const updatePendingRequestedAction = vi.hoisted(() => vi.fn(async () => undefined));
 const isSessionTargetRemoteToActiveServer = vi.hoisted(() => vi.fn(() => true));
 
-vi.mock('@/sync/ops', () => ({ resumeSession: vi.fn(), sessionSwitch: vi.fn() }));
+vi.mock('@/sync/ops', () => ({ ensureSessionRuntimeForPendingInput: vi.fn(), sessionSwitch: vi.fn() }));
 vi.mock('@/sync/sync', () => ({
     sync: {
         abortSession: vi.fn(),

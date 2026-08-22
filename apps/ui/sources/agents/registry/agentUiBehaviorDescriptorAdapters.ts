@@ -973,9 +973,6 @@ function createExternalSessionsBehavior(descriptor: Readonly<Record<string, unkn
     }
 
     return {
-        ...(typeof externalSessions?.supportsBackgroundFollow === 'boolean'
-            ? { supportsBackgroundFollow: externalSessions.supportsBackgroundFollow }
-            : {}),
         ...(browse
             || sourceOptions.length > 0
             || connectedServiceProfileSources.length > 0

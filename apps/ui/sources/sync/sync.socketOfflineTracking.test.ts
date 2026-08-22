@@ -1226,6 +1226,9 @@ describe('sync socket offline tracking', () => {
     expect(organizationSnapshotRequest).toBeDefined();
     expect(organizationSnapshotRequest).toContain('includeAllFolderAssignments=true');
     expect(organizationSnapshotRequest).toContain('includeAllTagAssignments=true');
+    // The band the list paints on first frame includes sessions the user asked to keep in it, so
+    // the list's own organization fetch has to ask for standings; the server omits them otherwise.
+    expect(organizationSnapshotRequest).toContain('includeAttentionStandings=true');
   });
 
   it('marks server-backed pinned rows as required hydration during session list fetches', async () => {

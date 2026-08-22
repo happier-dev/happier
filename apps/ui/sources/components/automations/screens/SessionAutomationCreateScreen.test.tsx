@@ -115,23 +115,20 @@ installAutomationScreensCommonModuleMocks({
             ),
         });
     },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key: string) => {
-                const labels: Record<string, string> = {
-                    'automations.create.defaultName': 'Scheduled message',
-                    'automations.create.createButtonTitle': 'Create automation',
-                    'automations.create.unavailableGroupTitle': 'Unavailable',
-                    'automations.create.cannotCreateForSession': 'Cannot create automation for this session',
-                    'automations.create.missingResumeKey': 'This session does not have a resume encryption key loaded yet.',
-                    'session.inactiveNotResumableNoticeTitle': 'This session can’t be resumed',
-                    'automations.form.toggleEnabledTitle': 'Enabled',
-                    'automations.form.toggleEnabledHelp': 'When disabled, no scheduled runs will be executed.',
-                };
-                return labels[key] ?? key;
-            },
-        });
+    text: {
+        translate: (key: string) => {
+            const labels: Record<string, string> = {
+                'automations.create.defaultName': 'Scheduled message',
+                'automations.create.createButtonTitle': 'Create automation',
+                'automations.create.unavailableGroupTitle': 'Unavailable',
+                'automations.create.cannotCreateForSession': 'Cannot create automation for this session',
+                'automations.create.missingResumeKey': 'This session does not have a resume encryption key loaded yet.',
+                'session.inactiveNotResumableNoticeTitle': 'This session can’t be resumed',
+                'automations.form.toggleEnabledTitle': 'Enabled',
+                'automations.form.toggleEnabledHelp': 'When disabled, no scheduled runs will be executed.',
+            };
+            return labels[key] ?? key;
+        },
     },
 });
 

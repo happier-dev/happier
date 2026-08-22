@@ -19,7 +19,7 @@ const INSPECTOR_ARTIFACT: PluginSelectedArtifactIdentity = Object.freeze({
     availabilityCursor: 7,
 });
 
-const INSPECTOR_ENTRY_PATH = 'react-native-web/inspector-app-native/entry.mjs';
+const INSPECTOR_ENTRY_PATH = 'react-native-web/inspector-app-native/entry.mjs.bundle';
 
 function createInventory(): BundledPluginUiAppArtifactInventory {
     return Object.freeze([Object.freeze({

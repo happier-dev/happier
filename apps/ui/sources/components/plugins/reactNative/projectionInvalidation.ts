@@ -9,6 +9,9 @@ import {
     type PluginUiExecutableModuleHost,
 } from './executableModuleHost';
 import {
+    getPluginUiClientExecutableComposition,
+} from './clientExecutableContributions';
+import {
     getInstalledPluginReactNativeModuleRegistry,
     type PluginReactNativeModuleRegistry,
 } from './moduleRegistry';
@@ -165,28 +168,12 @@ export function createInstalledPluginUiReactNativeRuntimeProjectionSource(): Plu
     return installedPluginUiReactNativeRuntimeProjectionReconciler.createSource();
 }
 
-/**
- * AppShell executable modules retain a separate activation authority. Their
- * revocation remains AppShell-owned; byte and surface-module cache eviction is
- * exclusively reconciled from the current scoped source union above.
- */
-export async function applyPluginUiReactNativeExecutableAuthorityInvalidation(input: Readonly<{
-    previous: PluginUiProjectionModel;
-    next: PluginUiProjectionModel;
-    executableHost: Pick<PluginUiExecutableModuleHost, 'replaceAuthority'>;
-}>): Promise<void> {
-    if (input.previous.generation !== input.next.generation) {
-        await input.executableHost.replaceAuthority(null);
-    }
-}
-
 export function applyInstalledAppShellPluginUiReactNativeExecutableAuthorityInvalidation(
     previous: PluginUiProjectionModel,
     next: PluginUiProjectionModel,
 ): Promise<void> {
-    return applyPluginUiReactNativeExecutableAuthorityInvalidation({
-        previous,
-        next,
-        executableHost: getInstalledPluginUiExecutableModuleHost(),
-    });
+    if (previous.generation === next.generation) return Promise.resolve();
+    // The installed root now owns multiple exact-authority lifecycle leaves.
+    // Only its generic composition can fence all of them atomically.
+    return getPluginUiClientExecutableComposition(getInstalledPluginUiExecutableModuleHost()).unload();
 }

@@ -1,7 +1,7 @@
-import type { AutomationV3RunOrigin } from '@happier-dev/protocol';
+import type { AutomationRunStateV3, AutomationV3RunOrigin } from '@happier-dev/protocol';
 
 import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
-import { t } from '@/text';
+import { t, type TranslationKey } from '@/text';
 
 export function formatAutomationScheduleLabel(automation: {
     schedule: { kind: 'cron' | 'interval'; everyMs: number | null; scheduleExpr: string | null; timezone?: string | null };
@@ -57,6 +57,29 @@ export function getAutomationRunOriginTranslationKey(
         case 'conversation':
             return 'automations.detail.runMeta.origin.conversation';
     }
+}
+
+/**
+ * Shared presentation key for the canonical Run state union on list and detail surfaces.
+ * The union is closed by the Protocol, so every state has exactly one product label and no
+ * surface paints the raw state token.
+ */
+const AUTOMATION_RUN_STATE_TRANSLATION_KEYS = {
+    queued: 'automations.detail.runMeta.state.queued',
+    claimed: 'automations.detail.runMeta.state.claimed',
+    running: 'automations.detail.runMeta.state.running',
+    succeeded: 'automations.detail.runMeta.state.succeeded',
+    failed: 'automations.detail.runMeta.state.failed',
+    cancelled: 'automations.detail.runMeta.state.cancelled',
+    expired: 'automations.detail.runMeta.state.expired',
+    dispatch_failed: 'automations.detail.runMeta.state.dispatch_failed',
+    skipped: 'automations.detail.runMeta.state.skipped',
+    missed: 'automations.detail.runMeta.state.missed',
+    outcome_uncertain: 'automations.detail.runMeta.state.outcome_uncertain',
+} as const satisfies Record<AutomationRunStateV3, TranslationKey>;
+
+export function formatAutomationRunStateLabel(state: AutomationRunStateV3): string {
+    return t(AUTOMATION_RUN_STATE_TRANSLATION_KEYS[state]);
 }
 
 export function formatAutomationNextRun(nextRunAt: number | null): string {

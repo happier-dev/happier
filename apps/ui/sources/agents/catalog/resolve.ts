@@ -10,8 +10,13 @@ import {
 export function resolveAgentIdOrDefault(
     flavor: string | null | undefined,
     fallback: AgentId,
-): AgentId {
-    return resolveAgentIdFromFlavor(flavor) ?? fallback;
+): string {
+    return resolveAgentIdFromFlavor(flavor) ?? readDeclaredAgentId(flavor) ?? fallback;
+}
+
+function readDeclaredAgentId(value: string | null | undefined): string | null {
+    const agentId = typeof value === 'string' ? value.trim() : '';
+    return agentId.length > 0 ? agentId : null;
 }
 
 /**
@@ -24,12 +29,18 @@ export function resolveAgentIdForPermissionUi(params: {
     metadata?: unknown;
     flavor: string | null | undefined;
     toolName: string;
-}): AgentId {
+}): string {
     const byMetadata = resolveAgentIdFromSessionMetadata(params.metadata);
     if (byMetadata) return byMetadata;
 
     const byFlavor = resolveAgentIdFromFlavor(params.flavor);
     if (byFlavor) return byFlavor;
+
+    // A non-empty foreign flavor is still the session's declared Agent
+    // identity. Preserve it so neutral/unavailable UI is selected rather than
+    // borrowing a bundled Agent's tool behavior or default presentation.
+    const declaredFlavor = readDeclaredAgentId(params.flavor);
+    if (declaredFlavor) return declaredFlavor;
 
     const byTool = typeof params.toolName === 'string' ? params.toolName.trim() : '';
     if (byTool.length > 0) {

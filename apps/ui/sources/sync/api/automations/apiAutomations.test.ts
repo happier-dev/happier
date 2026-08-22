@@ -52,6 +52,7 @@ const v3EventSummary = {
         },
     },
     targetType: 'existingSession' as const,
+    existingSessionId: 'session-1',
     templateVersion: 3,
     nextRunAt: null,
     lastRunAt: null,

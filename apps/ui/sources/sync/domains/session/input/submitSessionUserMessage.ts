@@ -489,7 +489,7 @@ async function enqueuePending(
     };
 
     try {
-        const wakeResult = await port.resumeSession(resumeOptions);
+        const wakeResult = await port.ensureSessionRuntimeForPendingInput(resumeOptions);
         if (wakeResult.type === 'error') {
             await switchRemoteAfterPendingEnqueueIfNeeded(port, opts);
             return {
@@ -588,16 +588,16 @@ export async function submitSessionUserMessage(
                 localId,
             };
         }
-        if (effectiveOpts.session.active === false) {
-            const wakeOpts = getPendingQueueWakeResumeOptions({
-                sessionId: effectiveOpts.sessionId,
-                session: effectiveOpts.session,
-                resumeCapabilityOptions: effectiveOpts.resumeCapabilityOptions,
-                resumeTargetOverride: effectiveOpts.resumeTargetOverride,
-                permissionOverride: effectiveOpts.permissionOverride,
-                canWakeMachineId: port.canWakeMachineId,
-            });
-            if (!wakeOpts) {
+        const wakeOpts = getPendingQueueWakeResumeOptions({
+            sessionId: effectiveOpts.sessionId,
+            session: effectiveOpts.session,
+            resumeCapabilityOptions: effectiveOpts.resumeCapabilityOptions,
+            resumeTargetOverride: effectiveOpts.resumeTargetOverride,
+            permissionOverride: effectiveOpts.permissionOverride,
+            canWakeMachineId: port.canWakeMachineId,
+        });
+        if (!wakeOpts) {
+            if (effectiveOpts.session.active === false) {
                 const errorMessage = 'This inactive session cannot be resumed; the pending message remains queued.';
                 return {
                     type: 'wake_failed',
@@ -608,8 +608,9 @@ export async function submitSessionUserMessage(
                     localId,
                 };
             }
+        } else {
             try {
-                const wakeResult = await port.resumeSession({
+                const wakeResult = await port.ensureSessionRuntimeForPendingInput({
                     ...wakeOpts,
                     executionAuthorization: {
                         provenance: 'user_request',

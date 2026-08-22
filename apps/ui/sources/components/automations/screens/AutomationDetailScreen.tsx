@@ -19,6 +19,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { sync } from '@/sync/sync';
 import { upsertAutomationAssignmentToggle } from '@/components/automations/screens/automationAssignmentsModel';
 import {
+    formatAutomationRunStateLabel,
     formatAutomationTriggerLabel,
     getAutomationRunOriginTranslationKey,
 } from '@/components/automations/list/automationListFormatting';
@@ -707,7 +708,7 @@ export function AutomationDetailScreen() {
                     ) : runs.map((run) => (
                         <Item
                             key={run.id}
-                            title={run.state.toUpperCase()}
+                            title={formatAutomationRunStateLabel(run.state)}
                             subtitle={[
                                 t(getAutomationRunOriginTranslationKey(run.origin)),
                                 formatDate(getAutomationDefinitionRunOriginAt(run), unknownDate),

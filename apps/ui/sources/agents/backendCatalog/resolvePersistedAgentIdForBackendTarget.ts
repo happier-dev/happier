@@ -1,14 +1,14 @@
 import { readBackendTargetRefV2, type BackendTargetRefV2Input, type BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import type { AgentId } from '@/agents/catalog/catalog';
-import { isAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { isLegacyCompatAgentType } from './legacyCompatAgents';
 
 function resolveCanonicalPersistedAgentId(params: Readonly<{
     persistedAgentId: unknown;
     selectedBuiltInAgentId: AgentId;
 }>): AgentId {
-    if (isAgentId(params.persistedAgentId)) {
+    if (isBundledAgentId(params.persistedAgentId)) {
         return params.persistedAgentId;
     }
     return params.selectedBuiltInAgentId;
@@ -32,11 +32,11 @@ export function resolvePersistedAgentIdForBackendTarget(params: Readonly<{
         return resolveCanonicalPersistedAgentId(params);
     }
 
-    if (resolvedTarget && isAgentId(resolvedTarget.backendId)) {
+    if (resolvedTarget && isBundledAgentId(resolvedTarget.backendId)) {
         return resolvedTarget.backendId;
     }
 
-    if (isAgentId(params.persistedAgentId)) {
+    if (isBundledAgentId(params.persistedAgentId)) {
         return params.persistedAgentId;
     }
 

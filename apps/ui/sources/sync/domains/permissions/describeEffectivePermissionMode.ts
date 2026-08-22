@@ -1,7 +1,7 @@
 import type { AgentType } from '@/sync/domains/models/modelOptions';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
-import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import {
     readSessionConfigOptionsState,
@@ -57,9 +57,8 @@ export function describeEffectivePermissionMode(_params: {
     metadata: Metadata | null;
     applyTiming: 'immediate' | 'next_prompt';
 }): EffectivePermissionModeDescription {
-    const agentId = resolveAgentIdFromFlavor(_params.agentType) ?? DEFAULT_AGENT_ID;
-    const core = getAgentCore(agentId);
-    const group = core.permissions.modeGroup;
+    const agentId = resolveAgentIdFromFlavor(_params.agentType);
+    const core = agentId ? getAgentCore(agentId) : null;
     const hasAcpSessionMetadata = Boolean(
         readSessionModesState(_params.metadata) ||
         readSessionModelsState(_params.metadata) ||
@@ -71,6 +70,16 @@ export function describeEffectivePermissionMode(_params: {
     const reasons: EffectivePermissionModeReason[] = [];
 
     let effectiveMode: PermissionMode = normalized;
+
+    if (!agentId || !core) {
+        if (_params.applyTiming === 'next_prompt') {
+            reasons.push({ code: 'applies_on_next_message' });
+        }
+        const notes = reasons.map(noteForReason).filter(Boolean);
+        return { effectiveMode, reasons, notes };
+    }
+
+    const group = core.permissions.modeGroup;
 
     if (selected === 'plan') {
         reasons.push({ code: 'plan_not_supported_for_provider' });

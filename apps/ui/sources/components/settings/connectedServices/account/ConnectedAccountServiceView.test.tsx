@@ -289,10 +289,6 @@ vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
         errorReason: null,
     }),
 }));
-vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/domains/connectedServices/connectedServiceRegistry')>(),
-    getConnectedServiceRegistryEntry: () => currentRegistryEntry(),
-}));
 vi.mock('@/sync/ops/connectedAccounts/connectedAccountDaemon', async (importOriginal) => {
     const original = await importOriginal<typeof import('@/sync/ops/connectedAccounts/connectedAccountDaemon')>();
     return {

@@ -2,22 +2,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveAnnotationCropClip } from '@/sync/domains/browser/context/annotationCropGeometry';
 
-const invokeTauriMock = vi.hoisted(() => vi.fn());
-const isTauriDesktopMock = vi.hoisted(() => vi.fn());
+const invokeDesktopHostMock = vi.hoisted(() => vi.fn());
+const isDesktopHostMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/utils/platform/tauri', () => ({
-    invokeTauri: (command: string, args?: Record<string, unknown>) => invokeTauriMock(command, args),
-    isTauriDesktop: () => isTauriDesktopMock(),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    invokeDesktopHost: (command: string, args?: Record<string, unknown>) => invokeDesktopHostMock(command, args),
+    isDesktopHost: () => isDesktopHostMock(),
 }));
 
 describe('desktop WebView native bridge', () => {
     beforeEach(() => {
-        invokeTauriMock.mockReset();
-        isTauriDesktopMock.mockReset();
+        invokeDesktopHostMock.mockReset();
+        isDesktopHostMock.mockReset();
     });
 
     it('fails closed without invoking native commands outside Tauri desktop', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const mod = await import('./desktopWebViewBridge');
 
         await expect(mod.readDesktopWebViewNativeAvailability()).resolves.toEqual({
@@ -40,12 +40,12 @@ describe('desktop WebView native bridge', () => {
             },
             disabledReasons: ['tauri_host_unavailable'],
         });
-        expect(invokeTauriMock).not.toHaveBeenCalled();
+        expect(invokeDesktopHostMock).not.toHaveBeenCalled();
     });
 
     it('returns the typed native availability payload from the Tauri browser command', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValue({
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({
             available: false,
             platform: 'linuxWayland',
             primitive: 'linuxWaylandGtkEmbedding',
@@ -73,12 +73,12 @@ describe('desktop WebView native bridge', () => {
             primitive: 'linuxWaylandGtkEmbedding',
             disabledReasons: ['desktop_webview_wayland_gtk_unimplemented'],
         });
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_browser_get_availability', undefined);
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_browser_get_availability', undefined);
     });
 
     it('downgrades malformed native available payloads instead of advertising desktop browsing', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValue({
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({
             available: true,
             platform: 'macos',
             primitive: 'macosNsViewWebKit',
@@ -110,8 +110,8 @@ describe('desktop WebView native bridge', () => {
     });
 
     it('rejects native availability payloads that advertise capture on unsupported desktop platforms', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValue({
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({
             available: true,
             platform: 'windows',
             primitive: 'windowsHwndWebView2',
@@ -152,8 +152,8 @@ describe('desktop WebView native bridge', () => {
     it('accepts injected reload/stop support on a backed desktop WebView (capability-truth flip ready)', async () => {
         // The §5-gated Wry-injection verification can flip the native reload/stop bits true; the
         // TS contract must accept that shape (recording/automation still false) and preserve the bits.
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValue({
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({
             available: true,
             platform: 'macos',
             primitive: 'macosNsViewWebKit',
@@ -191,7 +191,7 @@ describe('desktop WebView native bridge', () => {
     });
 
     it('fails browser view commands closed outside Tauri desktop without invoking native IPC', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const mod = await import('./desktopWebViewBridge');
 
         await expect(mod.openDesktopBrowserView({
@@ -267,11 +267,11 @@ describe('desktop WebView native bridge', () => {
             },
         });
 
-        expect(invokeTauriMock).not.toHaveBeenCalled();
+        expect(invokeDesktopHostMock).not.toHaveBeenCalled();
     });
 
     it('fails desktop WebView snapshot capture closed outside Tauri desktop without invoking native IPC', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const mod = await import('./desktopWebViewBridge');
 
         await expect(mod.captureDesktopBrowserSnapshot({
@@ -287,11 +287,11 @@ describe('desktop WebView native bridge', () => {
                 disabledReasons: ['tauri_host_unavailable'],
             },
         });
-        expect(invokeTauriMock).not.toHaveBeenCalled();
+        expect(invokeDesktopHostMock).not.toHaveBeenCalled();
     });
 
     it('invokes shaped Tauri browser view commands and preserves native unavailability diagnostics', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         const unavailableResult = {
             ok: false,
             availability: {
@@ -315,7 +315,7 @@ describe('desktop WebView native bridge', () => {
                 disabledReasons: ['desktop_webview_child_view_unimplemented'],
             },
         };
-        invokeTauriMock.mockResolvedValue(unavailableResult);
+        invokeDesktopHostMock.mockResolvedValue(unavailableResult);
         const mod = await import('./desktopWebViewBridge');
 
         await expect(mod.openDesktopBrowserView({
@@ -355,7 +355,7 @@ describe('desktop WebView native bridge', () => {
             viewId: 'view_1',
         })).resolves.toEqual(unavailableResult);
 
-        expect(invokeTauriMock.mock.calls).toEqual([
+        expect(invokeDesktopHostMock.mock.calls).toEqual([
             [
                 'desktop_browser_open_view',
                 {
@@ -426,8 +426,8 @@ describe('desktop WebView native bridge', () => {
     });
 
     it('reads typed native page-info diagnostics without exposing other diagnostics families', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValue({
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({
             ok: true,
             availability: {
                 available: true,
@@ -480,7 +480,7 @@ describe('desktop WebView native bridge', () => {
                 },
             },
         });
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_browser_get_page_info', {
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_browser_get_page_info', {
             request: {
                 browserSessionId: 'browser_session_1',
                 viewId: 'view_1',
@@ -489,8 +489,8 @@ describe('desktop WebView native bridge', () => {
     });
 
     it('accepts the crashed loading-state so the engine can surface render-process recovery', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValue({
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({
             ok: true,
             availability: {
                 available: true,
@@ -536,8 +536,8 @@ describe('desktop WebView native bridge', () => {
     });
 
     it('captures typed desktop WebView snapshots only when native identity and generation match', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValue({
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({
             ok: true,
             availability: {
                 available: true,
@@ -588,7 +588,7 @@ describe('desktop WebView native bridge', () => {
                 bytesBase64: 'AQIDBA==',
             },
         });
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_browser_capture_snapshot', {
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_browser_capture_snapshot', {
             request: {
                 browserSessionId: 'browser_session_1',
                 viewId: 'view_1',
@@ -599,7 +599,7 @@ describe('desktop WebView native bridge', () => {
     });
 
     it('forwards the annotation crop clip so the Wry capture matches the union-of-targets rect (ANNO-3)', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         // Union of two marked targets in CSS viewport px → device clip via the canonical helper.
         const clip = resolveAnnotationCropClip({
             targets: [
@@ -617,7 +617,7 @@ describe('desktop WebView native bridge', () => {
         // css union {10,10,60,50} × DPR 2 → device {20,20,120,100}.
         expect(clip.devicePageRect).toEqual({ x: 20, y: 20, width: 120, height: 100 });
 
-        invokeTauriMock.mockResolvedValue({
+        invokeDesktopHostMock.mockResolvedValue({
             ok: true,
             availability: {
                 available: true,
@@ -665,7 +665,7 @@ describe('desktop WebView native bridge', () => {
 
         // The native command received the union-of-targets device clip (integer-normalized), NOT a
         // full-frame capture.
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_browser_capture_snapshot', {
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_browser_capture_snapshot', {
             request: {
                 browserSessionId: 'browser_session_1',
                 viewId: 'view_1',
@@ -681,8 +681,8 @@ describe('desktop WebView native bridge', () => {
     });
 
     it('rejects stale desktop WebView snapshot payloads that do not match the requested generation', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValue({
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({
             ok: true,
             availability: {
                 available: true,
@@ -733,8 +733,8 @@ describe('desktop WebView native bridge', () => {
     });
 
     it('rejects desktop WebView snapshot payloads that return data URLs instead of raw base64 bytes', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValue({
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({
             ok: true,
             availability: {
                 available: true,
@@ -786,8 +786,8 @@ describe('desktop WebView native bridge', () => {
     });
 
     it('captures a reference-only recording frame over the canonical invoke (no inline bytes)', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValue({
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({
             ok: true,
             availability: {
                 available: true,
@@ -843,7 +843,7 @@ describe('desktop WebView native bridge', () => {
         });
         // Reference-only: the IPC payload never carries pixel bytes.
         expect(result.frame && Object.keys(result.frame)).not.toContain('bytesBase64');
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_browser_capture_recording_frame', {
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_browser_capture_recording_frame', {
             request: {
                 browserSessionId: 'browser_session_1',
                 viewId: 'view_1',
@@ -856,8 +856,8 @@ describe('desktop WebView native bridge', () => {
     });
 
     it('rejects a recording frame that exceeds the negotiated byte cap', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValue({
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({
             ok: true,
             availability: {
                 available: true,
@@ -908,8 +908,8 @@ describe('desktop WebView native bridge', () => {
     });
 
     it('passes through a native recording-frame write failure error code', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockResolvedValue({
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({
             ok: false,
             availability: {
                 available: true,
@@ -948,7 +948,7 @@ describe('desktop WebView native bridge', () => {
     });
 
     it('reports the recording frame capture unavailable off-desktop without invoking', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const mod = await import('./desktopWebViewBridge');
 
         const result = await mod.captureDesktopBrowserRecordingFrame({
@@ -961,12 +961,12 @@ describe('desktop WebView native bridge', () => {
         });
 
         expect(result).toMatchObject({ ok: false, errorCode: 'captureUnsupported' });
-        expect(invokeTauriMock).not.toHaveBeenCalled();
+        expect(invokeDesktopHostMock).not.toHaveBeenCalled();
     });
 
     it('downgrades rejected native browser view commands to structured command unavailability', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
-        invokeTauriMock.mockRejectedValue(new Error('unknown command'));
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockRejectedValue(new Error('unknown command'));
         const mod = await import('./desktopWebViewBridge');
 
         await expect(mod.closeDesktopBrowserView({

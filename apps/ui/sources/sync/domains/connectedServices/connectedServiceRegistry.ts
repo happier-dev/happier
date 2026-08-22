@@ -359,10 +359,6 @@ export function getLegacyConnectedServiceRegistryEntry(serviceId: string): Conne
   return createLegacyConnectedServiceRegistryFallback(serviceId);
 }
 
-
-/** @deprecated Use the explicit qualified or released-legacy lookup instead. */
-export const getConnectedServiceRegistryEntry = getLegacyConnectedServiceRegistryEntry;
-
 export function getConnectedAccountAuthenticationMode(
   service: Readonly<{ pluginId: string; localId: string }>,
   authenticationModeId: string | null,

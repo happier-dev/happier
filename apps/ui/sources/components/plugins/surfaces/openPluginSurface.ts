@@ -6,7 +6,10 @@ import {
     type PluginUiOpenSurfaceRequestV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import type { PluginSurfaceHostApiMethodHandler } from './createPluginSurfaceHostApi';
+import {
+    createPluginSurfaceHostApiError,
+    type PluginSurfaceHostApiMethodHandler,
+} from './createPluginSurfaceHostApi';
 
 /**
  * The canonical `openSurface` host request (EU-5a).
@@ -50,19 +53,19 @@ export function createPluginSurfaceOpenSurfaceHandler(
         // the source mount retired must not report success to a replacement
         // Account, generation, or renderer.
         if (isCurrent?.() === false) {
-            return { code: 'stale_surface', diagnostics: ['plugin_surface_retired'] };
+            return createPluginSurfaceHostApiError('stale_surface', ['plugin_surface_retired']);
         }
         const parsed = PluginUiOpenSurfaceRequestV1Schema.safeParse(request.payload);
         if (!parsed.success) {
-            return { code: 'invalid_payload', diagnostics: ['plugin_surface_open_payload_invalid'] };
+            return createPluginSurfaceHostApiError('invalid_payload', ['plugin_surface_open_payload_invalid']);
         }
 
         const outcome = await handler(parsed.data);
         if (isCurrent?.() === false) {
-            return { code: 'stale_surface', diagnostics: ['plugin_surface_retired'] };
+            return createPluginSurfaceHostApiError('stale_surface', ['plugin_surface_retired']);
         }
         return outcome.ok
             ? null
-            : { code: outcome.code, diagnostics: [outcome.reason] };
+            : createPluginSurfaceHostApiError(outcome.code, [outcome.reason]);
     };
 }

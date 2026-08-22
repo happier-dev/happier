@@ -29,6 +29,12 @@ export type SessionOrganizationListViewState = Readonly<{
     sessionFoldersV1: SessionFolderList;
     sessionFolderAssignmentsBySessionKey: Record<string, string | null>;
     sessionTagsV1: Record<string, readonly SessionOrganizationListTag[]>;
+    /**
+     * Per-session standing overrides, keyed the way every other session-keyed slice here is, so a
+     * surface can join them with the account default without a second projection subscription.
+     * A `false` entry is a real "removed from Needs attention", never an absent key.
+     */
+    attentionStandingOverridesBySessionKey: Record<string, boolean>;
     sessionListGroupOrderV1: Record<string, readonly string[]>;
     sessionWorkspaceOrderV1: SessionWorkspaceOrderV1;
     workspaceLabelsV1: Record<string, HumanDisplayState>;
@@ -225,6 +231,7 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
             sessionFoldersV1: { v: 1, folders: [] },
             sessionFolderAssignmentsBySessionKey: {},
             sessionTagsV1: {},
+            attentionStandingOverridesBySessionKey: {},
             sessionListGroupOrderV1: {},
             sessionWorkspaceOrderV1: {},
             workspaceLabelsV1: {},
@@ -258,6 +265,12 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
         ]),
     );
     const sessionTagsV1 = sessionTagDisplayStatesBySessionKey;
+    const attentionStandingOverridesBySessionKey = Object.fromEntries(
+        Object.entries(projection.attentionStandingsBySessionId).map(([sessionId, standing]) => [
+            buildServerSessionKey(serverId, sessionId),
+            standing.standing,
+        ]),
+    );
     const sessionFolderAssignmentsBySessionKey = Object.fromEntries(
         Object.entries(projection.folderAssignmentsBySessionId).map(([sessionId, folderId]) => [
             buildServerSessionKey(serverId, sessionId),
@@ -336,6 +349,7 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
         sessionFoldersV1: { v: 1, folders },
         sessionFolderAssignmentsBySessionKey,
         sessionTagsV1,
+        attentionStandingOverridesBySessionKey,
         sessionListGroupOrderV1,
         sessionWorkspaceOrderV1,
         workspaceLabelsV1,

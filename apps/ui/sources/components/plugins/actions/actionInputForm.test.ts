@@ -193,7 +193,7 @@ describe('generic Action input form', () => {
         expect(submit).toHaveBeenCalledOnce();
     });
 
-    it('aborts its local submission signal and rejects a late settlement when the presentation retires', async () => {
+    it('aborts its local submission signal but preserves a known Action settlement when the presentation retires', async () => {
         let settleSubmission: (result: Readonly<{ ok: true }>) => void = () => {
             throw new Error('submission resolver was not initialized');
         };
@@ -229,8 +229,8 @@ describe('generic Action input form', () => {
         expect(submissionSignal?.aborted).toBe(true);
         settleSubmission({ ok: true });
         await expect(submitting).resolves.toEqual({
-            kind: 'stale',
-            reason: 'presentation_retired',
+            kind: 'settled',
+            outcome: { ok: true },
         });
     });
 
@@ -374,8 +374,8 @@ describe('generic Action input form', () => {
             expect(form.getInput()).toEqual({});
             resolveSubmission({ ok: true });
             await expect(submitting).resolves.toEqual({
-                kind: 'stale',
-                reason: 'presentation_retired',
+                kind: 'settled',
+                outcome: { ok: true },
             });
         } finally {
             vi.useRealTimers();

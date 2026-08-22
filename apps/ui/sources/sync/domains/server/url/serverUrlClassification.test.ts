@@ -4,6 +4,7 @@ import {
     canSafelyAutoAdoptCanonicalServerUrl,
     isInsecureRemoteHttpServerUrl,
     isLocalishHostname,
+    isLoopbackServerUrl,
     isLocalishServerUrl,
 } from './serverUrlClassification';
 
@@ -21,6 +22,12 @@ describe('serverUrlClassification', () => {
         expect(isLocalishServerUrl('http://127.0.0.1:3005')).toBe(true);
         expect(isLocalishServerUrl('http://192.168.0.2:3005')).toBe(true);
         expect(isLocalishServerUrl('https://api.happier.dev')).toBe(false);
+    });
+
+    it('treats the complete IPv4 loopback range as unreachable from another device', () => {
+        expect(isLoopbackServerUrl('http://127.0.0.2:3005')).toBe(true);
+        expect(isLoopbackServerUrl('http://127.255.255.254:3005')).toBe(true);
+        expect(isLoopbackServerUrl('http://192.168.0.2:3005')).toBe(false);
     });
 
     it('detects insecure remote http URLs', () => {
@@ -50,4 +57,3 @@ describe('serverUrlClassification', () => {
         })).toBe(false);
     });
 });
-

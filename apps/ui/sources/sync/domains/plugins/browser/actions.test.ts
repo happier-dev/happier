@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 
 import {
     EMPTY_PLUGIN_BROWSER_PROJECTION,
@@ -37,6 +38,7 @@ function createProjection(): PluginProjectionV2 {
                 icon: 'open-outline',
                 scopes: ['session'],
                 surfaces: ['ui'],
+                execution: { target: 'daemon' },
                 placementBindings: ['detailsPanel'],
                 priority: 0,
                 dangerLevel: 'safe',
@@ -99,8 +101,46 @@ function createProjection(): PluginProjectionV2 {
 }
 
 describe('plugin browser projection normalization', () => {
+    it('does not require a daemon machine or invoke the daemon for a client-target browser Action', async () => {
+        const raw = createProjection();
+        raw.actionsById['acme.preview/open-preview'] = {
+            ...raw.actionsById['acme.preview/open-preview']!,
+            execution: {
+                target: 'client',
+                client: {
+                    artifactId: 'client-action-bundle',
+                    modulePath: './actions/clientAction',
+                    exportName: 'execute',
+                },
+                platforms: ['web'],
+            },
+        };
+        const model = normalizePluginBrowserProjection(raw);
+        const action = model.actionsById['browserAction:acme.preview:open-preview'];
+        const execute = vi.fn();
+
+        await expect(executePluginBrowserAction({
+            action,
+            generation: model.generation,
+            machineId: null,
+            input: { targetId: action?.targetId },
+            policyContext: {
+                profileMode: 'session',
+                isFeatureEnabled: () => true,
+            },
+            resolveContributedAction: createPluginUiProjectedActionResolver(raw.actionsById),
+            execute,
+        })).resolves.toEqual({
+            ok: false,
+            code: 'unavailable',
+            reason: 'plugin_surface_client_action_unavailable',
+        });
+        expect(execute).not.toHaveBeenCalled();
+    });
+
     it('normalizes plugin browser targets and actions into stable lookup maps', () => {
-        const model = normalizePluginBrowserProjection(createProjection());
+        const raw = createProjection();
+        const model = normalizePluginBrowserProjection(raw);
 
         expect(model.generation).toBe(14);
         expect(model.targetsById['browserTarget:acme.preview:preview-target']).toMatchObject({
@@ -246,7 +286,8 @@ describe('plugin browser projection normalization', () => {
     });
 
     it('executes a browser presentation only through the generation-leased canonical action RPC', async () => {
-        const model = normalizePluginBrowserProjection(createProjection());
+        const raw = createProjection();
+        const model = normalizePluginBrowserProjection(raw);
         const action = model.actionsById['browserAction:acme.preview:open-preview'];
         const execute = vi.fn(async () => ({ supported: true as const, result: { ok: true as const, result: null } }));
 
@@ -265,6 +306,7 @@ describe('plugin browser projection normalization', () => {
                 profileMode: 'session',
                 isFeatureEnabled: () => true,
             },
+            resolveContributedAction: createPluginUiProjectedActionResolver(raw.actionsById),
             execute,
         })).resolves.toEqual({ ok: true, result: null });
 

@@ -167,7 +167,28 @@ function matchesIdentity(
     ) {
         return false;
     }
+    if (
+        Object.prototype.hasOwnProperty.call(filters, 'authoritySource')
+        && !authoritySourceMatches(value.authoritySource, filters.authoritySource)
+    ) {
+        return false;
+    }
     return true;
+}
+
+/**
+ * Grants and requests are Account-scoped rows carrying the machine installation
+ * that approved or asked for them. A surface acting for one selected machine
+ * must not read, decide, or revoke another machine's row.
+ */
+function authoritySourceMatches(
+    value: PluginPermissionGrantIdentity['authoritySource'],
+    filter: PluginPermissionGrantIdentity['authoritySource'],
+): boolean {
+    if (!filter) return !value;
+    if (!value || value.kind !== filter.kind) return false;
+    if (value.kind !== 'machine_installation' || filter.kind !== 'machine_installation') return false;
+    return value.machineId === filter.machineId && value.installationId === filter.installationId;
 }
 
 function targetScopeMatches(
@@ -190,12 +211,19 @@ export function selectPluginPermissionPendingRequests(
         .sort((left, right) => right.createdAt - left.createdAt);
 }
 
+export function selectPluginPermissionGrants(
+    state: PluginPermissionGrantState,
+    filters: Partial<PluginPermissionGrantIdentity> = {},
+): readonly PluginPermissionGrant[] {
+    return state.grantIds
+        .map((id) => state.grantsById[id])
+        .filter((grant): grant is PluginPermissionGrant => Boolean(grant))
+        .filter((grant) => matchesIdentity(grant, filters));
+}
+
 export function hasPluginPermissionGrant(
     state: PluginPermissionGrantState,
     input: Partial<PluginPermissionGrantIdentity>,
 ): boolean {
-    return state.grantIds
-        .map((id) => state.grantsById[id])
-        .filter((grant): grant is PluginPermissionGrant => Boolean(grant))
-        .some((grant) => matchesIdentity(grant, input));
+    return selectPluginPermissionGrants(state, input).length > 0;
 }

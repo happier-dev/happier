@@ -9,7 +9,7 @@ vi.mock('@/text', async () => {
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['antigravity', 'codex', 'claude', 'ohMyPi'],
-    isAgentId: (agentId: string) => agentId === 'antigravity' || agentId === 'codex' || agentId === 'claude' || agentId === 'ohMyPi',
+    isBundledAgentId: (agentId: string) => agentId === 'antigravity' || agentId === 'codex' || agentId === 'claude' || agentId === 'ohMyPi',
     getAgentCore: (agentId: string) => ({
         displayNameKey: `agent.${agentId}`,
         availability: { experimental: false },
@@ -115,13 +115,13 @@ describe('agentCatalogProjection', () => {
         }));
     });
 
-    it('reuses the backing built-in provider settings/auth behavior for a projected plugin provider without collapsing its identity', () => {
+    it('projects bundled UI behavior from an explicit backing Agent without collapsing an external identity', () => {
         const params = {
-            enabledAgentIds: ['acme.review.backend'],
+            enabledAgentIds: ['acme.agent.backend'],
             mergedBackendProjectionById: {
-                'acme.review.backend': {
-                    backendId: 'acme.review.backend',
-                    agentId: 'acme.review.provider',
+                'acme.agent.backend': {
+                    backendId: 'acme.agent.backend',
+                    agentId: 'acme.agent',
                     title: 'Acme Review Backend',
                     subtitle: 'Plugin-backed review engine',
                     catalogAgentId: 'claude' as const,
@@ -129,21 +129,21 @@ describe('agentCatalogProjection', () => {
                 },
             },
             mergedProviderProjectionById: {
-                'acme.review.provider': {
-                    agentId: 'acme.review.provider',
+                'acme.agent': {
+                    agentId: 'acme.agent',
                     title: 'Acme Review Provider',
                     subtitle: 'Plugin provider',
                     channel: 'plugin' as const,
                     isBuiltIn: false,
-                    settingsBackendId: 'acme.review.backend',
+                    settingsBackendId: 'acme.agent.backend',
                     catalogAgentId: 'claude' as const,
                     iconAgentId: 'codex' as const,
                 },
             },
         };
 
-        expect(resolveAgentCatalogProjection('acme.review.provider', params)).toEqual(expect.objectContaining({
-            agentId: 'acme.review.provider',
+        expect(resolveAgentCatalogProjection('acme.agent', params)).toEqual(expect.objectContaining({
+            agentId: 'acme.agent',
             title: 'Acme Review Provider',
             subtitle: 'Plugin provider',
             channel: 'plugin',
@@ -151,7 +151,7 @@ describe('agentCatalogProjection', () => {
             catalogAgentId: 'claude',
             iconAgentId: 'codex',
             iconName: getAgentCore('codex').ui.agentPickerIconName,
-            backendTargetKey: 'backend:acme.review.backend',
+            backendTargetKey: 'backend:acme.agent.backend',
             descriptor: expect.objectContaining({ agentId: 'claude' }),
             behavior: expect.objectContaining({ agentId: 'claude' }),
             authPlugin: expect.objectContaining({ agentId: 'claude' }),

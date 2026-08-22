@@ -12,11 +12,11 @@ export type MachineWithReplacement = Machine & Readonly<{
     contentPublicKeyFingerprint?: string | null;
 }>;
 
-export type CanonicalMachineResolution = Readonly<{
-    machineId: string;
-    reason: 'direct' | 'replacement' | 'missingReplacementTarget';
-    chain: readonly string[];
-}>;
+export {
+    isMachineReplaced,
+    normalizeMachineIdentityString,
+    type CanonicalMachineResolution,
+} from '@happier-dev/protocol';
 
 export type MachineTargetResolution = Readonly<{
     machineId: string;
@@ -24,15 +24,3 @@ export type MachineTargetResolution = Readonly<{
     originMachineId: string;
     replaced: boolean;
 }>;
-
-export function normalizeMachineIdentityString(value: unknown): string | null {
-    if (typeof value !== 'string') return null;
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-}
-
-export function isMachineReplaced(
-    machine: Readonly<{ replacedByMachineId?: string | null; replacedAt?: unknown }> | null | undefined,
-): boolean {
-    return Boolean(normalizeMachineIdentityString(machine?.replacedByMachineId));
-}

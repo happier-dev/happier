@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolvePluginDisplayString } from './resolvePluginDisplayString';
+import {
+    resolveProjectedLocalizedText,
+    resolvePluginDisplayString,
+} from './resolvePluginDisplayString';
 
 describe('resolvePluginDisplayString', () => {
     it('prefers a developer-authored literal over keys and fallback', () => {
@@ -47,5 +50,26 @@ describe('resolvePluginDisplayString', () => {
             keys: [undefined, 'plugin.unknown'],
             fallback: '  ',
         })).toBeNull();
+    });
+});
+
+describe('resolveProjectedLocalizedText', () => {
+    it('translates a projected key and ignores the developer fallback', () => {
+        expect(resolveProjectedLocalizedText({
+            key: 'common.copy',
+            fallback: 'Duplicate',
+        })).toBe('Copy');
+    });
+
+    it('never treats a bare projected literal as a translation key', () => {
+        // A descriptor that projected the plain string `common.copy` declared a
+        // literal, not a key; resolving it would silently rewrite plugin copy.
+        expect(resolveProjectedLocalizedText('common.copy')).toBe('common.copy');
+    });
+
+    it('yields empty text for an absent projection so callers can fall through', () => {
+        expect(resolveProjectedLocalizedText(undefined)).toBe('');
+        expect(resolveProjectedLocalizedText(null)).toBe('');
+        expect(resolveProjectedLocalizedText({ fallback: '   ' })).toBe('');
     });
 });

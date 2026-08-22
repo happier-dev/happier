@@ -5,7 +5,7 @@ import {
     type BackendTargetRefV2Input,
 } from '@happier-dev/protocol';
 
-import { isAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES } from '@/agents/registry/generatedBundledPluginEntries';
 
 import type { DaemonMergedProjectionInputs } from './loadDaemonMergedProjectionInputs';
@@ -53,7 +53,7 @@ export function resolveAgentExecutionTargetForBackendTarget(params: Readonly<{
         };
     }
 
-    if (!isAgentId(agentId)) {
+    if (!isBundledAgentId(agentId)) {
         return null;
     }
 

@@ -1,6 +1,13 @@
 import * as React from 'react';
 import { View, type TextInput } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import {
+    BUNDLED_PROVIDER_CATALOG_PARSERS_V1,
+    BundledProviderCatalogParserV1Schema,
+    CustomProviderCredentialStyleV1Schema,
+    type BundledProviderCatalogParserV1,
+    type CustomProviderCredentialStyleV1,
+} from '@happier-dev/protocol';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
@@ -15,7 +22,26 @@ const styles = StyleSheet.create(() => ({
     multiline: { minHeight: 88, textAlignVertical: 'top' },
 }));
 
-const CREDENTIAL_STYLES = ['bearer', 'x-api-key', 'api-key', 'custom-header', 'custom-header-bearer'] as const;
+/**
+ * Titles only. MEMBERSHIP of both vocabularies is owned by Protocol; these maps
+ * are exhaustive over it, so a credential style or bundled catalog format added
+ * upstream fails this screen's typecheck instead of silently losing its picker
+ * row. Presentation copy stays here and is never pushed into Protocol.
+ */
+const CREDENTIAL_STYLE_TITLE_KEYS = {
+    bearer: 'settingsProviders.authoring.credentialStyle.bearer',
+    'x-api-key': 'settingsProviders.authoring.credentialStyle.xApiKey',
+    'api-key': 'settingsProviders.authoring.credentialStyle.apiKey',
+    'custom-header': 'settingsProviders.authoring.credentialStyle.customHeader',
+    'custom-header-bearer': 'settingsProviders.authoring.credentialStyle.customHeaderBearer',
+} as const satisfies Record<CustomProviderCredentialStyleV1, string>;
+
+const PROBE_PARSER_TITLE_KEYS = {
+    'openai-models': 'settingsProviders.authoring.probeParser.openaiModels',
+    'anthropic-models': 'settingsProviders.authoring.protocol.anthropic.title',
+    'ollama-tags': 'settingsProviders.authoring.probeParser.ollamaTags',
+    'lmstudio-native-models': 'settingsProviders.authoring.probeParser.lmStudioNative',
+} as const satisfies Record<BundledProviderCatalogParserV1, string>;
 
 export const CustomProviderAdvancedFields = React.memo(function CustomProviderAdvancedFields(props: Readonly<{
     draft: CustomProviderDraft;
@@ -24,19 +50,20 @@ export const CustomProviderAdvancedFields = React.memo(function CustomProviderAd
 }>) {
     const [credentialMenu, setCredentialMenu] = React.useState<string | null>(null);
     const [probeParserMenu, setProbeParserMenu] = React.useState<string | null>(null);
-    const credentialStyles = React.useMemo<readonly DropdownMenuItem[]>(() => [
-        { id: 'bearer', title: t('settingsProviders.authoring.credentialStyle.bearer') },
-        { id: 'x-api-key', title: t('settingsProviders.authoring.credentialStyle.xApiKey') },
-        { id: 'api-key', title: t('settingsProviders.authoring.credentialStyle.apiKey') },
-        { id: 'custom-header', title: t('settingsProviders.authoring.credentialStyle.customHeader') },
-        { id: 'custom-header-bearer', title: t('settingsProviders.authoring.credentialStyle.customHeaderBearer') },
-    ], []);
-    const probeParsers = React.useMemo<readonly DropdownMenuItem[]>(() => [
-        { id: 'openai-models', title: t('settingsProviders.authoring.probeParser.openaiModels') },
-        { id: 'anthropic-models', title: t('settingsProviders.authoring.protocol.anthropic.title') },
-        { id: 'ollama-tags', title: t('settingsProviders.authoring.probeParser.ollamaTags') },
-        { id: 'lmstudio-native-models', title: t('settingsProviders.authoring.probeParser.lmStudioNative') },
-    ], []);
+    const credentialStyles = React.useMemo<readonly DropdownMenuItem[]>(
+        () => CustomProviderCredentialStyleV1Schema.options.map((id) => ({
+            id,
+            title: t(CREDENTIAL_STYLE_TITLE_KEYS[id]),
+        })),
+        [],
+    );
+    const probeParsers = React.useMemo<readonly DropdownMenuItem[]>(
+        () => BUNDLED_PROVIDER_CATALOG_PARSERS_V1.map((id) => ({
+            id,
+            title: t(PROBE_PARSER_TITLE_KEYS[id]),
+        })),
+        [],
+    );
     const focusEndpointProtocol = props.draft.endpoints.find((endpoint) => endpoint.enabled)?.protocol ?? null;
     const update = React.useCallback((protocol: CustomProviderAdvancedEndpointDraft['protocol'], patch: Partial<CustomProviderAdvancedEndpointDraft>) => {
         props.onChange((current) => ({
@@ -113,10 +140,8 @@ export const CustomProviderAdvancedFields = React.memo(function CustomProviderAd
                                 }}
                                 items={probeParsers}
                                 onSelect={(probeParser) => {
-                                    if (probeParser === 'openai-models' || probeParser === 'anthropic-models'
-                                        || probeParser === 'ollama-tags' || probeParser === 'lmstudio-native-models') {
-                                        update(endpoint.protocol, { probeParser });
-                                    }
+                                    const parsed = BundledProviderCatalogParserV1Schema.safeParse(probeParser);
+                                    if (parsed.success) update(endpoint.protocol, { probeParser: parsed.data });
                                 }}
                             />
                         ) : null}
@@ -147,9 +172,8 @@ export const CustomProviderAdvancedFields = React.memo(function CustomProviderAd
                                 }}
                                 items={credentialStyles}
                                 onSelect={(style) => {
-                                    if (CREDENTIAL_STYLES.includes(style as typeof CREDENTIAL_STYLES[number])) {
-                                        update(endpoint.protocol, { credentialStyle: style as typeof CREDENTIAL_STYLES[number] });
-                                    }
+                                    const parsed = CustomProviderCredentialStyleV1Schema.safeParse(style);
+                                    if (parsed.success) update(endpoint.protocol, { credentialStyle: parsed.data });
                                 }}
                             />
                             {endpoint.credentialStyle === 'custom-header' || endpoint.credentialStyle === 'custom-header-bearer' ? (

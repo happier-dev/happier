@@ -1,5 +1,6 @@
 import { isStackContext } from './serverContext';
 import { readWebRuntimeConfigServerUrl } from '@/sync/runtime/webRuntimeConfig';
+import { isLoopbackHostname } from '@happier-dev/protocol';
 
 function readFirstNonEmptyEnv(...values: Array<string | undefined>): string {
     for (const value of values) {
@@ -20,17 +21,6 @@ export function readConfiguredServerUrlEnvRaw(): string {
 
 function isWebRuntime(): boolean {
     return typeof window !== 'undefined' && typeof document !== 'undefined';
-}
-
-function isLoopbackHostname(rawHost: string): boolean {
-    const host = String(rawHost ?? '').trim().toLowerCase();
-    return (
-        host === 'localhost'
-        || host === '127.0.0.1'
-        || host === '::1'
-        || host === '[::1]'
-        || host.endsWith('.localhost')
-    );
 }
 
 function isPrivateIpv4Hostname(rawHost: string): boolean {

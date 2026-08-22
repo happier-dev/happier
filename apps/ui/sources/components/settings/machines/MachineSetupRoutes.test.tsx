@@ -12,14 +12,14 @@ const expoRouterMock = createExpoRouterMock({
 
 vi.mock('expo-router', () => expoRouterMock.module);
 
-const isTauriDesktopMock = vi.fn();
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => isTauriDesktopMock(),
+const isDesktopHostMock = vi.fn();
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => isDesktopHostMock(),
 }));
 
 describe('Machines settings routes', () => {
     it('renders a setup wizard launcher for add-machine route on desktop', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         const AddMachineRoute = (await import('@/app/(app)/settings/machines/add')).default;
         const screen = await renderScreen(React.createElement(AddMachineRoute));
 
@@ -29,7 +29,7 @@ describe('Machines settings routes', () => {
     });
 
     it('renders a setup wizard launcher for this-computer route on desktop', async () => {
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         const ThisComputerSetupRoute = (await import('@/app/(app)/settings/machines/this-computer')).default;
         const screen = await renderScreen(React.createElement(ThisComputerSetupRoute));
 
@@ -37,7 +37,7 @@ describe('Machines settings routes', () => {
     });
 
     it('renders a setup wizard launcher for add-machine route on web', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const AddMachineRoute = (await import('@/app/(app)/settings/machines/add')).default;
         const screen = await renderScreen(React.createElement(AddMachineRoute));
 
@@ -47,7 +47,7 @@ describe('Machines settings routes', () => {
     });
 
     it('renders a setup wizard launcher for this-computer route on web', async () => {
-        isTauriDesktopMock.mockReturnValue(false);
+        isDesktopHostMock.mockReturnValue(false);
         const ThisComputerSetupRoute = (await import('@/app/(app)/settings/machines/this-computer')).default;
         const screen = await renderScreen(React.createElement(ThisComputerSetupRoute));
 

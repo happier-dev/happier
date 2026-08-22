@@ -1,6 +1,7 @@
 import type {
     PluginPermissionCapabilityV1,
     PluginPermissionGrantActionIdV1,
+    PluginPermissionGrantAuthoritySourceV1,
     PluginPermissionGrantDismissRequestActionInputV1,
     PluginPermissionGrantGrantActionInputV1,
     PluginPermissionGrantGrantActionOutputV1,
@@ -33,6 +34,12 @@ export type PluginPermissionGrantIdentity = Readonly<{
     capability: PluginPermissionCapabilityV1;
     targetScope?: PluginPermissionGrantTargetScope | null;
     subject?: PluginPermissionSubjectV1 | null;
+    /**
+     * The machine installation whose person approved (or is being asked for) the
+     * grant. Listing stays Account-wide for management, so a surface acting for
+     * one machine filters on this rather than taking the first Account match.
+     */
+    authoritySource?: PluginPermissionGrantAuthoritySourceV1 | null;
 }>;
 
 export type PluginPermissionGrant = PluginPermissionGrantV1;
@@ -43,7 +50,7 @@ export type PluginPermissionPendingGrantRequest = PluginPermissionGrantRequestV1
 
 export type PluginPermissionGrantListResponse = PluginPermissionGrantListActionOutputV1;
 
-export type PluginPermissionGrantListInput = Partial<PluginPermissionGrantIdentity> & Readonly<{
+export type PluginPermissionGrantListInput = Partial<Omit<PluginPermissionGrantIdentity, 'authoritySource'>> & Readonly<{
     includeRevoked?: boolean;
     includeResolvedRequests?: boolean;
     limit?: number;

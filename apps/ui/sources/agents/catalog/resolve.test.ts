@@ -3,8 +3,8 @@ import { describe, it, expect } from 'vitest';
 import { resolveAgentIdOrDefault, resolveAgentIdForPermissionUi } from './resolve';
 
 describe('agents/resolve', () => {
-    it('falls back to a default agent id for unknown flavors', () => {
-        expect(resolveAgentIdOrDefault('unknown', 'claude')).toBe('claude');
+    it('preserves an unrecognized Agent identity and falls back only when it is absent', () => {
+        expect(resolveAgentIdOrDefault('acme.agent', 'claude')).toBe('acme.agent');
         expect(resolveAgentIdOrDefault(null, 'claude')).toBe('claude');
     });
 
@@ -26,6 +26,27 @@ describe('agents/resolve', () => {
             flavor: 'claude',
             toolName: 'OpenCodeBash',
         })).toBe('codex');
+    });
+
+    it('preserves an installed external Agent declared by session metadata', () => {
+        expect(resolveAgentIdForPermissionUi({
+            metadata: {
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'acme.agent',
+                    provider: {},
+                },
+            },
+            flavor: 'claude',
+            toolName: 'ClaudeBash',
+        })).toBe('acme.agent');
+    });
+
+    it('preserves an external flavor instead of applying bundled tool-prefix behavior', () => {
+        expect(resolveAgentIdForPermissionUi({
+            flavor: 'acme.agent',
+            toolName: 'CodexBash',
+        })).toBe('acme.agent');
     });
 
     it('prefers Codex tool prefix hints for permission UI', () => {

@@ -759,10 +759,11 @@ export function PluginHostedWebPane(props: Readonly<{
         && !nativeArtifactAdapterUnavailable
         && (platform === 'ios' || platform === 'android' || platform === 'desktop')
         && nativeArtifactHandle.isCurrent()
-        ? resolvePluginHostedWebNativeArtifactFrameOriginV1({
-            platform,
-            storagePartitionId: nativeArtifactHandle.storagePartitionId,
-        })
+        ? (platform === 'desktop' ? nativeArtifactHandle.frameOrigin : undefined)
+            ?? resolvePluginHostedWebNativeArtifactFrameOriginV1({
+                platform,
+                storagePartitionId: nativeArtifactHandle.storagePartitionId,
+            })
         : null;
     const nativeArtifactFrame = nativeArtifactFrameEnabled && nativeArtifactFrameOrigin && nativeArtifactHandle
         ? Object.freeze({
@@ -849,6 +850,11 @@ export function PluginHostedWebPane(props: Readonly<{
         present: props.launchInput !== undefined,
         value: props.launchInput,
     });
+    // The nonce is the guest's address proof for exactly one bound frame, so its
+    // lifetime must cover every fact that replaces the guest document. The bound
+    // page location is one of them: `bridgeLifetimeKey` below already re-keys the
+    // frame on it, so without it here the document minted for the previous page
+    // would hand its still-valid nonce to the document that replaces it.
     const bridgeNonce = React.useMemo(
         () => props.bridgeNonce ?? createBridgeNonce(),
         [
@@ -856,6 +862,7 @@ export function PluginHostedWebPane(props: Readonly<{
             projectionGeneration,
             props.bridgeNonce,
             props.mountInstanceKey,
+            props.subPath,
         ],
     );
     const allowedMessageKinds = descriptor ? readAllowedMessageKinds(descriptor.bridge) : [];

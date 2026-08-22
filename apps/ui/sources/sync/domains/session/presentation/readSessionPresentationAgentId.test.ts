@@ -25,6 +25,18 @@ describe('readSessionPresentationAgentId', () => {
         })).toBeNull();
     });
 
+    it('preserves an installed external Agent from the shared presentation envelope', () => {
+        expect(readSessionPresentationAgentId({
+            metadataLayoutVersion: 1,
+            accessLevel: 'view',
+            metadata: {
+                v: 1,
+                agentPresentation: { agentId: 'acme.agent' },
+            },
+            ownerMetadataView: null,
+        })).toBe('acme.agent');
+    });
+
     it('does not let an owner-only runtime identity override layout-v1 shared presentation', () => {
         expect(readSessionPresentationAgentId({
             metadataLayoutVersion: 1,

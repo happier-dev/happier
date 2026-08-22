@@ -12,7 +12,15 @@ export type SessionListAttentionPlacementReason =
     | 'action_required'
     | 'permission_required'
     | 'failed'
-    | 'ready';
+    | 'ready'
+    | 'unread'
+    /**
+     * The user asked for this session to stay in Needs attention. It is a
+     * FLOOR, never an override: it only reaches a session whose own signals
+     * place it nowhere, so every reason above keeps its own placement and its
+     * own ordering key.
+     */
+    | 'standing';
 
 /**
  * Item-level projection of a 'working' placement: 'working' means live

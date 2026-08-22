@@ -56,14 +56,24 @@ export const fetchReactNativeExactArtifactBytesViaMachineRpc: PluginReactNativeE
                     ...(reactNativeHostRuntimeIdentity ? { reactNativeHostRuntimeIdentity } : {}),
                     ...(reactNativeWebLoaderCapability ? { reactNativeWebLoaderCapability } : {}),
                 })
-                : DaemonPluginUiArtifactBytesReadRequestSchema.parse({
-                    artifactFamily: 'reactNative',
-                    artifactOwnerKind: 'collectionMigrations',
-                    machineId: input.origin.materializationRef.machineId,
-                    cacheIdentity: input.identity,
-                    ...(reactNativeHostRuntimeIdentity ? { reactNativeHostRuntimeIdentity } : {}),
-                    ...(reactNativeWebLoaderCapability ? { reactNativeWebLoaderCapability } : {}),
-                });
+                : input.artifactOwnerKind === 'clientContribution'
+                    ? DaemonPluginUiArtifactBytesReadRequestSchema.parse({
+                        artifactFamily: 'reactNative',
+                        artifactOwnerKind: 'clientContribution',
+                        machineId: input.origin.materializationRef.machineId,
+                        cacheIdentity: input.identity,
+                        clientContribution: input.clientContribution,
+                        ...(reactNativeHostRuntimeIdentity ? { reactNativeHostRuntimeIdentity } : {}),
+                        ...(reactNativeWebLoaderCapability ? { reactNativeWebLoaderCapability } : {}),
+                    })
+                    : DaemonPluginUiArtifactBytesReadRequestSchema.parse({
+                        artifactFamily: 'reactNative',
+                        artifactOwnerKind: 'collectionMigrations',
+                        machineId: input.origin.materializationRef.machineId,
+                        cacheIdentity: input.identity,
+                        ...(reactNativeHostRuntimeIdentity ? { reactNativeHostRuntimeIdentity } : {}),
+                        ...(reactNativeWebLoaderCapability ? { reactNativeWebLoaderCapability } : {}),
+                    });
         const raw = await callGuardedMachineRpcWithPolicy<unknown, typeof payload>({
             machineId: input.origin.materializationRef.machineId,
             serverId: input.serverId,
@@ -95,6 +105,17 @@ export const fetchReactNativeExactArtifactBytesViaMachineRpc: PluginReactNativeE
             )
         ) {
             return unavailableArtifactBytes('react_native_artifact_bytes_response_crash_state_mismatch');
+        }
+        if (
+            input.artifactOwnerKind === 'clientContribution'
+            && (
+                parsed.data.artifactOwnerKind !== 'clientContribution'
+                || parsed.data.clientContribution.family !== input.clientContribution.family
+                || parsed.data.clientContribution.action.pluginId !== input.clientContribution.action.pluginId
+                || parsed.data.clientContribution.action.localId !== input.clientContribution.action.localId
+            )
+        ) {
+            return unavailableArtifactBytes('react_native_artifact_bytes_response_client_contribution_mismatch');
         }
         return parsed.data;
     } catch {

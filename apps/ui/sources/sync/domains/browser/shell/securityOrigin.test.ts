@@ -51,6 +51,11 @@ describe('selectBrowserSecurityOriginModel', () => {
         expect(model).toEqual({ securityLevel: 'local', originLabel: '127.0.0.1:3000' });
     });
 
+    it('classifies a reserved localhost subdomain as local', () => {
+        const model = selectBrowserSecurityOriginModel(view({ securityOrigin: 'http://relay.localhost.:5173' }));
+        expect(model).toEqual({ securityLevel: 'local', originLabel: 'relay.localhost.:5173' });
+    });
+
     it('classifies a plaintext non-loopback http origin as insecure', () => {
         const model = selectBrowserSecurityOriginModel(view({ securityOrigin: 'http://insecure.example.test' }));
         expect(model).toEqual({ securityLevel: 'insecure', originLabel: 'insecure.example.test' });

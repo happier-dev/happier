@@ -66,6 +66,19 @@ const HANDOFF_ELIGIBLE_SESSION = {
     },
 } as const;
 
+const EXTERNAL_AGENT_HANDOFF_SESSION = {
+    metadata: {
+        machineId: 'machine_source',
+        runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'acme.agent',
+            agent: {
+                providerSessionId: 'external_vendor_session',
+            },
+        },
+    },
+} as const;
+
 function buildActiveDaemonTransferState(): unknown {
     return {
         transfer: {
@@ -166,6 +179,22 @@ function buildPredecessorLanOnlyDaemonTransferState(): unknown {
 }
 
 describe('resolveSessionHandoffUiAvailability', () => {
+    it('keeps the entry point available for an installed Agent and leaves handoff qualification to the daemon action', () => {
+        expect(resolveSessionHandoffUiAvailability({
+            sessionId: 'session-external-agent',
+            session: EXTERNAL_AGENT_HANDOFF_SESSION,
+            sessionHandoffFeatureEnabled: true,
+            serverSnapshot: buildReadyServerSnapshot({
+                directPeerEnabled: true,
+                serverRoutedEnabled: true,
+            }),
+            runtimeAvailability: 'reachable',
+        })).toEqual({
+            available: true,
+            reason: 'available',
+        });
+    });
+
     it('reads source-machine daemon transfer state from an explicit server scope when callers pass one', () => {
         state.preferredServerId = 'server-preferred-ignored';
         state.storageState.machineListByServerId = {

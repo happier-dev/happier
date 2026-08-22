@@ -1,18 +1,16 @@
 import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
 import type { PermissionMode } from './permissionTypes';
-import { normalizePermissionModeForGroup } from './permissionTypes';
-import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import type { AgentId } from '@/agents/catalog/catalog';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { normalizePermissionModeForAgentType } from './permissionModeOptions';
 
 export type AccountPermissionDefaults = Readonly<{
     byTargetKey: Record<string, PermissionMode>;
 }>;
 
-function normalizeForAgentType(mode: PermissionMode, agentType: AgentId): PermissionMode {
-    const group = getAgentCore(agentType).permissions.modeGroup;
-    const normalized = (parsePermissionIntentAlias(mode) ?? 'default') as PermissionMode;
-    return normalizePermissionModeForGroup(normalized, group);
+function normalizeForAgentType(mode: PermissionMode, agentType: string): PermissionMode {
+    return normalizePermissionModeForAgentType(mode, agentType);
 }
 
 export function readAccountPermissionDefaults(
@@ -34,7 +32,7 @@ export function readAccountPermissionDefaults(
 }
 
 export function resolveNewSessionDefaultPermissionMode(params: Readonly<{
-    agentType: AgentId;
+    agentType: string;
     backendTarget?: BackendTargetRefV2Input | null;
     accountDefaults: AccountPermissionDefaults;
     profileDefaultsByTargetKey?: Record<string, PermissionMode | undefined> | null;

@@ -321,6 +321,48 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
         });
     });
 
+    it('builds an external Agent resume from its current declaration and generic runtime descriptor', () => {
+        expect(buildResumeSessionBaseOptionsFromSession({
+            sessionId: 's1',
+            session: {
+                metadata: {
+                    machineId: 'm1',
+                    path: '/tmp',
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'acme-lifecycle',
+                        provider: { providerSessionId: 'acme-session-1' },
+                    },
+                },
+            } as any,
+            resumeCapabilityOptions: {
+                currentAgentCapabilities: {
+                    agentId: 'acme-lifecycle',
+                    identity: { pluginId: 'acme.lifecycle', localId: 'acme-lifecycle' },
+                    generation: 42,
+                    capabilities: {
+                        sessions: {
+                            open: ['create', 'resume', 'fork'],
+                            delivery: ['newTurn'],
+                            cancel: true,
+                        },
+                    },
+                },
+            },
+        })).toEqual({
+            sessionId: 's1',
+            machineId: 'm1',
+            directory: '/tmp',
+            backendTarget: { kind: 'backend', backendId: 'acme-lifecycle' },
+            resume: 'acme-session-1',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'acme-lifecycle',
+                agent: { providerSessionId: 'acme-session-1' },
+            },
+        });
+    });
+
     it('passes through permission mode overrides', () => {
         expect(buildResumeSessionBaseOptionsFromSession({
             sessionId: 's1',

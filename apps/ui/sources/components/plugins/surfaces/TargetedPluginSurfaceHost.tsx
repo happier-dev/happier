@@ -24,6 +24,7 @@ import {
 import type { PreparedDaemonPluginUiTargetedSurfaceMountV1 } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { BoundPluginSurfaceFacts } from './boundPluginSurfaceController';
 import type { PluginUiPrivateTargetedSurfacePresentation } from './pluginUiPrivatePresentationHost';
 import {
@@ -289,6 +290,7 @@ export function createTargetedPluginSurfaceBoundFacts(input: Readonly<{
     channel: PluginUiChannelV1;
     projectionGeneration?: number | string | null;
     pluginProjectionById?: Readonly<Record<string, PluginProjectionEntry>> | null;
+    pluginUiProjection?: PluginUiProjectionModel | null;
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     parentLifetime?: BoundPluginSurfaceFacts['parentLifetime'];
     interactionEnabled: boolean;
@@ -318,6 +320,7 @@ export function createTargetedPluginSurfaceBoundFacts(input: Readonly<{
             launchInput: physical.resourceLaunchInput,
         }),
         pluginProjectionById: input.pluginProjectionById,
+        pluginUiProjection: input.pluginUiProjection,
         targetedContributions: physical.targetedContributions,
         accountLifetime: input.accountLifetime,
         parentLifetime: input.parentLifetime,

@@ -57,6 +57,7 @@ import {
 import { emitPluginSettingChangedEvent } from '@/track/settingsAnalytics/emitPluginSettingChangedEvent';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
+    PluginSettingMultiSelectField,
     PluginSettingSelectField,
     PluginSettingSwitchField,
 } from './PluginSettingChoiceFields';
@@ -939,57 +940,6 @@ function PluginSettingDaemonSecretField(props: Readonly<{
             onCommit={() => commit('set')}
             onDelete={secretConfigured ? () => commit('delete') : undefined}
         />
-    );
-}
-
-function PluginSettingMultiSelectField(props: Readonly<{
-    pluginId: string;
-    group: PluginProjectionEditableSettingsGroup;
-    field: PluginProjectionEditableSettingField;
-    value: unknown;
-    disabled: boolean;
-    onChangeValue: (value: readonly unknown[]) => void;
-}>) {
-    const { theme } = useUnistyles();
-    const selectedValues = Array.isArray(props.value) ? props.value : [];
-    const selectedIds = new Set(selectedValues.map((value) => JSON.stringify(value)));
-    return (
-        <>
-            {(props.field.presentation?.options ?? []).map((option) => {
-                const optionId = JSON.stringify(option.value);
-                const selected = selectedIds.has(optionId);
-                return (
-                    <Item
-                        key={optionId}
-                        title={localizedPresentationText(option.title)}
-                        subtitle={localizedPresentationText(option.description) || undefined}
-                        icon={<Icon name="sliders-horizontal" size={29} color={theme.colors.text.secondary} />}
-                        rightElement={(
-                            <Switch
-                                value={selected}
-                                disabled={props.disabled}
-                                accessibilityLabel={localizedPresentationText(option.title)}
-                                onValueChange={() => {
-                                    const next = selected
-                                        ? selectedValues.filter((value) => JSON.stringify(value) !== optionId)
-                                        : [...selectedValues, option.value];
-                                    props.onChangeValue(next);
-                                }}
-                            />
-                        )}
-                        rightElementOutsidePressable
-                        showChevron={false}
-                        disabled={props.disabled}
-                        onPress={() => {
-                            const next = selected
-                                ? selectedValues.filter((value) => JSON.stringify(value) !== optionId)
-                                : [...selectedValues, option.value];
-                            props.onChangeValue(next);
-                        }}
-                    />
-                );
-            })}
-        </>
     );
 }
 

@@ -48,8 +48,8 @@ vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => tauriDesktopState.enabled,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => tauriDesktopState.enabled,
 }));
 
 vi.mock('@/components/systemTasks', async (importOriginal) => {

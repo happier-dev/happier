@@ -106,6 +106,14 @@ type PendingQueueSessionEncryption = Readonly<{
     encryptRawRecord: (record: RawRecord) => Promise<string>;
 }>;
 
+/**
+ * The separate capability an E2EE mutation needs: the Session's own keyed
+ * equality tag, from `SessionEncryption`.
+ */
+type PendingMutationEqualityTagOwner = Readonly<{
+    deriveInputEqualityTagV1: (canonicalIntent: string) => string;
+}>;
+
 export type PendingQueueEncryption = Readonly<{
     getSessionEncryption: (
         sessionId: string,
@@ -944,12 +952,30 @@ const PENDING_MESSAGE_MUTATION_FINGERPRINT_DOMAIN_V1 = 'happier.pending-message-
  * The authenticated client owns this one admitted-mutation fingerprint before
  * the content envelope becomes E2EE ciphertext. It lets the server recognize
  * only an exact response-loss retry after it atomically rotates the row key.
+ *
+ * The server never recomputes this value; it only compares the retry's against
+ * the one already stored on the rotated row. How it is derived is therefore
+ * entirely the client's choice, and the persisted Session mode decides it:
+ *
+ * - `plain` uploads the record itself, so an unkeyed digest of that same record
+ *   discloses nothing the server does not already hold and stays verifiable
+ *   against the stored content.
+ * - `e2ee` uploads ciphertext, so an unkeyed digest of the plaintext beside it
+ *   would hand the server a confirmation oracle for guessed message and
+ *   attachment content. The tag is keyed out of the Session's own encryption
+ *   material through `SessionEncryption.deriveInputEqualityTagV1`, which
+ *   the server cannot compute and so cannot test a candidate plaintext against.
+ *
+ * E2EE without usable Session material fails here rather than falling back to
+ * the plain derivation.
  */
 function derivePendingMessageMutationFingerprintV1(params: Readonly<{
     sessionId: string;
     predecessorLocalId: string;
     replacementLocalId: string;
     rawRecord: RawRecord;
+    sessionEncryptionMode: 'e2ee' | 'plain';
+    sessionEncryption: PendingMutationEqualityTagOwner | null;
 }>): string {
     const canonicalPayload = stableJsonStringify({
         v: 1,
@@ -959,8 +985,17 @@ function derivePendingMessageMutationFingerprintV1(params: Readonly<{
         messageRole: 'user',
         rawRecord: params.rawRecord,
     });
+    const canonicalIntent = `${PENDING_MESSAGE_MUTATION_FINGERPRINT_DOMAIN_V1}\u0000${canonicalPayload}`;
+    if (params.sessionEncryptionMode === 'e2ee') {
+        if (!params.sessionEncryption) {
+            throw new Error(`Session ${params.sessionId} not found`);
+        }
+        return PendingMessageMutationFingerprintV1Schema.parse(
+            params.sessionEncryption.deriveInputEqualityTagV1(canonicalIntent),
+        );
+    }
     return PendingMessageMutationFingerprintV1Schema.parse(encodeBase64(
-        sha256(utf8ToBytes(`${PENDING_MESSAGE_MUTATION_FINGERPRINT_DOMAIN_V1}\u0000${canonicalPayload}`)),
+        sha256(utf8ToBytes(canonicalIntent)),
         'base64url',
     ));
 }
@@ -2490,6 +2525,8 @@ export async function updatePendingMessageV2(params: {
             predecessorLocalId: localId,
             replacementLocalId: params.replacementLocalId,
             rawRecord,
+            sessionEncryptionMode,
+            sessionEncryption: sessionEncryption ?? null,
         })
         : undefined;
 

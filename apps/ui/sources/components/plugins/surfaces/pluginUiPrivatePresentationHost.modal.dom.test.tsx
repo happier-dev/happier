@@ -238,6 +238,7 @@ function createHostApi(
         version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: [] }),
         context: async () => context,
         watchContext: async () => ({ dispose() {} }),
+        publishCurrentUiContext: () => unexpectedHostApiCall('publishCurrentUiContext'),
         activeComposer: async () => unexpectedHostApiCall('activeComposer'),
         readComposer: async () => unexpectedHostApiCall('readComposer'),
         watchComposer: async () => unexpectedHostApiCall('watchComposer'),

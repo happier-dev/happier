@@ -31,7 +31,8 @@ type PreviewSuccess = Extract<DaemonMcpServersPreviewResponse, { ok: true }>;
 
 export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(props: Readonly<{
     agentItems: readonly DropdownMenuItem[];
-    selectedAgentTools: AgentCoreConfig['tools'];
+    /** Null when the selected Agent contributes no bundled tools declaration. */
+    selectedAgentTools: AgentCoreConfig['tools'] | null;
     selectedMachineId: string | null;
     selectedServerId: string | null;
     canExecute: boolean;
@@ -79,15 +80,17 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
                     variant="default"
                 />
 
-                <Item
-                    testID="settings.mcpServers.preview.delivery"
-                    title={t('settings.mcpServersPreviewDeliveryTitle')}
-                    subtitle={resolveAgentToolsDeliveryDescription(props.selectedAgentTools.delivery)}
-                    detail={resolveAgentToolsDeliveryLabel(props.selectedAgentTools.delivery)}
-                    icon={<Icon name="cpu" size={29} color={theme.colors.accent.green} />}
-                    showChevron={false}
-                    mode="info"
-                />
+                {props.selectedAgentTools ? (
+                    <Item
+                        testID="settings.mcpServers.preview.delivery"
+                        title={t('settings.mcpServersPreviewDeliveryTitle')}
+                        subtitle={resolveAgentToolsDeliveryDescription(props.selectedAgentTools.delivery)}
+                        detail={resolveAgentToolsDeliveryLabel(props.selectedAgentTools.delivery)}
+                        icon={<Icon name="cpu" size={29} color={theme.colors.accent.green} />}
+                        showChevron={false}
+                        mode="info"
+                    />
+                ) : null}
 
                 <Item
                     testID="settings.mcpServers.preview.directory"

@@ -66,8 +66,14 @@ export const PoolMembersSelectField = React.memo(function PoolMembersSelectField
         if (toAdd.length === 0 && toRemove.length === 0) return;
 
         if (toRemove.length > 0) {
+            // A candidate that vanished between opening the sheet and committing
+            // has no recognisable name left. Name it as unavailable rather than
+            // reading a canonical account id into an irreversible confirmation:
+            // titles here come from the shared qualified-target presenter, which
+            // deliberately never emits one.
             const removedTitles = toRemove.map((accountId) => (
-                candidates.find((candidate) => candidate.accountId === accountId)?.title ?? accountId
+                candidates.find((candidate) => candidate.accountId === accountId)?.title
+                ?? t('common.unavailable')
             ));
             const ok = await Modal.confirm(
                 t('connectedServices.detail.groupActions.removeMemberConfirmTitle'),

@@ -121,6 +121,7 @@ function PluginDetailCurrentContent(props: Readonly<{
                 pluginId={props.pluginId}
                 projection={props.projection}
                 registryDiagnostics={props.state.registryDiagnostics}
+                machineId={props.state.executionMachineId}
             />
         </ItemList>
     );

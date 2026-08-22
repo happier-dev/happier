@@ -1,4 +1,5 @@
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
+import { clampAutomationIntervalMinutes } from '@/sync/domains/automations/automationValidation';
 import { t, type TranslationKeyNoParams } from '@/text';
 
 export type AutomationCronPresetId =
@@ -78,23 +79,19 @@ export const AUTOMATION_CRON_PRESETS: ReadonlyArray<AutomationCronPreset> = [
     },
 ];
 
-function clampEveryMinutes(value: number): number {
-    return Math.min(Math.max(Math.floor(value), 1), 30 * 24 * 60);
-}
-
 function getIntervalUnitMultiplier(unit: AutomationIntervalUnit): number {
     return AUTOMATION_INTERVAL_UNITS.find((item) => item.id === unit)?.multiplierMinutes ?? 1;
 }
 
 export function deriveAutomationIntervalUnit(minutes: number): AutomationIntervalUnit {
-    const normalized = clampEveryMinutes(minutes);
+    const normalized = clampAutomationIntervalMinutes(minutes);
     if (normalized % (24 * 60) === 0) return 'days';
     if (normalized % 60 === 0) return 'hours';
     return 'minutes';
 }
 
 export function getAutomationIntervalUnitValue(minutes: number, unit: AutomationIntervalUnit): number {
-    return Math.max(1, Math.round(clampEveryMinutes(minutes) / getIntervalUnitMultiplier(unit)));
+    return Math.max(1, Math.round(clampAutomationIntervalMinutes(minutes) / getIntervalUnitMultiplier(unit)));
 }
 
 export function applyAutomationIntervalPreset(
@@ -104,7 +101,7 @@ export function applyAutomationIntervalPreset(
     return {
         ...draft,
         scheduleKind: 'interval',
-        everyMinutes: clampEveryMinutes(minutes),
+        everyMinutes: clampAutomationIntervalMinutes(minutes),
     };
 }
 
@@ -138,7 +135,7 @@ export function applyAutomationCronPreset(
 }
 
 export function formatIntervalPresetLabel(minutes: number): string {
-    const normalized = clampEveryMinutes(minutes);
+    const normalized = clampAutomationIntervalMinutes(minutes);
     if (normalized < 60) return `${normalized}m`;
     if (normalized % (24 * 60) === 0) return `${normalized / (24 * 60)}d`;
     const hours = normalized / 60;
@@ -156,7 +153,7 @@ export function formatAutomationScheduleTriggerLabel(draft: NewSessionAutomation
         return preset ? t(preset.labelKey) : (expr || '0 * * * *');
     }
 
-    return t('automations.form.sentence.intervalValue', { minutes: clampEveryMinutes(draft.everyMinutes) });
+    return t('automations.form.sentence.intervalValue', { minutes: clampAutomationIntervalMinutes(draft.everyMinutes) });
 }
 
 export function formatAutomationCadenceLabel(draft: NewSessionAutomationDraft): string {
@@ -168,5 +165,5 @@ export function formatAutomationCadenceLabel(draft: NewSessionAutomationDraft): 
             : t('automations.form.sentence.cronCadenceExpression', { expression: expr || '0 * * * *' });
     }
 
-    return t('automations.form.sentence.intervalCadence', { minutes: clampEveryMinutes(draft.everyMinutes) });
+    return t('automations.form.sentence.intervalCadence', { minutes: clampAutomationIntervalMinutes(draft.everyMinutes) });
 }

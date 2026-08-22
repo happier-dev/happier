@@ -9,7 +9,7 @@ import * as React from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import type { BrowserFrameNavigationCommand } from '@/components/browser/frame/types';
-import { invokeTauri, listenTauriEvent } from '@/utils/platform/tauri';
+import { invokeDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
 
 import { createPluginHostedWebNativeMessageBridge } from './nativeMessageBridge';
 
@@ -181,7 +181,7 @@ export function PluginHostedArtifactDesktopViewHost(props: DesktopArtifactViewPr
 
     const dispatchGuestMessage = React.useCallback((message: GuestMessage) => {
         if (!viewId || !openedRef.current || !mountedRef.current) return;
-        void invokeTauri<unknown>(POST_MESSAGE_COMMAND, {
+        void invokeDesktopHost<unknown>(POST_MESSAGE_COMMAND, {
             request: {
                 viewId,
                 token: props.artifact.artifactHandleToken,
@@ -269,7 +269,7 @@ export function PluginHostedArtifactDesktopViewHost(props: DesktopArtifactViewPr
         if (boundsEqual(lastBoundsRef.current, bounds) && lastVisibleRef.current === visible) return;
         lastBoundsRef.current = bounds;
         lastVisibleRef.current = visible;
-        void invokeTauri<unknown>(SET_BOUNDS_COMMAND, {
+        void invokeDesktopHost<unknown>(SET_BOUNDS_COMMAND, {
             request: {
                 viewId,
                 token: props.artifact.artifactHandleToken,
@@ -321,7 +321,7 @@ export function PluginHostedArtifactDesktopViewHost(props: DesktopArtifactViewPr
             pendingGuestMessagesRef.current = [];
             if (!openedRef.current) return;
             openedRef.current = false;
-            void invokeTauri<unknown>(CLOSE_VIEW_COMMAND, {
+            void invokeDesktopHost<unknown>(CLOSE_VIEW_COMMAND, {
                 request: {
                     viewId,
                     token: props.artifact.artifactHandleToken,
@@ -330,7 +330,7 @@ export function PluginHostedArtifactDesktopViewHost(props: DesktopArtifactViewPr
         };
         const open = async () => {
             try {
-                const removeListener = await listenTauriEvent<unknown>(HOST_EVENT, handleNativeEvent);
+                const removeListener = await listenDesktopHostEvent<unknown>(HOST_EVENT, handleNativeEvent);
                 if (disposed) {
                     removeListener();
                     return;
@@ -346,7 +346,7 @@ export function PluginHostedArtifactDesktopViewHost(props: DesktopArtifactViewPr
             }
             let result: unknown;
             try {
-                result = await invokeTauri<unknown>(OPEN_VIEW_COMMAND, {
+                result = await invokeDesktopHost<unknown>(OPEN_VIEW_COMMAND, {
                     request: {
                         viewId,
                         token: props.artifact.artifactHandleToken,
@@ -391,7 +391,7 @@ export function PluginHostedArtifactDesktopViewHost(props: DesktopArtifactViewPr
         const navigationCommand = props.navigationCommand;
         if (!isOpen || !viewId || !openedRef.current || navigationCommand?.kind !== 'goBack') return;
         let active = true;
-        void invokeTauri<unknown>(GO_BACK_COMMAND, {
+        void invokeDesktopHost<unknown>(GO_BACK_COMMAND, {
             request: {
                 viewId,
                 token: props.artifact.artifactHandleToken,

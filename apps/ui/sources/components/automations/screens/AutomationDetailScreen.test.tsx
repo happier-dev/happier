@@ -17,6 +17,7 @@ type AutomationScreenFixture = {
     description: string | null;
     trigger: AutomationV3DefinitionDetail['trigger'];
     targetType: 'newSession' | 'existingSession' | 'executionRun';
+    existingSessionId: string | null;
     templateVersion: number;
     sourceStatus?: {
         automationId: string;
@@ -88,6 +89,7 @@ const automationState = vi.hoisted((): { automation: AutomationScreenFixture; mi
         description: null as string | null,
         trigger: { kind: 'schedule' as const, schedule: { kind: 'interval' as const, everyMs: 60_000, scheduleExpr: null, timezone: null as string | null } },
         targetType: 'newSession' as const,
+        existingSessionId: null as string | null,
         templateVersion: 1,
         detail: { kind: 'unloaded' as const, templateVersion: 1 },
         linkedExistingSessionId: null as string | null,
@@ -121,48 +123,56 @@ installAutomationScreensCommonModuleMocks({
         });
         return expoRouterMock.module;
     },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key: string, params?: Record<string, unknown>) => {
-                const labels: Record<string, string> = {
-                    'automations.detail.runNowTitle': 'Run now',
-                    'automations.detail.loadMoreRuns': 'Load more runs',
-                    'automations.detail.editAutomation': 'Edit automation',
-                    'automations.detail.deleteAutomation': 'Delete automation',
-                    'automations.detail.machineAssignmentsTitle': 'Machine assignments',
-                    'automations.detail.event.watcherTitle': 'Observation watcher',
-                    'automations.detail.event.watcherUnwatched': 'Unwatched',
-                    'settingsPlugins.eventAutomationComposer.sourceStatusTitle': 'Observation source',
-                    'settingsPlugins.eventAutomationComposer.sourceCatalogStatusTitle': 'Catalog reconciliation',
-                    'automations.detail.runDetail.sourceInstance': 'Source instance',
-                    'automations.detail.runDetail.filter': 'Filter',
-                    'automations.detail.runDetail.target': 'Frozen target',
-                    'automations.detail.runDetail.outputCeiling': 'Output limit',
-                    'automations.detail.runDetail.executionRun': `Execution run · ${String(params?.permissionMode ?? '')}`,
-                    'settingsPlugins.eventAutomationComposer.sourceStatusState.backingOff': 'Waiting to retry',
-                    'settingsPlugins.eventAutomationComposer.sourceCatalogStatusState.reconciliationLate': 'Reconciliation delayed',
-                    'settingsPlugins.eventAutomationComposer.sourceStatusCode.rateLimited': 'Rate limited',
-                    'automations.detail.runMeta.origin.pluginEvent': 'Event',
-                    'automations.list.event': 'Event: repository-event-v1',
-                    'status.online': 'online',
-                    'status.offline': 'offline',
-                };
-                if (key === 'settingsPlugins.eventAutomationComposer.sourceStatusNextRetry') {
-                    return `Next retry: ${String(params?.time ?? '')}`;
-                }
-                if (key === 'settingsPlugins.eventAutomationComposer.sourceCatalogStatusObservedRevision') {
-                    return `Observed revision: ${String(params?.revision ?? '')}`;
-                }
-                if (key === 'settingsPlugins.eventAutomationComposer.sourceCatalogStatusAdoptedRevision') {
-                    return `Adopted revision: ${String(params?.revision ?? '')}`;
-                }
-                if (key === 'settingsPlugins.eventAutomationComposer.sourceCatalogStatusScanStarted') {
-                    return `Scan started: ${String(params?.time ?? '')}`;
-                }
-                return labels[key] ?? key;
-            },
-        });
+    text: {
+        translate: (key: string, params?: Record<string, unknown>) => {
+            const labels: Record<string, string> = {
+                'automations.detail.runNowTitle': 'Run now',
+                'automations.detail.loadMoreRuns': 'Load more runs',
+                'automations.detail.editAutomation': 'Edit automation',
+                'automations.detail.deleteAutomation': 'Delete automation',
+                'automations.detail.machineAssignmentsTitle': 'Machine assignments',
+                'automations.detail.event.watcherTitle': 'Observation watcher',
+                'automations.detail.event.watcherUnwatched': 'Unwatched',
+                'settingsPlugins.eventAutomationComposer.sourceStatusTitle': 'Observation source',
+                'settingsPlugins.eventAutomationComposer.sourceCatalogStatusTitle': 'Catalog reconciliation',
+                'automations.detail.runDetail.sourceInstance': 'Source instance',
+                'automations.detail.runDetail.filter': 'Filter',
+                'automations.detail.runDetail.target': 'Frozen target',
+                'automations.detail.runDetail.outputCeiling': 'Output limit',
+                'automations.detail.runDetail.executionRun': `Execution run · ${String(params?.permissionMode ?? '')}`,
+                'settingsPlugins.eventAutomationComposer.sourceStatusState.backingOff': 'Waiting to retry',
+                'settingsPlugins.eventAutomationComposer.sourceCatalogStatusState.reconciliationLate': 'Reconciliation delayed',
+                'settingsPlugins.eventAutomationComposer.sourceStatusCode.rateLimited': 'Rate limited',
+                'automations.detail.runMeta.origin.pluginEvent': 'Event',
+                'automations.detail.runMeta.state.queued': 'Queued',
+                'automations.detail.runMeta.state.claimed': 'Claimed',
+                'automations.detail.runMeta.state.running': 'Running',
+                'automations.detail.runMeta.state.succeeded': 'Succeeded',
+                'automations.detail.runMeta.state.failed': 'Failed',
+                'automations.detail.runMeta.state.cancelled': 'Cancelled',
+                'automations.detail.runMeta.state.expired': 'Expired',
+                'automations.detail.runMeta.state.dispatch_failed': 'Dispatch failed',
+                'automations.detail.runMeta.state.skipped': 'Skipped',
+                'automations.detail.runMeta.state.missed': 'Missed',
+                'automations.detail.runMeta.state.outcome_uncertain': 'Outcome uncertain',
+                'automations.list.event': 'Event: repository-event-v1',
+                'status.online': 'online',
+                'status.offline': 'offline',
+            };
+            if (key === 'settingsPlugins.eventAutomationComposer.sourceStatusNextRetry') {
+                return `Next retry: ${String(params?.time ?? '')}`;
+            }
+            if (key === 'settingsPlugins.eventAutomationComposer.sourceCatalogStatusObservedRevision') {
+                return `Observed revision: ${String(params?.revision ?? '')}`;
+            }
+            if (key === 'settingsPlugins.eventAutomationComposer.sourceCatalogStatusAdoptedRevision') {
+                return `Adopted revision: ${String(params?.revision ?? '')}`;
+            }
+            if (key === 'settingsPlugins.eventAutomationComposer.sourceCatalogStatusScanStarted') {
+                return `Scan started: ${String(params?.time ?? '')}`;
+            }
+            return labels[key] ?? key;
+        },
     },
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -269,6 +279,7 @@ describe('AutomationDetailScreen', () => {
             description: null,
             trigger: { kind: 'schedule', schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } },
             targetType: 'newSession',
+            existingSessionId: null,
             templateVersion: 1,
             detail: { kind: 'unloaded', templateVersion: 1 },
             linkedExistingSessionId: null,
@@ -357,6 +368,7 @@ describe('AutomationDetailScreen', () => {
                 },
             },
             targetType,
+            existingSessionId: targetType === 'existingSession' ? 'session-existing' : null,
             templateVersion: 3,
             nextRunAt: null,
             lastRunAt: null,
@@ -397,6 +409,7 @@ describe('AutomationDetailScreen', () => {
             description: null,
             trigger: detail.trigger,
             targetType,
+            existingSessionId: targetType === 'existingSession' ? 'session-existing' : null,
             templateVersion: 3,
             detail: { kind: 'available', templateVersion: 3, value: detail },
             linkedExistingSessionId: targetType === 'existingSession' ? 'session-existing' : null,
@@ -537,6 +550,7 @@ describe('AutomationDetailScreen', () => {
                 observation: { kind: 'checkpointedPull', watcher: null },
             },
             targetType: 'executionRun',
+            existingSessionId: null,
             templateVersion: 3,
             detail: {
                 kind: 'available',
@@ -554,6 +568,7 @@ describe('AutomationDetailScreen', () => {
                         observation: { kind: 'checkpointedPull', watcher: null },
                     },
                     targetType: 'executionRun',
+                    existingSessionId: null,
                     templateVersion: 3,
                     nextRunAt: null,
                     lastRunAt: null,
@@ -633,6 +648,7 @@ describe('AutomationDetailScreen', () => {
                 observation: { kind: 'checkpointedPull', watcher: null },
             },
             targetType: 'executionRun',
+            existingSessionId: null,
             templateVersion: 3,
             detail: {
                 kind: 'unavailable',
@@ -713,7 +729,7 @@ describe('AutomationDetailScreen', () => {
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
         const screen = await renderScreen(React.createElement(AutomationDetailScreen));
-        const runRow = findTestInstanceByTypeContainingText(screen, 'Pressable', 'QUEUED');
+        const runRow = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Queued');
 
         expect(runRow?.props.subtitle).toContain('Event');
     });
@@ -734,6 +750,7 @@ describe('AutomationDetailScreen', () => {
                 },
             },
             targetType: 'executionRun',
+            existingSessionId: null,
             executionRecipe: {
                 v: 1,
                 templateVersion: 3,
@@ -766,6 +783,7 @@ describe('AutomationDetailScreen', () => {
         automationState.automation = {
             ...automationState.automation,
             targetType: 'executionRun',
+            existingSessionId: null,
             templateVersion: 3,
             detail: {
                 kind: 'available',
@@ -1315,9 +1333,9 @@ describe('AutomationDetailScreen', () => {
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
         const screen = await renderScreen(React.createElement(AutomationDetailScreen));
-        const runRow = findTestInstanceByTypeContainingText(screen, 'Pressable', 'RUNNING');
+        const runRow = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Running');
         await act(async () => {
-            pressTestInstance(runRow, 'RUNNING');
+            pressTestInstance(runRow, 'Running');
         });
 
         expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);

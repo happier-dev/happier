@@ -17,8 +17,12 @@ import {
     formatCatalogSubtitle,
     formatDevelopmentPluginSubtitle,
     formatInstalledSubtitle,
+    formatPendingPluginChangeSubtitle,
+    formatPendingPluginChangeTitle,
+    readPendingPluginChangeListingId,
     type DevelopmentPluginEntry,
     type InstalledPluginEntry,
+    type PendingPluginChangeListing,
     type PluginMarketplaceActionRequest,
 } from './model/pluginMarketplaceModel';
 
@@ -73,6 +77,87 @@ export function InstalledPluginsSection(props: Readonly<{
                 />
             )}
         </ItemGroup>
+    );
+}
+
+/**
+ * The decisions this machine's daemon is holding for the present user.
+ *
+ * This is the app half of the agent-authored plugin loop: an Agent can prepare
+ * a plugin change but cannot approve source-root or package trust, so without
+ * this section its change is invisible and expires unanswered. The section is
+ * rendered only when something is actually waiting, so it reads as attention
+ * rather than as permanent furniture.
+ */
+export function PendingPluginChangesSection(props: Readonly<{
+    pendingChanges: readonly PendingPluginChangeListing[];
+    canRunActions: boolean;
+    isPluginActionInFlight: (pendingChangeId: string) => boolean;
+    onDecide: (pendingChangeId: string, decision: 'approve' | 'reject') => void;
+}>) {
+    const { theme } = useUnistyles();
+    if (props.pendingChanges.length === 0) return null;
+    return (
+        <View
+            testID="settings.plugins.management.pendingChanges"
+            accessibilityLiveRegion="polite"
+        >
+            <ItemGroup
+                title={t('settingsPlugins.pendingChangesTitle')}
+                footer={t('settingsPlugins.pendingChangesFooter')}
+            >
+                {props.pendingChanges.map((entry) => {
+                    const pendingChangeId = readPendingPluginChangeListingId(entry);
+                    const busy = props.isPluginActionInFlight(pendingChangeId);
+                    const decidable = entry.kind !== 'applying';
+                    return (
+                        <Item
+                            key={pendingChangeId}
+                            testID={`settings.plugins.management.pendingChanges.${pendingChangeId}`}
+                            title={formatPendingPluginChangeTitle(entry)}
+                            subtitle={formatPendingPluginChangeSubtitle(entry)}
+                            subtitleLines={0}
+                            icon={<Icon
+                                name={decidable ? 'shield-check' : 'arrow-clockwise'}
+                                size={29}
+                                color={decidable ? theme.colors.accent.indigo : theme.colors.text.secondary}
+                            />}
+                            showChevron={false}
+                            mode="info"
+                            rightElementOutsidePressable
+                            rightElement={decidable ? (
+                                <ItemRowActions
+                                    title={formatPendingPluginChangeTitle(entry)}
+                                    compactActionIds={['approve', 'reject']}
+                                    overflowTriggerTestID={`settings.plugins.management.pendingChanges.${pendingChangeId}.actions.overflow`}
+                                    actions={[
+                                        {
+                                            id: 'approve',
+                                            title: t('approvals.approve'),
+                                            subtitle: t('settingsPlugins.pendingChangesReviewHint'),
+                                            icon: 'check-circle',
+                                            inlineTestID: `settings.plugins.management.pendingChanges.${pendingChangeId}.action.approve`,
+                                            disabled: !props.canRunActions || busy,
+                                            onPress: () => props.onDecide(pendingChangeId, 'approve'),
+                                        },
+                                        {
+                                            id: 'reject',
+                                            title: t('approvals.reject'),
+                                            subtitle: t('settingsPlugins.pendingChangeConfirmRejectBody'),
+                                            icon: 'x-circle',
+                                            destructive: true,
+                                            inlineTestID: `settings.plugins.management.pendingChanges.${pendingChangeId}.action.reject`,
+                                            disabled: !props.canRunActions || busy,
+                                            onPress: () => props.onDecide(pendingChangeId, 'reject'),
+                                        },
+                                    ]}
+                                />
+                            ) : undefined}
+                        />
+                    );
+                })}
+            </ItemGroup>
+        </View>
     );
 }
 

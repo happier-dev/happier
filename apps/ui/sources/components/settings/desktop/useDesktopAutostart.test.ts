@@ -8,12 +8,12 @@ const invokeMock = vi.hoisted(() => vi.fn<(command: string, args?: Record<string
     async () => false,
 ));
 
-vi.mock('@/utils/platform/tauri', async () => {
-    const actual = await vi.importActual<typeof import('@/utils/platform/tauri')>('@/utils/platform/tauri');
+vi.mock('@/utils/platform/desktopHost', async () => {
+    const actual = await vi.importActual<typeof import('@/utils/platform/desktopHost')>('@/utils/platform/desktopHost');
     return {
         ...actual,
-        isTauriDesktop: () => desktopState.value,
-        invokeTauri: invokeMock,
+        isDesktopHost: () => desktopState.value,
+        invokeDesktopHost: invokeMock,
     };
 });
 

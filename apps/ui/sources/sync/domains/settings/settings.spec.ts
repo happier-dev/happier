@@ -84,6 +84,7 @@ describe('settings', () => {
             expect((settings as any).sessionListOrderingModeV1).toBe('custom');
             expect((settings as any).sessionListFolderSortModeV1).toBe('foldersFirst');
             expect((settings as any).sessionListAttentionPromotionModeV1).toBe('off');
+            expect((settings as any).sessionListAttentionStandingDefaultV1).toBe(false);
             expect((settings as any).sessionListWorkingPlacementModeV1).toBe('off');
             expect((settings as any).sessionListSeparateBackgroundWorkV1).toBe(false);
             expect((settings as any).compactSessionView).toBe(true);
@@ -660,9 +661,12 @@ describe('settings', () => {
             expect((parsed as any).agentInputHistoryScope).toBe('perSession');
         });
 
+        // Replay is the only fork strategy an Agent without native fork support
+        // has, so leaving it off by default removed the fork affordance
+        // entirely for those Agents. It is a product decision, pinned here.
         it('defaults app-level replay resume settings', () => {
             const parsed = settingsParse({} as any);
-            expect((parsed as any).sessionReplayEnabled).toBe(false);
+            expect((parsed as any).sessionReplayEnabled).toBe(true);
             expect((parsed as any).sessionReplayStrategy).toBe('recent_messages');
             expect((parsed as any).sessionReplayRecentMessagesCount).toBeGreaterThan(0);
             expect((parsed as any).sessionReplaySummaryRunnerV1).toBe(null);
@@ -846,6 +850,15 @@ describe('settings', () => {
             expect((settingsParse({
                 sessionListAttentionPromotionModeV1: 'invalid',
             } as any) as any).sessionListAttentionPromotionModeV1).toBe('off');
+        });
+
+        it('parses the session list attention standing default setting', () => {
+            expect((settingsParse({
+                sessionListAttentionStandingDefaultV1: true,
+            } as any) as any).sessionListAttentionStandingDefaultV1).toBe(true);
+            expect((settingsParse({
+                sessionListAttentionStandingDefaultV1: 'invalid',
+            } as any) as any).sessionListAttentionStandingDefaultV1).toBe(false);
         });
 
         it('parses the session list working placement mode setting', () => {

@@ -51,9 +51,17 @@ export function SessionAutomationsScreen(props: {
     const styles = stylesheet;
     const router = useRouter();
     const automations = useAutomations();
-    const unloadedExistingSessionDefinitions = React.useMemo(
+    // The definition owner publishes the existing-Session association on the
+    // bounded list, so only a retained predecessor template — whose
+    // association is readable solely by a client that can open it — still
+    // needs a direct private read. Answering the association question by
+    // fanning private detail reads across the whole Account is neither
+    // necessary nor privacy-preserving.
+    const undisclosedExistingSessionDefinitions = React.useMemo(
         () => automations.filter((automation) => (
-            automation.targetType === 'existingSession' && automation.detail.kind === 'unloaded'
+            automation.targetType === 'existingSession'
+            && automation.detail.kind === 'unloaded'
+            && automation.linkedExistingSessionId === null
         )),
         [automations],
     );
@@ -61,10 +69,10 @@ export function SessionAutomationsScreen(props: {
         () => new Set<string>(),
     );
     const directDetailsToResolve = React.useMemo(
-        () => unloadedExistingSessionDefinitions.filter((automation) => (
+        () => undisclosedExistingSessionDefinitions.filter((automation) => (
             !completedDirectDetailKeys.has(`${automation.id}\u0000${automation.templateVersion}`)
         )),
-        [completedDirectDetailKeys, unloadedExistingSessionDefinitions],
+        [completedDirectDetailKeys, undisclosedExistingSessionDefinitions],
     );
     const routeHydrationState = useHydrateSessionForRoute(
         props.sessionId,

@@ -4,10 +4,8 @@ const hostRuntime = vi.hoisted(() => ({
     platform: 'web' as 'web' | 'ios' | 'android',
     tauriDesktop: false,
 }));
-const desktopNativeAvailability = vi.hoisted(() => ({
-    platform: 'macos' as 'macos' | 'windows' | 'linuxX11',
-    available: true,
-    read: vi.fn(),
+const hostedArtifactNativeCapability = vi.hoisted(() => ({
+    invoke: vi.fn(),
 }));
 
 vi.mock('react-native', () => ({
@@ -18,12 +16,11 @@ vi.mock('react-native', () => ({
     },
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => hostRuntime.tauriDesktop,
-}));
-
-vi.mock('@/sync/domains/browser/adapters/desktopWebViewBridge', () => ({
-    readDesktopWebViewNativeAvailability: () => desktopNativeAvailability.read(),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => hostRuntime.tauriDesktop,
+    invokeDesktopHost: (command: string, args?: Record<string, unknown>) => args === undefined
+        ? hostedArtifactNativeCapability.invoke(command)
+        : hostedArtifactNativeCapability.invoke(command, args),
 }));
 
 describe('hosted web frame capability', () => {
@@ -32,13 +29,7 @@ describe('hosted web frame capability', () => {
     beforeEach(() => {
         hostRuntime.platform = 'web';
         hostRuntime.tauriDesktop = false;
-        desktopNativeAvailability.platform = 'macos';
-        desktopNativeAvailability.available = true;
-        desktopNativeAvailability.read.mockReset();
-        desktopNativeAvailability.read.mockImplementation(async () => ({
-            platform: desktopNativeAvailability.platform,
-            available: desktopNativeAvailability.available,
-        }));
+        hostedArtifactNativeCapability.invoke.mockReset();
     });
 
     afterEach(() => {
@@ -75,7 +66,7 @@ describe('hosted web frame capability', () => {
         expect(removeChild).toHaveBeenCalledWith(frame);
     });
 
-    it('reports direct Wry only when the incumbent native platform fact confirms macOS', async () => {
+    it('reports direct Wry only when the native hosted-Artifact owner confirms its exact adapter', async () => {
         const { resolveHostedWebFrameCapability } = await import('./hostedWebFrameCapability.web');
         Reflect.deleteProperty(globalThis, 'document');
 
@@ -89,19 +80,36 @@ describe('hosted web frame capability', () => {
         });
         hostRuntime.tauriDesktop = true;
 
-        desktopNativeAvailability.platform = 'windows';
-        expect(await resolveHostedWebFrameCapability()).toBeNull();
-
-        desktopNativeAvailability.platform = 'linuxX11';
-        expect(await resolveHostedWebFrameCapability()).toBeNull();
-
-        desktopNativeAvailability.platform = 'macos';
-        desktopNativeAvailability.available = false;
+        // The command is the native hosted-Artifact transport's fact. It
+        // intentionally contains no UI-side OS policy, so the same strict
+        // capability represents an exact Windows or Linux/X11 direct-Wry row
+        // once that native owner has admitted it.
+        hostedArtifactNativeCapability.invoke.mockResolvedValueOnce({
+            kind: 'available',
+            capability: { platform: 'desktop', adapter: 'wry' },
+        });
         expect(await resolveHostedWebFrameCapability()).toEqual({
             platform: 'desktop',
             adapter: 'wry',
         });
-        expect(desktopNativeAvailability.read).toHaveBeenCalledTimes(3);
+        expect(hostedArtifactNativeCapability.invoke).toHaveBeenCalledExactlyOnceWith(
+            'desktop_hosted_artifact_get_frame_capability',
+        );
+
+        hostedArtifactNativeCapability.invoke.mockResolvedValueOnce({
+            kind: 'unavailable',
+            code: 'desktop_hosted_artifact_platform_unavailable',
+        });
+        expect(await resolveHostedWebFrameCapability()).toBeNull();
+
+        hostedArtifactNativeCapability.invoke.mockResolvedValueOnce({
+            kind: 'available',
+            capability: { platform: 'desktop', adapter: 'wry', unexpected: true },
+        });
+        expect(await resolveHostedWebFrameCapability()).toBeNull();
+
+        hostedArtifactNativeCapability.invoke.mockRejectedValueOnce(new Error('native command unavailable'));
+        expect(await resolveHostedWebFrameCapability()).toBeNull();
         expect(createElement).not.toHaveBeenCalled();
     });
 

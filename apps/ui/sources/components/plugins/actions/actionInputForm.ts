@@ -5,6 +5,8 @@ import {
     type EffectiveActionInputField,
 } from '@happier-dev/protocol';
 
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+
 export type ActionInputFormPresentation = Readonly<{
     title: string;
     description: string | null;
@@ -172,12 +174,10 @@ export function createActionInputForm<
     let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
     const listeners = new Set<() => void>();
     const presentationAbortController = new AbortController();
-    // `AbortSignal.any` is the incumbent host composition primitive. The
-    // resulting signal is presentation-local, includes outer host retirement,
-    // and is passed through the submit callback to the canonical Action owner.
-    const signal = params.signal
-        ? AbortSignal.any([params.signal, presentationAbortController.signal])
-        : presentationAbortController.signal;
+    // The presentation signal includes outer host retirement and is passed
+    // through the submit callback to the canonical Action owner.
+    const mergedSignal = mergeAbortSignals([presentationAbortController.signal, params.signal]);
+    const signal = mergedSignal.signal;
     const submissionInFlightReason = params.submissionInFlightReason
         ?? ('submission_in_flight' as TUnavailableReason);
     const retiredReason = params.retiredReason ?? ('presentation_retired' as TStaleReason);
@@ -198,6 +198,7 @@ export function createActionInputForm<
         if (retired) return;
         retired = true;
         presentationAbortController.abort();
+        mergedSignal.dispose();
         clear();
         abortCleanup?.();
         abortCleanup = null;
@@ -288,9 +289,6 @@ export function createActionInputForm<
             let retainSafeInput = false;
             try {
                 const result = await params.submit(candidate, { signal });
-                if (retired || signal.aborted) {
-                    return { kind: 'stale', reason: retiredReason };
-                }
                 const outcome: ActionInputFormSubmitOutcome<
                     TResult,
                     TUnavailableReason,

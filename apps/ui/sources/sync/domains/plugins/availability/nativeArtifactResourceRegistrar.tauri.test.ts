@@ -72,6 +72,36 @@ describe('Tauri desktop Artifact registrar', () => {
         });
     });
 
+    it('preserves only the Windows Wry origin bound to the registered Artifact partition', async () => {
+        const frameOrigin = `https://happier-hosted-artifact.${registration.storagePartitionId}`;
+        const registrar = createTauriPluginNativeArtifactResourceRegistrar({
+            // Test boundary fixture: Windows Wry maps the registered custom
+            // scheme to this exact HTTPS origin before guest bootstrap runs.
+            invoke: async <T>(): Promise<T> => ({
+                kind: 'registered',
+                frameOrigin,
+            } as unknown as T),
+        });
+
+        await expect(registrar.register(registration)).resolves.toEqual({
+            kind: 'registered',
+            frameOrigin,
+        });
+
+        const mismatchedPartitionRegistrar = createTauriPluginNativeArtifactResourceRegistrar({
+            // The origin is authority-bearing bridge input, not an arbitrary
+            // native string: it must be tied to this registration's partition.
+            invoke: async <T>(): Promise<T> => ({
+                kind: 'registered',
+                frameOrigin: `https://happier-hosted-artifact.hpa_${'z'.repeat(64)}`,
+            } as unknown as T),
+        });
+        await expect(mismatchedPartitionRegistrar.register(registration)).resolves.toEqual({
+            kind: 'unavailable',
+            code: 'native_artifact_resource_registration_failed',
+        });
+    });
+
     it('preserves the typed multi-profile unavailability returned by unsupported desktop targets', async () => {
         const registrar = createTauriPluginNativeArtifactResourceRegistrar({
             // Test boundary fixture for the strict native registration union.

@@ -6,9 +6,14 @@ import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/acti
 
 import {
     adaptDaemonContributionRegistryProjectionToMergedProjectionInputs,
+    readProjectedAgentUiBehaviorDescriptors,
     type PluginProjectionDiagnostic,
     type PluginProjectionEntry,
 } from './daemonContributionRegistryProjectionAdapters';
+import {
+    clearProjectedAgentUiBehaviorDescriptors,
+    publishProjectedAgentUiBehaviorDescriptors,
+} from '@/agents/registry/agentUiBehaviorProjection';
 import type {
     MergedBackendProjectionEntry,
     MergedProviderProjectionEntry,
@@ -106,6 +111,7 @@ let targetAccountLifetimeIdentities = new WeakMap<ActiveServerAccountScopeLifeti
 
 export function clearDaemonMergedProjectionCacheForTests(): void {
     PROJECTION_CACHE.clear();
+    clearProjectedAgentUiBehaviorDescriptors();
     LATEST_PROJECTION_REQUEST.clear();
     MOUNTED_TARGET_CACHE_SCOPES.clear();
     nextTargetAccountLifetimeIdentity = 0;
@@ -522,6 +528,15 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
         }
 
         const adapted = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(res.projection);
+        // The machine-wide read is the one place that sees every installed
+        // Agent, so it owns this machine's descriptor set. A target-scoped
+        // read sees one plugin and must not retire the rest.
+        if (!params.mountedTarget) {
+            publishProjectedAgentUiBehaviorDescriptors({
+                machineId: normalizeKeyPart(params.machineId),
+                descriptorsByAgentId: readProjectedAgentUiBehaviorDescriptors(adapted.mergedProviderProjectionById),
+            });
+        }
         const previous = PROJECTION_CACHE.get(cacheKey);
         const targetedSurfaceMountPreparation = res.targetedSurfaceMounts === undefined
             ? undefined

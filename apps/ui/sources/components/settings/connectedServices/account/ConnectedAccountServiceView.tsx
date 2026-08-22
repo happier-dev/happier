@@ -63,6 +63,7 @@ import {
     ConnectedAccountServiceContent,
     type ConnectedAccountServiceProfile,
 } from './ConnectedAccountServiceContent';
+import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
 
 type ServiceDescription = Extract<
     ConnectedAccountDaemonControlResponse,
@@ -91,12 +92,6 @@ type PendingIntent =
 function asStringParam(value: unknown): string {
     if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0].trim() : '';
     return typeof value === 'string' ? value.trim() : '';
-}
-
-function localizedText(
-    value: string | Readonly<{ fallback: string }> | undefined,
-): string {
-    return typeof value === 'string' ? value : value?.fallback ?? '';
 }
 
 function toControlTarget(
@@ -257,22 +252,24 @@ const ConnectedAccountServiceController = React.memo(
                 status: 'ready' as const,
                 transport:
                     projectDaemonPeerTransport(description.operationTransport),
-                error: null,
+                errorCode: null,
             };
         }
         // No transport AND a failed description read is the only way this route
         // learns the peer cannot be resolved at all; without emitting it, the
         // groups hook would report "unsupported" for what is really a failure.
+        // The raw daemon code travels as a CODE; the groups hook owns turning it
+        // into copy, exactly as this screen's own error row does below.
         return errorCode
             ? {
                 status: 'error' as const,
                 transport: null,
-                error: errorCode,
+                errorCode,
             }
             : {
                 status: 'loading' as const,
                 transport: null,
-                error: null,
+                errorCode: null,
             };
     }, [description?.operationTransport, errorCode]);
     const groups = useQualifiedConnectedAccountGroups({
@@ -621,7 +618,7 @@ const ConnectedAccountServiceController = React.memo(
         account: QualifiedConnectedAccountRef,
         options?: Readonly<{ alreadyConfirmed?: boolean }>,
     ): Promise<boolean> => {
-        const serviceLabel = localizedText(description?.descriptor.title) || serviceId;
+        const serviceLabel = resolveProjectedLocalizedText(description?.descriptor.title) || serviceId;
         const confirmed = options?.alreadyConfirmed === true || await Modal.confirm(
             t('modals.disconnect'),
             t('connectedServices.detail.disconnectConfirmBody', {
@@ -745,7 +742,7 @@ const ConnectedAccountServiceController = React.memo(
                     testIDPrefix="connected-account-target"
                 />
                 <ItemGroup
-                    title={localizedText(registryEntry?.projectedTitle)
+                    title={resolveProjectedLocalizedText(registryEntry?.projectedTitle)
                         || serviceId
                         || t('connectedServices.title')}
                 >
@@ -759,8 +756,8 @@ const ConnectedAccountServiceController = React.memo(
         );
     }
 
-    const title = localizedText(description?.descriptor.title)
-        || localizedText(registryEntry?.projectedTitle)
+    const title = resolveProjectedLocalizedText(description?.descriptor.title)
+        || resolveProjectedLocalizedText(registryEntry?.projectedTitle)
         || serviceId;
     // ONE projection of the daemon transport (the `accountPeer` memo) answers
     // every peer-capability question on this route, so a second copy cannot drift
@@ -1005,7 +1002,7 @@ const ConnectedAccountServiceController = React.memo(
             {attempt?.status === 'awaitingManual' && activeMode?.kind === 'manual' ? (
                 <ConnectedAccountManualForm
                     key={attempt.attemptId}
-                    title={localizedText(activeMode.title) || title}
+                    title={resolveProjectedLocalizedText(activeMode.title) || title}
                     fields={activeMode.fields}
                     submitting={busy}
                     onSubmit={({ fields }) => runAuthentication({
@@ -1051,7 +1048,7 @@ const ConnectedAccountServiceController = React.memo(
             {configuration && activeMode?.configuration ? (
                 <ConnectedAccountConfigurationForm
                     key={`${configuration.generation}:${configuration.configuration.revision ?? 'new'}`}
-                    title={localizedText(activeMode.title) || title}
+                    title={resolveProjectedLocalizedText(activeMode.title) || title}
                     fields={activeMode.configuration.fields}
                     values={configuration.configuration.values}
                     configuredSecretFieldIds={
@@ -1247,7 +1244,7 @@ export function ConnectedAccountServiceView() {
     );
     const headerTitle = focusedRoute?.focus?.kind === 'group'
         ? t('connectedServices.detail.groupDetail.routeTitle')
-        : localizedText(focusedRoute?.entry.projectedTitle) || t('settings.connectedServices');
+        : resolveProjectedLocalizedText(focusedRoute?.entry.projectedTitle) || t('settings.connectedServices');
     const navigation = useNavigation();
     React.useLayoutEffect(() => {
         // `useNavigation` returns null when this renders outside a navigator

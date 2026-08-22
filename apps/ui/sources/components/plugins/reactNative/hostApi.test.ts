@@ -9,7 +9,7 @@ import {
     type PluginUiJsonValueV1,
     type PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
-import type { PluginReference } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, type PluginReference } from '@happier-dev/plugin-sdk';
 import type { ResourceSubscriptionEvent, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -332,7 +332,7 @@ describe('canonical React Native plugin Host API adapter', () => {
 
             await expect(establishment).rejects.toMatchObject({
                 code: 'unavailable',
-                diagnostics: ['aborted'],
+                diagnostics: [{ code: 'aborted', severity: 'error' }],
             });
             resolveEstablishment?.(null);
             await vi.waitFor(() => {
@@ -609,7 +609,7 @@ describe('canonical React Native plugin Host API adapter', () => {
 
             await expect(firstEstablishment).rejects.toMatchObject({
                 code: 'unavailable',
-                diagnostics: ['aborted'],
+                diagnostics: [{ code: 'aborted', severity: 'error' }],
             });
             expect(adapter.publishResourceSubscriptionEvent({
                 version: 1,
@@ -1120,11 +1120,19 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         // outcome leaves a usable settlement behind.
         const failed = await select();
         executionOutcome = 'failure';
-        await expect(adapter.api.executeAction(
+        const failure = await adapter.api.executeAction(
             outerAction,
             outerInput,
             terminalOptions(failed),
-        )).rejects.toMatchObject({ code: 'internal_error' });
+        ).catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(PluginError);
+        expect(isPluginError(failure)).toBe(true);
+        expect(failure).toMatchObject({
+            name: 'PluginError',
+            code: 'internal_error',
+            retryable: false,
+            diagnostics: [{ code: 'host_api_handler_failed', severity: 'error' }],
+        });
         await expect(adapter.api.executeAction(outerAction, outerInput, {
             selectedActionInput: carrier(failed),
         })).rejects.toMatchObject({ code: 'invalid_payload' });
@@ -1212,21 +1220,43 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
             },
         });
 
-        await expect(adapter.api.confirm('Delete the preview?', { signal: controller.signal }))
-            .rejects.toMatchObject({ code: 'unavailable', diagnostics: ['aborted'] });
+        const failure = await adapter.api.confirm('Delete the preview?', { signal: controller.signal })
+            .catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(PluginError);
+        expect(isPluginError(failure)).toBe(true);
+        expect(failure).toMatchObject({
+            name: 'PluginError',
+            code: 'unavailable',
+            retryable: true,
+            diagnostics: [{ code: 'aborted', severity: 'error' }],
+        });
     });
 
     it('refuses an uninstalled method with a typed diagnostic instead of dispatching it', async () => {
         const adapter = createAdapterOverHost({});
 
         await expect(adapter.api.executeAction('plugin.preview.open', null)).rejects.toMatchObject({
+            name: 'PluginError',
             code: 'unsupported_method',
-            diagnostics: ['host_api_method_not_installed:executeAction'],
+            retryable: false,
+            diagnostics: [{ code: 'host_api_method_not_installed:executeAction', severity: 'error' }],
         });
         await expect(adapter.api.readClipboard()).rejects.toMatchObject({
+            name: 'PluginError',
             code: 'unsupported_method',
-            diagnostics: ['host_api_method_not_installed:readClipboard'],
+            retryable: false,
+            diagnostics: [{ code: 'host_api_method_not_installed:readClipboard', severity: 'error' }],
         });
+        // The public SDK shape always exposes this mount-bound method. A host
+        // outside the AppShell current-UI registry must therefore reject it
+        // through the incumbent negotiated-method boundary, never turn it
+        // into a silent no-op or synthesize a fallback context owner.
+        expect(() => adapter.api.publishCurrentUiContext(null)).toThrow(expect.objectContaining({
+            name: 'PluginError',
+            code: 'unsupported_method',
+            retryable: false,
+            diagnostics: [{ code: 'host_api_method_not_installed:publishCurrentUiContext', severity: 'error' }],
+        }));
         // UI-D03: a mount with no valid surface fact installs nothing, so
         // `watchContext` cannot pretend to be a live subscription that delivers
         // one snapshot and retires nothing.
@@ -1242,6 +1272,75 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         });
     });
 
+    it('refuses a transiently narrowed method as retryable rather than unsupported', async () => {
+        // The adapter deliberately outlives a daemon reconnect, so its method
+        // set is a CURRENT availability fact. Answering a merely unreachable
+        // daemon-owned method with `unsupported_method` tells the author the
+        // mount can never serve it and turns an outage into a permanent
+        // capability verdict.
+        let daemonReachable = false;
+        const host = createPluginSurfaceHostApi({
+            surfaceContext: surface,
+            handlers: {
+                readResource: async () => ({ ok: true }),
+                watchResource: async () => ({ ok: true }),
+            },
+            isMethodAvailable: (method) => method === 'context' || daemonReachable,
+        });
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter({
+            surface: canonicalSurface,
+            requestSurface: surface,
+            requestIdPrefix: 'rn-narrowed',
+            handleRequest: host.handleRequest,
+            installedMethods: host.installedMethods,
+            getInstalledMethods: () => host.installedMethods,
+            getAdmissionMethods: () => host.admissionMethods,
+        });
+
+        expect(adapter.api.version().methods).not.toContain('watchResource');
+        await expect(adapter.api.watchResource(
+            { pluginId: 'acme.preview', localId: 'review-summary' },
+            () => undefined,
+        )).rejects.toMatchObject({
+            name: 'PluginError',
+            code: 'unavailable',
+            retryable: true,
+            diagnostics: [{ code: 'host_api_method_unavailable:watchResource', severity: 'error' }],
+        });
+
+        // A method this mount never installs stays permanently unsupported.
+        await expect(adapter.api.readClipboard()).rejects.toMatchObject({
+            name: 'PluginError',
+            code: 'unsupported_method',
+            retryable: false,
+            diagnostics: [{ code: 'host_api_method_not_installed:readClipboard', severity: 'error' }],
+        });
+
+        daemonReachable = true;
+        expect(adapter.api.version().methods).toContain('watchResource');
+
+        // Control for the collapse this replaces: an adapter with no structural
+        // source cannot tell the two apart, so every absence is reported as the
+        // permanent verdict — which is exactly what the mounted surface used to
+        // hand the Resource store for a merely unreachable daemon.
+        daemonReachable = false;
+        const withoutAdmissionSource = createCanonicalPluginReactNativeHostApiAdapter({
+            surface: canonicalSurface,
+            requestSurface: surface,
+            requestIdPrefix: 'rn-narrowed-control',
+            handleRequest: host.handleRequest,
+            installedMethods: host.installedMethods,
+            getInstalledMethods: () => host.installedMethods,
+        });
+        await expect(withoutAdmissionSource.api.watchResource(
+            { pluginId: 'acme.preview', localId: 'review-summary' },
+            () => undefined,
+        )).rejects.toMatchObject({
+            code: 'unsupported_method',
+            retryable: false,
+        });
+    });
+
     it('serves an installed method through the real host handler', async () => {
         const seen: PluginUiHostApiRequestEnvelopeV1[] = [];
         const adapter = createAdapterOverHost({
@@ -1254,6 +1353,58 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         await expect(adapter.api.executeAction('plugin.preview.open', null))
             .resolves.toEqual({ actionId: 'opened' });
         expect(seen.map((request) => request.method)).toEqual(['executeAction']);
+    });
+
+    it('forwards mount-bound current-UI replacement and clear data through the real host handler', async () => {
+        const seen: PluginUiHostApiRequestEnvelopeV1[] = [];
+        const adapter = createAdapterOverHost({
+            publishCurrentUiContext: async (request) => {
+                seen.push(request);
+                return null;
+            },
+        });
+        const enrichment = {
+            entity: {
+                kind: 'review',
+                label: 'Current review',
+            },
+            commands: [{
+                title: 'Open detail',
+                command: {
+                    kind: 'openSurface' as const,
+                    destination: 'detail',
+                },
+            }],
+        };
+
+        adapter.api.publishCurrentUiContext(enrichment);
+        adapter.api.publishCurrentUiContext(null);
+
+        await vi.waitFor(() => expect(seen).toHaveLength(2));
+        expect(seen.map((request) => ({ method: request.method, payload: request.payload }))).toEqual([
+            {
+                method: 'publishCurrentUiContext',
+                payload: { enrichment },
+            },
+            {
+                method: 'publishCurrentUiContext',
+                payload: { enrichment: null },
+            },
+        ]);
+    });
+
+    it('preserves an Action result whose domain payload happens to carry a host error code', async () => {
+        const adapter = createAdapterOverHost({
+            executeAction: async () => ({
+                code: 'timeout',
+                outcome: 'domain-success',
+            }),
+        });
+
+        await expect(adapter.api.executeAction('plugin.preview.report', null)).resolves.toEqual({
+            code: 'timeout',
+            outcome: 'domain-success',
+        });
     });
 
     it('forwards the selected opaque openable-content binding through the real mounted host', async () => {
@@ -1358,7 +1509,10 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
             expectedRevision: 'workspace-file:5:1',
             maxBytes: 1024,
         }, { signal: controller.signal }))
-            .rejects.toMatchObject({ code: 'unavailable', diagnostics: ['aborted'] });
+            .rejects.toMatchObject({
+                code: 'unavailable',
+                diagnostics: [{ code: 'aborted', severity: 'error' }],
+            });
     });
 
     it('refuses a runtime Action reference outside the Protocol raw request grammar before forwarding', async () => {

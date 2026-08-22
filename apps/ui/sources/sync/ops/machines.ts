@@ -40,6 +40,7 @@ import {
 } from '../domains/session/spawn/spawnAttemptNonceStore';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '../domains/session/spawn/spawnSessionRpcTimeout';
 import { storage } from '../domains/state/storage';
+import { readMachineDaemonCliVersionForServerScope } from '../domains/machines/readMachineDaemonCliVersionForServerScope';
 import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
@@ -137,8 +138,13 @@ function resolveSpawnAttemptTargetFingerprint(params: Readonly<{
 }
 
 function readMachineDaemonCliVersion(machineId: string): string | null {
-    const rawVersion = storage.getState().machines[machineId]?.daemonState?.startedWithCliVersion;
-    return typeof rawVersion === 'string' && rawVersion.trim().length > 0 ? rawVersion.trim() : null;
+    const state = storage.getState();
+    return readMachineDaemonCliVersionForServerScope({
+        state,
+        machineId,
+        serverId: state.profileScope?.serverId,
+        activeServerId: state.profileScope?.serverId,
+    });
 }
 
 function remapLegacyDirectoryCompatibilityError(params: Readonly<{

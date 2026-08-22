@@ -20,6 +20,7 @@ import {
     CatalogEntriesSection,
     DevelopmentPluginsSection,
     InstalledPluginsSection,
+    PendingPluginChangesSection,
     PluginDiagnosticsSnapshotSection,
 } from './PluginMarketplaceSections';
 import { buildPluginDetailRoute } from './model/pluginDetailRoute';
@@ -148,6 +149,18 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                     onRetry={state.refreshPluginTruth}
                 />
             ) : null}
+
+            {/*
+              * Above the management views on purpose: a change waiting on this
+              * user is attention, not one tab's content. A change an Agent
+              * prepared has no other route into the app at all.
+              */}
+            <PendingPluginChangesSection
+                pendingChanges={state.pendingPluginChanges}
+                canRunActions={state.daemonOperationsAvailable}
+                isPluginActionInFlight={state.isPluginActionInFlight}
+                onDecide={state.decidePendingPluginChange}
+            />
 
             <PluginAccountDataEraseRecoverySection
                 testID="settings.plugins.accountDataErase"

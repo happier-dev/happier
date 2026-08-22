@@ -3378,6 +3378,100 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(orderedTexts).toEqual(['older', 'latest']);
     });
 
+    it('refuses a truncated older page instead of splicing replacement rows into the accepted transcript', async () => {
+        const sessionId = 'direct_session_older_truncated';
+        storage.getState().applySessions([createExternalSession(sessionId)]);
+        const readTexts = () => {
+            const sessionMessages = storage.getState().sessionMessages[sessionId];
+            return (sessionMessages?.messageIdsOldestFirst ?? [])
+                .map((id) => sessionMessages?.messagesById[id])
+                .filter((message): message is NonNullable<typeof message> => Boolean(message))
+                .filter((message) => message.kind === 'user-text')
+                .map((message) => message.text);
+        };
+        let textsObservedAtHydration: string[] | null = null;
+        machineExternalSessionTranscriptPageMock
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [
+                    {
+                        id: 'accepted-msg-2',
+                        createdAtMs: 2,
+                        raw: { role: 'user', content: { type: 'text', text: 'accepted' } },
+                    },
+                ],
+                nextCursor: 'older-cursor-accepted',
+                hasMore: true,
+            })
+            // A physical source replacement: the older page is nonempty but discontinuous.
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [
+                    {
+                        id: 'replacement-msg-1',
+                        createdAtMs: 1,
+                        raw: { role: 'user', content: { type: 'text', text: 'spliced replacement' } },
+                    },
+                ],
+                nextCursor: 'older-cursor-replacement',
+                hasMore: true,
+                truncated: true,
+            })
+            // The existing replacement hydration re-reads the source from its head.
+            .mockImplementationOnce(async () => {
+                textsObservedAtHydration = readTexts();
+                return {
+                    ok: true,
+                    items: [
+                        {
+                            id: 'rehydrated-msg-1',
+                            createdAtMs: 3,
+                            raw: { role: 'user', content: { type: 'text', text: 'rehydrated' } },
+                        },
+                    ],
+                    nextCursor: null,
+                    hasMore: false,
+                };
+            });
+        machineExternalSessionTranscriptReadAfterMock
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [],
+                nextCursor: 'tail-cursor-accepted',
+                truncated: false,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [],
+                nextCursor: 'tail-cursor-rehydrated',
+                truncated: false,
+            });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = { getSessionEncryption: () => null };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+        expect(readTexts()).toEqual(['accepted']);
+
+        const result = await (sync as any).loadOlderMessages(sessionId);
+
+        // Zero rows applied from the truncated page.
+        expect(result.loaded).toBe(0);
+        expect(textsObservedAtHydration).toEqual(['accepted']);
+        // The truncated page's cursor is never committed as the accepted cursor.
+        expect((sync as any).externalSessionOlderCursorBySessionId.get(sessionId))
+            .not.toBe('older-cursor-replacement');
+        // The existing source-replacement hydration ran: a fresh head read, no cursor.
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledTimes(3);
+        expect(machineExternalSessionTranscriptPageMock.mock.calls[2]?.[0]).toEqual(
+            expect.objectContaining({ direction: 'older' }),
+        );
+        expect(machineExternalSessionTranscriptPageMock.mock.calls[2]?.[0]?.cursor).toBeUndefined();
+        expect(readTexts()).toEqual(['rehydrated']);
+    });
+
     it('replaces the live transcript without reusing the losing link generation cursor after relink', async () => {
         const sessionId = 'direct_session_relink_authority';
         storage.getState().applySessions([createExternalSession(sessionId)]);

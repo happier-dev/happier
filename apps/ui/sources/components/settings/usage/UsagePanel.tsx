@@ -2,6 +2,9 @@ import React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useAuth } from '@/auth/context/AuthContext';
+import { usePublishCurrentUiContext } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import type { CurrentUiContextMountedEnrichment } from '@/components/appShell/currentUiContext/currentUiContextModel';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
 import { useConnectedServiceQuotaSummaries } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
@@ -17,6 +20,7 @@ import { UsageAnalyticsDashboard } from './UsageAnalyticsDashboard';
 import { SessionUsageDrilldownFrame } from './SessionUsageDrilldownFrame';
 import { UsageLoadingSkeleton } from './sections';
 import { useUsageAnalyticsQuery } from '@/sync/api/account/useUsageAnalyticsQuery';
+import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 
 type UsagePanelProps = {
     sessionId?: string;
@@ -60,6 +64,13 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.background.canvas,
     },
 }));
+
+function UsagePanelCurrentUiContext(props: Readonly<{
+    enrichment: CurrentUiContextMountedEnrichment | null;
+}>): null {
+    usePublishCurrentUiContext(props.enrichment);
+    return null;
+}
 
 export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilters, onFiltersChange, contentBottomInset }) => {
     const auth = useAuth();
@@ -149,48 +160,69 @@ export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilter
         () => buildConnectedServiceQuotaSummaryCards(connectedServiceQuotaSummaries),
         [connectedServiceQuotaSummaries],
     );
+    const isAccountUsageScreen = sessionId === undefined;
+    const currentUiContextEnrichment = React.useMemo<CurrentUiContextMountedEnrichment | null>(() => {
+        if (!isAccountUsageScreen) return null;
+        const periodLabel = t(getUsagePeriodDefinition(period).translationKey);
+        const metricLabel = metric === 'cost' ? t('usage.cost') : t('usage.tokens');
+        return {
+            entity: {
+                kind: 'usage_summary',
+                label: t('usage.summary.title'),
+                summary: `${periodLabel} · ${metricLabel}`,
+            },
+        };
+    }, [isAccountUsageScreen, metric, period]);
 
-    if (loading && usageData == null) {
-        // Skeletons that echo sections 1–3 while the first response is in
-        // flight — never a spinner (L6 loading contract).
-        return (
+    const content = loading && usageData == null
+        ? (
+            // Skeletons that echo sections 1–3 while the first response is in
+            // flight — never a spinner (L6 loading contract).
             <View style={styles.loadingContainer}>
                 <UsageLoadingSkeleton />
             </View>
+        )
+        : (
+            <>
+                {sessionId ? (
+                    <SessionUsageDrilldownFrame sessionId={sessionId} />
+                ) : null}
+                <UsageAnalyticsDashboard
+                    viewModel={viewModel}
+                    connectedServiceQuotaCards={connectedServiceQuotaCards}
+                    connectedServiceQuotasRefreshing={connectedServiceQuotaSummariesRefreshing}
+                    showConnectedServiceQuotaSectionWhenEmpty={hasConnectedServiceQuotaProfiles}
+                    filters={{ period, metric, costMode, focus }}
+                    sessionId={sessionId}
+                    contentBottomInset={contentBottomInset}
+                    isRefreshing={loading && usageData != null}
+                    errorMessage={errorMessage}
+                    onPeriodChange={(nextPeriod) => {
+                        setPeriod(nextPeriod);
+                    }}
+                    onMetricChange={(nextMetric) => {
+                        setMetric(nextMetric);
+                    }}
+                    onCostModeChange={(nextCostMode) => {
+                        setCostMode(nextCostMode);
+                    }}
+                    onFocusChange={(nextFocus) => {
+                        setFocus(nextFocus);
+                    }}
+                    onRetry={() => {
+                        setReloadToken((value) => value + 1);
+                    }}
+                />
+            </>
         );
-    }
 
     return (
-        <>
-            {sessionId ? (
-                <SessionUsageDrilldownFrame sessionId={sessionId} />
-            ) : null}
-            <UsageAnalyticsDashboard
-                viewModel={viewModel}
-                connectedServiceQuotaCards={connectedServiceQuotaCards}
-                connectedServiceQuotasRefreshing={connectedServiceQuotaSummariesRefreshing}
-                showConnectedServiceQuotaSectionWhenEmpty={hasConnectedServiceQuotaProfiles}
-                filters={{ period, metric, costMode, focus }}
-                sessionId={sessionId}
-                contentBottomInset={contentBottomInset}
-                isRefreshing={loading && usageData != null}
-                errorMessage={errorMessage}
-                onPeriodChange={(nextPeriod) => {
-                    setPeriod(nextPeriod);
-                }}
-                onMetricChange={(nextMetric) => {
-                    setMetric(nextMetric);
-                }}
-                onCostModeChange={(nextCostMode) => {
-                    setCostMode(nextCostMode);
-                }}
-                onFocusChange={(nextFocus) => {
-                    setFocus(nextFocus);
-                }}
-                onRetry={() => {
-                    setReloadToken((value) => value + 1);
-                }}
-            />
-        </>
+        <PluginSurfaceFocusEligibilityProvider
+            active={isAccountUsageScreen}
+            currentUiContextActive={isAccountUsageScreen}
+        >
+            <UsagePanelCurrentUiContext enrichment={currentUiContextEnrichment} />
+            {content}
+        </PluginSurfaceFocusEligibilityProvider>
     );
 };

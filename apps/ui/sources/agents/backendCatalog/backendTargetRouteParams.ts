@@ -5,7 +5,7 @@ import {
     type BackendTargetRefV2Input,
 } from '@happier-dev/protocol';
 
-import { isAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { isLegacyCompatAgentType } from './legacyCompatAgents';
 import { resolveBackendTargetKeyV2 } from './backendTargetKeyV2';
 
@@ -88,7 +88,7 @@ function resolveBackendTargetV2FromRouteParams(params: Readonly<{
 
     if (typeof params.agentType === 'string') {
         const normalizedAgentType = params.agentType.trim();
-        if (!normalizedAgentType || isLegacyCompatAgentType(normalizedAgentType) || !isAgentId(normalizedAgentType)) {
+        if (!normalizedAgentType || isLegacyCompatAgentType(normalizedAgentType) || !isBundledAgentId(normalizedAgentType)) {
             return null;
         }
 
@@ -135,9 +135,9 @@ export function buildBackendTargetRouteParams(params: Readonly<{
 
     const sanitizedTarget = resolvedTargetV2 ? stripBackendTargetSourceKind(resolvedTargetV2) : null;
 
-    if (sanitizedTarget && isAgentId(sanitizedTarget.backendId) && !isLegacyCompatAgentType(sanitizedTarget.backendId)) {
+    if (sanitizedTarget && isBundledAgentId(sanitizedTarget.backendId) && !isLegacyCompatAgentType(sanitizedTarget.backendId)) {
         routeParams.agentType = sanitizedTarget.backendId;
-    } else if (!resolvedTargetV2 && isAgentId(params.agentType) && !isLegacyCompatAgentType(params.agentType)) {
+    } else if (!resolvedTargetV2 && isBundledAgentId(params.agentType) && !isLegacyCompatAgentType(params.agentType)) {
         routeParams.agentType = params.agentType;
     }
 

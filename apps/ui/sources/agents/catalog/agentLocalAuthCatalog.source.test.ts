@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
-    isAgentId: (agentId: string) => agentId === 'codex',
+    isBundledAgentId: (agentId: string) => agentId === 'codex',
 }));
 
 vi.mock('@/agents/catalog/localAuth/createCatalogAgentLocalAuthPlugin', () => ({

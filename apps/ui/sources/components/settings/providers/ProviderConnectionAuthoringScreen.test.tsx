@@ -1021,10 +1021,9 @@ describe('ProviderConnectionAuthoringScreen', () => {
         });
         const localNotice = screen.findAllByType('Item')
             .find((item) => item.props.title === 'settingsProviders.authoring.localAddressTitle');
-        expect(localNotice?.props.subtitle).toEqual({
-            key: 'settingsProviders.authoring.localAddressDescription',
-            params: { machine: 'Mac', endpoint: 'http://127.0.0.1:1234/v1' },
-        });
+        expect(localNotice?.props.subtitle).toBe(
+            'settingsProviders.authoring.localAddressDescription(machine=Mac,endpoint=http://127.0.0.1:1234/v1)',
+        );
         const enable = screen.findAllByType('Item')
             .find((item) => item.props.title === 'settingsProviders.authoring.enableAfterSaving');
         await React.act(async () => { enable?.props.rightElement.props.onValueChange(false); });

@@ -24,6 +24,7 @@ function isAvailablePluginEventDefinition(
 
 function eventDefinition(params: Readonly<{
     envelopeSourceSelectorId?: string;
+    mentions?: readonly Readonly<{ kind: string; ref: string; token: string; label?: string }>[];
     filter?: { v: 1; all: Array<{ op: 'eq'; field: string; value: string }> } | null;
     target?:
         | Readonly<{
@@ -90,6 +91,7 @@ function eventDefinition(params: Readonly<{
             },
         },
         targetType: target.kind,
+        existingSessionId: target.kind === 'existingSession' ? target.sessionId : null,
         templateVersion,
         nextRunAt: null,
         lastRunAt: null,
@@ -122,7 +124,11 @@ function eventDefinition(params: Readonly<{
             templateVersion,
             template: {
                 t: 'plain',
-                v: { v: 1, prompt: 'Review {{input}}' },
+                v: {
+                    v: 1,
+                    prompt: 'Review {{input}}',
+                    ...(params.mentions ? { mentions: params.mentions } : {}),
+                },
             },
             triggerEvidence: null,
             target,
@@ -223,6 +229,22 @@ describe('readPluginEventAutomationEditSeed', () => {
                 permissionMode: 'no_tools',
             }),
         }));
+    });
+
+    it('re-hydrates the persisted composer references so an edit save cannot silently drop them', () => {
+        const sessionMention = {
+            kind: 'happier.session',
+            ref: 'session:sess-42',
+            token: '@Nightly%20review',
+            label: 'Nightly review',
+        } as const;
+        const seed = readPluginEventAutomationEditSeed(eventDefinition({
+            target: { kind: 'existingSession', sessionId: 'session-existing' },
+            mentions: [sessionMention],
+        }));
+
+        expect(seed?.mentions).toEqual([sessionMention]);
+        expect(readPluginEventAutomationEditSeed(eventDefinition())?.mentions).toEqual([]);
     });
 
     it('fails closed when the private envelope is bound to a different source selector', () => {

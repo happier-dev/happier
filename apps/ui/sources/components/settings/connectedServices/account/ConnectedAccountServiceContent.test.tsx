@@ -317,11 +317,13 @@ describe('ConnectedAccountServiceContent', () => {
             node.props.testID === 'connected-account:account-a'
         ));
 
-        // No user label: the provider email names the account and the stable
-        // account id stays visible on the identity line — never the raw id as
-        // the title.
+        // No user label: the provider email names the account and the service
+        // title carries the identity line. The canonical account id names the
+        // ROW (testID `connected-account:account-a`) and never the copy — a user
+        // cannot recognise a target by it.
         expect(account().props.title).toBe('work@example.com');
-        expect(account().props.identityLabel).toContain('account-a');
+        expect(account().props.identityLabel).toBe('Acme');
+        expect(account().props.identityLabel).not.toContain('account-a');
 
         await rendered.update(
             <ConnectedAccountServiceContent
@@ -948,8 +950,8 @@ describe('ConnectedAccountServiceContent', () => {
         expect(detail.props.account).toEqual({ service, accountId: 'account-a' });
         expect(detail.props.presentation).toEqual({
             primaryLabel: 'Work',
-            secondaryLabel: 'Acme · account-a',
-            accessibilityLabel: 'Acme · Work · account-a',
+            secondaryLabel: 'Acme',
+            accessibilityLabel: 'Acme · Work',
         });
         expect(detail.props.serviceLabel).toBe('Acme');
         expect(detail.props.isDefault).toBe(true);

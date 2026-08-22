@@ -147,7 +147,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'customAcp'],
     DEFAULT_AGENT_ID: 'customAcp',
     getAgentCore: () => ({ displayNameKey: 'agent.name' }),
-    isAgentId: () => false,
+    isBundledAgentId: () => false,
 }));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({

@@ -278,8 +278,8 @@ vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', ()
     ),
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => tauriDesktopState.current,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => tauriDesktopState.current,
 }));
 
 vi.mock('@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge', () => ({

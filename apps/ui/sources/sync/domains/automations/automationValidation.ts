@@ -1,4 +1,5 @@
 import {
+    clampAutomationIntervalMinutes,
     LEGACY_DEFAULT_NEW_SESSION_AUTOMATION_NAME,
     type NewSessionAutomationDraft,
 } from './automationDraft';
@@ -9,6 +10,10 @@ export type AutomationScheduleInput =
     | Readonly<{ kind: 'cron'; scheduleExpr: string; everyMs?: undefined; timezone?: string | null }>;
 
 export const DEFAULT_AUTOMATION_NAME_FALLBACK = 'Scheduled automation';
+
+// The interval-cadence clamp lives with the draft type it normalizes; re-exported
+// here so the schedule surfaces keep importing their one clamp from this module.
+export { clampAutomationIntervalMinutes, MAX_AUTOMATION_INTERVAL_MINUTES } from './automationDraft';
 
 export function normalizeAutomationName(input: string, fallback: string = DEFAULT_AUTOMATION_NAME_FALLBACK): string {
     const normalized = typeof input === 'string' ? input.trim() : '';
@@ -34,7 +39,7 @@ export function buildAutomationScheduleFromDraft(draft: NewSessionAutomationDraf
         };
     }
 
-    const intervalMinutes = Math.max(1, Math.floor(draft.everyMinutes));
+    const intervalMinutes = clampAutomationIntervalMinutes(draft.everyMinutes);
     return {
         kind: 'interval',
         everyMs: intervalMinutes * 60_000,

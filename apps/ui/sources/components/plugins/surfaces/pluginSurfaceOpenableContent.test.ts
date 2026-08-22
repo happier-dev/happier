@@ -90,11 +90,14 @@ describe('plugin surface openable content', () => {
             request: { path: 'notes/README.MD' },
         });
 
+        // The stat above classified `.MD` from content, so count reads from here:
+        // a foreign ref must still not reach a reader.
+        const readsBeforeForeignRef = workspaceReadFileMock.mock.calls.length;
         await expect(handlers.readOpenableContent!(request('readOpenableContent', {
             ref: { kind: 'workspaceFile', handle: 'workspaceFile_someone-else' },
             expectedRevision: 'workspace-file:5:100',
         }))).resolves.toEqual({ status: 'unsupported' });
-        expect(workspaceReadFileMock).not.toHaveBeenCalled();
+        expect(workspaceReadFileMock).toHaveBeenCalledTimes(readsBeforeForeignRef);
 
         await expect(handlers.readOpenableContent!(request('readOpenableContent', {
             ref: binding.ref,
@@ -310,6 +313,106 @@ describe('plugin surface openable content', () => {
         expect(workspaceStatFileMock).toHaveBeenCalledWith(expect.objectContaining({
             signal: controller.signal,
         }));
+    });
+
+    it('classifies an unknown-extension file from its content, not its filename', async () => {
+        // [0x00, 0x01, 0x02, 0xff, 0xfe] -> not decodable as UTF-8.
+        workspaceReadFileMock.mockResolvedValue({ ok: true, contentBase64: 'AAEC//4=' });
+        const binding = createWorkspaceFileOpenableContentBinding({
+            target: TARGET,
+            filePath: 'artifacts/model.qtz',
+        });
+        const handlers = createPluginSurfaceOpenableContentHandlers({ binding });
+
+        await expect(handlers.statOpenableContent!(request('statOpenableContent', { ref: binding.ref }))).resolves.toEqual({
+            status: 'ready',
+            contentClass: 'binary',
+            mimeType: 'application/octet-stream',
+            extension: '.qtz',
+            sizeBytes: 5,
+            revision: 'workspace-file:5:100',
+        });
+
+        await expect(handlers.readOpenableContent!(request('readOpenableContent', {
+            ref: binding.ref,
+            expectedRevision: 'workspace-file:5:100',
+            maxBytes: 5,
+        }))).resolves.toEqual({
+            status: 'ready',
+            content: { kind: 'base64', base64: 'AAEC//4=' },
+            revision: 'workspace-file:5:100',
+        });
+    });
+
+    it('keeps an unknown-extension UTF-8 file text and probes each revision once', async () => {
+        const binding = createWorkspaceFileOpenableContentBinding({
+            target: TARGET,
+            filePath: 'artifacts/notes.qtz',
+        });
+        const handlers = createPluginSurfaceOpenableContentHandlers({ binding });
+
+        const ready = {
+            status: 'ready',
+            contentClass: 'text',
+            mimeType: 'text/plain',
+            extension: '.qtz',
+            sizeBytes: 5,
+            revision: 'workspace-file:5:100',
+        };
+        await expect(handlers.statOpenableContent!(request('statOpenableContent', { ref: binding.ref }))).resolves.toEqual(ready);
+        await expect(handlers.statOpenableContent!(request('statOpenableContent', { ref: binding.ref }))).resolves.toEqual(ready);
+        expect(workspaceReadFileMock).toHaveBeenCalledTimes(1);
+
+        // A new host revision is not described by the previous revision's bytes.
+        workspaceStatFileMock.mockResolvedValue({
+            success: true,
+            exists: true,
+            kind: 'file',
+            sizeBytes: 5,
+            modifiedMs: 101,
+        });
+        workspaceReadFileMock.mockResolvedValue({ ok: true, contentBase64: 'AAEC//4=' });
+        await expect(handlers.statOpenableContent!(request('statOpenableContent', { ref: binding.ref }))).resolves.toMatchObject({
+            contentClass: 'binary',
+            revision: 'workspace-file:5:101',
+        });
+        expect(workspaceReadFileMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not probe a filename-decided class or content above the bounded probe ceiling', async () => {
+        const imageBinding = createWorkspaceFileOpenableContentBinding({
+            target: TARGET,
+            filePath: 'notes/preview.png',
+        });
+        await expect(createPluginSurfaceOpenableContentHandlers({ binding: imageBinding })
+            .statOpenableContent!(request('statOpenableContent', { ref: imageBinding.ref })))
+            .resolves.toMatchObject({ contentClass: 'image', mimeType: 'image/png' });
+
+        const archiveBinding = createWorkspaceFileOpenableContentBinding({
+            target: TARGET,
+            filePath: 'notes/bundle.zip',
+        });
+        await expect(createPluginSurfaceOpenableContentHandlers({ binding: archiveBinding })
+            .statOpenableContent!(request('statOpenableContent', { ref: archiveBinding.ref })))
+            .resolves.toMatchObject({ contentClass: 'binary' });
+
+        const sizeBytes = 300 * 1024;
+        workspaceStatFileMock.mockResolvedValue({
+            success: true,
+            exists: true,
+            kind: 'file',
+            sizeBytes,
+            modifiedMs: 100,
+        });
+        const largeBinding = createWorkspaceFileOpenableContentBinding({
+            target: TARGET,
+            filePath: 'artifacts/large.qtz',
+        });
+        await expect(createPluginSurfaceOpenableContentHandlers({ binding: largeBinding })
+            .statOpenableContent!(request('statOpenableContent', { ref: largeBinding.ref })))
+            .resolves.toMatchObject({ contentClass: 'text', sizeBytes });
+
+        expect(workspaceReadFileMock).not.toHaveBeenCalled();
     });
 
     it('does not disclose a completed stat after its selected mount retires', async () => {

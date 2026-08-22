@@ -6,8 +6,8 @@ const readPendingExternalAuthStateMock = vi.hoisted(() => vi.fn());
 const readPendingExternalAuthStateForServerUrlMock = vi.hoisted(() => vi.fn());
 const classifyRejectedCredentialMock = vi.hoisted(() => vi.fn());
 const setCredentialsMock = vi.hoisted(() => vi.fn());
-const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => false));
-const invokeTauriMock = vi.hoisted(() => vi.fn());
+const isDesktopHostMock = vi.hoisted(() => vi.fn(() => false));
+const invokeDesktopHostMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
@@ -23,9 +23,9 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     },
 }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => isTauriDesktopMock(),
-    invokeTauri: (...args: unknown[]) => invokeTauriMock(...args),
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => isDesktopHostMock(),
+    invokeDesktopHost: (...args: unknown[]) => invokeDesktopHostMock(...args),
 }));
 
 function createStorageMock() {
@@ -87,9 +87,9 @@ describe('resolveBootCredentials', () => {
         classifyRejectedCredentialMock.mockResolvedValue({
             kind: 'allowed',
         });
-        isTauriDesktopMock.mockReset();
-        isTauriDesktopMock.mockReturnValue(false);
-        invokeTauriMock.mockReset();
+        isDesktopHostMock.mockReset();
+        isDesktopHostMock.mockReturnValue(false);
+        invokeDesktopHostMock.mockReset();
     });
 
     afterEach(() => {
@@ -224,9 +224,9 @@ describe('resolveBootCredentials', () => {
             serverUrl: 'http://127.0.0.1:3009',
             serverContext: 'stack',
         };
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         getCredentialsForServerUrlMock.mockResolvedValue(null);
-        invokeTauriMock.mockResolvedValue({
+        invokeDesktopHostMock.mockResolvedValue({
             token: 'stack-token',
             encryption: {
                 publicKey: 'public-key',
@@ -247,7 +247,7 @@ describe('resolveBootCredentials', () => {
             serverId: getActiveServerSnapshot().serverId,
         });
         expect(getCredentialsMock).not.toHaveBeenCalled();
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_read_stack_boot_credentials');
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_read_stack_boot_credentials');
         expect(setCredentialsMock).toHaveBeenCalledWith({
             token: 'stack-token',
             encryption: {
@@ -263,9 +263,9 @@ describe('resolveBootCredentials', () => {
             serverUrl: 'http://127.0.0.1:3009',
             serverContext: 'stack',
         };
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         getCredentialsForServerUrlMock.mockResolvedValue(null);
-        invokeTauriMock.mockResolvedValue({
+        invokeDesktopHostMock.mockResolvedValue({
             token: 'stack-token-only',
             encryption: null,
         });
@@ -285,9 +285,9 @@ describe('resolveBootCredentials', () => {
             serverUrl: 'http://127.0.0.1:3009',
             serverContext: 'stack',
         };
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         getCredentialsForServerUrlMock.mockResolvedValue(null);
-        invokeTauriMock.mockResolvedValue({
+        invokeDesktopHostMock.mockResolvedValue({
             token: 'replacement-token',
             encryption: null,
         });
@@ -316,9 +316,9 @@ describe('resolveBootCredentials', () => {
             serverUrl: 'http://127.0.0.1:3009',
             serverContext: 'stack',
         };
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         getCredentialsForServerUrlMock.mockResolvedValue(null);
-        invokeTauriMock.mockResolvedValue({
+        invokeDesktopHostMock.mockResolvedValue({
             token: 'replacement-token',
             encryption: null,
         });
@@ -339,9 +339,9 @@ describe('resolveBootCredentials', () => {
             serverUrl: 'http://127.0.0.1:3009',
             serverContext: 'stack',
         };
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         getCredentialsMock.mockResolvedValue(null);
-        invokeTauriMock.mockResolvedValue({
+        invokeDesktopHostMock.mockResolvedValue({
             token: 'stack-token',
             encryption: {
                 publicKey: 'public-key',
@@ -376,7 +376,7 @@ describe('resolveBootCredentials', () => {
             serverUrl: 'http://127.0.0.1:3009',
             serverContext: 'stack',
         };
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         getCredentialsMock.mockResolvedValue({ token: 'other-token', secret: 'other-secret' });
         getCredentialsForServerUrlMock.mockResolvedValue({ token: 'stack-token', secret: 'stack-secret' });
 
@@ -399,7 +399,7 @@ describe('resolveBootCredentials', () => {
             serverUrl: 'http://127.0.0.1:3009',
             serverContext: 'stack',
         };
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         getCredentialsMock.mockResolvedValue({
             token: 'retained-token',
         });
@@ -424,7 +424,7 @@ describe('resolveBootCredentials', () => {
         });
         expect(getServerUrl()).toBe('https://retained.example.test');
         expect(getCredentialsForServerUrlMock).not.toHaveBeenCalled();
-        expect(invokeTauriMock).not.toHaveBeenCalled();
+        expect(invokeDesktopHostMock).not.toHaveBeenCalled();
         expect(setCredentialsMock).not.toHaveBeenCalled();
     });
 
@@ -434,9 +434,9 @@ describe('resolveBootCredentials', () => {
             serverUrl: 'http://127.0.0.1:3009',
             serverContext: 'stack',
         };
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         getCredentialsForServerUrlMock.mockResolvedValue(null);
-        invokeTauriMock.mockResolvedValue({
+        invokeDesktopHostMock.mockResolvedValue({
             token: 'stack-token',
             encryption: {
                 publicKey: 'public-key',
@@ -456,7 +456,7 @@ describe('resolveBootCredentials', () => {
         expect(getCredentialsForServerUrlMock).toHaveBeenCalledWith('http://127.0.0.1:3009', {
             serverId: getActiveServerSnapshot().serverId,
         });
-        expect(invokeTauriMock).toHaveBeenCalledWith('desktop_read_stack_boot_credentials');
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_read_stack_boot_credentials');
         expect(setCredentialsMock).toHaveBeenCalledWith({
             token: 'stack-token',
             encryption: {
@@ -472,9 +472,9 @@ describe('resolveBootCredentials', () => {
             serverUrl: 'http://127.0.0.1:3009',
             serverContext: 'stack',
         };
-        isTauriDesktopMock.mockReturnValue(true);
+        isDesktopHostMock.mockReturnValue(true);
         getCredentialsForServerUrlMock.mockResolvedValue(null);
-        invokeTauriMock.mockResolvedValue({
+        invokeDesktopHostMock.mockResolvedValue({
             token: 'stack-token',
             encryption: {
                 publicKey: 'public-key',
@@ -488,7 +488,7 @@ describe('resolveBootCredentials', () => {
         expect(getCredentialsForServerUrlMock).toHaveBeenCalledWith('http://127.0.0.1:3010', {
             serverId: getActiveServerSnapshot().serverId,
         });
-        expect(invokeTauriMock).not.toHaveBeenCalled();
+        expect(invokeDesktopHostMock).not.toHaveBeenCalled();
         expect(setCredentialsMock).not.toHaveBeenCalled();
     });
 

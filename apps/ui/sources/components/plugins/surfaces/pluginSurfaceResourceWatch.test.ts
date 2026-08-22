@@ -343,6 +343,41 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
         mounted.unsubscribe();
     });
 
+    it('composes the mount lifetime with an author cancellation while establishing, without AbortSignal.any', async () => {
+        // The mount lifetime and an author-held signal are both live here, which
+        // is the only path that has to compose two signals. `AbortSignal.any` is
+        // a browser-only static, so the composition may not depend on it.
+        const daemon = createFakeDaemon();
+        daemon.parkOpen();
+        const mounted = createMountedSurface(daemon, TARGETED_RESOURCE_CONTEXT);
+        const author = new AbortController();
+        const anyDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+        Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
+
+        try {
+            const pending = mounted.adapter.api.watchResource(
+                'live-status',
+                () => undefined,
+                { signal: author.signal },
+            );
+            await vi.waitFor(() => { expect(daemon.openSignals).toHaveLength(1); });
+            // A composition that simply forwarded the mount lifetime would already
+            // be aborted-free here and would stay so after the author cancels.
+            expect(daemon.openSignals[0]).toBeDefined();
+            expect(daemon.openSignals[0]?.aborted).toBe(false);
+
+            author.abort();
+
+            expect(daemon.openSignals[0]?.aborted).toBe(true);
+            await expect(pending).rejects.toMatchObject({ code: 'unavailable' });
+        } finally {
+            if (anyDescriptor) Object.defineProperty(AbortSignal, 'any', anyDescriptor);
+            else Reflect.deleteProperty(AbortSignal, 'any');
+            mounted.unsubscribe();
+            mounted.controller.dispose();
+        }
+    });
+
     it('delivers a daemon invalidation to the author listener through the public host API', async () => {
         const daemon = createFakeDaemon();
         const mounted = createMountedSurface(daemon);

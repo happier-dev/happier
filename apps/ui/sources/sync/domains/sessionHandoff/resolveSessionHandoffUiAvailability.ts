@@ -8,7 +8,6 @@ import { resolveMachineTransferAvailability } from '@/sync/domains/transfers/run
 import { readCachedMachineRpcDirectRoute } from '@/sync/domains/transfers/runtime/transferRouteCache';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 
-import { canHandoffConversation } from './handoffUiSupport';
 import { resolveSessionHandoffSourceMachineId } from './resolveSessionHandoffSourceMachineId';
 import type { SessionHandoffRuntimeAvailability } from './useSessionHandoffSourceReachability';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -42,6 +41,31 @@ function normalizeNonEmptyString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+}
+
+function hasResolvableSessionHandoffSource(input: Readonly<{
+    sessionId?: string | null;
+    reachableMachineId?: string | null;
+    session: SessionLike | null | undefined;
+}>): boolean {
+    const sessionId = normalizeNonEmptyString(input.sessionId);
+    const sessionMetadata = input.session
+        ? readSessionOwnerMetadataView({
+            metadataLayoutVersion: input.session.metadataLayoutVersion,
+            metadata: input.session.metadata ?? null,
+            ownerMetadataView: input.session.ownerMetadataView,
+        })
+        : null;
+    if (!sessionMetadata) {
+        return false;
+    }
+
+    return resolveSessionHandoffSourceMachineId({
+        reachableMachineId: normalizeNonEmptyString(input.reachableMachineId)
+            ?? (sessionId ? readMachineTargetForSession(sessionId)?.machineId : null)
+            ?? null,
+        sessionMetadata,
+    }) !== null;
 }
 
 function readSourceMachineDaemonState(input: Readonly<{
@@ -150,7 +174,11 @@ export function resolveSessionHandoffUiAvailability(input: Readonly<{
         };
     }
 
-    if (canHandoffConversation({ sessionId: input.sessionId, session: input.session }) !== true) {
+    if (!hasResolvableSessionHandoffSource({
+        sessionId: input.sessionId,
+        reachableMachineId: input.reachableMachineId,
+        session: input.session,
+    })) {
         return {
             available: false,
             reason: 'session_ineligible',

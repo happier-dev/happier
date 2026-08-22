@@ -294,6 +294,33 @@ describe('native Artifact resource bridge', () => {
         expect(unregister).not.toHaveBeenCalled();
     });
 
+    it('preserves the exact native frame origin as an opaque adapter fact on the current handle', async () => {
+        const { lease } = await acquireFixtureLease();
+        const frameOrigin = `https://happier-hosted-artifact.hpa_${'a'.repeat(64)}`;
+        const nativeRegistration = Object.freeze({ kind: 'registered' as const, frameOrigin });
+        const registry = createPluginNativeArtifactResourceRegistry({
+            registrar: Object.freeze({
+                register: async () => nativeRegistration,
+                unregister: vi.fn(() => true),
+            }),
+            createOpaqueId: () => 'opaque-native-origin',
+        });
+        const { lifetime } = createLifetime();
+
+        const result = await registry.materialize({
+            lease,
+            persistent: Object.freeze({ scope, store: createPersistentStore([]), isCurrent: () => true }),
+            accountLifetime: lifetime,
+            isCurrent: () => true,
+            hostedWebPolicy: hostedWebPolicyInput(),
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+            kind: 'available',
+            handle: expect.objectContaining({ frameOrigin }),
+        }));
+    });
+
     it('preserves Android profile-isolation rejection from the real native registrar through Artifact acquisition', async () => {
         const { lease } = await acquireFixtureLease();
         const events: string[] = [];

@@ -5,6 +5,23 @@ import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 
 import { readSessionRollbackRangesV1, resolveTranscriptRollbackActions } from './rollbackUiSupport';
 
+const projectedExternalRollbackCapabilities = {
+    agentId: 'acme-lifecycle',
+    identity: {
+        pluginId: 'acme.lifecycle',
+        localId: 'acme-lifecycle',
+    },
+    generation: 42,
+    capabilities: {
+        sessions: {
+            open: ['resume'],
+            delivery: ['newTurn'],
+            cancel: true,
+            conversationRollback: true,
+        },
+    },
+} as const;
+
 function createActiveSession(metadata: Metadata): Session {
     return {
         id: 'session-1',
@@ -117,6 +134,73 @@ describe('resolveTranscriptRollbackActions', () => {
             u1: {
                 target: { type: 'before_user_message', userMessageSeq: 1 },
                 restoredDraftText: 'initial prompt',
+            },
+        });
+    });
+
+    it('restores what the transcript showed, not the expanded transport text', () => {
+        const session = createActiveSession({
+            path: '/workspace',
+            host: 'localhost',
+            flavor: 'codex',
+            codexBackendMode: 'appServer',
+        });
+        const sessionWithTurns: Session = {
+            ...session,
+            rollbackEligibleTurnStarts: [1],
+        };
+        const messagesById: Record<string, Message> = {
+            u1: {
+                kind: 'user-text',
+                id: 'u1',
+                seq: 1,
+                localId: 'u1',
+                createdAt: 1,
+                text: 'Fix this\n\n[attachments]\n{"v":1,"files":[]}\n[/attachments]',
+                displayText: 'Fix this',
+            },
+        };
+
+        expect(resolveTranscriptRollbackActions({
+            session: sessionWithTurns,
+            messageIdsOldestFirst: ['u1'],
+            messagesById,
+            rollbackRanges: [],
+        })).toEqual({
+            u1: {
+                target: { type: 'before_user_message', userMessageSeq: 1 },
+                restoredDraftText: 'Fix this',
+            },
+        });
+    });
+
+    it('uses the exact external declaration while retaining trusted turn evidence', () => {
+        const session: Session = {
+            ...createActiveSession({
+                path: '/workspace',
+                host: 'localhost',
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'acme-lifecycle',
+                    agent: { providerSessionId: 'acme-session-1' },
+                },
+            }),
+            rollbackEligibleTurnStarts: [1],
+        };
+        const messagesById: Record<string, Message> = {
+            u1: userTextMessage('u1', 1, 'external prompt'),
+        };
+
+        expect(resolveTranscriptRollbackActions({
+            session,
+            messageIdsOldestFirst: ['u1'],
+            messagesById,
+            rollbackRanges: [],
+            currentAgentCapabilities: projectedExternalRollbackCapabilities,
+        } as any)).toMatchObject({
+            u1: {
+                target: { type: 'before_user_message', userMessageSeq: 1 },
+                restoredDraftText: 'external prompt',
             },
         });
     });

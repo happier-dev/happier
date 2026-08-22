@@ -2,6 +2,12 @@ import { t } from '@/text';
 import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/attention/runtimePresentation';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
+import {
+    resolveSessionAttentionStandingSource,
+    type SessionAttentionStandingPolicy,
+    type SessionAttentionStandingSource,
+} from '@/sync/domains/session/organization/attentionStanding';
+
 import { normalizeSessionListKeyParts } from './sessionListKeyNormalization';
 import type { SessionListRenderableSession } from './sessionListRenderable';
 import { hasActivityClearlyAfterTerminalProjection } from './sessionListTerminalActivity';
@@ -20,7 +26,21 @@ export const SESSION_LIST_WORKING_RETENTION_LIMIT_MS = 12 * 60 * 60 * 1000;
 
 export type SessionListAttentionPlacementOptions = Readonly<{
     mode: SessionListAttentionPlacementMode;
+    /**
+     * Rows to hold in the band for one more pass even though they no longer
+     * earn it — the session the user is currently reading. Retention carries
+     * keys only: the reason that placed a row is a live fact about the session,
+     * and replaying a stale one would relabel an approved session as still
+     * blocked.
+     */
     retainSessionKeys?: ReadonlySet<string> | ReadonlyArray<string> | null;
+    /**
+     * The user's Keep in Needs attention instructions, carried as the policy
+     * itself rather than a resolved key set: an account default plus per-session
+     * overrides, resolved per row by the single owner in the organization
+     * domain.
+     */
+    standingPolicy?: SessionAttentionStandingPolicy;
 }>;
 
 export type SessionListWorkingPlacementOptions = Readonly<{
@@ -52,6 +72,13 @@ type PlacementCandidate<Reason extends PlacementReason> = Readonly<{
     originalIndex: number;
     retainedIndex: number | null;
     retainedWorking?: boolean;
+    /**
+     * Only meaningful for a 'standing' placement: true when the user asked for
+     * THIS session to stay in the band, false when standing comes from the
+     * account default. Explicit intent outranks "Hide inactive sessions"; a
+     * blanket default must not silently disable that filter.
+     */
+    explicitStanding?: boolean;
 }>;
 
 type PlacementLane<Reason extends PlacementReason> = Readonly<{
@@ -61,6 +88,7 @@ type PlacementLane<Reason extends PlacementReason> = Readonly<{
         originalIndex: number;
         retainedKeys: ReadonlySet<string>;
         retainedKeyRanks: ReadonlyMap<string, number>;
+        standingPolicy: SessionAttentionStandingPolicy | undefined;
         nowMs: number;
         workingPlacementOptions?: SessionListWorkingPlacementOptions;
     }>) => PlacementCandidate<Reason> | null;
@@ -74,6 +102,10 @@ const ATTENTION_REASON_PRIORITY: Readonly<Record<SessionListAttentionPlacementRe
     permission_required: 1,
     failed: 2,
     ready: 3,
+    unread: 4,
+    // Standing is the floor of the band: it only reaches sessions whose own
+    // signals place them nowhere, so it always sorts behind every earned reason.
+    standing: 5,
 };
 
 function normalizeSeq(value: unknown): number | null {
@@ -161,6 +193,7 @@ function shouldPromoteFailedSessionAttention(session: SessionListRenderableSessi
 function resolveAttentionReason(
     session: SessionListRenderableSession,
     nowMs: number,
+    standingSource: SessionAttentionStandingSource = 'none',
 ): SessionListAttentionPlacementReason | null {
     const runtimePresentation = deriveSessionRuntimePresentationState({
         active: session.active,
@@ -205,6 +238,19 @@ function resolveAttentionReason(
     if (isTerminalTurnAfterReadCursor(session)) {
         return 'ready';
     }
+    // Weakest attention signal, so it is checked last: anything the session
+    // explicitly asked for keeps its own reason and its own ordering. Unread is
+    // read from the canonical unread fact the row already renders its badge
+    // from, so the band and the badge can never disagree.
+    if (session.hasUnreadMessages === true) {
+        return 'unread';
+    }
+    // Attention standing is a FLOOR, and only the FINAL return is the floor:
+    // the early `return null` above means "the working lane owns this row", not
+    // "nothing places this row", so standing must never be resolved there.
+    if (standingSource !== 'none') {
+        return 'standing';
+    }
     return null;
 }
 
@@ -244,7 +290,34 @@ function resolveAttentionTimestamp(
             ?? normalizePositiveTimestamp(session.latestTurnStatusObservedAt)
             ?? 0;
     }
+    if (reason === 'unread') {
+        return resolveUnreadAttentionTimestamp(session) ?? 0;
+    }
+    // Standing has no moment of its own — the session did nothing to earn the
+    // band — so standing rows fall back to source order within their run.
     return 0;
+}
+
+/**
+ * Unread membership is a boolean edge, so the ideal ordering key is the instant
+ * the session BECAME unread: it stays constant for as long as the row stays
+ * unread, and further messages then cannot re-sort the attention lane under a
+ * reader who has not read anything yet.
+ *
+ * This checkout carries no became-unread fact — neither a server column nor a
+ * renderable stamp — so the closest correct key available is the same activity
+ * time the row is already ordered by everywhere else. The limitation is
+ * observable: an unread session that keeps receiving messages moves within the
+ * unread run of the attention band. It costs no extra index work, because that
+ * same activity already reorders the source index and re-runs placement.
+ */
+function resolveUnreadAttentionTimestamp(session: Pick<
+    SessionListRenderableSession,
+    'meaningfulActivityAt' | 'updatedAt' | 'createdAt'
+>): number | null {
+    return normalizePositiveTimestamp(session.meaningfulActivityAt)
+        ?? normalizePositiveTimestamp(session.updatedAt)
+        ?? normalizePositiveTimestamp(session.createdAt);
 }
 
 function resolveActionRequiredAttentionTimestamp(session: Pick<
@@ -303,16 +376,24 @@ function resolveAttentionCandidate(params: Readonly<{
     originalIndex: number;
     retainedKeys: ReadonlySet<string>;
     retainedKeyRanks: ReadonlyMap<string, number>;
+    standingPolicy: SessionAttentionStandingPolicy | undefined;
     nowMs: number;
 }>): PlacementCandidate<SessionListAttentionPlacementReason> | null {
     const key = normalizeSessionListKeyParts(params.item.serverId, params.item.sessionId).sessionKey;
     if (!key || !params.row) return null;
     if (params.item.archivedAt != null || params.row.archivedAt != null) return null;
 
-    const reason = resolveAttentionReason(params.row, params.nowMs);
+    const standingSource = params.standingPolicy
+        ? resolveSessionAttentionStandingSource(params.standingPolicy, key)
+        : 'none';
+    const reason = resolveAttentionReason(params.row, params.nowMs, standingSource);
     if (!reason && !params.retainedKeys.has(key)) return null;
     if (!reason && isWorkingPlacementSession(params.row, params.nowMs)) return null;
 
+    // A retained row has no live reason left, so it is held with the neutral
+    // one. Its former reason is a fact about the session that has since
+    // changed; replaying it would paint an approved permission, a handled
+    // request, or a cleared failure back onto the row the user just resolved.
     const resolvedReason = reason ?? 'ready';
     return {
         item: params.item,
@@ -322,6 +403,7 @@ function resolveAttentionCandidate(params: Readonly<{
         timestamp: resolveAttentionTimestamp(params.row, resolvedReason),
         originalIndex: params.originalIndex,
         retainedIndex: params.retainedKeyRanks.get(key) ?? null,
+        explicitStanding: resolvedReason === 'standing' && standingSource === 'override',
     };
 }
 
@@ -356,6 +438,20 @@ function resolveWorkingCandidate(params: Readonly<{
     };
 }
 
+/**
+ * Whether placement exempts the row from "Hide inactive sessions". Every earned
+ * attention reason does: the session itself is asking for the user. Standing
+ * only does when the user asked for THIS session — standing derived from the
+ * account default would otherwise turn that filter into a no-op for every quiet
+ * session. Placement never CLEARS an exemption the row already carries for its
+ * own reasons, so the flag is spread in rather than assigned.
+ */
+function keepAttentionCandidateVisibleWhenInactive(
+    candidate: PlacementCandidate<SessionListAttentionPlacementReason>,
+): boolean {
+    return candidate.reason !== 'standing' || candidate.explicitStanding === true;
+}
+
 function createGlobalAttentionSessionItem(candidate: PlacementCandidate<SessionListAttentionPlacementReason>): SessionItem {
     return {
         ...candidate.item,
@@ -364,13 +460,14 @@ function createGlobalAttentionSessionItem(candidate: PlacementCandidate<SessionL
         attentionPlacementReason: candidate.reason,
         workingPlacementReason: undefined,
         variant: 'default',
-        keepVisibleWhenInactive: true,
+        ...(keepAttentionCandidateVisibleWhenInactive(candidate) ? { keepVisibleWhenInactive: true } : {}),
     };
 }
 
 function createWithinGroupAttentionSessionItem(candidate: PlacementCandidate<SessionListAttentionPlacementReason>): SessionItem {
+    const keepVisibleWhenInactive = keepAttentionCandidateVisibleWhenInactive(candidate);
     if (
-        candidate.item.keepVisibleWhenInactive === true
+        (!keepVisibleWhenInactive || candidate.item.keepVisibleWhenInactive === true)
         && candidate.item.attentionPlacementReason === candidate.reason
         && candidate.item.workingPlacementReason == null
     ) {
@@ -380,7 +477,7 @@ function createWithinGroupAttentionSessionItem(candidate: PlacementCandidate<Ses
         ...candidate.item,
         attentionPlacementReason: candidate.reason,
         workingPlacementReason: undefined,
-        keepVisibleWhenInactive: true,
+        ...(keepVisibleWhenInactive ? { keepVisibleWhenInactive: true } : {}),
     };
 }
 
@@ -444,6 +541,7 @@ type SessionListPlacementResult = Readonly<{
 function buildSessionListGlobalPlacement<Reason extends PlacementReason>(params: Readonly<{
     source: ReadonlyArray<SessionListIndexItem>;
     retainedKeys?: ReadonlySet<string> | ReadonlyArray<string> | null;
+    standingPolicy?: SessionAttentionStandingPolicy;
     workingPlacementOptions?: SessionListWorkingPlacementOptions;
     resolveSessionRow: (serverId: string | null | undefined, sessionId: string) => SessionListRenderableSession | null;
     lane: PlacementLane<Reason>;
@@ -465,6 +563,7 @@ function buildSessionListGlobalPlacement<Reason extends PlacementReason>(params:
             originalIndex,
             retainedKeys,
             retainedKeyRanks,
+            standingPolicy: params.standingPolicy,
             nowMs: params.nowMs,
             workingPlacementOptions: params.workingPlacementOptions,
         });
@@ -504,6 +603,7 @@ type SessionRunEntry = Readonly<{
 function reorderSessionRunWithinGroup<Reason extends PlacementReason>(
     entries: ReadonlyArray<SessionRunEntry>,
     retainedKeys: ReadonlySet<string>,
+    standingPolicy: SessionAttentionStandingPolicy | undefined,
     lane: PlacementLane<Reason>,
     nowMs: number,
     workingPlacementOptions?: SessionListWorkingPlacementOptions,
@@ -520,6 +620,7 @@ function reorderSessionRunWithinGroup<Reason extends PlacementReason>(
             originalIndex: entry.originalIndex,
             retainedKeys,
             retainedKeyRanks,
+            standingPolicy,
             nowMs,
             workingPlacementOptions,
         });
@@ -549,6 +650,7 @@ function reorderSessionRunWithinGroup<Reason extends PlacementReason>(
 function applySessionListPlacementWithinGroups<Reason extends PlacementReason>(params: Readonly<{
     source: ReadonlyArray<SessionListIndexItem>;
     retainedKeys?: ReadonlySet<string> | ReadonlyArray<string> | null;
+    standingPolicy?: SessionAttentionStandingPolicy;
     workingPlacementOptions?: SessionListWorkingPlacementOptions;
     resolveSessionRow: (serverId: string | null | undefined, sessionId: string) => SessionListRenderableSession | null;
     lane: PlacementLane<Reason>;
@@ -568,6 +670,7 @@ function applySessionListPlacementWithinGroups<Reason extends PlacementReason>(p
         const reordered = reorderSessionRunWithinGroup(
             run,
             retainedKeys,
+            params.standingPolicy,
             params.lane,
             params.nowMs,
             params.workingPlacementOptions,
@@ -607,6 +710,7 @@ export function buildSessionListAttentionPlacement(params: Readonly<{
     const result = buildSessionListGlobalPlacement({
         source: params.source,
         retainedKeys: params.options.retainSessionKeys,
+        standingPolicy: params.options.standingPolicy,
         resolveSessionRow: params.resolveSessionRow,
         lane: ATTENTION_LANE,
         nowMs: params.nowMs,
@@ -676,6 +780,7 @@ export function applySessionListAttentionPlacementWithinGroups(params: Readonly<
     return applySessionListPlacementWithinGroups({
         source: params.source,
         retainedKeys: params.options.retainSessionKeys,
+        standingPolicy: params.options.standingPolicy,
         resolveSessionRow: params.resolveSessionRow,
         lane: ATTENTION_LANE,
         nowMs: params.nowMs,

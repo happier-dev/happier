@@ -1,10 +1,16 @@
+import { PluginUiJsonValueV1Schema } from '@happier-dev/protocol/plugins/ui';
 import type {
     PluginUiHostApiRequestEnvelopeV1,
     PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { describe, expect, it } from 'vitest';
 
-import { createPluginSurfaceHostApi } from './createPluginSurfaceHostApi';
+import {
+    createPluginSurfaceHostApi,
+    createPluginSurfaceHostApiError,
+    createPluginSurfaceHostApiPluginErrorData,
+    settlePluginSurfaceHostApiRequest,
+} from './createPluginSurfaceHostApi';
 
 const surfaceContext: PluginUiSurfaceContextV1 = {
     pluginId: 'acme.preview',
@@ -31,6 +37,41 @@ function request(
 }
 
 describe('createPluginSurfaceHostApi', () => {
+    it('keeps canonical failures as strict JSON while transport settlement retains their provenance', async () => {
+        const failure = createPluginSurfaceHostApiError('timeout', ['host_timeout']);
+        const actionResult = { code: 'timeout', outcome: 'domain-success' } as const;
+
+        expect(PluginUiJsonValueV1Schema.parse(failure)).toEqual({
+            code: 'timeout',
+            diagnostics: ['host_timeout'],
+        });
+        expect(createPluginSurfaceHostApiPluginErrorData('timeout', ['host_timeout'])).toEqual({
+            name: 'PluginError',
+            code: 'timeout',
+            retryable: true,
+            diagnostics: [{ code: 'host_timeout', severity: 'error' }],
+        });
+        expect(createPluginSurfaceHostApiPluginErrorData('denied')).toEqual({
+            name: 'PluginError',
+            code: 'denied',
+            retryable: false,
+        });
+        await expect(settlePluginSurfaceHostApiRequest(
+            request('executeAction'),
+            () => failure,
+        )).resolves.toMatchObject({
+            kind: 'error',
+            payload: { code: 'timeout', diagnostics: ['host_timeout'] },
+        });
+        await expect(settlePluginSurfaceHostApiRequest(
+            request('executeAction'),
+            () => actionResult,
+        )).resolves.toMatchObject({
+            kind: 'result',
+            payload: actionResult,
+        });
+    });
+
     it('answers context locally and routes injected handlers', async () => {
         const hostApi = createPluginSurfaceHostApi({
             surfaceContext,
@@ -80,6 +121,36 @@ describe('createPluginSurfaceHostApi', () => {
 
         current = false;
         expect(hostApi.admissionMethods).toEqual([]);
+    });
+
+    it('answers a transiently narrowed method as retryably unavailable, not unsupported', async () => {
+        let daemonReachable = false;
+        const hostApi = createPluginSurfaceHostApi({
+            surfaceContext,
+            handlers: {
+                readResource: async () => ({ ok: true }),
+                watchResource: async () => ({ ok: true }),
+            },
+            isMethodAvailable: (method) => method === 'context' || daemonReachable,
+        });
+
+        // Structurally installed, momentarily unreachable. Reporting it as
+        // `unsupported_method` would tell the caller the mount can NEVER serve
+        // the method, which a reconnect immediately contradicts.
+        expect(hostApi.handleRequest(request('watchResource'))).toEqual({
+            code: 'unavailable',
+            diagnostics: ['host_api_method_unavailable:watchResource'],
+        });
+        expect(createPluginSurfaceHostApiPluginErrorData('unavailable').retryable).toBe(true);
+
+        // A method with no installed handler stays permanently unsupported.
+        expect(hostApi.handleRequest(request('openSurface'))).toEqual({
+            code: 'unsupported_method',
+            diagnostics: ['host_api_method_not_installed:openSurface'],
+        });
+
+        daemonReachable = true;
+        await expect(hostApi.handleRequest(request('watchResource'))).resolves.toEqual({ ok: true });
     });
 
     it('returns a disabled host adapter for a malformed context', () => {

@@ -3,13 +3,13 @@ import {
     PluginAccountCollectionContributionV1Schema,
     type PluginCollectionContractRefV1,
 } from '@happier-dev/protocol';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type {
     PluginAccountCollectionDefinition,
-    PluginAccountCollectionForDefinition,
     PluginAccountCollectionValue,
 } from '@happier-dev/plugin-sdk/collections';
 import type {
+    PluginUiAccountCollectionForDefinition,
     PluginUiDataClient,
     PluginUiCollectionQueryInput,
     PluginUiCollectionQueryPager,
@@ -20,6 +20,7 @@ import type { PluginAccountAvailabilityReader } from '@/sync/domains/plugins/ava
 import {
     createActivePluginCollectionClientForContractRef,
     type ActivePluginCollectionClientForContractRefOutcomeV1,
+    type ActivePluginCollectionRejectedV1,
     type ActivePluginCollectionUnavailableReasonV1,
 } from './activePluginCollectionClient';
 import { createActivePluginCollectionUiQueryPager } from './queryPluginCollectionUiQuery';
@@ -34,12 +35,33 @@ function dataError(
     code: string,
     message: string,
     retryable = false,
+    details?: JsonValue,
 ): PluginError {
     return new PluginError({
         code,
         message,
         ...(retryable ? { retryable: true } : {}),
+        ...(details === undefined ? {} : { details }),
     });
+}
+
+/**
+ * A rejection reaches the author with the same code and detail a daemon plugin
+ * receives, so a surface that sized its batch through `limits`/`measureBatch`
+ * can react to the dimension the server actually enforced.
+ */
+function rejectedError(outcome: ActivePluginCollectionRejectedV1): PluginError {
+    return dataError(
+        outcome.code,
+        `Plugin Account Collection rejected the operation: ${outcome.code}`,
+        false,
+        outcome.quotaIncompatibility
+            ? {
+                dimension: outcome.quotaIncompatibility.dimension,
+                effectiveMaximum: outcome.quotaIncompatibility.effectiveMaximum,
+            }
+            : undefined,
+    );
 }
 
 function assertCurrent(
@@ -127,12 +149,7 @@ function resolvedClient<TValue extends PluginAccountCollectionValue<PluginAccoun
     outcome: ActivePluginCollectionClientForContractRefOutcomeV1<TValue>,
 ): Extract<ActivePluginCollectionClientForContractRefOutcomeV1<TValue>, Readonly<{ status: 'ready' }>> {
     if (outcome.status === 'ready') return outcome;
-    if (outcome.status === 'rejected') {
-        throw dataError(
-            outcome.code,
-            `Plugin Account Collection rejected the operation: ${outcome.code}`,
-        );
-    }
+    if (outcome.status === 'rejected') throw rejectedError(outcome);
     throw unavailableError(outcome.reason);
 }
 
@@ -189,7 +206,7 @@ export function createPluginUiDataClient(input: Readonly<{
 
     const collection = <TDefinition extends PluginAccountCollectionDefinition>(
         definition: TDefinition,
-    ): Pick<PluginAccountCollectionForDefinition<TDefinition>, 'get' | 'put' | 'delete' | 'query' | 'batch'> => {
+    ): PluginUiAccountCollectionForDefinition<TDefinition> => {
         const requested = normalizeCollectionDefinitionRef(input.pluginId, definition);
         if (!requested) {
             throw dataError(COLLECTION_UNDECLARED_CODE, 'The requested Account Collection is not declared');
@@ -203,7 +220,7 @@ export function createPluginUiDataClient(input: Readonly<{
                     return outcome.row;
                 }
                 if (outcome.status === 'rejected') {
-                    throw dataError(outcome.code, `Plugin Account Collection rejected the operation: ${outcome.code}`);
+                    throw rejectedError(outcome);
                 }
                 throw unavailableError(outcome.reason);
             },
@@ -219,7 +236,7 @@ export function createPluginUiDataClient(input: Readonly<{
                     throw dataError(COLLECTION_CONFLICT_CODE, 'Collection mutation conflicted with a newer row revision');
                 }
                 if (outcome.status === 'rejected') {
-                    throw dataError(outcome.code, `Plugin Account Collection rejected the operation: ${outcome.code}`);
+                    throw rejectedError(outcome);
                 }
                 if (outcome.status === 'unavailable') throw unavailableError(outcome.reason);
                 const entry = outcome.results[0];
@@ -248,7 +265,7 @@ export function createPluginUiDataClient(input: Readonly<{
                     throw dataError(COLLECTION_CONFLICT_CODE, 'Collection mutation conflicted with a newer row revision');
                 }
                 if (outcome.status === 'rejected') {
-                    throw dataError(outcome.code, `Plugin Account Collection rejected the operation: ${outcome.code}`);
+                    throw rejectedError(outcome);
                 }
                 if (outcome.status === 'unavailable') throw unavailableError(outcome.reason);
                 const entry = outcome.results[0];
@@ -287,7 +304,7 @@ export function createPluginUiDataClient(input: Readonly<{
                     });
                 }
                 if (outcome.status === 'rejected') {
-                    throw dataError(outcome.code, `Plugin Account Collection rejected the operation: ${outcome.code}`);
+                    throw rejectedError(outcome);
                 }
                 throw unavailableError(outcome.reason);
             },
@@ -297,7 +314,24 @@ export function createPluginUiDataClient(input: Readonly<{
                 assertCurrent(input.accountLifetime, options?.signal);
                 if (outcome.status === 'updated' || outcome.status === 'conflict') return outcome;
                 if (outcome.status === 'rejected') {
-                    throw dataError(outcome.code, `Plugin Account Collection rejected the operation: ${outcome.code}`);
+                    throw rejectedError(outcome);
+                }
+                throw unavailableError(outcome.reason);
+            },
+            async limits(options) {
+                const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal);
+                const outcome = await active.client.limits(options);
+                assertCurrent(input.accountLifetime, options?.signal);
+                if (outcome.status === 'ready') return outcome.limits;
+                throw unavailableError(outcome.reason);
+            },
+            async measureBatch(operations, options) {
+                const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal);
+                const outcome = await active.client.measureBatch(operations, options);
+                assertCurrent(input.accountLifetime, options?.signal);
+                if (outcome.status === 'ready') return outcome.measurement;
+                if (outcome.status === 'rejected') {
+                    throw rejectedError(outcome);
                 }
                 throw unavailableError(outcome.reason);
             },

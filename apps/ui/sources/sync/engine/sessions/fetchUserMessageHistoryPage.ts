@@ -151,6 +151,15 @@ export async function fetchUserMessageHistoryPage(params: Readonly<{
     sessionEncryptionMode?: SessionMessagesEncryptionMode;
     request: (path: string) => Promise<Response>;
     getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
+    /**
+     * Ask the server for the TURN projection instead of a raw role-filtered page.
+     *
+     * Only pass this when `capabilities.session.messages.turns` is advertised. The rows are the
+     * same shape and the same order — every prompt plus that turn's final reply — so the
+     * caller's turn assembly is unchanged; what changes is that the replies this page never
+     * used are no longer transferred or decrypted.
+     */
+    turnProjection?: boolean;
 }>): Promise<FetchUserMessageHistoryPageResult> {
     const sessionId = String(params.sessionId ?? '').trim();
     if (!sessionId) return { status: 'not_ready' };
@@ -168,6 +177,7 @@ export async function fetchUserMessageHistoryPage(params: Readonly<{
         role: 'user',
         roles: SESSION_MESSAGE_HISTORY_REMOTE_ROLES,
         limit,
+        ...(params.turnProjection === true ? { projection: 'turns' as const } : {}),
         ...(beforeSeq !== null ? { beforeSeq } : {}),
     });
 

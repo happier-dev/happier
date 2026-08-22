@@ -1,13 +1,35 @@
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
+import type { AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { PreflightModelList } from './modelOptions';
+
+type StoredSessionModelList = NonNullable<Metadata['sessionModelsV1']>['availableModels'];
+type StoredModelOption = NonNullable<StoredSessionModelList[number]['modelOptions']>[number];
 
 type SessionModelsSeed = Readonly<{
     agentId: string;
     currentModelId: string;
-    availableModels: NonNullable<Metadata['sessionModelsV1']>['availableModels'];
+    availableModels: StoredSessionModelList;
     updatedAt: number;
 }>;
+
+/**
+ * Project a preflight catalog's model options onto the shape session metadata persists.
+ *
+ * The catalog publishes readonly option data it keeps owning, while metadata is a mutable
+ * document handed to every later writer, so the nested arrays are copied rather than aliased.
+ * `groups` is dropped because the metadata carrier for a model option (`StoredModelOptionSchema`)
+ * does not declare it: persisting it here would only produce a field the next read strips.
+ */
+function toStoredModelOptions(options: readonly AcpConfigOption[]): StoredModelOption[] {
+    return options.map(({ options: choices, groups: _groups, overridesWhenOn, ...option }) => ({
+        ...option,
+        ...(choices ? { options: choices.map((choice) => ({ ...choice })) } : {}),
+        ...(overridesWhenOn
+            ? { overridesWhenOn: { ...overridesWhenOn, optionIds: [...overridesWhenOn.optionIds] } }
+            : {}),
+    }));
+}
 
 function readNonBlank(value: unknown): string | null {
     if (typeof value !== 'string') return null;
@@ -47,7 +69,7 @@ export function buildSessionModelsSeedRequest(params: Readonly<{
             name,
             ...(description ? { description } : {}),
             ...(extendedContextModelId ? { extendedContextModelId } : {}),
-            ...(model.modelOptions?.length ? { modelOptions: [...model.modelOptions] } : {}),
+            ...(model.modelOptions?.length ? { modelOptions: toStoredModelOptions(model.modelOptions) } : {}),
         }];
     });
     if (availableModels.length === 0) return null;

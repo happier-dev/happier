@@ -1046,6 +1046,7 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
             realID: reducerMsg.realID,
             ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
             ...(typeof reducerMsg.transcriptBlockIndex === 'number' ? { transcriptBlockIndex: reducerMsg.transcriptBlockIndex } : {}),
+            localId: reducerMsg.localId,
             createdAt: reducerMsg.createdAt,
             kind: 'agent-event',
             event: reducerMsg.event,

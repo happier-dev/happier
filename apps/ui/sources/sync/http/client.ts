@@ -1,7 +1,7 @@
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
-import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol';
+import { isLoopbackHostname, redactPublicShareCapabilityUrl } from '@happier-dev/protocol';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { createEndpointSupervisedRequest } from '@/sync/runtime/connectivity/createEndpointSupervisedRequest';
 import { getEndpointSupervisorForServer } from '@/sync/runtime/connectivity/endpointSupervisorPool';
@@ -136,17 +136,6 @@ function tryParseUrl(raw: string): URL | null {
 function isDebugEnabled(): boolean {
     const raw = String(process.env.EXPO_PUBLIC_DEBUG ?? '').trim();
     return raw === '1' || raw.toLowerCase() === 'true';
-}
-
-function isLoopbackHostname(rawHost: string): boolean {
-    const host = String(rawHost ?? '').trim().toLowerCase();
-    return (
-        host === 'localhost'
-        || host === '127.0.0.1'
-        || host === '::1'
-        || host === '[::1]'
-        || host.endsWith('.localhost')
-    );
 }
 
 function describeUrlForHint(rawUrl: string): { hostname: string; port: string } | null {

@@ -137,7 +137,7 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
         iconColor: theme.colors.text.secondary,
     }), [previewAgentIds, theme.colors.text.secondary]);
 
-    const selectedAgentTools = React.useMemo(() => getAgentCore(selectedAgentId).tools, [selectedAgentId]);
+    const selectedAgentTools = React.useMemo(() => getAgentCore(selectedAgentId)?.tools ?? null, [selectedAgentId]);
 
     const handleToggleStrictMode = React.useCallback(() => {
         if (!writableMcpSettings) {

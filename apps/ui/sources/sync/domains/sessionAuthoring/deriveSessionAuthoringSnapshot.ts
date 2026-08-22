@@ -1,7 +1,7 @@
 import { resolveModelSelectionIntentFromSessionMetadata, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 import { buildBackendTargetKeyV2, SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
 
-import { isAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
@@ -61,7 +61,7 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
             ?? normalizeOptionalString(metadata?.homeDir)
             ?? '/',
         ),
-        agentId: backendTarget && isAgentId(backendTarget.backendId) && !backendTarget.configuredBackendId
+        agentId: backendTarget && isBundledAgentId(backendTarget.backendId) && !backendTarget.configuredBackendId
             ? backendTarget.backendId
             : null,
         backendTarget,

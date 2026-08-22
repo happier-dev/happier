@@ -4,6 +4,13 @@ import { createReducer } from './reducer';
 import { reducer } from './reducer';
 import { AgentState } from '../domains/state/storageTypes';
 import { markSyntheticNoResponseMeta } from '../domains/messages/syntheticNoResponseMessageMeta';
+import { messageAttentionImpact } from '../domains/messages/messageUserAttention';
+import { SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT } from '@happier-dev/protocol';
+import { buildSessionTranscriptAgentAttributionIndex } from '@/components/sessions/transcript/attribution/sessionTranscriptAgentAttribution';
+import {
+    buildAgentTransitionDividerLocalId,
+    createAgentTransitionDividerEventFixture,
+} from '@/dev/testkit/fixtures/sessionAgentTransitionFixtures';
 
 describe('reducer', () => {
     // it('should process golden cases', () => {
@@ -31,6 +38,44 @@ describe('reducer', () => {
     //         expect(newMessages, `log_${i}`).toMatchSnapshot();
     //     }
     // });
+
+    describe('agent event handling', () => {
+        it('carries the reserved localId onto the converted agent-event row so the Agent-transition divider stays readable', () => {
+            const state = createReducer();
+            const localId = buildAgentTransitionDividerLocalId('local-1');
+            const event = createAgentTransitionDividerEventFixture({
+                fromAgentId: 'claude',
+                toAgentId: 'codex',
+            });
+            const messages: NormalizedMessage[] = [
+                {
+                    id: 'divider-1',
+                    localId,
+                    seq: 50,
+                    createdAt: 5_000,
+                    role: 'event',
+                    content: event as never,
+                    isSidechain: false,
+                },
+            ];
+
+            const result = reducer(state, messages);
+            expect(result.messages).toHaveLength(1);
+            const message = result.messages[0];
+            expect(message.kind).toBe('agent-event');
+            // The divider is only readable at the reserved localId: the sidecar alone is
+            // writable by anything that can post an agent event. A converted row that
+            // drops it makes both the attention exemption and historical attribution
+            // permanently unreachable, no matter what the producer wrote.
+            expect(message.kind === 'agent-event' ? message.localId : undefined).toBe(localId);
+            expect(messageAttentionImpact(message)).toBe(SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT);
+            expect(
+                buildSessionTranscriptAgentAttributionIndex(result.messages).boundaries,
+            ).toEqual([
+                expect.objectContaining({ seq: 50, fromAgentId: 'claude', toAgentId: 'codex' }),
+            ]);
+        });
+    });
 
     describe('user message handling', () => {
         it('should process user messages with localId', () => {

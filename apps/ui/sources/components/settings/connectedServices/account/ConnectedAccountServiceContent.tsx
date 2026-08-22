@@ -63,14 +63,9 @@ import {
     isQualifiedConnectedAccountLegacyOperationSupported,
     type QualifiedConnectedAccountUiLegacyPeerClass,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
+import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
 
 export type ConnectedAccountServiceProfile = QualifiedConnectedAccountProfileV4;
-
-function localizedText(
-    value: string | Readonly<{ fallback: string }> | undefined,
-): string {
-    return typeof value === 'string' ? value : value?.fallback ?? '';
-}
 
 /** Stable empty fallback so an absent `accountLabels` prop does not churn memos. */
 const EMPTY_ACCOUNT_LABELS: Readonly<Record<string, string>> = Object.freeze({});
@@ -639,7 +634,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                     <Item
                         key={mode.id}
                         testID={`connected-account-mode:${mode.id}`}
-                        title={localizedText(mode.title) || mode.id}
+                        title={resolveProjectedLocalizedText(mode.title) || mode.id}
                         icon={<Icon
                             name="plus-circle"
                             size={20}
@@ -661,7 +656,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                             testID={`connected-service-configuration-settings:${mode.id}`}
                             title={t('connectedServices.account.configurationTitle')}
                             detail={[
-                                localizedText(mode.title) || mode.id,
+                                resolveProjectedLocalizedText(mode.title) || mode.id,
                                 isConnectedAccountServiceConfigurationBlocked(
                                     props.serviceConfigurationStatusByModeId,
                                     mode.id,

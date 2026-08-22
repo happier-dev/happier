@@ -74,6 +74,51 @@ describe('BuiltInProviderAuthoringView', () => {
         expect(findAnnouncingAncestor(staticInfoText!)).toBeNull();
     });
 
+    it('labels an endpoint on a plugin-contributed wire protocol with the protocol it declared', async () => {
+        // A protocol the host does not bundle has no bundled copy string. The
+        // field must show the declared protocol id rather than another
+        // protocol's label or an unresolved translation key.
+        const { BuiltInProviderAuthoringView } = await import('./BuiltInProviderAuthoringView');
+        const screen = await renderScreen(
+            <BuiltInProviderAuthoringView
+                targetMachines={[]}
+                machineId="machine-a"
+                currentMachineName="Mac"
+                providerName="Acme"
+                provenance="external"
+                previewCredential={null}
+                endpointTemplates={[
+                    { id: 'acme', protocol: 'acme-wire-v1' },
+                    { id: 'responses', protocol: 'openai-responses' },
+                ]}
+                endpointValues={{ acme: 'https://api.acme.example/v1' }}
+                secretSelected={false}
+                preview={null}
+                previewLoading={false}
+                enableAfterSaving={false}
+                savePending={false}
+                error={null}
+                secondaryTextColor="#777"
+                warningColor="#b70"
+                onSelectMachine={vi.fn()}
+                onPickSecret={vi.fn()}
+                onChooseCandidate={vi.fn()}
+                onEndpointChange={vi.fn()}
+                onEnableAfterSavingChange={vi.fn()}
+                onSave={vi.fn()}
+            />,
+        );
+
+        expect(screen.findByTestId('settings-provider-authoring-endpoint-acme')).toBeTruthy();
+        const text = screen.getTextContent();
+        // The contributed protocol is shown as declared, never as an
+        // unresolved `settingsProviders.authoring.protocol.<id>.title` key.
+        expect(text).toContain('acme-wire-v1');
+        expect(text).not.toContain('protocol.acme-wire-v1.title');
+        // The bundled protocol still resolves its copy through the text owner.
+        expect(text).toContain('settingsProviders.authoring.protocol.openai-responses.title');
+    });
+
     it('exposes stable automation identities for external candidate review and connection', async () => {
         const onChooseCandidate = vi.fn();
         const { BuiltInProviderAuthoringView } = await import('./BuiltInProviderAuthoringView');

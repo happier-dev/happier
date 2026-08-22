@@ -2,11 +2,19 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import type { CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { ConnectedServiceQuotaSnapshotV1Schema, type AccountProfile } from '@happier-dev/protocol';
+import { t } from '@/text';
 import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 import { invalidateUsageAnalyticsQueryCache } from '@/sync/api/account/useUsageAnalyticsQuery';
+import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
+import type {
+    ConnectedServiceRegistryEntry,
+    ConnectedServiceRegistrySnapshot,
+} from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 const authState = vi.hoisted(() => ({
     credentials: { token: 'test-token', secret: 'test-secret' },
@@ -14,6 +22,58 @@ const authState = vi.hoisted(() => ({
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: authState.credentials, isAuthenticated: true }),
+}));
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        segments: ['(app)', 'settings', 'usage'],
+    }).module;
+});
+
+vi.mock('@/modal', () => ({
+    useVisibleModalKind: () => null,
+}));
+
+vi.mock('@/components/appShell/panes/AppPaneProvider', () => ({
+    useAppPaneContext: () => ({ state: { activeScopeId: null, scopes: {} } }),
+}));
+
+vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
+    useAppShellPluginUiProjection: () => ({ pluginUiProjection: null }),
+    useProjectedConnectedServicesRegistry: (): ConnectedServiceRegistrySnapshot => ({
+        scopeKey: null,
+        status: 'loading',
+        entries: [],
+        errorReason: null,
+    }),
+}));
+
+vi.mock('@/components/appShell/plugins/pluginAppPageRoute', () => ({
+    readPluginAppPageRouteIdentity: () => ({ pluginId: null, localId: null }),
+}));
+
+vi.mock('@/components/appShell/plugins/pluginAppPages', () => ({
+    resolvePluginAppPageForRoute: () => null,
+    resolvePluginAppPages: () => [],
+    selectPluginAppPagePlacements: () => [],
+}));
+
+vi.mock('@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog', () => ({
+    useResolvedSettingsPageCatalog: () => ({ activePageId: null, tree: [] }),
+}));
+
+vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', () => ({
+    useMainAppTabState: () => ({ activeTab: null }),
+}));
+
+vi.mock('@/sync/domains/session/sessionSurfaceVisibility', () => ({
+    useFocusedSessionId: () => null,
+}));
+
+vi.mock('@/utils/runtime/isRuntimeActive', () => ({
+    isRuntimeActive: () => true,
+    subscribeToRuntimeActiveChange: () => () => undefined,
 }));
 
 vi.mock('@/sync/api/account/apiUsage', async (importOriginal) => {
@@ -82,6 +142,7 @@ vi.mock('@/sync/store/hooks', async () => {
     return {
         ...actual,
         useAllMachines: () => [{ id: 'machine-a', active: true }],
+        useMachine: () => null,
         useProfile: () => useProfileSpy(),
         useSettings: () => useSettingsSpy(),
     };
@@ -102,11 +163,23 @@ vi.mock('@/sync/ops/connectedAccounts/connectedAccountDaemon', () => ({
 }));
 
 vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
-    getConnectedServiceRegistryEntry: (serviceId: string) => ({
+    getConnectedServiceRegistryEntry: (serviceId: string): ConnectedServiceRegistryEntry => ({
         serviceId,
         displayNameKey: serviceId === 'openai-codex'
-            ? 'connectedServices.names.openaiCodex'
+            ? 'connectedServices.serviceNames.openaiCodex'
             : 'connectedServices.fallbackName',
+        connectCommand: 'connect',
+        supportsOauth: true,
+    }),
+    getLegacyConnectedServiceRegistryEntry: (serviceId: string): ConnectedServiceRegistryEntry => ({
+        serviceId,
+        service: { pluginId: 'happier.core', localId: serviceId },
+        legacyServiceId: serviceId === 'openai-codex' ? 'openai-codex' : 'github',
+        displayNameKey: serviceId === 'openai-codex'
+            ? 'connectedServices.serviceNames.openaiCodex'
+            : 'connectedServices.fallbackName',
+        connectCommand: 'connect',
+        supportsOauth: true,
     }),
 }));
 
@@ -127,6 +200,81 @@ afterEach(() => {
 });
 
 describe('UsagePanel', () => {
+    it('publishes only the bounded selected usage lens and retires it on eligibility loss and unmount', async () => {
+        const {
+            CurrentUiContextProvider,
+            useOptionalCurrentUiContextReader,
+        } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        const { UsagePanel } = await import('./UsagePanel');
+        const readerCapture: { current: CurrentUiContextReader | null } = { current: null };
+        const CurrentUiContextReaderProbe = (): null => {
+            readerCapture.current = useOptionalCurrentUiContextReader();
+            return null;
+        };
+        const renderUsagePanel = (
+            initialFilters: Readonly<{
+                period: '30days' | 'year';
+                metric: 'tokens' | 'cost';
+                costMode: 'auto';
+                focus: Readonly<{ dimension: 'project'; key: string; label: string }> | null;
+            }>,
+            options: Readonly<{ eligible?: boolean; mounted?: boolean }> = {},
+        ) => (
+            <CurrentUiContextProvider>
+                <PluginSurfaceFocusEligibilityProvider
+                    active={options.eligible ?? true}
+                    currentUiContextActive
+                >
+                    {options.mounted === false ? null : <UsagePanel initialFilters={initialFilters} />}
+                </PluginSurfaceFocusEligibilityProvider>
+                <CurrentUiContextReaderProbe />
+            </CurrentUiContextProvider>
+        );
+        const initialFilters = {
+            period: '30days' as const,
+            metric: 'tokens' as const,
+            costMode: 'auto' as const,
+            focus: { dimension: 'project' as const, key: 'project-private', label: 'Private project label' },
+        };
+        const updatedFilters = {
+            period: 'year' as const,
+            metric: 'cost' as const,
+            costMode: 'auto' as const,
+            focus: { dimension: 'project' as const, key: 'project-secret', label: 'Secret project label' },
+        };
+
+        const screen = await renderScreen(renderUsagePanel(initialFilters));
+        const reader = readerCapture.current;
+        if (reader === null) throw new Error('Current UI context reader was not mounted');
+
+        expect(reader.readCurrentUiContext()?.entity).toEqual({
+            kind: 'usage_summary',
+            label: t('usage.summary.title'),
+            summary: `${t(getUsagePeriodDefinition('30days').translationKey)} · ${t('usage.tokens')}`,
+        });
+        expect(reader.readCurrentUiContext()?.detail).toBeUndefined();
+        expect(JSON.stringify(reader.readCurrentUiContext())).not.toContain('Private project label');
+        expect(JSON.stringify(reader.readCurrentUiContext())).not.toContain('project-private');
+
+        await screen.update(renderUsagePanel(updatedFilters));
+        await flushHookEffects({ cycles: 2, turns: 1 });
+        expect(reader.readCurrentUiContext()?.entity).toEqual({
+            kind: 'usage_summary',
+            label: t('usage.summary.title'),
+            summary: `${t(getUsagePeriodDefinition('year').translationKey)} · ${t('usage.cost')}`,
+        });
+        expect(JSON.stringify(reader.readCurrentUiContext())).not.toContain('Secret project label');
+        expect(JSON.stringify(reader.readCurrentUiContext())).not.toContain('project-secret');
+
+        await screen.update(renderUsagePanel(updatedFilters, { eligible: false }));
+        expect(reader.readCurrentUiContext()?.entity).toBeUndefined();
+        expect(reader.readCurrentUiContext()?.commands).toEqual([]);
+
+        await screen.update(renderUsagePanel(updatedFilters, { mounted: false }));
+        expect(reader.readCurrentUiContext()?.entity).toBeUndefined();
+        expect(reader.readCurrentUiContext()?.commands).toEqual([]);
+    });
+
     it('renders a session drilldown frame when scoped to a specific session', async () => {
         const { UsagePanel } = await import('./UsagePanel');
         const screen = await renderScreen(

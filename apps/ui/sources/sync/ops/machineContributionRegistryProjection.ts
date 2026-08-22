@@ -125,7 +125,7 @@ export type MachinePluginSecretDeleteResult =
 
 export type MachinePluginStructuredMessageActionResult =
     | Readonly<{ supported: true; result: DaemonPluginStructuredMessageActionExecuteResponse }>
-    | Readonly<{ supported: false; reason: 'not-supported' | 'error' }>;
+    | Readonly<{ supported: false; reason: 'not-supported' | 'error' | 'outcomeUnknown' }>;
 
 export type MachinePluginActionFormConnectedAccountOptionsResult =
     | Readonly<{ supported: true; result: DaemonPluginActionFormConnectedAccountOptionsResolveResponse }>
@@ -734,6 +734,7 @@ export async function machinePluginStructuredMessageActionExecute(
         signal?: AbortSignal;
     }>,
 ): Promise<MachinePluginStructuredMessageActionResult> {
+    let issued = false;
     try {
         const payload = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({
             machineId,
@@ -758,14 +759,17 @@ export async function machinePluginStructuredMessageActionExecute(
             signal: opts.signal,
             method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
             payload,
+            onIssued: () => {
+                issued = true;
+            },
         });
         if (isRpcMethodNotFoundResult(response)) return { supported: false, reason: 'not-supported' };
         const parsed = DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse(response);
         return parsed.success
             ? { supported: true, result: parsed.data }
-            : { supported: false, reason: 'error' };
+            : { supported: false, reason: issued ? 'outcomeUnknown' : 'error' };
     } catch {
-        return { supported: false, reason: 'error' };
+        return { supported: false, reason: issued ? 'outcomeUnknown' : 'error' };
     }
 }
 

@@ -28,8 +28,13 @@ import {
 } from './PluginReactNativeUnavailable';
 import { PluginUiBoundary } from './PluginUiBoundary';
 import { PluginSurfaceInteractionBoundary } from '@/components/plugins/shared/PluginSurfaceInteractionBoundary';
+import {
+    logPluginSurfaceDiagnostic,
+    readPluginSurfaceDiagnosticError,
+} from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { resolvePluginSurfaceStatePresentation } from '@/sync/domains/surfaces/copy';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import {
     createPluginReactNativeWatchdog,
     type PluginReactNativePendingFailure,
@@ -62,6 +67,15 @@ function isPluginReactNativeSurfaceModule(value: unknown): value is PluginReactN
     return Boolean(value)
         && typeof value === 'object'
         && typeof (value as { renderSurface?: unknown }).renderSurface === 'function';
+}
+
+/**
+ * A noncanonical RenderContext is refused at the mount boundary, so diagnostics
+ * must read its plugin identity defensively rather than assume the ABI held.
+ */
+function readRenderContextPluginId(renderContext: RenderContext): string | null {
+    const plugin = (renderContext as Partial<RenderContext> | null | undefined)?.plugin;
+    return typeof plugin?.id === 'string' && plugin.id.length > 0 ? plugin.id : null;
 }
 
 function readLoaderErrorDiagnostics(error: unknown): readonly string[] {
@@ -101,6 +115,13 @@ type PluginReactNativeSurfaceProps = Readonly<{
     crashReportScopeKey?: string;
     /** Daemon-owned disabled fact for that exact binding/epoch. */
     crashStateDisabled?: boolean;
+    /**
+     * Whether the projection carrying `crashStateDisabled` is the daemon's
+     * current truth rather than a retained offline snapshot. Absent means the
+     * host does not track projection currentness for this mount, which is read
+     * as current so an untracking host keeps its existing behavior.
+     */
+    crashStateProjectionCurrent?: boolean;
     /** The surface reports only its already-durable UI pending occurrence. */
     reportFailure?: (failure: PluginReactNativePendingFailure) => Promise<ReactNativeCrashReportResult>;
     /** Explicit same-digest recovery remains a daemon operation. */
@@ -523,6 +544,17 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         ? watchdog.readPending({ token: props.crashStateToken, scopeKey: crashReportScopeKey })
         : Object.freeze([]);
     const pendingQuarantine = pendingFailures.length > 0;
+    // A durable quarantine this UI cannot read or write is not an empty one.
+    // While the local store cannot speak and the daemon projection behind this
+    // binding is a retained offline snapshot rather than current truth, nothing
+    // has cleared the cached artifact, so it stays contained. The daemon
+    // remains the only owner of counts, thresholds, disablement and reset: its
+    // current truth is exactly what releases the mount again.
+    const unreconciledQuarantine = props.crashStateToken !== undefined
+        && crashReportScopeKey !== undefined
+        && watchdog.readDurability() === 'unavailable'
+        && props.crashStateProjectionCurrent === false;
+    const quarantineHeld = pendingQuarantine || unreconciledQuarantine;
     const crashDisabled = props.crashStateDisabled === true || daemonReportedDisabled;
     React.useLayoutEffect(() => {
         // A daemon-issued replacement/reset token is the only event that can
@@ -689,7 +721,25 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         setRetrying(false);
     }, [crashStateTokenLifecycleVersion, props.mountInstanceKey, props.surfaceId, watchdogCacheKey]);
 
-    const recordDaemonCrashFailure = React.useCallback((failure: DaemonPluginReactNativeCrashFailureV1) => {
+    const recordDaemonCrashFailure = React.useCallback((
+        failure: DaemonPluginReactNativeCrashFailureV1,
+        error?: unknown,
+    ) => {
+        // Attribution first, and deliberately outside the daemon-token gate
+        // below: a surface that fails before the daemon has issued a crash
+        // binding is exactly the case that used to name nothing anywhere.
+        logPluginSurfaceDiagnostic(
+            {
+                pluginId: props.crashStateToken?.renderer.pluginId
+                    ?? readRenderContextPluginId(props.renderContext),
+                contributionId: props.crashStateToken?.renderer.localId ?? null,
+                surfaceId: props.surfaceId,
+            },
+            {
+                surfaceFailure: failure,
+                error: readPluginSurfaceDiagnosticError(error),
+            },
+        );
         if (props.crashStateToken && crashReportScopeKey) {
             watchdog.recordFailure({
                 token: props.crashStateToken,
@@ -698,7 +748,13 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
             });
         }
         refreshWatchdogState();
-    }, [crashReportScopeKey, props.crashStateToken, watchdog]);
+    }, [
+        crashReportScopeKey,
+        props.crashStateToken,
+        props.renderContext,
+        props.surfaceId,
+        watchdog,
+    ]);
 
     React.useEffect(() => {
         if (
@@ -707,7 +763,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
             || !props.load
             || !loadPolicy.canLoad
             || cachedModule !== null
-            || pendingQuarantine
+            || quarantineHeld
             || crashDisabled
         ) {
             return undefined;
@@ -756,7 +812,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
             .catch((error: unknown) => {
                 if (!cancelled && !timedOut) {
                     clearTimeout(timeout);
-                    recordDaemonCrashFailure('load_error');
+                    recordDaemonCrashFailure('load_error', error);
                     setLoadFailureDiagnostics(readLoaderErrorDiagnostics(error));
                     setLoadFailed(true);
                     setRetrying(false);
@@ -779,7 +835,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         props.module,
         recordDaemonCrashFailure,
         reusesProcessGlobalModule,
-        pendingQuarantine,
+        quarantineHeld,
         crashDisabled,
     ]);
 
@@ -802,14 +858,14 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
     ]);
 
     const handleRetry = React.useCallback(() => {
-        if (retrying || pendingQuarantine || crashDisabled) {
+        if (retrying || quarantineHeld || crashDisabled) {
             return;
         }
         retryCurrentMountLocalFailure();
-    }, [crashDisabled, pendingQuarantine, retryCurrentMountLocalFailure, retrying]);
+    }, [crashDisabled, quarantineHeld, retryCurrentMountLocalFailure, retrying]);
 
     const handleCrash = React.useCallback((surfaceId: string, error: Error) => {
-        recordDaemonCrashFailure('render_error');
+        recordDaemonCrashFailure('render_error', error);
         if (props.targetedFallback !== undefined) {
             setTargetedFallbackMountAttemptId(mountAttemptId);
         }
@@ -940,6 +996,26 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         : lastInteractiveRenderStateRef.current;
     const renderContext = renderState.renderContext;
     const privateHostBindings = renderState.privateHostBindings;
+    // A replacement launch input is a new render request for the same mounted
+    // contributor, not a new mount. Keep its stateful tree alive when healthy,
+    // but let a targeted child retry after its caller gives it new input.
+    const launchInputResetKey = renderContext.launchInput === undefined
+        ? 'absent'
+        : `present:${stableJsonStringify(renderContext.launchInput)}`;
+    const launchInputResetKeyRef = React.useRef(launchInputResetKey);
+    React.useLayoutEffect(() => {
+        const launchInputChanged = launchInputResetKeyRef.current !== launchInputResetKey;
+        launchInputResetKeyRef.current = launchInputResetKey;
+        if (!launchInputChanged || targetedFallbackMountAttemptId !== mountAttemptId) {
+            return;
+        }
+        // This is only the targeted render-failure latch. Loader and daemon
+        // fault state retain their existing owner/currentness rules.
+        setTargetedFallbackMountAttemptId(null);
+        setLoadFailed(false);
+        setLoadFailureDiagnostics([]);
+        setRetrying(false);
+    }, [launchInputResetKey, mountAttemptId, targetedFallbackMountAttemptId]);
 
     const crashResetFacts = Object.freeze({
         status: crashResetFeedback.status,
@@ -962,6 +1038,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         ...loadPolicy.diagnostics,
         ...loadFailureDiagnostics,
         ...(pendingQuarantine ? ['crash_reconciliation_pending'] : []),
+        ...(unreconciledQuarantine ? ['crash_quarantine_truth_unavailable'] : []),
         ...(crashDisabled ? ['crash_threshold_reached'] : []),
         ...(canonicalRenderContextDiagnostic ? [canonicalRenderContextDiagnostic] : []),
     ]);
@@ -970,7 +1047,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         && (Boolean(props.load) || isPluginReactNativeSurfaceModule(props.module));
     const shouldOfferRetry = canRetryCurrentArtifact
         && loadFailed
-        && !pendingQuarantine
+        && !quarantineHeld
         && !crashDisabled;
     const shouldOfferCrashReset = crashDisabled
         && props.resetCrashState !== undefined
@@ -1000,7 +1077,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         props.decision.state !== 'load'
         || loadFailed
         || !loadPolicy.canLoad
-        || pendingQuarantine
+        || quarantineHeld
         || crashDisabled
     ) {
         return (
@@ -1030,7 +1107,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         <PluginUiBoundary
             key={mountAttemptId}
             surfaceId={props.surfaceId}
-            resetKey={watchdogCacheKey}
+            resetKey={`${watchdogCacheKey}\u0000${launchInputResetKey}`}
             mountInstanceKey={props.mountInstanceKey}
             fallback={props.targetedFallback === undefined ? (
                 <PluginReactNativeUnavailable

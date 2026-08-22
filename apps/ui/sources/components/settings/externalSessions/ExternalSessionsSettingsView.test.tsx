@@ -213,7 +213,7 @@ function createExternalSession(params: Readonly<{
     };
 }
 
-function createFollowCapabilityProjection(params?: Readonly<{ explicit?: boolean }>) {
+function createFollowCapabilityProjection(params?: Readonly<{ sourceKind?: string }>) {
     return {
         generation: 1,
         installedPackagesById: {
@@ -227,10 +227,7 @@ function createFollowCapabilityProjection(params?: Readonly<{ explicit?: boolean
                     generation: 1,
                     operations: {},
                     sources: [{
-                        sourceKind: 'claudeConfig',
-                        ...(params?.explicit === true
-                            ? { terminalFollow: { userRowClassification: 'explicitV1' } }
-                            : {}),
+                        sourceKind: params?.sourceKind ?? 'claudeConfig',
                         schema: {
                             fields: [
                                 { name: 'kind', kind: 'literal', value: 'claudeConfig' },
@@ -275,7 +272,7 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         effectBoundary.daemonProjection = {
             phase: 'ready',
             inputs: {
-                pluginProjectionV2: createFollowCapabilityProjection({ explicit: true }),
+                pluginProjectionV2: createFollowCapabilityProjection(),
             },
         };
         administrationTargetState.current = {
@@ -924,28 +921,53 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         await screen.unmount();
     });
 
-    it('hides the follow toggle when the linked source lacks an explicit terminal-follow declaration', async () => {
+    it('hides the follow control when the current projection no longer declares the linked source', async () => {
         effectBoundary.sessions = [createExternalSession({
-            id: 'no-explicit-follow',
+            id: 'undeclared-source',
             policy: 'attached_only',
             status: 'disabled',
-            title: 'No explicit follow capability',
+            title: 'Undeclared linked source',
         })];
         effectBoundary.daemonProjection = {
             phase: 'ready',
             inputs: {
-                pluginProjectionV2: createFollowCapabilityProjection(),
+                // The Agent is projected, but it no longer declares the
+                // `claudeConfig` source this session is linked to.
+                pluginProjectionV2: createFollowCapabilityProjection({
+                    sourceKind: 'claudeArchive',
+                }),
             },
         };
 
         const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
         const screen = await renderSettingsView(<ExternalSessionsSettingsView />);
 
-        const row = screen.findRow('settings-external-sessions-follow-item-no-explicit-follow');
+        const row = screen.findRow('settings-external-sessions-follow-item-undeclared-source');
         expect(row).toBeTruthy();
         expect(row?.props.rightElement).toBeUndefined();
         expect(row?.props.onPress).toBeUndefined();
         expect(row?.props.subtitle).toBe('externalSessions.followStatusUnsupported');
+
+        await screen.unmount();
+    });
+
+    it('offers background follow for a declared linked source that carries no terminal-follow opt-in', async () => {
+        effectBoundary.sessions = [createExternalSession({
+            id: 'observation-follow',
+            policy: 'attached_only',
+            status: 'disabled',
+            title: 'Observation-backed follow',
+        })];
+
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(<ExternalSessionsSettingsView />);
+
+        const row = screen.findRow('settings-external-sessions-follow-item-observation-follow');
+        expect(row).toBeTruthy();
+        expect(row?.props.mode).not.toBe('info');
+        expect(row?.props.rightElement).toBeTruthy();
+        expect(row?.props.onPress).toBeTruthy();
+        expect(row?.props.subtitle).toBe('externalSessions.followStatusDisabled');
 
         await screen.unmount();
     });

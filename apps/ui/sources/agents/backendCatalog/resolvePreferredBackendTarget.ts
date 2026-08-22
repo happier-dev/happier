@@ -4,7 +4,7 @@ import {
     type BackendTargetRefV2Input,
 } from '@happier-dev/protocol';
 
-import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { isLegacyCompatAgentType } from './legacyCompatAgents';
 import { backendTargetsMatch, formatBackendTargetKeyV2 } from './backendTargetKeyV2';
 
@@ -70,14 +70,14 @@ export function resolvePreferredBackendTarget(params: BackendTargetPreferenceInp
 
     const preferredBuiltInAgentIds: AgentId[] = [];
     for (const preferredCandidate of params.preferredBuiltInAgentIds ?? []) {
-        if (!isAgentId(preferredCandidate)) {
+        if (!isBundledAgentId(preferredCandidate)) {
             continue;
         }
         if (!preferredBuiltInAgentIds.includes(preferredCandidate)) {
             preferredBuiltInAgentIds.push(preferredCandidate);
         }
     }
-    if (isAgentId(params.lastUsedAgent) && !preferredBuiltInAgentIds.includes(params.lastUsedAgent)) {
+    if (isBundledAgentId(params.lastUsedAgent) && !preferredBuiltInAgentIds.includes(params.lastUsedAgent)) {
         preferredBuiltInAgentIds.push(params.lastUsedAgent);
     }
 

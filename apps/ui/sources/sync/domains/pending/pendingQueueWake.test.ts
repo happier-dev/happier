@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getPendingQueueWakeResumeOptions } from './pendingQueueWake';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import {
+    clearProjectedAgentUiBehaviorDescriptors,
+    publishProjectedAgentUiBehaviorDescriptors,
+} from '@/agents/registry/agentUiBehaviorProjection';
 
 let storageState: any = {
     sessions: {},
@@ -682,5 +686,73 @@ describe('getPendingQueueWakeResumeOptions', () => {
             directory: '/tmp',
             backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-kiro' },
         });
+    });
+    it('carries an externally installed Agent\'s projected wake resume extras', () => {
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'm1',
+            descriptorsByAgentId: {
+                'acme-lifecycle': {
+                    kind: 'plugin.ui.v1',
+                    pluginId: 'acme.lifecycle',
+                    agentId: 'acme-lifecycle',
+                    version: 1,
+                    behavior: {
+                        payload: {
+                            environmentVariables: {
+                                providerId: 'acme-lifecycle',
+                                backendMode: {
+                                    envKey: 'ACME_BACKEND_MODE',
+                                    settingKey: 'acmeBackendMode',
+                                    legacyMetadataKey: 'acmeBackendModeV1',
+                                    runtimeDescriptorField: 'backendMode',
+                                    defaultValue: 'server',
+                                    values: ['server', 'local'],
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        try {
+            const session: any = {
+                thinking: false,
+                agentState: null,
+                metadata: {
+                    machineId: 'm1',
+                    path: '/tmp',
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'acme-lifecycle',
+                        provider: { providerSessionId: 'acme-session-1' },
+                    },
+                },
+            };
+
+            const res = getPendingQueueWakeResumeOptions({
+                sessionId: 's1',
+                session,
+                resumeCapabilityOptions: {
+                    accountSettings: {},
+                    currentAgentCapabilities: {
+                        agentId: 'acme-lifecycle',
+                        identity: { pluginId: 'acme.lifecycle', localId: 'acme-lifecycle' },
+                        generation: 42,
+                        capabilities: {
+                            sessions: {
+                                open: ['create', 'resume', 'fork'],
+                                delivery: ['newTurn'],
+                                cancel: true,
+                            },
+                        },
+                    },
+                } as any,
+            });
+
+            expect(res?.backendTarget).toEqual({ kind: 'backend', backendId: 'acme-lifecycle' });
+            expect(res?.environmentVariables).toEqual({ ACME_BACKEND_MODE: 'server' });
+        } finally {
+            clearProjectedAgentUiBehaviorDescriptors();
+        }
     });
 });

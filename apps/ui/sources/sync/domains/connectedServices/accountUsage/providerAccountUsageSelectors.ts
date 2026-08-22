@@ -1,6 +1,6 @@
 import {
     resolveAgentIdFromFlavor,
-    isAgentId,
+    isBundledAgentId,
 } from '@/agents/catalog/catalog';
 
 import {
@@ -47,7 +47,7 @@ function providerAccountUsageSnapshotMatchesRequestedProvider(params: Readonly<{
     const requestedProviderId = String(params.providerId ?? '').trim();
     if (!requestedProviderId) return true;
     if (params.snapshot.providerId === requestedProviderId) return true;
-    const agentId = isAgentId(requestedProviderId)
+    const agentId = isBundledAgentId(requestedProviderId)
         ? requestedProviderId
         : resolveAgentIdFromFlavor(requestedProviderId);
     return agentId === params.snapshot.providerId;

@@ -1,6 +1,6 @@
 import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { DaemonMergedProjectionInputs } from './loadDaemonMergedProjectionInputs';
@@ -47,7 +47,7 @@ export function resolvePreferredBackendTargetFromSettings(params: Readonly<{
         || hasCatalogBackends;
 
     const explicitEnabledAgentIds = Array.isArray(params.enabledAgentIds)
-        ? params.enabledAgentIds.filter((agentId): agentId is AgentId => isAgentId(agentId))
+        ? params.enabledAgentIds.filter((agentId): agentId is AgentId => isBundledAgentId(agentId))
         : null;
 
     const enabledBuiltInAgentIds = (explicitEnabledAgentIds ?? getEnabledAgentIds({

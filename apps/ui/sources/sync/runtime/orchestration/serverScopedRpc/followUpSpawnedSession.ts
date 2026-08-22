@@ -1,8 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import {
-    hasAdmittedComposerAttachmentSelectionV1,
-    readHappierStructuredInputV1FromMeta,
-} from '@happier-dev/protocol';
+import { hasRawComposerAttachmentSelectionV1 } from '@happier-dev/protocol';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { createNotAuthenticatedError, isAuthenticationResponseStatus } from '@/sync/runtime/connectivity/authErrors';
@@ -32,8 +29,19 @@ type RecoverableFollowUpError = Error & {
     recoverableFollowUpPayload?: RecoverableFollowUpPayload;
 };
 
-function hasAdmittedComposerAttachmentSelection(metaOverrides: Record<string, unknown> | null | undefined): boolean {
-    return hasAdmittedComposerAttachmentSelectionV1(readHappierStructuredInputV1FromMeta(metaOverrides));
+/**
+ * The post-spawn first turn is submitted with the Composer's raw pre-admission
+ * metadata: its attachments are still drafts, and a media attachment still
+ * carries the staged claim the daemon's SessionMedia finalizer replaces during
+ * admission. Reading it through the admitted-only projection dropped exactly
+ * those attachments, so a media-only first message looked empty and was never
+ * sent. The canonical raw-selection owner answers the question this gate
+ * actually asks — is there authored attachment input — and keeps a malformed
+ * selection on the fail-closed path to the one admission owner's typed error
+ * instead of silently discarding the turn.
+ */
+function hasComposerAttachmentSelection(metaOverrides: Record<string, unknown> | null | undefined): boolean {
+    return hasRawComposerAttachmentSelectionV1(metaOverrides);
 }
 
 function buildRecoverableFollowUpPayload(params: Readonly<{
@@ -43,7 +51,7 @@ function buildRecoverableFollowUpPayload(params: Readonly<{
     profileId?: string | null;
 }>): RecoverableFollowUpPayload | null {
     const draftText = String(params.initialMessageText ?? '');
-    if (!draftText.trim() && !hasAdmittedComposerAttachmentSelection(params.metaOverrides)) {
+    if (!draftText.trim() && !hasComposerAttachmentSelection(params.metaOverrides)) {
         return null;
     }
 
@@ -196,7 +204,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                 }).sendSessionMessageWithServerScope;
             const trimmedInitialMessage = String(params.initialMessageText ?? '').trim();
             const hasInitialInput = trimmedInitialMessage.length > 0
-                || hasAdmittedComposerAttachmentSelection(params.metaOverrides);
+                || hasComposerAttachmentSelection(params.metaOverrides);
 
             if (context.scope === 'active') {
                 if (hasInitialInput) {

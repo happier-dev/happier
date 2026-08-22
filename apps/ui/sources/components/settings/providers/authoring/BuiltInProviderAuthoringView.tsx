@@ -1,5 +1,10 @@
 import * as React from 'react';
-import type { ProviderErrorV1, ProviderWireProtocol } from '@happier-dev/protocol';
+import {
+    readBundledProviderWireProtocolFactV1,
+    type BundledProviderWireProtocol,
+    type ProviderErrorV1,
+    type ProviderWireProtocol,
+} from '@happier-dev/protocol';
 import type { DaemonProviderContributionAuthoringPreviewV1 } from '@happier-dev/protocol/rpc';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -22,6 +27,24 @@ type PreviewCredential = Readonly<{ required: boolean }>;
 const styles = StyleSheet.create(() => ({
     fields: { gap: 16, paddingHorizontal: 16, paddingVertical: 14 },
 }));
+
+/**
+ * Translated endpoint labels exist only for the protocols this build bundles a
+ * copy string for. A protocol contributed by an installed plugin has none, so
+ * the endpoint is labelled with the protocol id the plugin declared rather than
+ * with another protocol's label or an unresolved translation key.
+ */
+const BUNDLED_PROTOCOL_LABEL_KEYS = {
+    anthropic: 'settingsProviders.authoring.protocol.anthropic.title',
+    'openai-chat': 'settingsProviders.authoring.protocol.openai-chat.title',
+    'openai-responses': 'settingsProviders.authoring.protocol.openai-responses.title',
+    'ollama-native': null,
+} as const satisfies Record<BundledProviderWireProtocol, string | null>;
+
+function endpointProtocolLabel(protocol: ProviderWireProtocol): string {
+    const key = readBundledProviderWireProtocolFactV1(BUNDLED_PROTOCOL_LABEL_KEYS, protocol);
+    return key === null ? protocol : t(key);
+}
 
 export function BuiltInProviderAuthoringView(props: Readonly<{
     targetMachines: readonly Machine[];
@@ -95,9 +118,7 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
                             <MachineSetupTextField
                                 key={endpoint.id}
                                 testID={`settings-provider-authoring-endpoint-${endpoint.id}`}
-                                label={endpoint.protocol === 'ollama-native'
-                                    ? endpoint.protocol
-                                    : t(`settingsProviders.authoring.protocol.${endpoint.protocol}.title`)}
+                                label={endpointProtocolLabel(endpoint.protocol)}
                                 value={props.endpointValues[endpoint.id] ?? ''}
                                 placeholder={t('settingsProviders.authoring.baseUrlPlaceholder')}
                                 autoCapitalize="none"

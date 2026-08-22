@@ -5,14 +5,24 @@ import type { PluginUiHostApi, SurfaceContext } from '@happier-dev/plugin-sdk/ui
 import {
     DaemonPluginStructuredMessageActionExecuteRequestSchema,
     PLUGIN_INVOCABLE_ACTION_IDS,
+    PluginProjectionInstalledPackageV2Schema,
+    PluginProjectedActionV2Schema,
+    type PluginActionCurrentIntentResult,
+    type PluginContributionIdentityV1,
+    type PluginMachineExecutionOriginV1,
+    type PluginProjectedActionV2,
 } from '@happier-dev/protocol';
+import type { PluginClientApi } from '@happier-dev/plugin-sdk';
+import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
+    PluginUiArtifactsManifestEntryV1Schema,
     PluginHostedWebBridgeEnvelopeV1Schema,
     PluginUiExecuteActionRequestV1Schema,
     PluginUiJsonValueV1Schema,
     PluginUiTargetedContributionsV1Schema,
     type
+    CurrentUiContextSnapshotV1,
     PluginUiHostApiRequestEnvelopeV1,
     PluginUiJsonValueV1,
     PluginUiSurfaceContextV1,
@@ -23,14 +33,31 @@ import { resolveThemeProfile } from '@/theme/profiles/resolveThemeProfile';
 
 import { projectPluginUiTheme } from './pluginUiThemeProjection';
 import { createCanonicalPluginReactNativeHostApiAdapter } from '@/components/plugins/reactNative/hostApi';
+import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
+import {
+    getInstalledPluginUiClientExecutableComposition,
+    resolvePluginUiClientActionRegistration,
+} from '@/components/plugins/reactNative/clientExecutableContributions';
+import { resolveProjectedPluginUiClientExecutables } from '@/components/plugins/reactNative/clientExecutableProjection';
+import type {
+    PluginReactNativeExecutableExport,
+    PluginReactNativeLoaderBackend,
+} from '@/components/plugins/reactNative/loader';
+import {
+    EMPTY_PLUGIN_UI_PROJECTION,
+    type PluginUiProjectionModel,
+} from '@/sync/domains/plugins/ui/projection';
+import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';
+import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 
 import {
-    createPluginSurfaceActionHostApi,
-    dispatchPluginSurfaceAction,
+    createPluginSurfaceActionHostApi as createPluginSurfaceActionHostApiImpl,
+    dispatchPluginSurfaceAction as dispatchPluginSurfaceActionImpl,
     type DispatchPluginSurfaceActionInput,
     type PluginSurfaceContributedActionTransport,
     type PluginSurfaceHostActionExecute,
 } from './pluginSurfaceActionDispatch';
+import { createBoundPluginSurfaceController } from './boundPluginSurfaceController';
 
 // The dispatcher and serializer stay real. The server-scoped RPC is the
 // system boundary that terminates this UI-side transport path.
@@ -76,6 +103,250 @@ function mountedActionBinding(input: Readonly<{
     } as const;
 }
 
+const CLIENT_ACTION_TARGET = Object.freeze({
+    artifactId: 'client-action-bundle',
+    modulePath: './actions/clientAction',
+    exportName: 'execute',
+    platform: 'web' as const,
+});
+const CLIENT_ACTION_ORIGIN: PluginMachineExecutionOriginV1 = Object.freeze({
+    serverIdentityId: 'srv_client_action',
+    materializationRef: Object.freeze({
+        pluginId: CALLER_PLUGIN_ID,
+        machineId: 'machine-client-action',
+        materializationId: 'materialization-client-action',
+    }),
+});
+const CLIENT_ACTION_GENERATION = 9;
+const CLIENT_ACTION_ARTIFACT_GRAPH = PluginUiArtifactsManifestEntryV1Schema.parse({
+    contributionId: CLIENT_ACTION_TARGET.artifactId,
+    tier: 'reactNative',
+    platform: CLIENT_ACTION_TARGET.platform,
+    entry: 'react-native/client-action-bundle/index.js',
+    files: [{
+        relativePath: 'react-native/client-action-bundle/index.js',
+        digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        byteSize: 10,
+    }],
+    digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    builtWith: { bundler: 'vite', version: '7.0.0' },
+    hostUiApiVersion: '1.0.0',
+    compat: { react: '19.0.0', reactNative: '0.83.4' },
+});
+const CLIENT_ACTION_HOST_ORIGIN = Object.freeze({
+    machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
+    serverId: 'server-client-action',
+    generation: CLIENT_ACTION_GENERATION,
+    interactionEnabled: true,
+    phase: 'current' as const,
+    executionOrigin: CLIENT_ACTION_ORIGIN,
+});
+
+function clientActionIdentity(localId: string): PluginReactNativeBundleCacheIdentity {
+    return Object.freeze({
+        pluginId: CALLER_PLUGIN_ID,
+        contributionId: localId,
+        artifactDigest: CLIENT_ACTION_ARTIFACT_GRAPH.digest,
+        hostAppVersion: '2.0.0',
+        hostUiApiVersion: '1.0.0',
+        reactVersion: '19.0.0',
+        reactNativeVersion: '0.83.4',
+        platform: CLIENT_ACTION_TARGET.platform,
+        channel: 'internal',
+        nativeCapabilitiesDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        projectionGeneration: CLIENT_ACTION_GENERATION,
+    });
+}
+const CLIENT_ACTION_AUTHORIZATION = Object.freeze({
+    packageTrust: Object.freeze({
+        packageIdentity: `${CALLER_PLUGIN_ID}/actions/refresh-index`,
+        reviewedPackageIdentity: `${CALLER_PLUGIN_ID}/actions/refresh-index`,
+    }),
+    generation: Object.freeze({
+        targetGeneration: String(CLIENT_ACTION_GENERATION),
+        desiredGeneration: String(CLIENT_ACTION_GENERATION),
+        appliedGeneration: String(CLIENT_ACTION_GENERATION),
+    }),
+    resourceSelections: Object.freeze([]),
+    scopedGrants: Object.freeze([]),
+    serviceAvailability: Object.freeze([]),
+    operatingSystemAuthorization: Object.freeze([]),
+});
+
+function createClientTargetAction(input: Readonly<{
+    identity: PluginContributionIdentityV1;
+    dangerLevel?: 'safe' | 'writesRemote';
+    surfaces?: readonly ('ui' | 'voice')[];
+}>): PluginProjectedActionV2 {
+    const dangerLevel = input.dangerLevel ?? 'safe';
+    return PluginProjectedActionV2Schema.parse({
+        id: input.identity.localId,
+        pluginId: input.identity.pluginId,
+        title: input.identity.localId,
+        scopes: ['global'],
+        surfaces: input.surfaces ?? ['ui'],
+        placementBindings: ['detailsPanel'],
+        execution: {
+            target: 'client',
+            client: {
+                artifactId: CLIENT_ACTION_TARGET.artifactId,
+                modulePath: CLIENT_ACTION_TARGET.modulePath,
+                exportName: CLIENT_ACTION_TARGET.exportName,
+            },
+            platforms: [CLIENT_ACTION_TARGET.platform],
+        },
+        serverIdentityId: CLIENT_ACTION_ORIGIN.serverIdentityId,
+        materializationRef: CLIENT_ACTION_ORIGIN.materializationRef,
+        dangerLevel,
+        ...(dangerLevel === 'safe'
+            ? {}
+            : {
+                confirmation: {
+                    title: 'Confirm client action',
+                    body: 'This action changes remote state.',
+                },
+            }),
+        available: true,
+        authorization: CLIENT_ACTION_AUTHORIZATION,
+    });
+}
+
+function createClientActionActivation(input: Readonly<{
+    localId?: string;
+    dangerLevel?: 'safe' | 'writesRemote';
+    surfaces?: readonly ('ui' | 'voice')[];
+    handler: PluginClientActionHandler;
+}>) {
+    const localId = input.localId ?? 'refresh-index';
+    const action = createClientTargetAction({
+        identity: { pluginId: CALLER_PLUGIN_ID, localId },
+        dangerLevel: input.dangerLevel,
+        surfaces: input.surfaces,
+    });
+    const identity = clientActionIdentity(localId);
+    const projectedAction = Object.freeze({
+        ...action,
+        [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: CLIENT_ACTION_HOST_ORIGIN,
+    });
+    const bundleId = `reactNativeBundle:${CALLER_PLUGIN_ID}:${localId}`;
+    const projection = Object.freeze({
+        ...EMPTY_PLUGIN_UI_PROJECTION,
+        generation: CLIENT_ACTION_GENERATION,
+        installedPackagesById: Object.freeze({
+            [CALLER_PLUGIN_ID]: PluginProjectionInstalledPackageV2Schema.parse({
+                id: CALLER_PLUGIN_ID,
+                displayName: 'Happier Inspector',
+                version: '1.2.3',
+                enabled: true,
+                source: { kind: 'localPath', locator: CALLER_PLUGIN_ID },
+            }),
+        }),
+        actionsById: Object.freeze({
+            [`${CALLER_PLUGIN_ID}/${localId}`]: projectedAction,
+        }),
+        reactNativeBundlesById: Object.freeze({
+            [bundleId]: Object.freeze({
+                id: bundleId,
+                pluginId: CALLER_PLUGIN_ID,
+                contributionKind: 'reactNativeBundle' as const,
+                contributionId: localId,
+                generatedOwnerKind: 'clientContribution' as const,
+                artifactGraph: CLIENT_ACTION_ARTIFACT_GRAPH,
+                runtime: Object.freeze({
+                    decision: Object.freeze({ state: 'load' }),
+                    loadPolicy: Object.freeze({ source: 'installedArtifact' }),
+                    cacheIdentity: identity,
+                }),
+                [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: CLIENT_ACTION_HOST_ORIGIN,
+            }),
+        }),
+    }) satisfies PluginUiProjectionModel;
+    const resolved = resolveProjectedPluginUiClientExecutables({
+        actionProjection: Object.freeze({ projection }),
+        platform: CLIENT_ACTION_TARGET.platform,
+    });
+    const resolvedAction = resolved[0];
+    if (!resolvedAction || resolved.length !== 1) {
+        throw new Error('client Action fixture did not resolve through the production projection');
+    }
+    const cache = createPluginReactNativeBundleCache();
+    cache.putInstalledArtifact({
+        identity: resolvedAction.cacheIdentity,
+        bytes: new Uint8Array([47, 47, 32, 99, 108, 105, 101, 110, 116]),
+        format: 'plainJs',
+    });
+    const activate = vi.fn((api: PluginClientApi) => {
+        // The registration transaction is real: only the artifact loader is a
+        // system-boundary test double.
+        api.actions.register(localId, input.handler);
+    });
+    const backend: PluginReactNativeLoaderBackend = Object.freeze({
+        backendId: 'reactNativeWebModule',
+        available: true,
+        loadInstalledBundle: vi.fn(async () => activate as PluginReactNativeExecutableExport),
+    });
+    const activation = Object.freeze({
+        pluginId: resolvedAction.pluginId,
+        ...(resolvedAction.pluginVersion === undefined ? {} : { pluginVersion: resolvedAction.pluginVersion }),
+        contributes: resolvedAction.contributes,
+        target: resolvedAction.target,
+        executionOrigin: resolvedAction.executionOrigin,
+        projectionGeneration: resolvedAction.projectionGeneration,
+        cache,
+        identity: resolvedAction.cacheIdentity,
+        moduleReference: resolvedAction.moduleReference,
+        backend,
+        authority: resolvedAction.authority,
+        isCurrent: () => true,
+    });
+    return Object.freeze({
+        activation,
+        activate,
+        action: projectedAction as PluginProjectedActionV2,
+        composition: getInstalledPluginUiClientExecutableComposition(),
+    });
+}
+
+function resolveExactClientAction(action: PluginProjectedActionV2) {
+    return (identity: PluginContributionIdentityV1): PluginProjectedActionV2 | null => (
+        identity.pluginId === action.pluginId && identity.localId === action.id
+            ? action
+            : null
+    );
+}
+
+function resolveDaemonTargetAction(
+    identity: PluginContributionIdentityV1,
+): PluginProjectedActionV2 {
+    return {
+        id: identity.localId,
+        pluginId: identity.pluginId,
+        title: identity.localId,
+        scopes: ['session'],
+        surfaces: ['ui'],
+        execution: { target: 'daemon' },
+        dangerLevel: 'safe',
+    };
+}
+
+/** Test-only raw projection producer for pre-existing daemon-arm cases. */
+function dispatchPluginSurfaceAction(input: DispatchPluginSurfaceActionInput) {
+    return dispatchPluginSurfaceActionImpl({
+        ...input,
+        resolveContributedAction: input.resolveContributedAction ?? resolveDaemonTargetAction,
+    });
+}
+
+/** Keeps existing host-API cases on the same raw V2 descriptor path. */
+function createPluginSurfaceActionHostApi(
+    input: Parameters<typeof createPluginSurfaceActionHostApiImpl>[0],
+) {
+    return createPluginSurfaceActionHostApiImpl({
+        ...input,
+        resolveContributedAction: input.resolveContributedAction ?? resolveDaemonTargetAction,
+    });
+}
+
 /**
  * A first-party ActionSpec that really carries `surfaces.plugin`. Read from the
  * canonical runtime companion so this suite cannot drift from the master key:
@@ -108,6 +379,481 @@ function executeActionRequest(payload: PluginUiJsonValueV1): PluginUiHostApiRequ
 }
 
 describe('plugin-surface action branch selection', () => {
+    it('reads the current UI snapshot only after current-intent approval for a writes-remote client Action', async () => {
+        const snapshotAtDispatch: CurrentUiContextSnapshotV1 = {
+            navigation: { area: 'app' as const, screen: 'initial' },
+            commands: [],
+        };
+        let currentSnapshot = snapshotAtDispatch;
+        const snapshotAfterApproval: CurrentUiContextSnapshotV1 = {
+            navigation: { area: 'plugin' as const, screen: 'issue-detail', title: 'Issue 42' },
+            entity: { kind: 'issue', label: 'Issue 42' },
+            commands: [],
+        };
+        const readCurrentUiContext = vi.fn(() => currentSnapshot);
+        let resolveCurrentIntent!: (result: Readonly<{
+            status: 'approved';
+            fingerprint: string;
+        }>) => void;
+        let requestedFingerprint!: string;
+        let currentIntentRequested!: () => void;
+        const currentIntentRequestedPromise = new Promise<void>((resolve) => {
+            currentIntentRequested = resolve;
+        });
+        const handler = vi.fn(async (_input: PluginUiJsonValueV1, context: Parameters<PluginClientActionHandler>[1]) => ({
+            currentUiContext: context.currentUiContext ?? null,
+        }));
+        const activation = createClientActionActivation({
+            dangerLevel: 'writesRemote',
+            handler,
+        });
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const requestCurrentIntent = vi.fn(({ fingerprint }: Readonly<{ fingerprint: string }>) => {
+                requestedFingerprint = fingerprint;
+                currentIntentRequested();
+                return new Promise<PluginActionCurrentIntentResult>((resolve) => { resolveCurrentIntent = resolve; });
+            });
+            const pending = dispatchPluginSurfaceAction({
+                callerPluginId: CALLER_PLUGIN_ID,
+                action: 'refresh-index',
+                input: null,
+                resolveContributedAction: resolveExactClientAction(activation.action),
+                clientAction: {
+                    projectionGeneration: CLIENT_ACTION_GENERATION,
+                    currentUiContext: readCurrentUiContext,
+                    requestCurrentIntent,
+                },
+            });
+            await currentIntentRequestedPromise;
+            expect(readCurrentUiContext).not.toHaveBeenCalled();
+            expect(handler).not.toHaveBeenCalled();
+
+            currentSnapshot = snapshotAfterApproval;
+            resolveCurrentIntent({
+                status: 'approved',
+                fingerprint: requestedFingerprint,
+            });
+
+            await expect(pending).resolves.toEqual({
+                ok: true,
+                result: {
+                    currentUiContext: snapshotAfterApproval,
+                },
+            });
+            expect(handler).toHaveBeenCalledTimes(1);
+            expect(handler).toHaveBeenCalledWith(null, expect.objectContaining({
+                currentUiContext: snapshotAfterApproval,
+            }));
+            expect(requestCurrentIntent).toHaveBeenCalledTimes(1);
+            expect(readCurrentUiContext).toHaveBeenCalledTimes(1);
+        } finally {
+            await activation.composition.unload();
+        }
+    });
+
+    it('invokes an Action-only exact client registration without daemon fallback', async () => {
+        const contributed = vi.fn<PluginSurfaceContributedActionTransport>(async () => ({
+            supported: true as const,
+            result: { ok: true as const, result: { daemonShouldNotRun: true } },
+        }));
+        let receivedContext: unknown;
+        const handler = vi.fn(async (input: PluginUiJsonValueV1, context: unknown) => {
+            receivedContext = context;
+            return { input, executed: true };
+        });
+        const clientHandler: PluginClientActionHandler = async (input, context) => handler(input, context);
+        const activation = createClientActionActivation({ handler: clientHandler });
+        const action = activation.action;
+        await activation.composition.unload();
+        try {
+            await expect(activation.composition.reconcile([activation.activation])).resolves.toEqual([
+                expect.objectContaining({ result: { ok: true } }),
+            ]);
+
+            await expect(dispatchPluginSurfaceAction({
+                callerPluginId: CALLER_PLUGIN_ID,
+                action: 'refresh-index',
+                input: { source: 'surface' },
+                resolveContributedAction: resolveExactClientAction(action),
+                // A daemon outage must not decide a client Action's availability.
+                isContributedActionAvailable: () => false,
+                contributedAction: {
+                    ...mountedActionBinding(),
+                    execute: contributed,
+                },
+                clientAction: {
+                    projectionGeneration: CLIENT_ACTION_GENERATION,
+                },
+            })).resolves.toEqual({
+                ok: true,
+                result: {
+                    input: { source: 'surface' },
+                    executed: true,
+                },
+            });
+
+            expect(receivedContext).toEqual(expect.objectContaining({
+                plugin: { id: CALLER_PLUGIN_ID, version: '1.2.3' },
+                contribution: {
+                    id: 'refresh-index',
+                    qualifiedId: `${CALLER_PLUGIN_ID}/actions/refresh-index`,
+                },
+                invocationSurface: 'ui',
+            }));
+
+            expect(resolvePluginUiClientActionRegistration({
+                action,
+                projectionGeneration: CLIENT_ACTION_GENERATION,
+                platform: CLIENT_ACTION_TARGET.platform,
+                reader: activation.composition,
+            })).not.toBeNull();
+            expect(handler).toHaveBeenCalledTimes(1);
+            expect(contributed).not.toHaveBeenCalled();
+        } finally {
+            await activation.composition.unload();
+        }
+    });
+
+    it('does not repurpose an Action-only exact registration for a Voice invocation', async () => {
+        const handler = vi.fn(async () => ({ shouldNotRun: true }));
+        const clientHandler: PluginClientActionHandler = async () => handler();
+        const activation = createClientActionActivation({ handler: clientHandler });
+        const action = activation.action;
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+
+            await expect(dispatchPluginSurfaceAction({
+                callerPluginId: CALLER_PLUGIN_ID,
+                action: 'refresh-index',
+                input: null,
+                resolveContributedAction: resolveExactClientAction(action),
+                invocationSurface: 'voice',
+                clientAction: { projectionGeneration: CLIENT_ACTION_GENERATION },
+            })).resolves.toEqual({
+                ok: false,
+                code: 'unavailable',
+                reason: 'plugin_action_surface_unavailable',
+            });
+            expect(handler).not.toHaveBeenCalled();
+        } finally {
+            await activation.composition.unload();
+        }
+    });
+
+    it('invokes the same exact client Action registration from UI and Voice when both surfaces are declared', async () => {
+        const handler = vi.fn(async (_input: PluginUiJsonValueV1, context: Parameters<PluginClientActionHandler>[1]) => ({
+            invocationSurface: context.invocationSurface,
+        }));
+        const activation = createClientActionActivation({
+            handler,
+            surfaces: ['ui', 'voice'],
+        });
+        const action = activation.action;
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+
+            const common = {
+                callerPluginId: CALLER_PLUGIN_ID,
+                action: 'refresh-index',
+                input: null,
+                resolveContributedAction: resolveExactClientAction(action),
+                clientAction: { projectionGeneration: CLIENT_ACTION_GENERATION },
+            } as const;
+            await expect(dispatchPluginSurfaceAction(common)).resolves.toEqual({
+                ok: true,
+                result: { invocationSurface: 'ui' },
+            });
+            await expect(dispatchPluginSurfaceAction({
+                ...common,
+                invocationSurface: 'voice',
+            })).resolves.toEqual({
+                ok: true,
+                result: { invocationSurface: 'voice' },
+            });
+
+            expect(handler).toHaveBeenCalledTimes(2);
+            expect(resolvePluginUiClientActionRegistration({
+                action,
+                projectionGeneration: CLIENT_ACTION_GENERATION,
+                platform: CLIENT_ACTION_TARGET.platform,
+                reader: activation.composition,
+            })).not.toBeNull();
+        } finally {
+            await activation.composition.unload();
+        }
+    });
+
+    it('withdraws an exact client registration before a pending confirmation can enter its handler', async () => {
+        let resolveIntent!: (result: Readonly<{
+            status: 'approved';
+            fingerprint: string;
+        }>) => void;
+        let intentRequested!: () => void;
+        const intentRequestedPromise = new Promise<void>((resolve) => { intentRequested = resolve; });
+        const handler = vi.fn(async () => ({ shouldNotRun: true }));
+        const clientHandler: PluginClientActionHandler = async () => handler();
+        const activation = createClientActionActivation({
+            dangerLevel: 'writesRemote',
+            handler: clientHandler,
+        });
+        const action = activation.action;
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const pending = dispatchPluginSurfaceAction({
+                callerPluginId: CALLER_PLUGIN_ID,
+                action: 'refresh-index',
+                input: { source: 'surface' },
+                resolveContributedAction: resolveExactClientAction(action),
+                clientAction: {
+                    projectionGeneration: CLIENT_ACTION_GENERATION,
+                    requestCurrentIntent: ({ fingerprint }: Readonly<{ fingerprint: string }>) => {
+                        intentRequested();
+                        return new Promise((resolve) => { resolveIntent = resolve; });
+                    },
+                },
+            });
+            await intentRequestedPromise;
+            await activation.composition.unload();
+            resolveIntent({
+                status: 'approved',
+                fingerprint: 'the retired confirmation must not be accepted',
+            });
+
+            await expect(pending).resolves.toEqual({
+                ok: false,
+                code: 'stale_surface',
+                reason: 'plugin_action_generation_retired',
+            });
+            expect(handler).not.toHaveBeenCalled();
+        } finally {
+            await activation.composition.unload();
+        }
+    });
+
+    it('keeps a known client handler fulfillment when caller cancellation arrives afterwards', async () => {
+        const cancellation = new AbortController();
+        let handlerReturned!: () => void;
+        const handlerReturnedPromise = new Promise<void>((resolve) => { handlerReturned = resolve; });
+        const handler = vi.fn(() => {
+            handlerReturned();
+            return { committed: true };
+        });
+        const clientHandler: PluginClientActionHandler = () => handler();
+        const activation = createClientActionActivation({ handler: clientHandler });
+        const action = activation.action;
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const pending = dispatchPluginSurfaceAction({
+                callerPluginId: CALLER_PLUGIN_ID,
+                action: 'refresh-index',
+                input: null,
+                resolveContributedAction: resolveExactClientAction(action),
+                signal: cancellation.signal,
+                clientAction: { projectionGeneration: CLIENT_ACTION_GENERATION },
+            });
+            await handlerReturnedPromise;
+            cancellation.abort(new Error('caller stopped after the client effect settled'));
+
+            await expect(pending).resolves.toEqual({ ok: true, result: { committed: true } });
+        } finally {
+            await activation.composition.unload();
+        }
+    });
+
+    it('projects post-handler client cancellation without a non-start proof as outcome unknown', async () => {
+        const cancellation = new AbortController();
+        let handlerEntered!: () => void;
+        const handlerEnteredPromise = new Promise<void>((resolve) => { handlerEntered = resolve; });
+        const handler = vi.fn(() => {
+            handlerEntered();
+            return new Promise<never>(() => {});
+        });
+        const clientHandler: PluginClientActionHandler = () => handler();
+        const activation = createClientActionActivation({ handler: clientHandler });
+        const action = activation.action;
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const pending = dispatchPluginSurfaceAction({
+                callerPluginId: CALLER_PLUGIN_ID,
+                action: 'refresh-index',
+                input: null,
+                resolveContributedAction: resolveExactClientAction(action),
+                signal: cancellation.signal,
+                clientAction: { projectionGeneration: CLIENT_ACTION_GENERATION },
+            });
+            await handlerEnteredPromise;
+            cancellation.abort(new Error('caller stopped after the client handler started'));
+
+            await expect(pending).resolves.toEqual({
+                ok: false,
+                code: 'timeout',
+                reason: 'plugin_ui_action_outcome_unknown',
+            });
+        } finally {
+            await activation.composition.unload();
+        }
+    });
+
+    it('does not bypass current-intent denial for a non-safe client Action', async () => {
+        const handler = vi.fn(async () => ({ shouldNotRun: true }));
+        const clientHandler: PluginClientActionHandler = async () => handler();
+        const activation = createClientActionActivation({
+            dangerLevel: 'writesRemote',
+            handler: clientHandler,
+        });
+        const action = activation.action;
+        const requestCurrentIntent = vi.fn(async () => ({
+            status: 'rejected' as const,
+            code: 'plugin_action_current_intent_rejected',
+        }));
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            await expect(dispatchPluginSurfaceAction({
+                callerPluginId: CALLER_PLUGIN_ID,
+                action: 'refresh-index',
+                input: null,
+                resolveContributedAction: resolveExactClientAction(action),
+                clientAction: {
+                    projectionGeneration: CLIENT_ACTION_GENERATION,
+                    requestCurrentIntent,
+                },
+            })).resolves.toEqual({
+                ok: false,
+                code: 'unavailable',
+                reason: 'plugin_action_current_intent_rejected',
+            });
+            expect(requestCurrentIntent).toHaveBeenCalledTimes(1);
+            expect(handler).not.toHaveBeenCalled();
+        } finally {
+            await activation.composition.unload();
+        }
+    });
+
+    // The selected-operation carrier is a dispatcher-level settlement, not a
+    // daemon-transport detail. A client-target Action must receive the same
+    // reconstructed selected input, the same exact-input comparison, and the
+    // same mounted-target ownership rule as a daemon-target Action (C1).
+    it('settles the host-selected operation before branching to a client Action', async () => {
+        const handler = vi.fn(async (input: PluginUiJsonValueV1) => ({ received: input }));
+        const clientHandler: PluginClientActionHandler = async (input) => handler(input);
+        const activation = createClientActionActivation({ handler: clientHandler });
+        const action = activation.action;
+        const targetedOperation = {
+            point: { pointId: 'connection', protocol: { id: 'connection', version: 1 } },
+            contributor: {
+                pluginId: CALLER_PLUGIN_ID,
+                contributionId: 'github-connection',
+                immutableGenerationId: 'contributor-generation-a',
+            },
+            role: 'setup',
+            action: { pluginId: CALLER_PLUGIN_ID, localId: 'refresh-index' },
+        } as const;
+        const account = {
+            service: { pluginId: 'acme.github', localId: 'github' },
+            accountId: 'account-a',
+        } as const;
+        const selectedActionInput = {
+            kind: 'submitted' as const,
+            action: targetedOperation.action,
+            input: { repository: 'happier-dev/happier' },
+            selection: {
+                target: {
+                    pluginId: CALLER_PLUGIN_ID,
+                    immutableGenerationId: 'target-generation-a',
+                },
+                point: targetedOperation.point,
+                contributor: targetedOperation.contributor,
+            },
+            connectedAccount: {
+                kind: 'selected' as const,
+                fieldPath: 'credentialRef',
+                ref: account,
+            },
+        };
+        const dispatch = (overrides: Partial<DispatchPluginSurfaceActionInput> = {}) => dispatchPluginSurfaceAction({
+            callerPluginId: CALLER_PLUGIN_ID,
+            callerContributionLocalId: 'inspector-app',
+            callerBinding: mountedCallerBinding(),
+            action: { pluginId: CALLER_PLUGIN_ID, localId: 'refresh-index' },
+            input: { repository: 'happier-dev/happier' },
+            resolveContributedAction: resolveExactClientAction(action),
+            clientAction: { projectionGeneration: CLIENT_ACTION_GENERATION },
+            targetedOperation,
+            selectedActionInput,
+            ...overrides,
+        });
+
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+
+            // The selected Connected Account is reconstructed into the input the
+            // client handler observes, exactly as on the daemon arm.
+            await expect(dispatch()).resolves.toEqual({
+                ok: true,
+                result: {
+                    received: {
+                        repository: 'happier-dev/happier',
+                        credentialRef: account,
+                    },
+                },
+            });
+
+            // A tampered input cannot ride an admitted selection.
+            await expect(dispatch({ input: { repository: 'tampered' } })).resolves.toEqual({
+                ok: false,
+                code: 'invalid_payload',
+                reason: 'plugin_surface_targeted_selection_invalid',
+            });
+
+            // The carrier is anchored to the exact mounted target.
+            await expect(dispatch({
+                selectedActionInput: {
+                    ...selectedActionInput,
+                    selection: {
+                        ...selectedActionInput.selection,
+                        target: { pluginId: 'other.plugin', immutableGenerationId: 'target-generation-a' },
+                    },
+                },
+            })).resolves.toEqual({
+                ok: false,
+                code: 'invalid_payload',
+                reason: 'plugin_surface_targeted_selection_invalid',
+            });
+
+            // A relay carrier is a daemon-request field with no client channel.
+            // The combination is refused explicitly rather than executing with
+            // the caller's selection silently dropped.
+            const relayOperation = {
+                ...targetedOperation,
+                action: { pluginId: CALLER_PLUGIN_ID, localId: 'prepare-v1' },
+            } as const;
+            await expect(dispatch({
+                targetedOperation: relayOperation,
+                selectedActionInput: {
+                    ...selectedActionInput,
+                    action: relayOperation.action,
+                },
+            })).resolves.toEqual({
+                ok: false,
+                code: 'unsupported_method',
+                reason: 'plugin_surface_targeted_selection_relay_unsupported',
+            });
+
+            expect(handler).toHaveBeenCalledTimes(1);
+        } finally {
+            await activation.composition.unload();
+        }
+    });
+
     it('composes exact mount-owned host semantics into the canonical facade and retires them with it', async () => {
         const readComposer = vi.fn(() => ({ status: 'unavailable' as const, reason: 'scopeClosed' as const }));
         const disposeHostResource = vi.fn(() => null);
@@ -706,7 +1452,7 @@ describe('plugin-surface action branch selection', () => {
         })).resolves.toEqual({ ok: true, result: { applied: 1 } });
     });
 
-    it('prefers the retirement reason when the settlement itself failed', async () => {
+    it('keeps a known daemon failure when the surface retires after settlement', async () => {
         let current = true;
         const contributed = vi.fn<PluginSurfaceContributedActionTransport>(async () => {
             current = false;
@@ -725,8 +1471,53 @@ describe('plugin-surface action branch selection', () => {
             },
         })).resolves.toEqual({
             ok: false,
-            code: 'stale_surface',
-            reason: 'plugin_ui_generation_retired',
+            code: 'unavailable',
+            reason: 'plugin_action_unavailable',
+        });
+    });
+
+    it('keeps a pre-handler daemon retirement as an ordinary unavailable result', async () => {
+        const contributed = vi.fn<PluginSurfaceContributedActionTransport>(async () => ({
+            supported: true as const,
+            result: { ok: false as const, code: 'plugin_action_generation_retired' },
+        }));
+
+        await expect(dispatchPluginSurfaceAction({
+            callerPluginId: CALLER_PLUGIN_ID,
+            action: 'refresh-index',
+            input: {},
+            contributedAction: {
+                machineId: 'machine-1',
+                expectedGeneration: '9',
+                execute: contributed,
+            },
+        })).resolves.toEqual({
+            ok: false,
+            code: 'unavailable',
+            reason: 'plugin_action_generation_retired',
+        });
+    });
+
+    it('projects a post-handler daemon retirement as outcome unknown', async () => {
+        const contributed = vi.fn<PluginSurfaceContributedActionTransport>(async () => ({
+            supported: true as const,
+            result: { ok: false as const, code: 'plugin_action_outcome_unknown' },
+        }));
+
+        await expect(dispatchPluginSurfaceAction({
+            callerPluginId: CALLER_PLUGIN_ID,
+            action: 'refresh-index',
+            input: {},
+            invocationSurface: 'voice',
+            contributedAction: {
+                machineId: 'machine-1',
+                expectedGeneration: '9',
+                execute: contributed,
+            },
+        })).resolves.toEqual({
+            ok: false,
+            code: 'timeout',
+            reason: 'plugin_ui_action_outcome_unknown',
         });
     });
 });
@@ -1579,11 +2370,11 @@ describe('composed React Native host API to canonical plugin-surface dispatcher'
             pluginId: CALLER_PLUGIN_ID,
         })).rejects.toMatchObject({
             code: 'unavailable',
-            diagnostics: ['plugins_reload_failed'],
+            diagnostics: [{ code: 'plugins_reload_failed', severity: 'error' }],
         });
         await expect(adapter.api.executeAction('refresh-index', {})).rejects.toMatchObject({
             code: 'unavailable',
-            diagnostics: ['plugin_action_surface_unavailable'],
+            diagnostics: [{ code: 'plugin_action_surface_unavailable', severity: 'error' }],
         });
     });
 });

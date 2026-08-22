@@ -7,5 +7,6 @@ export function createSessionListOrganizationSnapshotRequest(): Partial<SessionO
         includeLabels: true,
         includeAllFolderAssignments: true,
         includeAllTagAssignments: true,
+        includeAttentionStandings: true,
     };
 }

@@ -23,7 +23,7 @@ import {
 
 const pluginId = 'example.tasks';
 const releaseVersion = '2.0.0';
-const entryPath = 'react-native/ios.bundle.js';
+const entryPath = 'react-native/ios.bundle';
 const entryBytes = new TextEncoder().encode('// candidate migration bundle');
 const entryDigest = computePluginUiArtifactSha256DigestV1(entryBytes);
 const artifactDigest = computePluginUiArtifactFileSetSha256DigestV1([

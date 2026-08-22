@@ -13,6 +13,7 @@ import type {
     AutomationEventTriggerDefinitionStoredPayloadV1,
     AutomationRunExecutionRecipeV1,
     AutomationRunExecutionTargetV1,
+    MentionRefV1,
     PluginEventAutomationSetupResultV1,
 } from '@happier-dev/protocol';
 
@@ -41,6 +42,13 @@ export type PluginEventAutomationEditSeed = Readonly<{
     filter: AutomationEventFilterV1 | null;
     maximumObservationAgeMs: number | null;
     prompt: string;
+    /**
+     * The composer references persisted beside `prompt`, in the same
+     * identity-only shape the writer stored. The editor re-hydrates them so a
+     * save that never touched the composer rewrites the template it read; an
+     * older definition authored before the field simply seeds an empty list.
+     */
+    mentions: readonly MentionRefV1[];
     /**
      * The exact persisted target arm. Target kind is immutable while editing,
      * but its own fields remain ordinary Event-editor inputs.
@@ -210,6 +218,7 @@ export function readPluginEventAutomationEditSeed(
         filter: privateDefinition.filter,
         maximumObservationAgeMs: privateDefinition.maximumObservationAgeMs,
         prompt: template.data.prompt,
+        mentions: Object.freeze([...template.data.mentions ?? []]),
         target: target.data,
     });
 }

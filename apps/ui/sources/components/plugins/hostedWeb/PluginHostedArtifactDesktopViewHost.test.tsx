@@ -4,15 +4,15 @@ import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
 
-const invokeTauri = vi.hoisted(() => vi.fn());
-const listenTauriEvent = vi.hoisted(() => vi.fn());
+const invokeDesktopHost = vi.hoisted(() => vi.fn());
+const listenDesktopHostEvent = vi.hoisted(() => vi.fn());
 
-vi.mock('@/utils/platform/tauri', async () => {
-    const actual = await vi.importActual<typeof import('@/utils/platform/tauri')>('@/utils/platform/tauri');
+vi.mock('@/utils/platform/desktopHost', async () => {
+    const actual = await vi.importActual<typeof import('@/utils/platform/desktopHost')>('@/utils/platform/desktopHost');
     return {
         ...actual,
-        invokeTauri: (command: string, args?: Record<string, unknown>) => invokeTauri(command, args),
-        listenTauriEvent: (event: string, handler: (payload: unknown) => void) => listenTauriEvent(event, handler),
+        invokeDesktopHost: (command: string, args?: Record<string, unknown>) => invokeDesktopHost(command, args),
+        listenDesktopHostEvent: (event: string, handler: (payload: unknown) => void) => listenDesktopHostEvent(event, handler),
     };
 });
 
@@ -74,8 +74,8 @@ function readyResponse() {
 
 describe('PluginHostedArtifactDesktopViewHost', () => {
     afterEach(() => {
-        invokeTauri.mockReset();
-        listenTauriEvent.mockReset();
+        invokeDesktopHost.mockReset();
+        listenDesktopHostEvent.mockReset();
     });
 
     it('opens one token-bound child and relays only strict host and exact-frame bridge messages', async () => {
@@ -83,12 +83,12 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
         let sendHostMessage: ((message: unknown) => void) | undefined;
         const onMessage = vi.fn(() => readyResponse());
         const unlisten = vi.fn();
-        listenTauriEvent.mockImplementation(async (event: string, handler: (payload: unknown) => void) => {
+        listenDesktopHostEvent.mockImplementation(async (event: string, handler: (payload: unknown) => void) => {
             expect(event).toBe('desktop-hosted-artifact-event');
             nativeEventHandler = handler;
             return unlisten;
         });
-        invokeTauri.mockImplementation(async (command: string) => {
+        invokeDesktopHost.mockImplementation(async (command: string) => {
             if (command === 'desktop_hosted_artifact_open_view') return { kind: 'opened' };
             return { kind: 'ok' };
         });
@@ -121,7 +121,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
             await Promise.resolve();
         });
 
-        const openCall = invokeTauri.mock.calls.find(([command]) => command === 'desktop_hosted_artifact_open_view');
+        const openCall = invokeDesktopHost.mock.calls.find(([command]) => command === 'desktop_hosted_artifact_open_view');
         expect(openCall).toMatchObject([
             'desktop_hosted_artifact_open_view',
             {
@@ -139,7 +139,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
         await act(async () => {
             await Promise.resolve();
         });
-        expect(invokeTauri).toHaveBeenCalledWith('desktop_hosted_artifact_post_message', {
+        expect(invokeDesktopHost).toHaveBeenCalledWith('desktop_hosted_artifact_post_message', {
             request: {
                 viewId,
                 token: 'hpat_test_token',
@@ -162,7 +162,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
         });
         expect(onMessage).toHaveBeenCalledTimes(1);
         expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ kind: 'ready' }));
-        expect(invokeTauri).toHaveBeenCalledWith('desktop_hosted_artifact_post_message', {
+        expect(invokeDesktopHost).toHaveBeenCalledWith('desktop_hosted_artifact_post_message', {
             request: {
                 viewId,
                 token: 'hpat_test_token',
@@ -174,7 +174,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
             tree.unmount();
         });
         expect(unlisten).toHaveBeenCalledTimes(1);
-        expect(invokeTauri).toHaveBeenCalledWith('desktop_hosted_artifact_close_view', {
+        expect(invokeDesktopHost).toHaveBeenCalledWith('desktop_hosted_artifact_close_view', {
             request: {
                 viewId,
                 token: 'hpat_test_token',
@@ -186,11 +186,11 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
         let nativeEventHandler: ((payload: unknown) => void) | undefined;
         let sendHostMessage: ((message: unknown) => void) | undefined;
         let acknowledgeOpen: ((result: unknown) => void) | undefined;
-        listenTauriEvent.mockImplementation(async (_event: string, handler: (payload: unknown) => void) => {
+        listenDesktopHostEvent.mockImplementation(async (_event: string, handler: (payload: unknown) => void) => {
             nativeEventHandler = handler;
             return () => {};
         });
-        invokeTauri.mockImplementation((command: string) => {
+        invokeDesktopHost.mockImplementation((command: string) => {
             if (command === 'desktop_hosted_artifact_open_view') {
                 return new Promise((resolve) => {
                     acknowledgeOpen = resolve;
@@ -230,7 +230,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
             await Promise.resolve();
             await Promise.resolve();
         });
-        const openCall = invokeTauri.mock.calls.find(([command]) => command === 'desktop_hosted_artifact_open_view');
+        const openCall = invokeDesktopHost.mock.calls.find(([command]) => command === 'desktop_hosted_artifact_open_view');
         const viewId = (openCall?.[1] as { request: { viewId: string } }).request.viewId;
 
         nativeEventHandler?.({
@@ -241,7 +241,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
         await act(async () => {
             await Promise.resolve();
         });
-        expect(invokeTauri.mock.calls.filter(([command]) => command === 'desktop_hosted_artifact_post_message'))
+        expect(invokeDesktopHost.mock.calls.filter(([command]) => command === 'desktop_hosted_artifact_post_message'))
             .toHaveLength(0);
 
         await act(async () => {
@@ -250,14 +250,14 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
             await Promise.resolve();
         });
 
-        expect(invokeTauri).toHaveBeenCalledWith('desktop_hosted_artifact_post_message', {
+        expect(invokeDesktopHost).toHaveBeenCalledWith('desktop_hosted_artifact_post_message', {
             request: {
                 viewId,
                 token: 'hpat_test_token',
                 message: bootstrapMessage(),
             },
         });
-        expect(invokeTauri).toHaveBeenCalledWith('desktop_hosted_artifact_post_message', {
+        expect(invokeDesktopHost).toHaveBeenCalledWith('desktop_hosted_artifact_post_message', {
             request: {
                 viewId,
                 token: 'hpat_test_token',
@@ -273,8 +273,8 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
     it('closes the exact child when it acknowledges after the Artifact host has unmounted', async () => {
         let acknowledgeOpen: ((result: unknown) => void) | undefined;
         const unlisten = vi.fn();
-        listenTauriEvent.mockResolvedValue(unlisten);
-        invokeTauri.mockImplementation((command: string) => {
+        listenDesktopHostEvent.mockResolvedValue(unlisten);
+        invokeDesktopHost.mockImplementation((command: string) => {
             if (command === 'desktop_hosted_artifact_open_view') {
                 return new Promise((resolve) => {
                     acknowledgeOpen = resolve;
@@ -296,14 +296,14 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
             await Promise.resolve();
             await Promise.resolve();
         });
-        const openCall = invokeTauri.mock.calls.find(([command]) => command === 'desktop_hosted_artifact_open_view');
+        const openCall = invokeDesktopHost.mock.calls.find(([command]) => command === 'desktop_hosted_artifact_open_view');
         const viewId = (openCall?.[1] as { request: { viewId: string } }).request.viewId;
 
         await act(async () => {
             tree.unmount();
         });
         expect(unlisten).toHaveBeenCalledTimes(1);
-        expect(invokeTauri.mock.calls.filter(([command]) => command === 'desktop_hosted_artifact_close_view'))
+        expect(invokeDesktopHost.mock.calls.filter(([command]) => command === 'desktop_hosted_artifact_close_view'))
             .toHaveLength(0);
 
         await act(async () => {
@@ -312,7 +312,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
             await Promise.resolve();
         });
 
-        expect(invokeTauri).toHaveBeenCalledWith('desktop_hosted_artifact_close_view', {
+        expect(invokeDesktopHost).toHaveBeenCalledWith('desktop_hosted_artifact_close_view', {
             request: {
                 viewId,
                 token: 'hpat_test_token',
@@ -324,11 +324,11 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
         let nativeEventHandler: ((payload: unknown) => void) | undefined;
         const onNativeArtifactHistoryStateChange = vi.fn();
         const onNativeArtifactGoBackResult = vi.fn();
-        listenTauriEvent.mockImplementation(async (_event: string, handler: (payload: unknown) => void) => {
+        listenDesktopHostEvent.mockImplementation(async (_event: string, handler: (payload: unknown) => void) => {
             nativeEventHandler = handler;
             return () => {};
         });
-        invokeTauri.mockImplementation(async (command: string) => {
+        invokeDesktopHost.mockImplementation(async (command: string) => {
             if (command === 'desktop_hosted_artifact_open_view') return { kind: 'opened' };
             if (command === 'desktop_hosted_artifact_go_back') return { kind: 'handled', handled: true };
             return { kind: 'ok' };
@@ -350,7 +350,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
             await Promise.resolve();
             await Promise.resolve();
         });
-        const openCall = invokeTauri.mock.calls.find(([command]) => command === 'desktop_hosted_artifact_open_view');
+        const openCall = invokeDesktopHost.mock.calls.find(([command]) => command === 'desktop_hosted_artifact_open_view');
         const viewId = (openCall?.[1] as { request: { viewId: string } }).request.viewId;
 
         await act(async () => {
@@ -359,7 +359,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
         });
 
         expect(onNativeArtifactHistoryStateChange).toHaveBeenCalledExactlyOnceWith(true);
-        expect(invokeTauri).toHaveBeenCalledWith('desktop_hosted_artifact_go_back', {
+        expect(invokeDesktopHost).toHaveBeenCalledWith('desktop_hosted_artifact_go_back', {
             request: {
                 viewId,
                 token: 'hpat_test_token',

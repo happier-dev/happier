@@ -1,10 +1,15 @@
-import type { PluginResourceContextV1 } from '@happier-dev/protocol';
+import type {
+    PluginContributionIdentityV1,
+    PluginProjectedActionV2,
+    PluginResourceContextV1,
+} from '@happier-dev/protocol';
 import {
     PluginUiSelectActionInputResultV1Schema,
     type PluginUiJsonValueV1,
     type PluginUiTargetedContributionsV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { Linking } from 'react-native';
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -32,6 +37,42 @@ const CURRENT_ACCOUNT_LIFETIME = Object.freeze({
     onRetire: () => Object.freeze({ dispose: () => {} }),
 });
 
+function resolveDaemonTargetAction(
+    identity: PluginContributionIdentityV1,
+): PluginProjectedActionV2 {
+    return {
+        id: identity.localId,
+        pluginId: identity.pluginId,
+        title: identity.localId,
+        scopes: ['session'],
+        surfaces: ['ui'],
+        execution: { target: 'daemon' },
+        dangerLevel: 'safe',
+    };
+}
+
+function resolveClientTargetAction(
+    identity: PluginContributionIdentityV1,
+): PluginProjectedActionV2 {
+    return {
+        id: identity.localId,
+        pluginId: identity.pluginId,
+        title: identity.localId,
+        scopes: ['session'],
+        surfaces: ['ui'],
+        execution: {
+            target: 'client',
+            client: {
+                artifactId: 'client-action-bundle',
+                modulePath: './actions/clientAction',
+                exportName: 'execute',
+            },
+            platforms: ['web'],
+        },
+        dangerLevel: 'safe',
+    };
+}
+
 const FACTS = {
     pluginId: 'acme.browser',
     contributionId: 'panel',
@@ -51,6 +92,7 @@ const FACTS = {
         },
     },
     resourceCapability: { readable: true, dynamic: true },
+    resolveContributedAction: resolveDaemonTargetAction,
     accountLifetime: CURRENT_ACCOUNT_LIFETIME,
     interactionEnabled: true,
     daemonInteractionEnabled: true,
@@ -88,6 +130,27 @@ function request(method: string, payload?: unknown) {
 }
 
 describe('BoundPluginSurfaceController (§3.1)', () => {
+    it('passes the raw client target to the canonical dispatcher before daemon availability', async () => {
+        const executeContributedAction = vi.fn();
+        const controller = createBoundPluginSurfaceController({
+            facts: {
+                ...FACTS,
+                daemonInteractionEnabled: false,
+                resolveContributedAction: resolveClientTargetAction,
+            },
+            binding: { executeContributedAction: executeContributedAction as never },
+        });
+
+        await expect(controller.hostApi.handleRequest(request('executeAction', {
+            action: 'refresh-index',
+            input: {},
+        }))).resolves.toEqual({
+            code: 'unavailable',
+            diagnostics: ['plugin_surface_client_action_unavailable'],
+        });
+        expect(executeContributedAction).not.toHaveBeenCalled();
+    });
+
     it('keeps raw daemon reachability factual when projection admission disables actions', async () => {
         const previousState = storage.getState();
         try {
@@ -146,6 +209,149 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             diagnostics: ['plugin_surface_retired'],
         });
         expect(executeContributedAction).not.toHaveBeenCalled();
+    });
+
+    it('publishes qualified data through the exact mounted Host API and distinguishes null from an absent payload', async () => {
+        const publication = {
+            publish: vi.fn(() => true),
+            clear: vi.fn(),
+            restore: vi.fn(),
+            dispose: vi.fn(),
+        };
+        const createMountedHostApiHandlers = vi.fn(() => ({
+            handlers: {},
+            currentUiContext: publication,
+        }));
+        const controller = createBoundPluginSurfaceController({
+            facts: FACTS,
+            binding: { createMountedHostApiHandlers } as never,
+        });
+        const enrichment = {
+            entity: {
+                kind: 'issue',
+                label: 'Issue A',
+                reference: { number: 1 },
+            },
+            detail: { state: 'open' },
+            commands: [{
+                title: 'Open issue B',
+                description: 'Navigate to the related issue',
+                command: {
+                    kind: 'openSurface',
+                    destination: 'issues',
+                    input: { issueNumber: 2 },
+                },
+            }],
+        };
+
+        expect(controller.installedMethods).toContain('publishCurrentUiContext');
+        await expect(Promise.resolve(controller.hostApi.handleRequest(request('publishCurrentUiContext', {
+            enrichment,
+        })))).resolves.toBeNull();
+        expect(publication.publish).toHaveBeenCalledWith({
+            entity: enrichment.entity,
+            detail: enrichment.detail,
+            commands: [{
+                title: 'Open issue B',
+                description: 'Navigate to the related issue',
+                command: {
+                    kind: 'openSurface',
+                    destination: { pluginId: FACTS.pluginId, localId: 'issues' },
+                    input: { issueNumber: 2 },
+                },
+            }],
+        });
+
+        await expect(Promise.resolve(controller.hostApi.handleRequest(request('publishCurrentUiContext', {
+            enrichment: null,
+        })))).resolves.toBeNull();
+        expect(publication.publish).toHaveBeenLastCalledWith(null);
+
+        await expect(Promise.resolve(controller.hostApi.handleRequest(request('publishCurrentUiContext', {})))).resolves.toEqual({
+            code: 'invalid_payload',
+            diagnostics: ['plugin_current_ui_context_payload_invalid'],
+        });
+        expect(publication.publish).toHaveBeenCalledTimes(2);
+
+        controller.clearCurrentUiContext();
+        expect(publication.clear).toHaveBeenCalledTimes(1);
+        controller.dispose();
+        expect(publication.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not admit a competing mounted publish handler without the controller-bound publication capability', async () => {
+        const forbiddenPublish = vi.fn(() => ({ accepted: true }));
+        const controller = createBoundPluginSurfaceController({
+            facts: FACTS,
+            binding: {
+                mountedHostApiHandlers: {
+                    publishCurrentUiContext: forbiddenPublish,
+                },
+            },
+        });
+
+        expect(controller.installedMethods).not.toContain('publishCurrentUiContext');
+        await expect(Promise.resolve(controller.hostApi.handleRequest(request('publishCurrentUiContext', {
+            enrichment: { entity: { kind: 'issue', label: 'Bypass' } },
+        })))).resolves.toEqual({
+            code: 'unsupported_method',
+            diagnostics: ['host_api_method_not_installed:publishCurrentUiContext'],
+        });
+        expect(forbiddenPublish).not.toHaveBeenCalled();
+    });
+
+    it('retires an A publication before B can publish and fences late A work', async () => {
+        const publications: Array<{
+            publish: ReturnType<typeof vi.fn>;
+            clear: ReturnType<typeof vi.fn>;
+            restore: ReturnType<typeof vi.fn>;
+            dispose: ReturnType<typeof vi.fn>;
+        }> = [];
+        const createMountedHostApiHandlers = vi.fn(() => {
+            const publication = {
+                publish: vi.fn(() => true),
+                clear: vi.fn(),
+                restore: vi.fn(),
+                dispose: vi.fn(),
+            };
+            publications.push(publication);
+            return {
+                handlers: {},
+                currentUiContext: publication,
+            };
+        });
+        const binding = { createMountedHostApiHandlers } as never;
+        const hook = await renderHook(
+            (sessionId: string) => useBoundPluginSurfaceController({
+                facts: { ...FACTS, sessionId },
+                binding,
+            }),
+            { initialProps: 'session-a' },
+        );
+        const first = hook.getCurrent();
+
+        await expect(Promise.resolve(first.hostApi.handleRequest(request('publishCurrentUiContext', {
+            enrichment: { entity: { kind: 'issue', label: 'Issue A' } },
+        })))).resolves.toBeNull();
+        expect(publications[0]?.publish).toHaveBeenCalledTimes(1);
+
+        const second = await hook.rerender('session-b');
+        expect(first.isCurrent()).toBe(false);
+        expect(publications[0]?.dispose).toHaveBeenCalledTimes(1);
+        await expect(Promise.resolve(first.hostApi.handleRequest(request('publishCurrentUiContext', {
+            enrichment: { entity: { kind: 'issue', label: 'Late A' } },
+        })))).resolves.toEqual({
+            code: 'stale_surface',
+            diagnostics: ['plugin_surface_retired'],
+        });
+        expect(publications[0]?.publish).toHaveBeenCalledTimes(1);
+
+        await expect(Promise.resolve(second.hostApi.handleRequest(request('publishCurrentUiContext', {
+            enrichment: { entity: { kind: 'issue', label: 'Issue B' } },
+        })))).resolves.toBeNull();
+        expect(publications[1]?.publish).toHaveBeenCalledTimes(1);
+        await hook.unmount();
+        expect(publications[1]?.dispose).toHaveBeenCalledTimes(1);
     });
 
     it('replaces and retires the controller when its exact Session identity changes', async () => {
@@ -1146,7 +1352,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         });
     });
 
-    it('does not deliver an Action success after its mount retires', async () => {
+    it('preserves a known Action success when its mount retires after settlement wins', async () => {
         let settle: ((value: unknown) => void) | undefined;
         const executeContributedAction = vi.fn(() => new Promise((resolve) => {
             settle = resolve;
@@ -1168,10 +1374,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             result: { ok: true, result: { applied: true } },
         });
 
-        await expect(pending).resolves.toEqual({
-            code: 'stale_surface',
-            diagnostics: ['plugin_ui_generation_retired_after_dispatch'],
-        });
+        await expect(pending).resolves.toEqual({ applied: true });
     });
 
     it('routes a declarative action through this mount\'s one bound host facade', async () => {
@@ -1499,6 +1702,71 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         expect(fileViewer.installedMethods).not.toContain('readComposer');
     });
 
+    it('activates and updates a mounted current-UI handler only after its controller commits, then retires it with that controller', async () => {
+        const activate = vi.fn();
+        const setCurrentUiContextEligibility = vi.fn();
+        const dispose = vi.fn();
+        const buildMountedHandlers = vi.fn(() => Object.freeze({
+            handlers: {},
+            activate,
+            setCurrentUiContextEligibility,
+            dispose,
+        }));
+
+        const hook = await renderHook(
+            (focusEligible: boolean) => {
+                const controller = useBoundPluginSurfaceController({
+                    facts: FACTS,
+                    binding: {
+                        createMountedHostApiHandlers: buildMountedHandlers as never,
+                    },
+                });
+                // This mirrors the physical host's post-commit focus observer.
+                // It must update data on the exact committed controller rather
+                // than replace the controller or retain plugin enrichment.
+                React.useEffect(() => {
+                    (controller as unknown as Readonly<{
+                        setCurrentUiContextEligibility?: (eligible: boolean) => void;
+                    }>).setCurrentUiContextEligibility?.(focusEligible);
+                }, [controller, focusEligible]);
+                return controller;
+            },
+            { initialProps: true },
+        );
+
+        expect(buildMountedHandlers).toHaveBeenCalledTimes(1);
+        expect(activate).toHaveBeenCalledTimes(1);
+        expect(setCurrentUiContextEligibility).toHaveBeenLastCalledWith(true);
+
+        await hook.rerender(false);
+        expect(buildMountedHandlers).toHaveBeenCalledTimes(1);
+        expect(setCurrentUiContextEligibility).toHaveBeenLastCalledWith(false);
+
+        await hook.unmount();
+        expect(dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not activate a mounted handler while constructing an uncommitted controller', () => {
+        const activate = vi.fn();
+        const dispose = vi.fn();
+        const controller = createBoundPluginSurfaceController({
+            facts: FACTS,
+            binding: {
+                createMountedHostApiHandlers: (() => Object.freeze({
+                    handlers: {},
+                    activate,
+                    dispose,
+                })) as never,
+            },
+        });
+
+        // Controller construction is the same render-time work an abandoned
+        // React render performs. Registration must wait for the hook effect.
+        expect(activate).not.toHaveBeenCalled();
+        controller.dispose();
+        expect(dispose).toHaveBeenCalledTimes(1);
+    });
+
     it('does not advertise Resource methods when the selected surface has no readable Resource capability', () => {
         const controller = createBoundPluginSurfaceController({
             // The selected-member capability is an admission fact. A sibling
@@ -1563,6 +1831,12 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
     it('fences the facade when the captured Account lifetime retires', async () => {
         let accountCurrent = true;
         let retireController: (() => void) | undefined;
+        const publication = {
+            publish: vi.fn(() => true),
+            clear: vi.fn(),
+            restore: vi.fn(),
+            dispose: vi.fn(),
+        };
         const controller = createBoundPluginSurfaceController({
             facts: {
                 ...FACTS,
@@ -1575,7 +1849,17 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
                     },
                 },
             },
+            binding: {
+                createMountedHostApiHandlers: (() => ({
+                    handlers: {},
+                    currentUiContext: publication,
+                })) as never,
+            },
         });
+
+        await expect(Promise.resolve(controller.hostApi.handleRequest(request('publishCurrentUiContext', {
+            enrichment: { entity: { kind: 'issue', label: 'Account-scoped issue' } },
+        })))).resolves.toBeNull();
 
         accountCurrent = false;
         expect(retireController).toBeTypeOf('function');
@@ -1585,6 +1869,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             code: 'stale_surface',
             diagnostics: ['plugin_surface_retired'],
         });
+        expect(publication.dispose).toHaveBeenCalledTimes(1);
     });
 
     it('inherits parent mount retirement so a retained targeted child aborts its own Resource work', async () => {
@@ -1592,6 +1877,12 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         let retireParent: (() => void) | undefined;
         let resourceSignal: AbortSignal | undefined;
         let settleRead: ((value: Awaited<ReturnType<PluginSurfaceResourceReadTransport>>) => void) | undefined;
+        const publication = {
+            publish: vi.fn(() => true),
+            clear: vi.fn(),
+            restore: vi.fn(),
+            dispose: vi.fn(),
+        };
         const controller = createBoundPluginSurfaceController({
             facts: {
                 ...FACTS,
@@ -1608,8 +1899,16 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
                     resourceSignal = options.signal;
                     return new Promise((resolve) => { settleRead = resolve; });
                 }) as PluginSurfaceResourceReadTransport,
+                createMountedHostApiHandlers: (() => ({
+                    handlers: {},
+                    currentUiContext: publication,
+                })) as never,
             },
         });
+
+        await expect(Promise.resolve(controller.hostApi.handleRequest(request('publishCurrentUiContext', {
+            enrichment: { entity: { kind: 'issue', label: 'Parent-scoped issue' } },
+        })))).resolves.toBeNull();
 
         const pending = Promise.resolve(controller.hostApi.handleRequest(request('readResource', {
             resource: 'review-summary',
@@ -1628,6 +1927,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             code: 'stale_surface',
             diagnostics: ['plugin_surface_retired'],
         });
+        expect(publication.dispose).toHaveBeenCalledTimes(1);
 
         settleRead!({
             supported: true,

@@ -588,7 +588,7 @@ class ApiSocket {
     /**
      * Desktop reverse browser-recording capture (W2C-BA-1 / RU2 G1). Binds the already-built UI
      * capture handler to the machine-scoped `ui.browser.recording.captureFrame` reverse method so the
-     * spawned cli daemon (a SEPARATE OS process that cannot `invokeTauri` the desktop Wry WebView)
+     * spawned cli daemon (a SEPARATE OS process that cannot `invokeDesktopHost` the desktop Wry WebView)
      * can ask THIS desktop UI to capture one reference-only frame from the view it owns. Without this
      * registration the reverse channel fails closed (`browser_recording_capture_adapter_missing`).
      *

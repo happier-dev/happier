@@ -65,6 +65,7 @@ import {
     retireActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
 import {
+    resolvePluginUiClientExecutablePlatform,
     resolvePluginUiProjectionPlatform,
     usePluginUiProjectionCurrentness,
 } from './usePluginUiProjectionCurrentness';
@@ -133,11 +134,17 @@ describe('usePluginUiProjectionCurrentness', () => {
         delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
     });
 
-    it('uses the canonical local-service resolver for Tauri desktop projection surfaces', () => {
-        (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke: () => undefined };
+  it('uses the canonical local-service resolver for Tauri desktop projection surfaces', () => {
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke: () => undefined };
 
-        expect(resolvePluginUiProjectionPlatform()).toBe('desktop');
-    });
+    expect(resolvePluginUiProjectionPlatform()).toBe('desktop');
+  });
+
+  it('maps the desktop projection surface to the shared web client executable target', () => {
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke: () => undefined };
+
+    expect(resolvePluginUiClientExecutablePlatform()).toBe('web');
+  });
 
     it('reports a first describe as establishing instead of an empty unavailable projection', async () => {
         projectionRuntime.describe.mockImplementationOnce(() => new Promise(() => {}));

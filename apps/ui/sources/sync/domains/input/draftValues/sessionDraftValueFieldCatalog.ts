@@ -48,6 +48,25 @@ export const SESSION_DRAFT_VALUE_FIELD_CATALOG = {
             ttlDays: SESSION_DRAFT_VALUE_DEFAULT_TTL_DAYS,
         },
     },
+    /**
+     * The submitted switch whose effect is not established.
+     *
+     * Its lifetime is the live outcome's, and the Session screen owns both
+     * halves and mirrors one onto the other. The catalog deliberately adds no
+     * `send` or `composerClear` clear of its own: a persisted half that cleared
+     * where the live half does not is the two-lifetimes defect the sibling
+     * field above exists to remove.
+     *
+     * The TTL is a day rather than the shared default. An unsettled transition
+     * no canonical fact ever answered stops being a live statement about this
+     * composer long before a draft stops being a live message.
+     */
+    'routing.agentContinuationSubmission': {
+        lifecycle: {
+            sessionDelete: true,
+            ttlDays: 1,
+        },
+    },
     'routing.executionRunDelivery': {
         lifecycle: {
             send: 'outboundHandoff',

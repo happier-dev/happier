@@ -9,6 +9,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
 
 const stylesheet = StyleSheet.create((theme) => ({
     field: {
@@ -48,12 +49,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 12,
     },
 }));
-
-function localizedText(
-    value: string | Readonly<{ fallback: string }> | undefined,
-): string {
-    return typeof value === 'string' ? value : value?.fallback ?? '';
-}
 
 type ManualAuthenticationField =
     & Omit<PluginSettingFieldV2, 'secret'>
@@ -121,8 +116,8 @@ export const ConnectedAccountManualForm = React.memo(function ConnectedAccountMa
             footer={validationFailed ? t('common.error') : undefined}
         >
             {fields.map((field) => {
-                const title = localizedText(field.title);
-                const description = localizedText(field.description);
+                const title = resolveProjectedLocalizedText(field.title);
+                const description = resolveProjectedLocalizedText(field.description);
                 const multiline = field.presentation?.control === 'textarea';
                 return (
                     <View key={field.id} style={styles.field}>
@@ -141,7 +136,7 @@ export const ConnectedAccountManualForm = React.memo(function ConnectedAccountMa
                             multiline={multiline}
                             autoCapitalize="none"
                             autoCorrect={false}
-                            placeholder={localizedText(field.presentation?.placeholder)}
+                            placeholder={resolveProjectedLocalizedText(field.presentation?.placeholder)}
                             placeholderTextColor={theme.colors.input.placeholder}
                             style={[
                                 styles.input,

@@ -1,9 +1,4 @@
 import {
-    redactBugReportSensitiveText,
-    trimBugReportTextToMaxBytes,
-} from '@happier-dev/protocol';
-import {
-    PLUGIN_UI_HOST_API_DIAGNOSTIC_MAX_UTF8_BYTES_V1,
     PluginUiHostApiDiagnosticV1Schema,
     PluginUiHostApiOpenExternalLinkRequestV1Schema,
     PluginUiHostApiWriteClipboardRequestV1Schema,
@@ -12,16 +7,17 @@ import {
     type PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import { log } from '@/log';
+import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
 import {
     getClipboardStringSafe,
     setClipboardStringSafe,
 } from '@/utils/ui/clipboard';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 
-import type {
-    PluginSurfaceHostApiHandlers,
-    PluginSurfaceHostApiRequestOptions,
+import {
+    createPluginSurfaceHostApiError,
+    type PluginSurfaceHostApiHandlers,
+    type PluginSurfaceHostApiRequestOptions,
 } from './createPluginSurfaceHostApi';
 
 type LocalHostHandlerInput = Readonly<{
@@ -31,15 +27,15 @@ type LocalHostHandlerInput = Readonly<{
 }>;
 
 function unavailable(reason: string): PluginUiJsonValueV1 {
-    return { code: 'unavailable', diagnostics: [reason] };
+    return createPluginSurfaceHostApiError('unavailable', [reason]);
 }
 
 function staleSurface(): PluginUiJsonValueV1 {
-    return { code: 'stale_surface', diagnostics: ['plugin_surface_retired'] };
+    return createPluginSurfaceHostApiError('stale_surface', ['plugin_surface_retired']);
 }
 
 function invalidPayload(reason: string): PluginUiJsonValueV1 {
-    return { code: 'invalid_payload', diagnostics: [reason] };
+    return createPluginSurfaceHostApiError('invalid_payload', [reason]);
 }
 
 function preflight(
@@ -50,22 +46,6 @@ function preflight(
     if (options?.signal?.aborted) return unavailable(cancellationReason);
     if (input.isCurrent?.() === false) return staleSurface();
     return null;
-}
-
-function diagnosticLogMessage(
-    surface: PluginUiSurfaceContextV1,
-    diagnostic: unknown,
-): string {
-    const raw = `[plugin-ui-host-api] ${JSON.stringify({
-        pluginId: surface.pluginId,
-        contributionId: surface.contributionId,
-        surfaceId: surface.surfaceId,
-        diagnostic,
-    })}`;
-    return trimBugReportTextToMaxBytes(
-        redactBugReportSensitiveText(raw),
-        PLUGIN_UI_HOST_API_DIAGNOSTIC_MAX_UTF8_BYTES_V1,
-    );
 }
 
 /**
@@ -91,12 +71,9 @@ export function createPluginSurfaceLocalHostHandlers(
             if (refusal) return refusal;
             const parsed = PluginUiHostApiDiagnosticV1Schema.safeParse(request.payload);
             if (!parsed.success) return invalidPayload('plugin_surface_diagnostic_payload_invalid');
-            try {
-                log.log(diagnosticLogMessage(input.surfaceContext, parsed.data));
-                return null;
-            } catch {
-                return unavailable('plugin_surface_diagnostic_unavailable');
-            }
+            return logPluginSurfaceDiagnostic(input.surfaceContext, parsed.data)
+                ? null
+                : unavailable('plugin_surface_diagnostic_unavailable');
         },
         readClipboard: async (
             _request: PluginUiHostApiRequestEnvelopeV1,

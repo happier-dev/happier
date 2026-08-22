@@ -22,6 +22,10 @@ describe('shareableServerUrl', () => {
         })).toBe('https://active.example.test');
     });
 
+    it('never publishes any IPv4 loopback address into a cross-device link', () => {
+        expect(sanitizeServerUrlForShareableLink('http://127.0.0.2:3005')).toBeNull();
+    });
+
     it('sanitizes credentials out of shareable URLs', () => {
         expect(sanitizeServerUrlForShareableLink('https://user:pass@relay.example.ts.net/')).toBe('https://relay.example.ts.net');
     });

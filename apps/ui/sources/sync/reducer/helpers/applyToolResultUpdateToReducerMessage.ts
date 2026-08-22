@@ -1,3 +1,5 @@
+import { isAsyncSubAgentLaunchToolResult } from '@happier-dev/protocol/tools/v2';
+
 import type { MessageMeta } from '../../domains/messages/messageMetaTypes';
 import type { ReducerMessage } from '../reducer';
 import {
@@ -33,14 +35,36 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
   const isRuntimeTerminalResult =
     meta?.source === 'runtime' &&
     meta.runtimeEventKind === 'tool-result';
+  // A second provisional completion: the generic sub-agent tool answers an ASYNCHRONOUS launch
+  // within milliseconds with an acknowledgement, then delivers the agent's real result — rewritten
+  // from its `<task-notification>` — against the same tool-use id hours later. That rewrite arrives
+  // on the transcript channel, so `isRuntimeTerminalResult` never sees it; without this the second
+  // result was dropped and the card stayed frozen on "Async agent launched successfully" forever.
+  // A replay of the acknowledgement itself is not new evidence, so the incoming result must be a
+  // different kind of answer for the exception to apply.
+  const supersedesAsyncAgentLaunch =
+    message.tool.state === 'completed' &&
+    isAsyncSubAgentLaunchToolResult(message.tool.result) &&
+    !isAsyncSubAgentLaunchToolResult(toolResult.content);
 
-  if (message.tool.state !== 'running' && !isApprovedPlaceholder && !isRuntimeTerminalResult) {
+  if (
+    message.tool.state !== 'running' &&
+    !isApprovedPlaceholder &&
+    !isRuntimeTerminalResult &&
+    !supersedesAsyncAgentLaunch
+  ) {
     return;
   }
 
   if (isApprovedPlaceholder) {
     message.tool.state = 'running';
     message.tool.completedAt = null;
+    message.tool.result = undefined;
+  }
+
+  if (supersedesAsyncAgentLaunch) {
+    // The acknowledgement is not partial output to merge with — it is a different answer to a
+    // different question, so the agent's real result replaces it outright.
     message.tool.result = undefined;
   }
 

@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { getLegacyConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { setPreferredLanguageFromSettings } from '@/text';
 
 import {
     resolveConnectedServiceDisplayName,
@@ -53,10 +54,51 @@ describe('resolveQualifiedConnectedServiceRegistryDisplayName', () => {
         }, { pluginId: 'external.plugin', localId: 'gateway' }, (key) => key)).toBe('External Gateway');
     });
 
+    it('renders a plugin-declared descriptor title in the reader\u2019s language', () => {
+        // `plugins.sentry.account.title` ships translated in every bundled
+        // locale; reading only the developer `fallback` showed English to
+        // every non-English user.
+        setPreferredLanguageFromSettings('fr');
+
+        expect(resolveQualifiedConnectedServiceRegistryDisplayName({
+            entries: [{
+                serviceId: 'sentry',
+                service: { pluginId: 'happier.sentry', localId: 'sentry' },
+                connectCommand: '',
+                supportsOauth: false,
+                projectedTitle: {
+                    key: 'plugins.sentry.account.title',
+                    fallback: 'Sentry account',
+                },
+            }],
+        }, { pluginId: 'happier.sentry', localId: 'sentry' }, (key) => key))
+            .toBe('Compte Sentry');
+    });
+
+    it('keeps the developer fallback when the declared key is not in the catalog', () => {
+        expect(resolveQualifiedConnectedServiceRegistryDisplayName({
+            entries: [{
+                serviceId: 'gateway',
+                service: { pluginId: 'external.plugin', localId: 'gateway' },
+                connectCommand: '',
+                supportsOauth: false,
+                projectedTitle: {
+                    key: 'plugins.external.totallyUnknown.title',
+                    fallback: 'External Gateway',
+                },
+            }],
+        }, { pluginId: 'external.plugin', localId: 'gateway' }, (key) => key))
+            .toBe('External Gateway');
+    });
+
     it('fails closed to the generic service title when no applied descriptor matches', () => {
         expect(resolveQualifiedConnectedServiceRegistryDisplayName({ entries: [] }, {
             pluginId: 'external.plugin',
             localId: 'gateway',
         }, (key) => key)).toBe('connectedServices.fallbackName');
     });
+});
+
+afterEach(() => {
+    setPreferredLanguageFromSettings(null);
 });

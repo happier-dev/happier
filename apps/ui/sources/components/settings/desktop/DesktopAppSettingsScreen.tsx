@@ -7,7 +7,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
 import { t } from '@/text';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { useDesktopAutostart } from './useDesktopAutostart';
 import { DesktopOverlaySettingsSection } from './DesktopOverlaySettingsSection';
@@ -16,7 +16,7 @@ import { DesktopSettingsIonicon } from './DesktopSettingsIonicon';
 export const DesktopAppSettingsScreen = React.memo(function DesktopAppSettingsScreen() {
     const { theme } = useUnistyles();
     const autostart = useDesktopAutostart();
-    const showOverlaySettings = isTauriDesktop();
+    const showOverlaySettings = isDesktopHost();
 
     if (!autostart.supported && !showOverlaySettings) {
         return null;

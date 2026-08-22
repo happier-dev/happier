@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+    FeaturesResponseSchema,
+    measurePluginCollectionMutationRequestEncodedBytesV1,
     normalizePluginAccountCollectionContractV1,
+    PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
+    PluginCollectionMutationRequestV1Schema,
     PluginManifestV2Schema,
 } from '@happier-dev/protocol';
 import {
@@ -139,7 +143,9 @@ function createAvailabilityReader() {
     });
 }
 
-async function loadClient() {
+async function loadClient(options: Readonly<{
+    mutationResponse?: () => Response;
+}> = {}) {
     vi.resetModules();
     let current = true;
     const retireCallbacks = new Set<() => void>();
@@ -168,6 +174,7 @@ async function loadClient() {
             });
         }
         if (path === '/v1/plugins/data/mutate') {
+            if (options.mutationResponse) return options.mutationResponse();
             return new Response(JSON.stringify({
                 status: 'updated',
                 results: [{ rowId: 'task-1', revision: 2, deleted: false }],
@@ -283,5 +290,108 @@ describe('Plugin UI Data client', () => {
             code: 'plugin_account_storage_unavailable',
         });
         expect(transport).not.toHaveBeenCalled();
+    });
+
+    it('gives a plugin UI the same effective Collection limits a daemon plugin plans against', async () => {
+        const { client, transport } = await loadClient();
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({
+            serverId: 'server-a',
+            snapshot: {
+                status: 'ready',
+                features: FeaturesResponseSchema.parse({
+                    features: {},
+                    capabilities: {
+                        pluginDataCollections: {
+                            maxRowEncodedBytes: 256 * 1024,
+                            maxBatchBytes: 4 * 1024 * 1024,
+                            maxBatchRows: 40,
+                            maxAccountRows: 5_000,
+                            maxAccountBytes: 64 * 1024 * 1024,
+                        },
+                    },
+                }),
+            },
+        });
+
+        await expect(client.collection(collectionDefinition).limits()).resolves.toEqual({
+            maxRowEncodedBytes: 256 * 1024,
+            maxBatchBytes: 4 * 1024 * 1024,
+            maxBatchRows: 40,
+            maxAccountRows: 5_000,
+            maxAccountBytes: 64 * 1024 * 1024,
+            basis: 'deployment',
+        });
+        expect(transport.mock.calls.some(([path]) => path === '/v1/plugins/data/mutate')).toBe(false);
+    });
+
+    it('reports the shipped deployment policy to a plugin UI when no capability is published', async () => {
+        const { client } = await loadClient();
+
+        await expect(client.collection(collectionDefinition).limits()).resolves.toEqual({
+            ...PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
+            basis: 'default',
+        });
+    });
+
+    it('measures a plugin UI batch through the same sealed request its write sends', async () => {
+        const { client, transport } = await loadClient();
+        const collection = client.collection(collectionDefinition);
+        const operations = [
+            {
+                kind: 'put' as const,
+                expectedRevision: 'absent' as const,
+                value: { id: 'task-1', title: 'a'.repeat(8), status: 'open' as const },
+            },
+            {
+                kind: 'put' as const,
+                expectedRevision: 'absent' as const,
+                value: { id: 'task-2', title: 'b'.repeat(200), status: 'open' as const },
+            },
+        ];
+
+        const measurement = await collection.measureBatch(operations);
+        await collection.batch(operations);
+
+        expect(measurement.operationEncodedBytes).toHaveLength(2);
+        expect(measurement.operationEncodedBytes[1]!).toBeGreaterThan(
+            measurement.operationEncodedBytes[0]! + 190,
+        );
+        const mutationCall = transport.mock.calls.find(([path]) => path === '/v1/plugins/data/mutate');
+        const sentRequest = PluginCollectionMutationRequestV1Schema.parse(
+            JSON.parse(String(mutationCall?.[1]?.body)),
+        );
+        expect(
+            measurement.overheadEncodedBytes
+            + measurement.operationEncodedBytes.reduce((total, bytes) => total + bytes, 0)
+            - 1,
+        ).toBe(measurePluginCollectionMutationRequestEncodedBytesV1(sentRequest));
+    });
+
+    it('refuses to size a batch for a same-id local definition the release does not admit', async () => {
+        const { client, transport } = await loadClient();
+
+        await expect(client.collection(forgedCollectionDefinition).limits()).rejects.toMatchObject({
+            code: 'plugin_collection_undeclared',
+        });
+        expect(transport).not.toHaveBeenCalled();
+    });
+    it('hands a plugin UI the same typed quota incompatibility a daemon plugin receives', async () => {
+        const { client } = await loadClient({
+            mutationResponse: () => new Response(JSON.stringify({
+                error: 'collection_quota_incompatible',
+                dimension: 'maxBatchBytes',
+                effectiveMaximum: 4 * 1024 * 1024,
+            }), { status: 413, headers: { 'Content-Type': 'application/json' } }),
+        });
+
+        await expect(client.collection(collectionDefinition).batch([{
+            kind: 'put',
+            expectedRevision: 'absent',
+            value: { id: 'task-1', title: 'Too large for one batch', status: 'open' },
+        }])).rejects.toMatchObject({
+            code: 'collection_quota_incompatible',
+            details: { dimension: 'maxBatchBytes', effectiveMaximum: 4 * 1024 * 1024 },
+        });
     });
 });

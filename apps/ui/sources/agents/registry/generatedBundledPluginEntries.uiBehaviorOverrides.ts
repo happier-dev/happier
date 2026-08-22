@@ -31,9 +31,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         descriptor: Object.freeze({
   "components": {
     "slots": []
-  },
-  "externalSessions": {
-    "supportsBackgroundFollow": true
   }
 } as const),
     }),
@@ -143,8 +140,10 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         "claudeLastAssistantUuid"
       ]
     },
-    "sessionHandoffDescriptorId": "claude.sessionHandoff.v1",
-    "supportsBackgroundFollow": true
+    "sessionHandoffDescriptorId": "claude.sessionHandoff.v1"
+  },
+  "mcpServers": {
+    "supportsDetectedConfigScan": true
   },
   "message": {
     "metaOverrides": [
@@ -319,8 +318,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
           }
         }
       ]
-    },
-    "supportsBackgroundFollow": true
+    }
   },
   "guidance": {
     "includeInSessionGettingStartedCliExamples": true
@@ -509,11 +507,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
           }
         }
       ]
-    },
-    "supportsBackgroundFollow": false
-  },
-  "mcpServers": {
-    "supportsDetectedConfigScan": true
+    }
   }
 } as const),
     }),
@@ -545,8 +539,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
       ]
     },
     "browseDescriptorId": "opencode.externalSessions.browse.v1",
-    "sessionHandoffDescriptorId": "opencode.sessionHandoff.v1",
-    "supportsBackgroundFollow": true
+    "sessionHandoffDescriptorId": "opencode.sessionHandoff.v1"
   },
   "guidance": {
     "includeInSessionGettingStartedCliExamples": true

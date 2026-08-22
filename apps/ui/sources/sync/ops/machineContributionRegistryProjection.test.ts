@@ -792,6 +792,34 @@ describe('machine contribution registry projection ops', () => {
         expect(nullPayload.input).toBeNull();
     });
 
+    it('distinguishes a structured Action failure before issuance from a lost acknowledgement after issuance', async () => {
+        machineRpcWithServerScopeMock
+            .mockRejectedValueOnce(new Error('connection unavailable before Action emission'))
+            .mockImplementationOnce(async (input: Readonly<{ onIssued?: () => void }>) => {
+                input.onIssued?.();
+                throw new Error('Action socket acknowledgement timed out after emission');
+            });
+        const { machinePluginStructuredMessageActionExecute } = await import('./machineContributionRegistryProjection');
+        const input = {
+            serverId: 'server-a',
+            expectedGeneration: '7',
+            qualifiedActionId: 'acme.preview/open-preview',
+            executionSurface: 'ui' as const,
+        };
+
+        await expect(machinePluginStructuredMessageActionExecute('machine-1', input)).resolves.toEqual({
+            supported: false,
+            reason: 'error',
+        });
+        await expect(machinePluginStructuredMessageActionExecute('machine-1', input)).resolves.toEqual({
+            supported: false,
+            reason: 'outcomeUnknown',
+        });
+        expect(machineRpcWithServerScopeMock.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+            onIssued: expect.any(Function),
+        }));
+    });
+
     it('fails closed when an older daemon does not expose the structured-message Action RPC', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,

@@ -1,5 +1,3 @@
-import type { AgentId } from '@/agents/catalog/catalog';
-
 import { resolveProviderMessageMetaOverrides } from '@/sync/domains/messages/messageMetaProviders';
 import { buildOutgoingMessageMeta } from '@/sync/domains/messages/messageMeta';
 import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
@@ -11,7 +9,7 @@ export function buildSendMessageMeta(args: {
     model?: MessageMeta['model'];
     fallbackModel?: MessageMeta['fallbackModel'];
     displayText?: string;
-    agentId: AgentId | null;
+    agentId: string | null;
     settings: Record<string, unknown>;
     session: unknown;
     metaOverrides?: Partial<MessageMeta>;

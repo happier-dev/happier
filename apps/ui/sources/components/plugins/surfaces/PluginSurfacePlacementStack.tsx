@@ -17,6 +17,8 @@ import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projecti
 import {
     selectRenderablePluginSurfacePlacementsForBinding,
 } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import type { BoundPluginSurfaceBinding } from './boundPluginSurfaceController';
+import { usePluginSurfaceDestinationNavigationBinding } from './pluginSurfaceDestinationNavigation';
 import { PluginSurfacePlacementHost } from './PluginSurfaceHost';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
@@ -42,6 +44,16 @@ export function PluginSurfacePlacementStack(props: Readonly<{
     testID?: string;
 }>): React.ReactElement | null {
     const deviceType = useDeviceType();
+    // A stack mounted inside a target scope inherits that scope's one navigation
+    // binding, so its placements advertise `openSurface` like every other
+    // contextual container. A genuinely standalone mount has no such owner, and
+    // no navigation authority is invented for it: the method stays factually
+    // uninstalled (UI-D02) rather than resolving after doing nothing.
+    const navigationBinding = usePluginSurfaceDestinationNavigationBinding();
+    const placementBinding = React.useMemo<BoundPluginSurfaceBinding | undefined>(
+        () => (navigationBinding ? { openSurface: navigationBinding.openSurface } : undefined),
+        [navigationBinding],
+    );
     const surfacePlatform = props.platform ?? 'web';
     const runtimeFormFactor = props.formFactor ?? resolvePluginUiRuntimeFormFactor({ deviceType });
     const policyContext = React.useMemo(() => createPluginUiPolicyEvaluationContext(
@@ -97,6 +109,7 @@ export function PluginSurfacePlacementStack(props: Readonly<{
                             projectId={props.projectId}
                             pluginUiProjection={props.pluginUiProjection}
                             localServicePreviewState={props.localServicePreviewState}
+                            binding={placementBinding}
                             platform={props.platform}
                             formFactor={runtimeFormFactor}
                             nowMs={props.nowMs}

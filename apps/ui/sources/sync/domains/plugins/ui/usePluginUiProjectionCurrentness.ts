@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { PluginContributionClientPlatform } from '@happier-dev/protocol';
 
 import {
     createInstalledPluginUiReactNativeRuntimeProjectionSource,
@@ -84,6 +85,16 @@ export type PluginUiProjectionCurrentness = Readonly<{
  */
 export function resolvePluginUiProjectionPlatform(): LocalServicePreviewPlatform {
     return resolveLocalServicePreviewPlatform();
+}
+
+/**
+ * Client executable declarations have web/iOS/Android targets. Desktop uses
+ * the same React Native Web executable bundle as web, while the projection
+ * platform retains `desktop` for UI/currentness consumers that distinguish it.
+ */
+export function resolvePluginUiClientExecutablePlatform(): PluginContributionClientPlatform {
+    const platform = resolvePluginUiProjectionPlatform();
+    return platform === 'desktop' ? 'web' : platform;
 }
 
 function advanceProjectionConnectionState(

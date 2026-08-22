@@ -12,7 +12,10 @@ import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/plugin
 import type { PluginUiPrivatePresentationHost } from '../surfaces/pluginUiPrivatePresentationHost';
 import type { PluginReactNativeSurfaceModule } from './PluginReactNativeSurface';
 import { createCanonicalPluginReactNativeHostApiAdapter } from './hostApi';
-import { createPluginReactNativeWatchdog } from './watchdog';
+import {
+    createPluginReactNativeWatchdog,
+    type PluginReactNativeWatchdogSnapshot,
+} from './watchdog';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -153,11 +156,71 @@ describe('PluginReactNativeSurface', () => {
         expect(watchdog.readPending({ token: crashStateToken, scopeKey: crashReportScopeKey })).toEqual([pending]);
     });
 
+    it('holds cached bytes when neither the durable quarantine nor current daemon truth can clear them', async () => {
+        // A store that refuses to answer is not a store that says "nothing was
+        // quarantined". With no current daemon projection either, nothing has
+        // cleared this binding, so the cached artifact must not execute.
+        const watchdog = createPluginReactNativeWatchdog({
+            persistence: {
+                readSnapshot: () => { throw new Error('platform storage unavailable'); },
+                writeSnapshot: () => 'unavailable' as const,
+            },
+        });
+        const renderSurface = vi.fn(() => React.createElement('PluginNativeSurface', { testID: 'plugin-native-surface' }));
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+
+        const screen = await renderScreen(<PluginReactNativeSurface
+            surfaceId="surface_1"
+            renderContext={defaultRenderContext}
+            decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+            module={{ renderSurface }}
+            watchdog={watchdog}
+            crashStateToken={crashStateToken}
+            crashReportScopeKey={crashReportScopeKey}
+            {...({ crashStateProjectionCurrent: false } as any)}
+        />);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(renderSurface).not.toHaveBeenCalled();
+        expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
+    });
+
+    it('lets current daemon truth recover a mount whose durable quarantine cannot be read', async () => {
+        const watchdog = createPluginReactNativeWatchdog({
+            persistence: {
+                readSnapshot: () => { throw new Error('platform storage unavailable'); },
+                writeSnapshot: () => 'unavailable' as const,
+            },
+        });
+        const renderSurface = vi.fn(() => React.createElement('PluginNativeSurface', { testID: 'plugin-native-surface' }));
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+
+        const screen = await renderScreen(<PluginReactNativeSurface
+            surfaceId="surface_1"
+            renderContext={defaultRenderContext}
+            decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+            module={{ renderSurface }}
+            watchdog={watchdog}
+            crashStateToken={crashStateToken}
+            crashReportScopeKey={crashReportScopeKey}
+            {...({ crashStateProjectionCurrent: true } as any)}
+        />);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(renderSurface).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('plugin-native-surface')).toBeTruthy();
+    });
+
     it('does not forward a persisted occurrence from a retired server, machine, and Account scope to an equal token', async () => {
-        let persisted: unknown = null;
+        let persisted: PluginReactNativeWatchdogSnapshot | null = null;
         const persistence = {
-            readSnapshot: () => persisted,
-            writeSnapshot: (snapshot: unknown) => { persisted = snapshot; },
+            readSnapshot: () => persisted === null
+                ? { durability: 'absent' as const }
+                : { durability: 'available' as const, snapshot: persisted },
+            writeSnapshot: (snapshot: PluginReactNativeWatchdogSnapshot) => {
+                persisted = snapshot;
+                return 'available' as const;
+            },
         };
         const sourceScopeKey = 'server-a\u0000machine-a\u0000account-a';
         const successorScopeKey = 'server-b\u0000machine-b\u0000account-b';
@@ -1674,6 +1737,85 @@ describe('PluginReactNativeSurface', () => {
                 token: targetedCrashStateToken,
                 scopeKey: crashReportScopeKey,
             })).toHaveLength(1);
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+
+    it('retries a targeted child for replacement launch input without remounting a healthy same-entry child', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const onCrash = vi.fn();
+        const renderContext = (reviewId: string) => Object.freeze({
+            ...defaultRenderContext,
+            launchInput: Object.freeze({ reviewId }),
+        }) satisfies RenderContext;
+        const readReviewId = (context: RenderContext): string => {
+            const input = context.launchInput;
+            if (!input || typeof input !== 'object') return 'none';
+            const reviewId = Reflect.get(input, 'reviewId');
+            return typeof reviewId === 'string' ? reviewId : 'none';
+        };
+        let healthyMounts = 0;
+        function HealthyTargetedSurface(props: Readonly<{ reviewId: string }>) {
+            const [count, setCount] = React.useState(0);
+            React.useEffect(() => {
+                healthyMounts += 1;
+            }, []);
+            return React.createElement('PluginNativeSurface', {
+                testID: `targeted-healthy:${props.reviewId}:${count}`,
+                onClick: () => setCount((previous) => previous + 1),
+            });
+        }
+        const module: PluginReactNativeSurfaceModule = {
+            renderSurface: (context) => {
+                const reviewId = readReviewId(context);
+                if (reviewId === 'crashes') {
+                    throw new Error('targeted_launch_input_render_failure');
+                }
+                return React.createElement(HealthyTargetedSurface, { reviewId });
+            },
+        };
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        const element = (reviewId: string) => (
+            <PluginReactNativeSurface
+                surfaceId="surface_1"
+                renderContext={renderContext(reviewId)}
+                decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+                module={module}
+                cacheKey="targeted-launch-input"
+                targetedFallback={React.createElement('TargetedFallback', {
+                    testID: 'targeted-launch-input-fallback',
+                })}
+                onCrash={onCrash}
+            />
+        );
+
+        try {
+            const crashed = await renderScreen(element('crashes'));
+            await flushHookEffects({ cycles: 2, turns: 2 });
+
+            expect(crashed.findByTestId('targeted-launch-input-fallback')).toBeTruthy();
+            expect(onCrash).toHaveBeenCalledWith('surface_1', expect.objectContaining({
+                message: 'targeted_launch_input_render_failure',
+            }));
+
+            await crashed.update(element('recovered'));
+            await flushHookEffects({ cycles: 2, turns: 2 });
+
+            expect(crashed.findByTestId('targeted-launch-input-fallback')).toBeNull();
+            expect(crashed.findByTestId('targeted-healthy:recovered:0')).toBeTruthy();
+
+            await act(async () => {
+                crashed.pressByTestId('targeted-healthy:recovered:0');
+            });
+            expect(crashed.findByTestId('targeted-healthy:recovered:1')).toBeTruthy();
+            expect(healthyMounts).toBe(1);
+
+            await crashed.update(element('replacement'));
+            await flushHookEffects({ cycles: 2, turns: 2 });
+
+            expect(crashed.findByTestId('targeted-healthy:replacement:1')).toBeTruthy();
+            expect(healthyMounts).toBe(1);
         } finally {
             consoleError.mockRestore();
         }

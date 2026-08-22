@@ -22,6 +22,24 @@ vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
                                 pluginId: 'happier.agent.antigravity',
                                 localId: 'antigravity',
                             },
+                            capabilities: {
+                                sessions: {
+                                    open: ['create', 'resume', 'fork'],
+                                    delivery: ['newTurn', 'steer', 'followUp'],
+                                    cancel: true,
+                                    conversationRollback: true,
+                                    usageLimitRecovery: {
+                                        active: ['checkNow'],
+                                        inactive: ['checkNow', 'consumeResetCredit'],
+                                    },
+                                },
+                                executionRuns: {
+                                    open: ['create', 'resume', 'fork'],
+                                    checkpoint: true,
+                                    stop: true,
+                                },
+                                surfaces: ['terminal'],
+                            },
                             externalSessions: {
                                 agent: {
                                     pluginId: 'happier.agent.antigravity',
@@ -67,6 +85,15 @@ describe('useResumeCapabilityOptions', () => {
             },
             sourceKinds: ['antigravityCliPrint'],
         });
+        expect(hook.getCurrent().resumeCapabilityOptions.currentAgentCapabilities).toMatchObject({
+            agentId: 'antigravity',
+            generation: 42,
+            capabilities: {
+                sessions: { open: ['create', 'resume', 'fork'] },
+                executionRuns: { open: ['create', 'resume', 'fork'] },
+                surfaces: ['terminal'],
+            },
+        });
     });
 
     it('fails linked identity resolution closed while the daemon projection is not ready', async () => {
@@ -80,5 +107,6 @@ describe('useResumeCapabilityOptions', () => {
         }));
 
         expect(hook.getCurrent().resumeCapabilityOptions.linkedSessionCurrentAgent).toBeNull();
+        expect(hook.getCurrent().resumeCapabilityOptions.currentAgentCapabilities).toBeNull();
     });
 });

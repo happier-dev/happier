@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
+import { invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
 
 type DesktopAutostartState = Readonly<{
     supported: boolean;
@@ -11,7 +11,7 @@ type DesktopAutostartState = Readonly<{
 }>;
 
 export function useDesktopAutostart(): DesktopAutostartState {
-    const supported = React.useMemo(() => isTauriDesktop(), []);
+    const supported = React.useMemo(() => isDesktopHost(), []);
     const [enabled, setEnabledState] = React.useState(false);
     const [loading, setLoading] = React.useState(supported);
     const [error, setError] = React.useState<string | null>(null);
@@ -26,7 +26,7 @@ export function useDesktopAutostart(): DesktopAutostartState {
         setLoading(true);
         setError(null);
 
-        void invokeTauri<boolean>('desktop_get_autostart_enabled')
+        void invokeDesktopHost<boolean>('desktop_get_autostart_enabled')
             .then((value) => {
                 if (cancelled) {
                     return;
@@ -58,7 +58,7 @@ export function useDesktopAutostart(): DesktopAutostartState {
         setLoading(true);
         setError(null);
         try {
-            const actualEnabled = await invokeTauri<boolean>('desktop_set_autostart_enabled', {
+            const actualEnabled = await invokeDesktopHost<boolean>('desktop_set_autostart_enabled', {
                 enabled: nextEnabled,
             });
             setEnabledState(Boolean(actualEnabled));

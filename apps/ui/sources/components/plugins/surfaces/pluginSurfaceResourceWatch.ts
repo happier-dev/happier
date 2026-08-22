@@ -12,15 +12,18 @@ import {
     machinePluginUiResourceWatchNext,
     machinePluginUiResourceWatchOpen,
 } from '@/sync/ops/machineContributionRegistryProjection';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 import type { PluginUiResourceClient } from '@happier-dev/plugin-ui/advanced';
 
 import {
-    composePluginSurfaceResourceSignal,
     readPluginSurfaceResourceReference,
     type PluginContextualResourceBinding,
 } from './pluginSurfaceResourceRead';
-import type { PluginSurfaceHostApiRequestOptions } from './createPluginSurfaceHostApi';
+import {
+    createPluginSurfaceHostApiError,
+    type PluginSurfaceHostApiRequestOptions,
+} from './createPluginSurfaceHostApi';
 
 /**
  * The mounted `watchResource` / `disposeHostResource` handlers (§3.6, EU-4b).
@@ -66,7 +69,7 @@ function errorPayload(
     code: 'unavailable' | 'invalid_payload',
     reason: string,
 ): PluginUiJsonValueV1 {
-    return { code, diagnostics: [reason] };
+    return createPluginSurfaceHostApiError(code, [reason]);
 }
 
 function resourceAbortPayload(isCurrent: (() => boolean) | undefined): PluginUiJsonValueV1 {
@@ -488,24 +491,33 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
             if (input.isCurrent?.() === false) {
                 return errorPayload('unavailable', 'plugin_surface_retired');
             }
-            const signal = composePluginSurfaceResourceSignal(input.lifetimeSignal, options?.signal);
-            if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
-            const subscriptionId = parsed.data.subscriptionId;
-            const opened = await owner.open({
-                subscriptionId,
-                resourceId: reference.localId,
-                deliver: input.deliver,
-                ...(signal === undefined ? {} : { signal }),
-            });
-            if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
-            if (!opened.ok) return errorPayload('unavailable', opened.reason);
-            if (input.isCurrent?.() === false) {
-                owner.retire(subscriptionId);
-                return resourceAbortPayload(input.isCurrent);
+            const mergedSignal = mergeAbortSignals([input.lifetimeSignal, options?.signal]);
+            const signal = mergedSignal.signal;
+            try {
+                if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
+                const subscriptionId = parsed.data.subscriptionId;
+                const opened = await owner.open({
+                    subscriptionId,
+                    resourceId: reference.localId,
+                    deliver: input.deliver,
+                    ...(signal === undefined ? {} : { signal }),
+                });
+                if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
+                if (!opened.ok) return errorPayload('unavailable', opened.reason);
+                if (input.isCurrent?.() === false) {
+                    owner.retire(subscriptionId);
+                    return resourceAbortPayload(input.isCurrent);
+                }
+                // The establishment result is the resynchronization baseline the
+                // author can compare against its own last read.
+                return { subscriptionId, digest: opened.digest };
+            } finally {
+                // The established watch pumps on its own controller, so this
+                // composition is only live while `owner.open` awaits the daemon.
+                // Releasing it here keeps one long-lived mount lifetime from
+                // accumulating a listener per author subscription.
+                mergedSignal.dispose();
             }
-            // The establishment result is the resynchronization baseline the
-            // author can compare against its own last read.
-            return { subscriptionId, digest: opened.digest };
         },
         disposeHostResource: async (request: PluginUiHostApiRequestEnvelopeV1): Promise<PluginUiJsonValueV1> => {
             const parsed = PluginUiDisposeHostResourceRequestV1Schema.safeParse(readJsonRecord(request.payload));

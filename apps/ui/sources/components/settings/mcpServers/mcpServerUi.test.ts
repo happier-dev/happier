@@ -15,6 +15,7 @@ const installMcpServerUiMocks = () => installMcpServersCommonModuleMocks({
 installMcpServerUiMocks();
 
 let resolveDetectedProviderName: typeof import('./mcpServerUi').resolveDetectedProviderName;
+let formatDetectedWarning: typeof import('./mcpServerUi').formatDetectedWarning;
 
 describe('resolveDetectedProviderName', () => {
     beforeAll(async () => {
@@ -28,5 +29,18 @@ describe('resolveDetectedProviderName', () => {
 
     it('falls back to the raw provider when no registered agent matches', () => {
         expect(resolveDetectedProviderName('unknown-provider')).toBe('unknown-provider');
+    });
+});
+
+describe('formatDetectedWarning', () => {
+    beforeAll(async () => {
+        ({ formatDetectedWarning } = await import('./mcpServerUi'));
+    });
+
+    it('omits the agent segment for a detection warning that no agent owns instead of rendering an undefined agent', () => {
+        expect(formatDetectedWarning({ code: 'unsupported', path: 'plugin:config' }))
+            .toBe('unsupported \u00b7 plugin:config');
+        expect(formatDetectedWarning({ provider: 'gemini', code: 'parse_failed' }))
+            .toBe('gemini \u00b7 parse_failed');
     });
 });

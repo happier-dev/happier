@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
 import { getAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/agentLocalAuthCatalog';
-import { AGENT_IDS, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { AGENT_IDS, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import {
     AgentsLogoMultiSelect,
     type AgentsLogoMultiSelectEntry,
@@ -42,7 +42,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
 
 function supportsDirectAgentSetup(agentId: AgentId | null | undefined): agentId is AgentId {
-    return isAgentId(agentId) && Boolean(getAgentCliRuntimeSpec(agentId).binaryName);
+    return isBundledAgentId(agentId) && Boolean(getAgentCliRuntimeSpec(agentId).binaryName);
 }
 
 const DEFAULT_AGENT_IDS = AGENT_IDS.filter((agentId) => supportsDirectAgentSetup(agentId));
@@ -219,20 +219,23 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
     onRequestAdvance?: (() => void) | null;
 }>) {
     const presentation = props.presentation ?? 'settings';
-    const supportsDesktopControls = isTauriDesktop();
+    const supportsDesktopControls = isDesktopHost();
     const agentEntries = React.useMemo(
         () => {
             const sourceEntries = props.agentEntries?.length
                 ? props.agentEntries
-                : (props.agentIds?.length ? props.agentIds : DEFAULT_AGENT_IDS).map((agentId) => {
+                : (props.agentIds?.length ? props.agentIds : DEFAULT_AGENT_IDS).flatMap((agentId) => {
+                    // The bundled setup wizard walks bundled CLI recipes; an Agent
+                    // without one is set up by its own plugin, not by this flow.
                     const core = getAgentCore(agentId);
-                    return {
+                    if (!core) return [];
+                    return [{
                         agentId,
                         catalogAgentId: agentId,
                         title: t(core.displayNameKey),
                         iconAgentId: agentId,
                         iconName: core.ui.agentPickerIconName,
-                    } satisfies AgentSetupEntry;
+                    } satisfies AgentSetupEntry];
                 });
             return uniqueAgentSetupEntries(sourceEntries);
         },
@@ -306,7 +309,8 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
     const agentDetectKeys = React.useMemo(() => {
         const out: Partial<Record<AgentId, string>> = {};
         for (const agentId of selectedSetupProviderIds) {
-            out[agentId] = getAgentCore(agentId).cli.detectKey;
+            const detectKey = getAgentCore(agentId)?.cli.detectKey;
+            if (detectKey) out[agentId] = detectKey;
         }
         return out;
     }, [selectedSetupProviderIds]);
@@ -457,7 +461,7 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                         const selected = selectedAgentIds.includes(entry.agentId);
                         const stepState = resolveProviderStepState({ agentId: entry.agentId, queueState });
                         const installStatus = entry.catalogAgentId ? installQueue.resolveStatus(entry.catalogAgentId).status : 'idle';
-                        const iconName = entry.iconAgentId ? getAgentCore(entry.iconAgentId).ui.agentPickerIconName : entry.iconName;
+                        const iconName = getAgentCore(entry.iconAgentId ?? '')?.ui.agentPickerIconName ?? entry.iconName;
                         const canRetryInstall = installQueue.state.hasStarted && !installQueue.state.isRunning && installStatus === 'failed';
                         return (
                             <Item
@@ -515,9 +519,8 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
             {activeProviderId && activeEntry ? (
                 <>
                     {(() => {
-                        const activeIconName = activeEntry.iconAgentId
-                            ? getAgentCore(activeEntry.iconAgentId).ui.agentPickerIconName
-                            : activeEntry.iconName;
+                        const activeIconName = getAgentCore(activeEntry.iconAgentId ?? '')?.ui.agentPickerIconName
+                            ?? activeEntry.iconName;
                         return (
                             <>
                     {!isWizardPresentation ? (
@@ -640,7 +643,7 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                         if (!selected) return null;
 
                         const status = entry.catalogAgentId ? installQueue.resolveStatus(entry.catalogAgentId).status : 'idle';
-                        const iconName = entry.iconAgentId ? getAgentCore(entry.iconAgentId).ui.agentPickerIconName : entry.iconName;
+                        const iconName = getAgentCore(entry.iconAgentId ?? '')?.ui.agentPickerIconName ?? entry.iconName;
                         return (
                             <View key={entry.agentId} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                                 <Icon name={iconName as any} size={20} color={theme.colors.text.secondary} />

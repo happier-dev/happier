@@ -70,6 +70,37 @@ function placement(input: Readonly<{
     });
 }
 
+function servicesPlacement(): PluginUiSurfacePlacementProjection {
+    const normalized = normalizePluginUiDestinationBindingV1({
+        pluginId: 'acme.services',
+        destinationId: 'health',
+        rendererId: 'services-hosted',
+        container: 'servicesPanel',
+        target: Object.freeze({ kind: 'services' }),
+    });
+    if (!normalized) throw new Error('test fixture must use an admitted services binding');
+    return Object.freeze({
+        id: 'surfacePlacement:acme.services:health',
+        pluginId: 'acme.services',
+        contributionKind: 'surfacePlacement' as const,
+        descriptorId: 'health',
+        binding: normalized,
+        target: Object.freeze({ kind: 'services' }),
+        renderer: Object.freeze({ kind: 'hostedWeb', contributionId: 'health' }),
+        display: Object.freeze({ label: 'Health' }),
+        availability: Object.freeze({ state: 'available' as const, reason: 'available', diagnostics: [] }),
+        headerActions: Object.freeze([]),
+        order: 10,
+    });
+}
+
+const servicesProjection: PluginUiProjectionModel = {
+    ...EMPTY_PLUGIN_UI_PROJECTION,
+    surfacePlacementsById: {
+        'surfacePlacement:acme.services:health': servicesPlacement(),
+    },
+};
+
 const pluginUiProjection: PluginUiProjectionModel = {
     ...EMPTY_PLUGIN_UI_PROJECTION,
     surfacePlacementsById: {
@@ -163,6 +194,62 @@ describe('PluginSurfacePlacementStack', () => {
             formFactor: 'tablet',
             platform: 'ios',
         }));
+    });
+
+    // A Services panel mounts inside a target scope that already installed the
+    // one navigation binding. Losing it costs the whole slot `openSurface` (C1),
+    // while a genuinely standalone Services mount has no such owner and must
+    // keep advertising the method as unsupported.
+    it('threads the contextual target navigation binding into services placements', async () => {
+        const { PluginSurfacePlacementStack } = await import('./PluginSurfacePlacementStack');
+        const {
+            createPluginSurfaceDestinationNavigationBinding,
+            PluginSurfaceDestinationNavigationBindingProvider,
+        } = await import('./pluginSurfaceDestinationNavigation');
+        placementHostSpy.mockClear();
+
+        const navigationBinding = createPluginSurfaceDestinationNavigationBinding({
+            placements: Object.values(servicesProjection.surfacePlacementsById),
+            targetKind: 'session',
+        });
+
+        await renderScreen(
+            <PluginSurfaceDestinationNavigationBindingProvider binding={navigationBinding}>
+                <PluginSurfacePlacementStack
+                    container="servicesPanel"
+                    targetKind="services"
+                    pluginUiProjection={servicesProjection}
+                    machineId="machine-1"
+                    serverId="server-1"
+                    platform="web"
+                    testID="services-plugin-placements"
+                />
+            </PluginSurfaceDestinationNavigationBindingProvider>,
+        );
+
+        expect(placementHostSpy).toHaveBeenCalledTimes(1);
+        expect(placementHostSpy).toHaveBeenCalledWith(expect.objectContaining({
+            binding: expect.objectContaining({ openSurface: navigationBinding.openSurface }),
+        }));
+
+        // Standalone: no surrounding target scope, so no navigation authority is
+        // invented for the mount and `openSurface` stays factually uninstalled.
+        placementHostSpy.mockClear();
+        await renderScreen(
+            <PluginSurfacePlacementStack
+                container="servicesPanel"
+                targetKind="services"
+                pluginUiProjection={servicesProjection}
+                machineId="machine-1"
+                serverId="server-1"
+                platform="web"
+                testID="standalone-services-plugin-placements"
+            />,
+        );
+
+        expect(placementHostSpy).toHaveBeenCalledTimes(1);
+        expect((placementHostSpy.mock.calls.at(-1)?.[0] as Readonly<{ binding?: unknown }>).binding)
+            .toBeUndefined();
     });
 
     it('uses the observed phone form factor for default web admission', async () => {

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
     ComposerAgentContinuationIntentV1Schema,
     ComposerAttachmentDraftV1Schema,
+    SessionAgentTransitionResultV1Schema,
     type ComposerAttachmentDraftV1,
     type ComposerReferenceMentionPayloadV1,
     ParticipantRecipientV1Schema,
@@ -171,9 +172,10 @@ export const ComposerStructuredInputMentionsSchema = z.preprocess(
  * Keeping the two at different lifetimes is what let a reader navigate away and
  * come back to their message with the Agent choice silently gone.
  *
- * The submission identity is deliberately NOT here. It identifies one transition
- * attempt, is minted from the arm on demand, and a restored arm is a fresh
- * attempt; persisting it would carry a spent dedupe key across a remount.
+ * The submission identity is not here either, because it belongs to a
+ * SUBMITTED switch rather than to a choice about the next message. It lives in
+ * the sibling field below, whose lifetime is the transition's rather than the
+ * arm's.
  */
 export const SessionArmedAgentContinuationSchema = z.object({
     backendTargetKey: z.string().trim().min(1),
@@ -187,10 +189,56 @@ export const SessionArmedAgentContinuationSchema = z.object({
 }).strict();
 export type SessionArmedAgentContinuation = Readonly<z.infer<typeof SessionArmedAgentContinuationSchema>>;
 
+/**
+ * The armed switch this Session has already submitted, whose effect on the
+ * Session is not yet established.
+ *
+ * It is the other half of the same composer decision as the arm above, and it
+ * outlives the mount for a sharper reason than the draft text does: `localId`
+ * is the daemon's dedupe key and the divider correlation key. Held only in a
+ * mounted ref, a remount minted a NEW identity for the same armed choice while
+ * the still-visible draft stayed sendable, so the retry committed a SECOND
+ * message and divider for a switch that may already have happened. The banner
+ * that said so and the send block that stood in the way lived in that same lost
+ * state.
+ *
+ * This is not a recovery record and carries no recovery of its own. It holds
+ * exactly what the disposition owner needs to re-decide the outcome against
+ * canonical facts, and it is deleted the moment that owner says the transition
+ * has nothing left to say.
+ */
+export const SessionArmedAgentContinuationSubmissionSchema = z.object({
+    /**
+     * The submitted identity: the transition's dedupe key, the divider
+     * correlation key, and the only key the composer may compare-clear against.
+     */
+    localId: z.string().trim().min(1),
+    /**
+     * The switch that was submitted. A restored arm keeps this submission's
+     * identity only while it still describes the SAME switch; a reader who
+     * re-armed elsewhere gets a fresh one.
+     */
+    intent: ComposerAgentContinuationIntentV1Schema,
+    /** The daemon's own closed answer, re-decided rather than re-interpreted. */
+    result: SessionAgentTransitionResultV1Schema,
+    /**
+     * The exact composer text this submission carried, so custody observed
+     * later can compare-clear an UNCHANGED draft instead of leaving the reader
+     * holding a message they have already sent.
+     */
+    submittedText: z.string(),
+    /** Whether canonical Session/message facts have been read since the call. */
+    reconciled: z.boolean(),
+}).strict();
+export type SessionArmedAgentContinuationSubmission =
+    Readonly<z.infer<typeof SessionArmedAgentContinuationSubmissionSchema>>;
+
 export type SessionDraftValueByFieldId = Readonly<{
     'routing.recipient': ParticipantRecipientV1 | null;
     /** The armed target Agent for the next message; see the schema above. */
     'routing.agentContinuation': SessionArmedAgentContinuation;
+    /** The submitted switch whose effect is not established; see above. */
+    'routing.agentContinuationSubmission': SessionArmedAgentContinuationSubmission;
     'routing.executionRunDelivery': ExecutionRunDeliveryMode;
     /**
      * Contentless plugin attachment drafts remain source data until the
@@ -205,6 +253,7 @@ export type SessionDraftValueFieldId = keyof SessionDraftValueByFieldId;
 export const SESSION_DRAFT_VALUE_SCHEMAS = {
     'routing.recipient': ParticipantRecipientV1Schema.nullable(),
     'routing.agentContinuation': SessionArmedAgentContinuationSchema,
+    'routing.agentContinuationSubmission': SessionArmedAgentContinuationSubmissionSchema,
     'routing.executionRunDelivery': ExecutionRunDeliveryModeSchema,
     'structuredInput.composerAttachments': z.array(ComposerAttachmentDraftV1Schema).max(64),
     'structuredInput.mentions': ComposerStructuredInputMentionsSchema,

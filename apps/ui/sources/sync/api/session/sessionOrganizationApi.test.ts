@@ -119,6 +119,53 @@ describe('sessionOrganizationApi', () => {
         });
     });
 
+    it('writes the attention standing tri-state through the shared organization route', async () => {
+        const { setSessionAttentionStanding } = await import('./sessionOrganizationApi');
+        mocks.runtimeFetchWithServerReachability.mockResolvedValueOnce(jsonResponse({
+            standing: { sessionId: 's1', standing: false, updatedAt: 12 },
+        }));
+
+        const response = await setSessionAttentionStanding({
+            credentials,
+            serverUrl: 'https://row-server.example.test/api/',
+            sessionId: 's1',
+            request: { standing: false },
+        });
+
+        expect(response).toEqual({ standing: { sessionId: 's1', standing: false, updatedAt: 12 } });
+        expect(mocks.runtimeFetchWithServerReachability).toHaveBeenCalledWith({
+            serverUrl: 'https://row-server.example.test/api',
+            token: 'token-a',
+            url: 'https://row-server.example.test/api/v2/session-organization/attention-standings/s1',
+            init: expect.objectContaining({
+                method: 'PUT',
+                // `false` is a real value here, not an omission: the body must carry it verbatim so
+                // the server can tell "removed from Needs attention" from "cleared the override".
+                body: JSON.stringify({ standing: false }),
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer token-a',
+                    'Content-Type': 'application/json',
+                }),
+            }),
+        });
+    });
+
+    it('asks for attention standings in the session list snapshot query', async () => {
+        const { fetchSessionOrganizationSnapshot } = await import('./sessionOrganizationApi');
+        const { createSessionListOrganizationSnapshotRequest } = await import(
+            '@/sync/engine/sessions/sessionListOrganizationSnapshotRequest'
+        );
+        mocks.serverFetch.mockResolvedValueOnce(jsonResponse(organizationSnapshotResponse()));
+
+        await fetchSessionOrganizationSnapshot({
+            credentials,
+            request: createSessionListOrganizationSnapshotRequest(),
+        });
+
+        const requestUrl = new URL(String(mocks.serverFetch.mock.calls[0]?.[0]), 'http://localhost');
+        expect(requestUrl.searchParams.get('includeAttentionStandings')).toBe('true');
+    });
+
     it('returns an empty compatibility snapshot when the organization route is missing', async () => {
         const { fetchSessionOrganizationSnapshot } = await import('./sessionOrganizationApi');
         mocks.serverFetch.mockResolvedValueOnce(jsonResponse({

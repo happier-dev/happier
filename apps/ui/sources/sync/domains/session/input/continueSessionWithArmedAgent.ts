@@ -145,7 +145,49 @@ export type ArmedAgentContinuationDisposition = Readonly<{
      * and the dedupe identity cannot cover one that mints a fresh localId.
      */
     send: 'allow' | 'block';
+    /**
+     * Present only where the input reached canonical custody but no runtime has
+     * taken it yet.
+     *
+     * This is the transition's form of the ordinary send's `wake_pending` /
+     * `wake_failed`, and it is deliberately not a notice: the Session already
+     * owns that state and presents it through its queued-message banner. Naming
+     * the fact here lets that one owner present it instead of growing a second
+     * banner that says the same thing beside it.
+     */
+    awaitingRuntime?: true;
 }>;
+
+/**
+ * Whether this outcome still has anything to say to the reader.
+ *
+ * One predicate, because the two questions that ask it are the same one: is a
+ * submitted switch worth carrying across a remount, and is a carried one still
+ * truthful when it comes back. An outcome with nothing to state and nothing to
+ * hold the composer for is deleted rather than restored, so a restored banner
+ * can never point at a transition that has since resolved.
+ */
+export function isArmedAgentContinuationOutcomeUnsettled(
+    disposition: ArmedAgentContinuationDisposition,
+): boolean {
+    return disposition.notice !== null || disposition.send === 'block';
+}
+
+/**
+ * Where the exact submitted localId has got to, canonically.
+ *
+ * One value rather than two booleans, because "admitted" and "still waiting to
+ * be carried" are the same question asked at two depths, and a pair of flags
+ * can encode a state that cannot exist. `delivered` is the discriminator that
+ * keeps a queued-input signal from outliving the message it describes.
+ */
+export type ArmedAgentContinuationInputCustody =
+    /** No canonical record of this localId anywhere. */
+    | 'absent'
+    /** In the Session's pending queue; no runtime has taken it. */
+    | 'queued'
+    /** In the transcript: a runtime took it. */
+    | 'delivered';
 
 /**
  * The canonical Session/message facts the reconciliation reads. Nothing here is
@@ -157,8 +199,8 @@ export type ArmedAgentContinuationCanonicalFacts = Readonly<{
     currentAgentId: string | null;
     /** Whether the Session has a live runtime. */
     sessionActive: boolean;
-    /** Whether the exact submitted localId reached canonical admission. */
-    inputAdmitted: boolean;
+    /** How far the exact submitted localId has got. */
+    input: ArmedAgentContinuationInputCustody;
 }>;
 
 function resolveRejectedMessage(
@@ -210,10 +252,18 @@ function buildDisposition(params: Readonly<{
     reconciled?: boolean;
     /** The Session has no live runtime, so starting one is a real recovery. */
     canResume?: boolean;
+    /** The admitted input is still waiting for a runtime to carry it. */
+    awaitingRuntime?: boolean;
 }>): ArmedAgentContinuationDisposition {
     const { depth, message } = params;
     if (depth === 'accepted') {
-        return { draft: 'clear', arm: 'clear', notice: null, send: 'allow' };
+        return {
+            draft: 'clear',
+            arm: 'clear',
+            notice: null,
+            send: 'allow',
+            ...(params.awaitingRuntime === true ? { awaitingRuntime: true } as const : {}),
+        };
     }
     const armSpent = params.armSpent ?? depth === 'current_view_committed';
     const arm = armSpent ? 'clear' : 'keep';
@@ -246,6 +296,48 @@ function buildDisposition(params: Readonly<{
 }
 
 /**
+ * Whether the daemon's own answer PROVES this exact input reached canonical
+ * admission AND that no runtime took it, even though the arm it rides is a
+ * partial one.
+ *
+ * `target_start_failed` is the single such code. The transition coordinator
+ * takes input custody first and only then activates the target
+ * (`activateTargetAndAdmitInput`: `if (admitted.type !== 'accepted') return
+ * admitted;` precedes every `target_start_failed` return), so reaching it means
+ * admission already succeeded and only the runtime failed to come up. Treating
+ * it as "your message wasn't sent" is therefore false at the source, not merely
+ * unlucky timing — and acting on that sentence duplicates the message, because
+ * the arm is spent and the retry mints a fresh identity.
+ */
+function resultProvesInputQueuedBehindNoRuntime(result: SessionAgentTransitionResultV1): boolean {
+    return result.type === 'partially_applied'
+        && result.applied === 'current_view_committed'
+        && result.code === 'target_start_failed';
+}
+
+/**
+ * The one rule for "the reader's message is in the queue and nothing is running
+ * to take it" — the state the Session's queued-message banner exists to state.
+ *
+ * It is deliberately evidence-ranked rather than arm-ranked. `target_start_failed`
+ * carries the daemon's own proof that activation failed, so it stands without any
+ * client fact and yields only to seeing the message actually carried. Every other
+ * arm that ends with the input admitted — including plain `accepted` — proves
+ * NOTHING about the runtime: activation is fire-and-forget, with no readiness
+ * wait, so `accepted` means "spawn acknowledged", and a target that dies after it
+ * leaves the message queued behind a Session with no runtime. There the fact has
+ * to be read, and re-read: the death that exposed this arrived 94 seconds after a
+ * switch that reported success.
+ */
+function resolveAwaitingRuntime(
+    result: SessionAgentTransitionResultV1,
+    facts: ArmedAgentContinuationCanonicalFacts | null,
+): boolean {
+    if (resultProvesInputQueuedBehindNoRuntime(result)) return facts?.input !== 'delivered';
+    return facts !== null && facts.sessionActive === false && facts.input === 'queued';
+}
+
+/**
  * Maps one daemon answer onto the only recovery that is safe at that depth.
  *
  * The depths are not interchangeable and must not be collapsed:
@@ -257,8 +349,11 @@ function buildDisposition(params: Readonly<{
  *   arm survives and a retry is safe, but the copy must not imply the source is
  *   still running.
  * - `partially_applied` / `current_view_committed` — the Session IS the target.
- *   The switch already happened, so the arm is spent; the message did not go
- *   through, so the draft stays.
+ *   The switch already happened, so the arm is spent. Whether the draft stays
+ *   depends on the input: `target_start_failed` proves it was admitted before
+ *   activation was even attempted, so it becomes `accepted` with the runtime
+ *   still to come; every other code at this depth leaves the message unsent and
+ *   the draft in place.
  * - `outcome_unknown` — nothing is established. Preserve everything, say so, and
  *   hold the composer until reconciliation has read canonical facts.
  *
@@ -298,7 +393,15 @@ export function reconcileArmedAgentContinuationDisposition(params: Readonly<{
     const canResume = facts !== null && facts.sessionActive === false;
     switch (result.type) {
         case 'accepted':
-            return buildDisposition({ depth: 'accepted', message: '' });
+            // `accepted` is the narrowest claim in the union: the cutover and
+            // divider committed and this localId was admitted. It does NOT say
+            // the target came up, so it cannot be treated as the end of the
+            // story — before this, a target that died left total silence.
+            return buildDisposition({
+                depth: 'accepted',
+                message: '',
+                awaitingRuntime: resolveAwaitingRuntime(result, facts),
+            });
         case 'rejected':
             return buildDisposition({
                 depth: 'no_effect',
@@ -308,13 +411,25 @@ export function reconcileArmedAgentContinuationDisposition(params: Readonly<{
                 armSpent: result.code === 'same_target',
             });
         case 'partially_applied':
-            return result.applied === 'source_stopped'
-                ? buildDisposition({
+            if (result.applied === 'source_stopped') {
+                return buildDisposition({
                     depth: 'source_stopped',
                     message: t('session.agentContinuation.transition.sourceStopped', {
                         source: labels.sourceAgentLabel,
                         agent: labels.targetAgentLabel,
                     }),
+                });
+            }
+            // The Session IS the target; the only open question at this depth is
+            // whether the input landed. The daemon's own code answers it for
+            // `target_start_failed`, and canonical custody of the exact localId
+            // answers it for the rest. Either way the message is the reader's to
+            // wait on, so the draft goes and no sentence claims otherwise.
+            return resultProvesInputQueuedBehindNoRuntime(result) || (facts !== null && facts.input !== 'absent')
+                ? buildDisposition({
+                    depth: 'accepted',
+                    message: '',
+                    awaitingRuntime: resolveAwaitingRuntime(result, facts),
                 })
                 : buildDisposition({
                     depth: 'current_view_committed',
@@ -329,8 +444,12 @@ export function reconcileArmedAgentContinuationDisposition(params: Readonly<{
 
     // The reader's message is in the transcript. Anything else this could say
     // now would contradict an effect that is already established.
-    if (facts?.inputAdmitted === true) {
-        return buildDisposition({ depth: 'accepted', message: '' });
+    if (facts !== null && facts.input !== 'absent') {
+        return buildDisposition({
+            depth: 'accepted',
+            message: '',
+            awaitingRuntime: resolveAwaitingRuntime(result, facts),
+        });
     }
     // The Session canonically runs the Agent the reader armed, and this exact
     // input did not land: that is the committed-but-incomplete depth, reached

@@ -1,10 +1,9 @@
-import type { AgentId } from '@/agents/catalog/catalog';
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 
 import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
 
 export function resolveProviderMessageMetaOverrides(args: {
-    agentId: AgentId | null;
+    agentId: string | null;
     session: unknown;
     settings?: Record<string, unknown>;
     metaOverrides?: Partial<MessageMeta>;
