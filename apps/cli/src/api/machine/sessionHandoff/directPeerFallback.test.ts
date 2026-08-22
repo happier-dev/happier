@@ -337,7 +337,7 @@ function requireFileTransferPayloadSourcePath(
                 handoffId: 'handoff_direct_peer_expired_candidates_no_fallback',
             })).resolves.toEqual({
                 ok: false,
-                errorCode: 'awaiting_recovery',
+                errorCode: 'direct_peer_transfer_unavailable',
                 error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
             });
         });
