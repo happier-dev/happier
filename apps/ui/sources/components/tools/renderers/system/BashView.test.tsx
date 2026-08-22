@@ -144,6 +144,33 @@ describe('BashView', () => {
         );
     });
 
+    it('renders ACP text content arrays as command stdout', async () => {
+        commandViewSpy.mockClear();
+        codeViewSpy.mockClear();
+        const { BashView } = await import('./BashView');
+
+        const tool = makeToolCall({
+            name: 'Bash',
+            state: 'completed',
+            input: { command: 'printf hello' },
+            result: {
+                content: [{ type: 'text', text: 'hello' }],
+                details: { exit_code: 0 },
+                isError: false,
+            },
+        });
+
+        await renderScreen(React.createElement(BashView, makeToolViewProps(tool)));
+
+        expect(commandViewSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                command: 'printf hello',
+                stdout: 'hello',
+            }),
+        );
+        expect(codeViewSpy).not.toHaveBeenCalled();
+    });
+
     it('strips a leading unset prelude (Claude auth scrub) from the displayed command', async () => {
         commandViewSpy.mockClear();
         codeViewSpy.mockClear();

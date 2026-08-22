@@ -23,6 +23,17 @@ function readFirstNumber(obj: Record<string, unknown>, keys: readonly string[]):
     return undefined;
 }
 
+function readContentText(obj: Record<string, unknown>): string | undefined {
+    if (!Array.isArray(obj.content)) return undefined;
+    let text = '';
+    for (const item of obj.content) {
+        const entry = asRecord(item);
+        if (!entry || entry.type !== 'text' || typeof entry.text !== 'string') continue;
+        text += entry.text;
+    }
+    return text.length > 0 ? text : undefined;
+}
+
 export function extractStdStreams(result: unknown): StdStreams | null {
     const parsed = maybeParseJson(result);
     if (typeof parsed === 'string') {
@@ -38,7 +49,7 @@ export function extractStdStreams(result: unknown): StdStreams | null {
         'aggregated_output',
         'formattedOutput',
         'formatted_output',
-    ]);
+    ]) ?? readContentText(obj);
     const stderr = readFirstString(obj, ['stderr', 'err']);
     const exitCode = readFirstNumber(obj, ['exitCode', 'exit_code', 'code']);
     if (stdout === undefined && stderr === undefined && exitCode === undefined) return null;
