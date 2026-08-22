@@ -123,8 +123,15 @@ export async function readHappyCliRuntimeInputFreshness(cliDir) {
     fingerprint.update('\0');
   };
 
+  // Resolving the runtime inputs is a build-configuration decision: it fails
+  // when the host package.json is unreadable or its bundled workspace closure is
+  // incomplete, and it names the exact package that is missing. Callers render a
+  // null result as "must be a non-empty fingerprint", so that error has to reach
+  // them. Only the traversal below tolerates failure, because a file removed
+  // mid-walk genuinely means the inputs are not currently fingerprintable.
+  const inputPaths = resolveHappyCliRuntimeInputPaths({ cliDir });
   try {
-    for (const path of resolveHappyCliRuntimeInputPaths({ cliDir })) await visit(path);
+    for (const path of inputPaths) await visit(path);
   } catch {
     return null;
   }

@@ -7,14 +7,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const workflowsDir = join(repoRoot, '.github', 'workflows');
-const reviewedSetupNodeV4Uses = [
-  'actions/setup-node@v4',
-  'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
-];
-
-function usesReviewedSetupNodeV4(raw) {
-  return reviewedSetupNodeV4Uses.some((use) => raw.includes(use));
-}
+const reviewedSetupNodeUse = 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020';
 
 test('workflows use Node 22 policy and do not pin Node 20', async () => {
   const files = (await readdir(workflowsDir)).filter((name) => name.endsWith('.yml'));
@@ -34,7 +27,7 @@ test('workflows that run pipeline scripts set up Node 22', async () => {
     const raw = await readFile(join(workflowsDir, file), 'utf8');
     if (!raw.includes('node scripts/pipeline/')) continue;
     assert.ok(
-      usesReviewedSetupNodeV4(raw),
+      raw.includes(reviewedSetupNodeUse),
       `${file} must include the reviewed actions/setup-node v4 action when running pipeline scripts`,
     );
     const hasDirect22 = /node-version:\s*22(\.x)?\b/.test(raw);

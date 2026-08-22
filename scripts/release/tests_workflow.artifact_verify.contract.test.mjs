@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'yaml';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -11,14 +12,15 @@ async function loadWorkflow(name) {
   return readFile(join(repoRoot, '.github', 'workflows', name), 'utf8');
 }
 
-test('release-npm prepares CLI binary assets through one code-owned pipeline command', async () => {
+test('release-npm leaves signed CLI binary assets to the dedicated binary publisher', async () => {
   const raw = await loadWorkflow('release-npm.yml');
 
-  assert.match(
+  assert.doesNotMatch(
     raw,
-    /node scripts\/pipeline\/run\.mjs release-prepare-binary-assets[\s\S]*?--product cli[\s\S]*?--version "\$\{\{ steps\.meta\.outputs\.cli_version \}\}"[\s\S]*?--skip-smoke/,
-    'release-npm should delegate CLI build/manifest/verification to one pipeline command',
+    /release-prepare-binary-assets|MINISIGN_|bootstrap-minisign/,
+    'npm package preparation must not sign or prepare the separately published CLI binary release',
   );
+  assert.match(raw, /node scripts\/pipeline\/run\.mjs npm-release[\s\S]*?--mode pack/);
   assert.doesNotMatch(
     raw,
     /node scripts\/pipeline\/run\.mjs release-build-cli-binaries/,
@@ -61,12 +63,26 @@ test('release-npm keeps hstack out of release-signoff binary artifact paths', as
 
 test('promote-server runtime publishing uses the shared server binary publisher', async () => {
   const raw = await loadWorkflow('promote-server.yml');
+  const workflow = parse(raw);
+  const publisher = workflow?.jobs?.publish_runtime_release;
+  const promote = workflow?.jobs?.promote;
 
-  assert.match(
-    raw,
-    /node scripts\/pipeline\/run\.mjs publish-server-runtime[\s\S]*?--channel "\$\{CHANNEL\}"[\s\S]*?--allow-stable "\$\{ALLOW_STABLE\}"[\s\S]*?--run-contracts false[\s\S]*?--check-installers false/,
-    'promote-server should delegate build/manifest/verification/release publishing to publish-server-runtime',
+  assert.ok(publisher, 'promote-server should define the optional runtime publisher');
+  assert.equal(publisher.uses, './.github/workflows/publish-server-runtime.yml');
+  assert.equal(publisher.with?.source_ref, '${{ needs.apply_bump.outputs.release_sha }}');
+  assert.equal(publisher.with?.authorized_sha, '${{ needs.apply_bump.outputs.release_sha }}');
+  assert.equal(publisher.secrets, 'inherit');
+  assert.ok(
+    publisher.needs?.includes('validate_candidate'),
+    'runtime publishing must wait for secret-free candidate validation',
   );
+  assert.ok(promote?.needs?.includes('publish_runtime_release'));
+  assert.match(
+    String(promote?.if ?? ''),
+    /needs\.publish_runtime_release\.result == 'success'.*needs\.publish_runtime_release\.result == 'skipped'/,
+    'deploy-ref promotion must wait for the optional reusable publisher to succeed or be skipped',
+  );
+  assert.doesNotMatch(raw, /node scripts\/pipeline\/run\.mjs publish-server-runtime/);
   assert.doesNotMatch(
     raw,
     /node scripts\/pipeline\/run\.mjs release-build-server-binaries/,

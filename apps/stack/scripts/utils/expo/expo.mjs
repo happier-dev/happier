@@ -93,6 +93,9 @@ export async function waitForExpoMetroRunning(
     intervalMs = null,
     env = process.env,
     signal = null,
+    onTimeoutCheckpoint = ({ timeoutMs: checkpointMs }) => {
+      console.warn(`[stack] Metro is still starting on port ${port} after ${checkpointMs}ms; continuing to wait (TUI is attended)`);
+    },
   } = {},
   {
     looksLikeExpoMetroImpl = looksLikeExpoMetro,
@@ -113,11 +116,16 @@ export async function waitForExpoMetroRunning(
       ? Number(intervalMs)
       : resolveMetroWaitIntervalMsFromEnv(env);
 
-  const startMs = nowMsImpl();
+  let checkpointStartMs = nowMsImpl();
   let probes = 0;
-  while (nowMsImpl() - startMs <= resolvedTimeoutMs) {
+  while (true) {
     if (signal?.aborted) {
       return { ok: false, reason: 'aborted', probes };
+    }
+    if (nowMsImpl() - checkpointStartMs > resolvedTimeoutMs) {
+      if (env?.HAPPIER_STACK_TUI !== '1') break;
+      onTimeoutCheckpoint?.({ timeoutMs: resolvedTimeoutMs, port: p, probes });
+      checkpointStartMs = nowMsImpl();
     }
     // eslint-disable-next-line no-await-in-loop
     const ok = await looksLikeExpoMetroImpl({ port: p });

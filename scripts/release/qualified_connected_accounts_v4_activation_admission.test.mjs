@@ -29,7 +29,7 @@ const rollbackSupportPresent = Object.freeze({
   qualifiedAccountsV4: true,
   qualifiedConfigurationKind9: true,
   sessionMetadataLayout1Kind10: true,
-  managedLocalServiceRunAttachment: true,
+  publicManagedProviderRuntime: true,
 });
 const rollbackSupportAbsent = Object.fromEntries(
   QUALIFIED_CONNECTED_ACCOUNTS_V4_ROLLBACK_SUPPORT
@@ -50,12 +50,20 @@ test('qualified V4 activation admission names the migration in every database tr
 
 test('qualified V4 activation admission pins current reader and custody capability evidence', async () => {
   for (const { key, checks } of QUALIFIED_CONNECTED_ACCOUNTS_V4_ROLLBACK_SUPPORT) {
-    for (const { path, content } of checks) {
-      const source = await readFile(resolve(repoRoot, path), 'utf8');
-      assert.ok(
-        source.includes(content),
-        `expected ${key} rollback capability evidence in ${path}`,
-      );
+    for (const { path, content, absent: expectedAbsent } of checks) {
+      if (expectedAbsent === true) {
+        await assert.rejects(
+          readFile(resolve(repoRoot, path), 'utf8'),
+          (error) => error?.code === 'ENOENT',
+          `expected retired predecessor path ${path} to be absent`,
+        );
+      } else {
+        const source = await readFile(resolve(repoRoot, path), 'utf8');
+        assert.ok(
+          source.includes(content),
+          `expected ${key} rollback capability evidence in ${path}`,
+        );
+      }
     }
   }
 });
@@ -145,7 +153,7 @@ test('qualified V4 activation admission permits a complete forward repair from a
       candidatePresence: present,
       baselineRollbackSupport: {
         ...rollbackSupportPresent,
-        managedLocalServiceRunAttachment: false,
+        publicManagedProviderRuntime: false,
       },
       candidateRollbackSupport: rollbackSupportPresent,
       approved: false,
@@ -211,7 +219,7 @@ test('qualified V4 activation admission ignores releases before the activation e
   );
 });
 
-test('qualified V4 payload publication preserves released-dev rollback before server activation', () => {
+test('qualified V4 payload publication admits exact local payload reversion but no semantic rollback before activation', () => {
   assert.deepEqual(
     evaluateQualifiedConnectedAccountsV4PayloadPublicationAdmission({
       baselinePresence: absent,
@@ -221,8 +229,9 @@ test('qualified V4 payload publication preserves released-dev rollback before se
       status: 'pre-activation',
       migration: QUALIFIED_CONNECTED_ACCOUNTS_V4_ACTIVATION_MIGRATION,
       irreversible: true,
-      oldServerRollbackAllowed: true,
-      oldDaemonRollbackAllowed: true,
+      exactPayloadReversionAllowed: true,
+      oldServerRollbackAllowed: false,
+      oldDaemonRollbackAllowed: false,
     },
   );
 });
@@ -251,6 +260,7 @@ test('qualified V4 payload publication rejects every missing daemon reader after
       status: 'post-activation-compatible',
       migration: QUALIFIED_CONNECTED_ACCOUNTS_V4_ACTIVATION_MIGRATION,
       irreversible: true,
+      exactPayloadReversionAllowed: false,
       oldServerRollbackAllowed: false,
       oldDaemonRollbackAllowed: false,
     },
@@ -283,7 +293,8 @@ test('qualified V4 activation CLI reads the exact pending migration set from Git
   );
   const rollbackSupportContentByPath = new Map();
   for (const { checks } of QUALIFIED_CONNECTED_ACCOUNTS_V4_ROLLBACK_SUPPORT) {
-    for (const { path, content } of checks) {
+    for (const { path, content, absent: expectedAbsent } of checks) {
+      if (expectedAbsent === true) continue;
       const contents = rollbackSupportContentByPath.get(path) ?? [];
       contents.push(content);
       rollbackSupportContentByPath.set(path, contents);
@@ -361,6 +372,18 @@ test('qualified V4 activation CLI reads the exact pending migration set from Git
   assert.match(
     preActivationPayloadAdmitted.stdout,
     /status: `pre-activation`/,
+  );
+  assert.match(
+    preActivationPayloadAdmitted.stdout,
+    /exact local payload reversion is admitted before activation: `true`/,
+  );
+  assert.match(
+    preActivationPayloadAdmitted.stdout,
+    /old-server semantic rollback allowed: `false`/,
+  );
+  assert.match(
+    preActivationPayloadAdmitted.stdout,
+    /old-daemon semantic rollback allowed: `false`/,
   );
 
   const postActivationPayloadDenied = spawnSync(process.execPath, [

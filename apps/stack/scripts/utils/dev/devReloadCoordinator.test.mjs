@@ -1246,6 +1246,70 @@ test('a changed signature fences a stale generation before destructive restart a
   assert.deepEqual(activations, [2]);
 });
 
+test('an executor-owned publication update does not supersede the source generation that produced it', async () => {
+  const calls = [];
+  const source = descriptor({ id: 'daemon:cli', target: 'daemon' });
+  const publication = {
+    ...descriptor({ id: 'daemon:cli-publication', target: 'daemon' }),
+    invalidatesGeneration: false,
+  };
+  let observe = () => {};
+  const activations = [];
+  const onChange = startCoordinator({
+    descriptors: [source, publication],
+    executors: [executor('daemon', calls, {
+      async build(context) {
+        if (context.generation !== 1) return;
+        publication.set('1');
+        observe({
+          eventType: 'change',
+          filename: '.build-manifest.json',
+          watchPath: '/tmp/daemon:cli-publication',
+        });
+      },
+      async restart(context) {
+        activations.push(context.generation);
+      },
+    })],
+    calls,
+  });
+  observe = onChange.observe;
+
+  source.set('1');
+  await onChange({ eventType: 'change', filename: 'index.ts' });
+
+  assert.deepEqual(activations, [1]);
+  assert.deepEqual(calls.filter((entry) => typeof entry === 'string').slice(1), [
+    'daemon:build:1',
+    'daemon:restart:1',
+  ]);
+});
+
+test('an external publication update remains actionable when no generation owns it', async () => {
+  const calls = [];
+  const publication = {
+    ...descriptor({ id: 'daemon:cli-publication', target: 'daemon' }),
+    invalidatesGeneration: false,
+  };
+  const onChange = startCoordinator({
+    descriptors: [publication],
+    executors: [executor('daemon', calls)],
+    calls,
+  });
+
+  publication.set('1');
+  await onChange({
+    eventType: 'change',
+    filename: '.build-manifest.json',
+    watchPath: '/tmp/daemon:cli-publication',
+  });
+
+  assert.deepEqual(calls.slice(1), [
+    'daemon:build:1',
+    'daemon:restart:1',
+  ]);
+});
+
 test('a terminally published daemon build activates before a superseding watch generation replans', async () => {
   const calls = [];
   const daemon = descriptor({ id: 'daemon:app', target: 'daemon' });

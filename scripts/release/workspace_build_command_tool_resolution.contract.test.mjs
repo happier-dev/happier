@@ -95,7 +95,7 @@ test('yarn tsc and first-party compiler scripts use the shared native runner in 
 });
 
 test('dist-exporting TypeScript workspaces use the staged builder or one proven custom owner', async () => {
-  const customAtomicOwners = new Set(['apps/cli', 'packages/cli-common']);
+  const customAtomicOwners = new Set(['apps/cli', 'packages/cli-common', 'packages/privacy-kit']);
   const observedCustomOwners = [];
 
   for (const { packagePath, pkg } of await readDistExportingTypeScriptWorkspacePackages()) {

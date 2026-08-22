@@ -18,6 +18,7 @@ test('remote stage-zero dependency install materializes dependencies without wor
     '--production=false',
     '--ignore-engines',
     '--ignore-scripts',
+    '--pure-lockfile',
   ]);
 });
 
@@ -61,7 +62,11 @@ test('remote dependency bootstrap serializes stage-zero installs through the can
   const installInitialDependencies = async () => {
     installCalls += 1;
     assert.equal((await stat(join(repoDir, '.project', 'tmp', 'dependency-install.lock'))).isFile(), true);
-    assert.equal((await stat(join(repoDir, '.project', 'tmp', 'cli-dist-build.lock'))).isFile(), true);
+    await assert.rejects(
+      () => stat(join(repoDir, '.project', 'tmp', 'cli-dist-build.lock')),
+      { code: 'ENOENT' },
+      'dependency installation must not hold the final CLI publication lock',
+    );
     if (installCalls === 1) {
       markFirstInstallStarted();
       await firstInstallRelease;
@@ -75,6 +80,7 @@ test('remote dependency bootstrap serializes stage-zero installs through the can
   const options = {
     repoDir,
     env: { ...process.env, CI: '1' },
+    packageExists: () => false,
     installInitialDependencies,
     loadDependencyOwner,
   };
@@ -195,7 +201,7 @@ test('remote dependency bootstrap propagates stage-zero failures before loading 
   assert.equal(dependencyOwnerLoaded, false);
 });
 
-test('remote dependency bootstrap reuses the canonical dependency owner when stage zero exists', async () => {
+test('remote dependency bootstrap skips stage zero when the canonical dependency owner already exists', async () => {
   let initialInstallCalled = false;
   let workspaceBuildOwnerLoaded = false;
   let ensured = false;
@@ -205,11 +211,14 @@ test('remote dependency bootstrap reuses the canonical dependency owner when sta
     packageExists: (path) => new Set([
       '/remote/happier/node_modules/.yarn-integrity',
       '/remote/happier/packages/cli-common/dist/workspaces/index.js',
+      '/remote/happier/packages/cli-common/dist/process/index.js',
     ]).has(path),
     installInitialDependencies: async () => {
       initialInstallCalled = true;
     },
-    withDependencyRefresh: async () => ({ refreshed: false, reason: 'up-to-date' }),
+    withDependencyRefresh: async () => {
+      throw new Error('warm targets must not enter stage-zero dependency refresh');
+    },
     loadWorkspaceBuildOwner: async () => {
       workspaceBuildOwnerLoaded = true;
       return {
@@ -224,7 +233,7 @@ test('remote dependency bootstrap reuses the canonical dependency owner when sta
   });
 
   assert.equal(initialInstallCalled, false);
-  assert.equal(workspaceBuildOwnerLoaded, true);
+  assert.equal(workspaceBuildOwnerLoaded, false);
   assert.equal(ensured, true);
 });
 

@@ -55,8 +55,10 @@ export function assertKnownStackProviderIds(providerIds) {
 }
 
 export function resolveStackProviderInstallLabel(providerId) {
+  // `getAgentCliRuntimeSpec` answers null for an id outside the bundled set;
+  // this script is not typechecked, so the guard lives here.
   const spec = getAgentCliRuntimeSpec(providerId);
-  return `Installing ${spec.title || `${providerId} CLI`}`;
+  return `Installing ${spec?.title || `${providerId} CLI`}`;
 }
 
 export function resolveStackProviderPlatform() {

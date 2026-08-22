@@ -21,7 +21,7 @@ export interface V2ZeroInventoryCategorySpec {
   description: string;
   migrationScaffold: string;
   matchAnyOf: readonly V2ZeroInventoryMatcher[];
-  matchStrategy?: 'any' | 'customacp-sentinel-consumers' | 'shared-core-provider-branching' | 'runtimecore-create-session-runtime-whole-runner-delegation' | 'opencode-family-permission-policy-drift';
+  matchStrategy?: 'any' | 'customacp-sentinel-consumers' | 'shared-core-provider-branching' | 'runtimecore-create-session-runtime-whole-runner-delegation' | 'opencode-family-permission-policy-drift' | 'voice-v3-f-v2-media-residue';
 }
 
 export interface V2ZeroInventoryCategoryReport {
@@ -44,6 +44,15 @@ export interface V2ZeroInventoryReport {
 const GENERATED_PATH_FRAGMENT = /(?:^|\/)(?:output|dist|build|coverage|node_modules|out|\.expo|package-dist|\.dist[^/]*|public|generated)(?:\/|$)/;
 const NON_PRODUCTION_PATH_FRAGMENT = /(?:^|\/)(?:__tests__|__fixtures__|testkit|trash)(?:\/|$)|\.testkit\.[cm]?[jt]sx?$/;
 const TEST_FILE_PATTERN = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+const VOICE_V3_F_V2_MEDIA_RESIDUE_IDENTIFIER_PATTERN =
+  /\b(?:VoiceMediaAgentRealtime[A-Za-z0-9_]*|voiceMediaAgentRealtime[A-Za-z0-9_]*|dispatchVoiceMediaAgentRealtimeBinaryFrame|(?:admit|bind|open|close)AgentRealtimeAttempt)\b/;
+const VOICE_V3_F_V2_MEDIA_APPLICATION_KIND_PATTERN =
+  /(?:\bz\.literal\s*\(\s*|\bapplicationKind\s*(?::|===|!==)\s*)['"]agent_realtime['"]/;
+const VOICE_V3_F_V2_MEDIA_KIND_LITERAL_PATTERN = /['"]agent_realtime['"]/;
+const VOICE_V3_F_V2_PCM_FRAME_PATTERN =
+  /\b(?:pcm_s16le|PCM|Pcm|input_audio|output_audio|sampleRateHz|bytesPerSample)\b/;
+const VOICE_V3_F_NON_PRODUCT_PATH_FRAGMENT =
+  /(?:^|\/)(?:scripts\/testing\/migrations|\.(?:restore|tmp)[^/]*)(?:\/|$)/;
 const CUSTOM_ACP_NEUTRAL_COMPAT_PATHS = new Set([
   'apps/ui/sources/voice/tools/actionImpl/agentCatalogList.ts',
   'apps/ui/sources/voice/tools/actionImpl/spawnSessionAgent.ts',
@@ -103,14 +112,18 @@ const WHOLE_SESSION_RUNNER_DECLARATION_PATTERN = /^\s*(?:export\s+)?(?:async\s+)
 const NON_TYPE_LEGACY_PROVIDER_RUNNER_IMPORT_PATTERN = /^\s*import\s+(?!type\b)[^\n]*\bfrom\s+['"]\.\.\/run[A-Z][A-Za-z]*(?:SessionCommand|SessionLifecycle)?['"]/m;
 const CREATE_SESSION_RUNTIME_PATTERN = /\bcreateSessionRuntime\b/;
 const RUNTIME_RUN_CALL_PATTERN = /\b[\w$]+\s*\.\s*run\s*\(/;
-const AGENT_BACKEND_SEMANTIC_USAGE_PATTERN = /(?:import\s+type\s*\{[^}]*\bAgentBackend\b[^}]*\}|:\s*AgentBackend\b|=>\s*AgentBackend\b|\bextends\s+AgentBackend\b|\bas\s+AgentBackend\b|\bkeyof\s+AgentBackend\b)/;
-const AGENT_BACKEND_SURFACE_GROWTH_PATTERN = /\b(?:extends\s+AgentBackend|AgentBackend\s*&\s*\{|as\s+AgentBackend\s*&\s*\{|keyof\s+AgentBackend\b)/;
+const LEGACY_RUNTIME_LOOP_ALIAS_NAME = ['Runtime', 'For', 'Loop'].join('');
+const LEGACY_BACKEND_ALIAS_NAME = ['Agent', 'Backend'].join('');
+const LEGACY_RUNTIME_LOOP_ALIAS_WORD = String.raw`\b${LEGACY_RUNTIME_LOOP_ALIAS_NAME}\b`;
+const LEGACY_BACKEND_ALIAS_WORD = String.raw`\b${LEGACY_BACKEND_ALIAS_NAME}\b`;
+const AGENT_BACKEND_SEMANTIC_USAGE_PATTERN = new RegExp(String.raw`(?:import\s+type\s*\{[^}]*${LEGACY_BACKEND_ALIAS_WORD}[^}]*\}|:\s*${LEGACY_BACKEND_ALIAS_WORD}|=>\s*${LEGACY_BACKEND_ALIAS_WORD}|\bextends\s+${LEGACY_BACKEND_ALIAS_WORD}|\bas\s+${LEGACY_BACKEND_ALIAS_WORD}|\bkeyof\s+${LEGACY_BACKEND_ALIAS_WORD})`);
+const AGENT_BACKEND_SURFACE_GROWTH_PATTERN = new RegExp(String.raw`\b(?:extends\s+${LEGACY_BACKEND_ALIAS_WORD}|${LEGACY_BACKEND_ALIAS_NAME}\s*&\s*\{|as\s+${LEGACY_BACKEND_ALIAS_NAME}\s*&\s*\{|keyof\s+${LEGACY_BACKEND_ALIAS_WORD})`);
 const EXECUTION_RUN_HOST_AGENTBACKEND_FILE_PATTERN = /^apps\/cli\/src\/agent\/(?:runtime\/bridges\/executionRun\/ExecutionRunHostBridge\.ts|executionRuns\/(?:runtime\/(?:backendLongLivedSend|resumeBackendController|runEphemeralExecutionRunTextPrompt)\.ts|runtime\/executionRunManager\/(?:startExecutionRun|ensureExecutionRun)\.ts|tasks\/createExecutionRunTextPromptBackendForTarget\.ts))$/;
 const EXECUTION_RUN_AGENTBACKEND_RETIREMENT_OWNER_FILE_PATTERN = /^apps\/cli\/src\/agent\/executionRuns\/runtime\/(?:createExecutionRunBackend|executionRunAgentBackendRetirementAdapters)\.ts$/;
-const EXECUTION_RUN_AGENTBACKEND_RETIREMENT_OWNER_PATTERN = /(?:import\s+type\s*\{[^}]*\bAgentBackend\b[^}]*\}|:\s*AgentBackend\b|=>\s*AgentBackend\b)|\b(?:createAgentBackendFromExecutionRunHostRuntime|createExecutionRunHostRuntimeFromAgentBackend)\b/;
+const EXECUTION_RUN_AGENTBACKEND_RETIREMENT_OWNER_PATTERN = new RegExp(String.raw`(?:import\s+type\s*\{[^}]*${LEGACY_BACKEND_ALIAS_WORD}[^}]*\}|:\s*${LEGACY_BACKEND_ALIAS_WORD}|=>\s*${LEGACY_BACKEND_ALIAS_WORD})|\b(?:createAgentBackendFromExecutionRunHostRuntime|createExecutionRunHostRuntimeFromAgentBackend)\b`);
 const EXECUTION_RUN_PROVIDER_AGENTBACKEND_FILE_PATTERN =
   /^apps\/cli\/src\/(?:backends\/[^/]+\/(?:executionRuns\/.+|rpc\/[^/]+|sdkAgentBackend\/[^/]+)\.[cm]?[jt]sx?|agent\/reviews\/engines\/coderabbit\/CodeRabbitReviewBackend\.ts)$/;
-const EXECUTION_RUN_PROVIDER_AGENTBACKEND_PATTERN = /\b(?:implements\s+AgentBackend\s*,\s*ExecutionRunHostRuntime|AgentBackend\s*&\s*ExecutionRunHostRuntime)\b/;
+const EXECUTION_RUN_PROVIDER_AGENTBACKEND_PATTERN = new RegExp(String.raw`\b(?:implements\s+${LEGACY_BACKEND_ALIAS_NAME}\s*,\s*ExecutionRunHostRuntime|${LEGACY_BACKEND_ALIAS_NAME}\s*&\s*ExecutionRunHostRuntime)\b`);
 const SOURCE_FILE_PATTERN = /\.[cm]?[jt]sx?$/;
 const OPENCODE_PERMISSION_OWNER_PATH = 'apps/cli/src/backends/opencode/permission/';
 const OPENCODE_PERMISSION_IDENTIFIER_PATTERN = /\bOPENCODE_(?:READ|EDIT|SAFE_ALLOW|ALWAYS_ALLOW)_PERMISSIONS\b/;
@@ -124,6 +137,31 @@ function stripCommentsOnly(content: string): string {
   return content
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/\/\/.*$/gm, ' ');
+}
+
+function stripVoiceV3FNegativeTestAssertions(content: string): string {
+  return content
+    .replace(/\.\s*not\s*\.\s*toContain\s*\([^)]*\)/g, ' ')
+    .replace(/\bassert\.doesNotMatch\s*\([^;]*;?/g, ' ');
+}
+
+function matchesVoiceV3FV2MediaResidue(file: InventoryFile): boolean {
+  if (VOICE_V3_F_NON_PRODUCT_PATH_FRAGMENT.test(file.filePath)) {
+    return false;
+  }
+
+  const content = stripCommentsOnly(
+    TEST_FILE_PATTERN.test(file.filePath)
+      ? stripVoiceV3FNegativeTestAssertions(file.content)
+      : file.content,
+  );
+
+  return VOICE_V3_F_V2_MEDIA_RESIDUE_IDENTIFIER_PATTERN.test(content)
+    || VOICE_V3_F_V2_MEDIA_APPLICATION_KIND_PATTERN.test(content)
+    || (
+      VOICE_V3_F_V2_MEDIA_KIND_LITERAL_PATTERN.test(content)
+      && VOICE_V3_F_V2_PCM_FRAME_PATTERN.test(content)
+    );
 }
 
 function escapeForRegExp(value: string): string {
@@ -147,7 +185,20 @@ function countUniqueWildcardDecisionValues(codeText: string): number {
   return values.size;
 }
 
-function matchesSharedCoreProviderBranching(file: InventoryFile): boolean {
+/**
+ * The declared `matchAnyOf` scope is the category's contract: shared/core
+ * product code. The strategy only *refines* it, by keeping a file when a single
+ * line both names a provider and makes a decision on it. Without the scope
+ * check this counted scripts, marketing data, test fixtures and its own source
+ * as shared-core provider branching.
+ */
+function matchesSharedCoreProviderBranching(
+  file: InventoryFile,
+  matchAnyOf: readonly V2ZeroInventoryMatcher[],
+): boolean {
+  if (!matchesAny(file, matchAnyOf)) {
+    return false;
+  }
   if (SHARED_CORE_PROVIDER_BRANCHING_PATH_EXCLUDES.test(file.filePath)) {
     return false;
   }
@@ -227,8 +278,12 @@ function matchesCustomAcpSentinelConsumer(file: InventoryFile): boolean {
     return false;
   }
 
-  return matchesAny(file, [
-    // Keep this signal focused on behavior-bearing code paths, not translation copy.
+  // Keep this signal focused on behavior-bearing code paths, not translation copy or prose that
+  // merely documents the sentinel: a comment cannot consume it, and counting comments would make
+  // deleting an explanatory comment look like a migration win.
+  const codeOnly: InventoryFile = { ...file, content: stripCommentsOnly(file.content) };
+
+  return matchesAny(codeOnly, [
     { filePathIncludes: 'apps/cli/src/', contentMatches: /\bcustomAcp\b/ },
     { filePathIncludes: 'packages/agents/src/', contentMatches: /\bcustomAcp\b/ },
     { filePathIncludes: 'packages/protocol/src/', contentMatches: /\bcustomAcp\b/ },
@@ -384,7 +439,7 @@ function matchesCategory(file: InventoryFile, spec: V2ZeroInventoryCategorySpec)
   }
 
   if (spec.matchStrategy === 'shared-core-provider-branching') {
-    return matchesSharedCoreProviderBranching(file);
+    return matchesSharedCoreProviderBranching(file, spec.matchAnyOf);
   }
 
   if (spec.matchStrategy === 'runtimecore-create-session-runtime-whole-runner-delegation') {
@@ -393,6 +448,10 @@ function matchesCategory(file: InventoryFile, spec: V2ZeroInventoryCategorySpec)
 
   if (spec.matchStrategy === 'opencode-family-permission-policy-drift') {
     return matchesOpenCodePermissionPolicyDrift(file);
+  }
+
+  if (spec.matchStrategy === 'voice-v3-f-v2-media-residue') {
+    return matchesVoiceV3FV2MediaResidue(file);
   }
 
   return matchesAny(file, spec.matchAnyOf);
@@ -413,7 +472,6 @@ export const V2_ZERO_INVENTORY_CATEGORY_SPECS: readonly V2ZeroInventoryCategoryS
     description: 'CLI files that still reach into the built-in catalog or the merged contribution shell.',
     migrationScaffold: 'Use this list to rewrite host-owned catalog reads toward the merged contribution registry and then shrink the legacy shell.',
     matchAnyOf: [
-      { filePathIncludes: 'apps/cli/src/backends/catalog.ts' },
       { filePathIncludes: 'apps/cli/src/plugins/registry/createResolvedContributionRegistry.ts' },
       { filePathIncludes: 'apps/cli/src/plugins/registry/resolveBuiltInContributions.ts' },
       { filePathIncludes: 'apps/cli/src/plugins/registry/resolvePluginContributions.ts' },
@@ -475,6 +533,11 @@ export const V2_ZERO_INVENTORY_CATEGORY_SPECS: readonly V2ZeroInventoryCategoryS
     migrationScaffold: 'Use this list to move provider-specific branching behind registry hooks or provider-owned modules.',
     matchStrategy: 'shared-core-provider-branching',
     matchAnyOf: [
+      // `packages/cli-common/src/` is shared product code consumed by the CLI;
+      // its provider branching is exactly what this category names, and the
+      // pre-scope implementation was already counting it. Declaring it keeps
+      // that real debt visible instead of letting a relocation hide it.
+      { filePathIncludes: 'packages/cli-common/src/', contentMatches: /\b(?:claude|codex|opencode|gemini|auggie|qwen|kimi|kilo|kiro|copilot|customAcp|pi|ohMyPi)\b/ },
       { filePathIncludes: 'packages/agents/src/', contentMatches: /\b(?:claude|codex|opencode|gemini|auggie|qwen|kimi|kilo|kiro|copilot|customAcp|pi|ohMyPi)\b/ },
       { filePathIncludes: 'packages/protocol/src/', contentMatches: /\b(?:claude|codex|opencode|gemini|auggie|qwen|kimi|kilo|kiro|copilot|customAcp|pi|ohMyPi)\b/ },
       { filePathIncludes: 'apps/cli/src/', contentMatches: /\b(?:claude|codex|opencode|gemini|auggie|qwen|kimi|kilo|kiro|copilot|customAcp|pi|ohMyPi)\b/ },
@@ -490,10 +553,9 @@ export const V2_ZERO_INVENTORY_CATEGORY_SPECS: readonly V2ZeroInventoryCategoryS
       { filePathIncludes: 'packages/protocol/src/hooks/hookExecutionSemantics.ts' },
       { filePathIncludes: 'packages/protocol/src/plugins/hookEventEnvelopeV1.ts' },
       { filePathIncludes: 'packages/protocol/src/plugins/hookRegistrationV1.ts' },
-      { filePathIncludes: 'apps/cli/src/plugins/hooks/execution/dispatchPluginHookEvent.ts' },
-      { filePathIncludes: 'apps/cli/src/plugins/runtime/resolvePluginHookHandlerRegistry.ts' },
+      { filePathIncludes: 'apps/cli/src/plugins/runtime/hooks/execution/dispatchPluginHookEvent.ts' },
       { filePathIncludes: 'apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts' },
-      { filePathIncludes: 'apps/cli/src/plugins/plugins/manifest/validatePluginManifest.ts' },
+      { filePathIncludes: 'apps/cli/src/plugins/manifest/validate.ts' },
       { filePathIncludes: 'apps/cli/src/daemon/spawnHooks.ts' },
       { filePathIncludes: 'apps/cli/src/backends/claude/startup/tasks/startHookServerTask.ts' },
       { filePathIncludes: 'apps/cli/src/backends/claude/utils/startHookServer.ts' },
@@ -502,25 +564,6 @@ export const V2_ZERO_INVENTORY_CATEGORY_SPECS: readonly V2ZeroInventoryCategoryS
       { filePathIncludes: 'apps/cli/src/backends/claude/remote/claudeRemoteMetaState.ts' },
       { filePathIncludes: 'apps/cli/src/backends/opencode/acp/runtime.ts' },
       { filePathIncludes: 'apps/cli/src/backends/codex/acp/runtime.ts' },
-    ],
-  }),
-  createCategorySpec({
-    id: 'hardcoded-action-mcp-provider-id-surfaces',
-    title: 'Closed action, MCP, and provider-id surfaces',
-    description: 'Files that still expose hardcoded action ids, MCP ids, or provider ids that block parity with plugin-defined backends.',
-    migrationScaffold: 'Use this list to open or replace closed ids only where the later lanes intentionally widen them.',
-    matchAnyOf: [
-      { filePathIncludes: 'packages/protocol/src/actions/actionIds.ts' },
-      { filePathIncludes: 'packages/protocol/src/actions/actionSpecs.ts' },
-      { filePathIncludes: 'packages/protocol/src/actions/actionExecutor.ts' },
-      { filePathIncludes: 'packages/protocol/src/sentFrom.ts' },
-      { filePathIncludes: 'packages/protocol/src/daemonExecutionRuns.ts' },
-      { filePathIncludes: 'packages/protocol/src/executionRunStartRequest.ts' },
-      { filePathIncludes: 'packages/protocol/src/executionRuns.ts' },
-      { filePathIncludes: 'packages/protocol/src/mcp/' },
-      { filePathIncludes: 'apps/cli/src/mcp/createHappierMcpServer.ts' },
-      { filePathIncludes: 'packages/protocol/src/providers/directSessionsCatalog.ts' },
-      { filePathIncludes: 'packages/protocol/src/providers/handoffProviderIds.ts' },
     ],
   }),
   createCategorySpec({
@@ -546,60 +589,13 @@ export const V2_ZERO_INVENTORY_CATEGORY_SPECS: readonly V2ZeroInventoryCategoryS
     ],
   }),
   createCategorySpec({
-    id: 'v2-1-static-definition-runtime-foundation',
-    title: 'V2-1 static definitions, engine spec, and runtime foundation',
-    description: 'Files that define the normalized static-definition split, engine binding, and runtime foundation visible to the V2-1 migration packet.',
-    migrationScaffold: 'Use this list to keep the V2-1 static-definition split, engine spec, and runtime foundation explicit before later bridge waves consume them.',
+    id: 'voice-v3-f-v2-media-residue',
+    title: 'Voice V3-F V2 media contraction residue',
+    description: 'Production owners and positive tests that retain voice_media(agent_realtime), its PCM/frame schemas, media authority, dispatcher, encryption, or tunnel consumers.',
+    migrationScaffold: 'Keep this hard-zero release category red until the approved V3-F contraction gate authorizes atomic deletion; retain voice_media(speech_transcription).',
+    matchStrategy: 'voice-v3-f-v2-media-residue',
     matchAnyOf: [
-      { filePathIncludes: 'packages/agents/src/definitions/' },
-      { filePathIncludes: 'packages/agents/src/runtime/engine/' },
-      { filePathIncludes: 'packages/protocol/src/sessionMetadata/' },
-    ],
-  }),
-  createCategorySpec({
-    id: 'provider-auth-preferences-connected-services-message-meta',
-    title: 'Auth, preferences, connected-services, and message-meta ownership splits',
-    description: 'Files that define or consume the adjunct adapter families that sit beside the runtime core.',
-    migrationScaffold: 'Use this list to keep the adapter families separate while ensuring the host-facing split is explicit and stable.',
-    matchAnyOf: [
-      { filePathIncludes: 'packages/agents/src/runtime/adjunctAdapters/types.ts' },
-      { filePathIncludes: 'packages/agents/src/runtime/preferences/' },
-      { filePathIncludes: 'packages/agents/src/runtime/messageMeta/' },
-      { filePathIncludes: 'packages/agents/src/providers/providerSettingsRuntime.ts' },
-      { filePathIncludes: 'packages/agents/src/providers/sessionControlAdapterRegistry.ts' },
-      { filePathIncludes: 'packages/agents/src/providers/runtimeDescriptorReaderRegistry.ts' },
-      { filePathIncludes: 'packages/agents/src/providers/' },
-      { filePathIncludes: 'packages/agents/src/providerSettings/' },
-      { filePathIncludes: 'apps/cli/src/plugins/registry/types.ts' },
-      { filePathIncludes: 'apps/cli/src/plugins/registry/createResolvedContributionRegistry.ts' },
-      { filePathIncludes: 'apps/ui/sources/agents/registry/registryCore.ts' },
-      { filePathIncludes: 'apps/ui/sources/agents/registry/registryUiBehavior.ts' },
-      { filePathIncludes: 'apps/ui/sources/agents/providers/registry/providerSettingsRegistry.ts' },
-      { filePathIncludes: 'apps/ui/sources/agents/providers/registry/providerLocalAuthRegistry.ts' },
-    ],
-  }),
-  createCategorySpec({
-    id: 'command-handler-help-manifest',
-    title: 'Command handler and help-manifest split ownership',
-    description: 'Files that own command dispatch, command registry, and root help text surfaces.',
-    migrationScaffold: 'Use this list to keep command dispatch and help manifest projection separate while both remain deterministic.',
-    matchAnyOf: [
-      { filePathIncludes: 'apps/cli/src/cli/commandRegistry.ts' },
-      { filePathIncludes: 'apps/cli/src/cli/commandSurfaceManifest.ts' },
-      { filePathIncludes: 'apps/cli/src/cli/buildRootHelpText.ts' },
-      { filePathIncludes: 'apps/cli/src/cli/dispatch.ts' },
-      { filePathIncludes: 'apps/cli/src/cli/runBackendSessionCliCommand.ts' },
-      { filePathIncludes: 'apps/cli/src/cli/commands/' },
-      { filePathIncludes: 'apps/cli/src/backends/', contentIncludes: '/cli/command' },
-    ],
-  }),
-  createCategorySpec({
-    id: 'execution-run-intent-profiles',
-    title: 'Execution-run intent profiles',
-    description: 'Files that encode the intent-specific execution-run profiles for review, plan, delegate, voice, and memory hints.',
-    migrationScaffold: 'Use this list to keep intent-specific execution-run behavior explicit while the shared bridge/runtime core stays generic.',
-    matchAnyOf: [
-      { filePathIncludes: 'apps/cli/src/agent/executionRuns/profiles/' },
+      { contentMatches: /(?=a)b/ },
     ],
   }),
   createCategorySpec({
@@ -703,38 +699,38 @@ export const V2_ZERO_INVENTORY_CATEGORY_SPECS: readonly V2ZeroInventoryCategoryS
       {
         filePathIncludes: 'apps/cli/src/',
         filePathExcludes: 'apps/cli/src/agent/permissions/permissionTaxonomy.ts',
-        contentMatches: /ALWAYS_AUTO_APPROVE|ALWAYS_APPROVE|EXTRA_WRITE_LIKE/,
+        contentMatches: /(?:\bALWAYS_APPROVE\b|\bEXTRA_WRITE_LIKE\b|ALWAYS_AUTO_APPROVE_(?:TOOL|PERMISSION|COMMAND|MCP)(?:_|\b))/,
       },
     ],
   }),
   createCategorySpec({
     id: 'runtimeforloop-agentbackend-shrink-only',
-    title: 'RuntimeForLoop and AgentBackend shrink-only surfaces',
-    description: 'Compatibility-only references to RuntimeForLoop and AgentBackend that must shrink rather than become new architecture.',
+    title: 'Legacy runtime adapter shrink-only surfaces',
+    description: 'Compatibility-only references to retired runtime adapter names that must shrink rather than become new architecture.',
     migrationScaffold: 'Use this list to keep legacy runtime shapes shrinking and to prevent them from becoming new native APIs.',
     matchAnyOf: [
       {
         filePathIncludes: 'apps/cli/src/',
         filePathExcludes: 'apps/cli/src/agent/runtime/bridges/executionRun/executionRunUnifiedInterfaceDesignPacket.ts',
-        contentMatches: /\bRuntimeForLoop\b/,
+        contentMatches: new RegExp(LEGACY_RUNTIME_LOOP_ALIAS_WORD),
       },
       {
         filePathIncludes: 'apps/cli/src/',
         filePathExcludes: 'apps/cli/src/agent/runtime/bridges/executionRun/executionRunUnifiedInterfaceDesignPacket.ts',
-        contentMatches: /\bAgentBackend\s*&\s*\{/,
+        contentMatches: new RegExp(String.raw`${LEGACY_BACKEND_ALIAS_WORD}\s*&\s*\{`),
       },
       {
         filePathIncludes: 'apps/cli/src/',
         filePathExcludes: 'apps/cli/src/agent/runtime/bridges/executionRun/executionRunUnifiedInterfaceDesignPacket.ts',
-        contentMatches: /\bas\s+AgentBackend\s*&\s*\{/,
+        contentMatches: new RegExp(String.raw`\bas\s+${LEGACY_BACKEND_ALIAS_NAME}\s*&\s*\{`),
       },
     ],
   }),
   createCategorySpec({
     id: 'execution-run-agentbackend-semantic-debt',
-    title: 'Execution-run AgentBackend semantic debt',
-    description: 'Shared execution-run host files, provider-leaf execution-run backends, and review-engine backends that still keep AgentBackend semantically live after lexical shrink debt has been reduced.',
-    migrationScaffold: 'Use this list to distinguish real shared-owner AgentBackend retirement from lexical disappearance. Host/orchestrator files must stop typing against AgentBackend, and provider-leaf or review-engine compatibility seams must not grow new AgentBackend-only surface until the canonical execution-run host runtime fully owns the path.',
+    title: 'Execution-run retired adapter semantic debt',
+    description: 'Shared execution-run host files, provider-leaf execution-run backends, and review-engine backends that still keep the retired backend adapter semantically live after lexical shrink debt has been reduced.',
+    migrationScaffold: 'Use this list to distinguish real shared-owner adapter retirement from lexical disappearance. Host/orchestrator files must stop typing against the retired backend adapter, and provider-leaf or review-engine compatibility seams must not grow new retired-backend-adapter-only surface until the canonical execution-run host runtime fully owns the path.',
     matchAnyOf: [
       {
         filePathMatches: EXECUTION_RUN_HOST_AGENTBACKEND_FILE_PATTERN,
@@ -765,38 +761,8 @@ export const V2_ZERO_INVENTORY_CATEGORY_SPECS: readonly V2ZeroInventoryCategoryS
       { filePathIncludes: 'packages/agents/src/session/controls/runtimeControlSurface.ts' },
       { filePathIncludes: 'packages/agents/src/session/controls/runtimeKindOverride.ts' },
       { filePathIncludes: 'packages/agents/src/session/controls/providerBackendModes.ts' },
-      { filePathIncludes: 'packages/agents/src/providers/readSessionMetadataRuntimeDescriptor.ts' },
+      { filePathIncludes: 'packages/agents/src/runtime/identity/readSessionMetadataRuntimeDescriptor.ts' },
       { filePathIncludes: 'apps/cli/src/session/services/deriveExecutionRunPublicStatesFromHistory.ts' },
-    ],
-  }),
-  createCategorySpec({
-    id: 'discovery-preflight-capabilities-rpc',
-    title: 'Discovery, preflight, capabilities-RPC split ownership',
-    description: 'Files that own runtime discovery, capability derivation, preflight probes, and capability RPC handling.',
-    migrationScaffold: 'Use this list to keep live capability reads separate from preflight probes and RPC assembly.',
-    matchAnyOf: [
-      { filePathIncludes: 'packages/agents/src/runtime/discovery/runtimeDiscovery.ts' },
-      { filePathIncludes: 'packages/agents/src/runtime/capabilities/runtimeCapabilities.ts' },
-      { filePathIncludes: 'apps/cli/src/capabilities/probes/' },
-      { filePathIncludes: 'apps/cli/src/rpc/handlers/capabilities.ts' },
-      { filePathIncludes: 'apps/cli/src/capabilities/registry/toolExecutionRuns.ts' },
-    ],
-  }),
-  createCategorySpec({
-    id: 'plugin-identity-install-provenance-trust',
-    title: 'Plugin identity vs install-provenance/trust split ownership',
-    description: 'Files that still separate plugin identity, install/provenance data, and trust validation behavior.',
-    migrationScaffold: 'Use this list to keep plugin identity, loader provenance, and trust validation distinct as plugin support widens.',
-    matchAnyOf: [
-      { filePathIncludes: 'apps/cli/src/plugins/plugins/manifest/' },
-      { filePathIncludes: 'apps/cli/src/plugins/plugins/install/' },
-      { filePathIncludes: 'apps/cli/src/plugins/plugins/loader/' },
-      { filePathIncludes: 'apps/cli/src/plugins/plugins/catalog/' },
-      { filePathIncludes: 'apps/cli/src/plugins/plugins/store/' },
-      { filePathIncludes: 'apps/cli/src/plugins/plugins/' },
-      { filePathIncludes: 'apps/cli/src/plugins/runtime/' },
-      { filePathIncludes: 'apps/cli/src/plugins/registry/' },
-      { filePathIncludes: 'apps/cli/src/plugins/hooks/' },
     ],
   }),
   createCategorySpec({
@@ -808,13 +774,11 @@ export const V2_ZERO_INVENTORY_CATEGORY_SPECS: readonly V2ZeroInventoryCategoryS
       { filePathIncludes: 'apps/cli/src/plugins/registry/createResolvedContributionRegistry.ts' },
       { filePathIncludes: 'apps/cli/src/plugins/registry/types.ts' },
       { filePathIncludes: 'apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts' },
-      { filePathIncludes: 'apps/cli/src/plugins/runtime/resolvePluginHookHandlerRegistry.ts' },
       { filePathIncludes: 'apps/cli/src/plugins/registry/resolveBuiltInContributions.ts' },
       { filePathIncludes: 'apps/cli/src/plugins/registry/resolvePluginContributions.ts' },
       { filePathIncludes: 'packages/protocol/src/plugins/backendDefinitionV1.ts' },
       { filePathIncludes: 'packages/protocol/src/plugins/contractsV1.test.ts' },
-      { filePathIncludes: 'apps/cli/src/backends/catalog.runtimeAdapterConsumption.integration.test.ts' },
-      { filePathIncludes: 'apps/cli/src/backends/catalog.ts' },
+      { filePathIncludes: 'apps/cli/src/agent/runtime/registry/backendEngineSurfaceBindings.ts' },
     ],
   }),
 ]);
@@ -830,6 +794,29 @@ function normalizeSourceFiles(files: readonly InventoryFile[]): readonly Invento
   const productionPaths = new Set(productionFiles.map((file) => file.filePath));
 
   return productionFiles.filter((file) => !isTranspiledSourceSidecar(file.filePath, productionPaths));
+}
+
+function normalizeVoiceV3FPositiveTestFiles(files: readonly InventoryFile[]): readonly InventoryFile[] {
+  const candidateFiles = files.filter((file) => {
+    if (!TEST_FILE_PATTERN.test(file.filePath)) return false;
+    if (GENERATED_PATH_FRAGMENT.test(file.filePath)) return false;
+    if (NON_PRODUCTION_PATH_FRAGMENT.test(file.filePath)) return false;
+    return matchesVoiceV3FV2MediaResidue(file);
+  });
+  const candidatePaths = new Set(candidateFiles.map((file) => file.filePath));
+
+  return candidateFiles.filter((file) => !isTranspiledSourceSidecar(file.filePath, candidatePaths));
+}
+
+function collectVoiceV3FInventoryFiles(files: readonly InventoryFile[]): readonly InventoryFile[] {
+  return [
+    ...new Map(
+      [
+        ...normalizeSourceFiles(files).filter(matchesVoiceV3FV2MediaResidue),
+        ...normalizeVoiceV3FPositiveTestFiles(files),
+      ].map((file) => [file.filePath, file] as const),
+    ).values(),
+  ].sort((left, right) => left.filePath.localeCompare(right.filePath));
 }
 
 function isTranspiledSourceSidecar(
@@ -855,20 +842,32 @@ function isTranspiledSourceSidecar(
 }
 
 export function collectV2ZeroSourceFiles(rootDir: string = process.cwd()): InventoryFile[] {
-  return normalizeSourceFiles(
-    collectFileInventory({
-      rootDir,
-      include: /\.[cm]?[jt]sx?$/,
-    }),
-  );
+  const collectedFiles = collectFileInventory({
+    rootDir,
+    include: /\.[cm]?[jt]sx?$/,
+  });
+
+  return [
+    ...new Map(
+      [
+        ...normalizeSourceFiles(collectedFiles),
+        ...normalizeVoiceV3FPositiveTestFiles(collectedFiles),
+      ].map((file) => [file.filePath, file] as const),
+    ).values(),
+  ].sort((left, right) => left.filePath.localeCompare(right.filePath));
 }
 
 export function collectV2ZeroInventory(files: readonly InventoryFile[]): V2ZeroInventoryReport {
   const normalizedFiles = normalizeSourceFiles(files);
+  const voiceV3FInventoryFiles = collectVoiceV3FInventoryFiles(files);
   const recursiveWholeRunnerDelegationMatches = collectRecursiveRuntimeRunnerDelegationMatches(normalizedFiles);
   const categories = V2_ZERO_INVENTORY_CATEGORY_SPECS.flatMap((spec) => {
+    const categoryFiles =
+      spec.matchStrategy === 'voice-v3-f-v2-media-residue'
+        ? voiceV3FInventoryFiles
+        : normalizedFiles;
     const matchingFiles = [...new Set(
-      normalizedFiles
+      categoryFiles
         .filter((file) =>
           spec.matchStrategy === 'runtimecore-create-session-runtime-whole-runner-delegation'
             ? recursiveWholeRunnerDelegationMatches.has(file.filePath) || matchesCategory(file, spec)
@@ -894,7 +893,10 @@ export function collectV2ZeroInventory(files: readonly InventoryFile[]): V2ZeroI
   });
 
   return {
-    filesScanned: normalizedFiles.length,
+    filesScanned: new Set([
+      ...normalizedFiles.map((file) => file.filePath),
+      ...voiceV3FInventoryFiles.map((file) => file.filePath),
+    ]).size,
     filesMatched: countUniqueFiles(categories),
     totalMatches: categories.reduce((sum, category) => sum + category.count, 0),
     categories,

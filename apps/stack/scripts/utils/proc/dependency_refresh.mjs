@@ -1,15 +1,14 @@
 import { createHash } from 'node:crypto';
-import { lstat, readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir, readlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { pathExists } from '../fs/fs.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../fs/json.mjs';
 import { coerceHappyMonorepoRootFromPath, getHappyStacksHomeDir } from '../paths/paths.mjs';
-import { resolveCliDistBuildLockPath, withCliDistBuildLock } from './cliDistBuildLock.mjs';
 import { withJsonOwnerFileLock } from './jsonOwnerFileLock.mjs';
 import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.mjs';
 
-const REFRESH_STATE_VERSION = 3;
+const REFRESH_STATE_VERSION = 4;
 const REFRESH_MARKER = '.happier-stack-dependencies-ready';
 
 function installDirLockKey(installDir) {
@@ -85,13 +84,26 @@ async function readInputSnapshot(inputPaths) {
   const visit = async (inputPath) => {
     try {
       const stats = await lstat(inputPath);
-      snapshot.push({ path: resolve(inputPath), kind: stats.isFile() ? 'file' : stats.isDirectory() ? 'directory' : 'other', size: Number(stats.size), mtimeMs: stats.mtimeMs ?? 0 });
+      const resolvedPath = resolve(inputPath);
+      if (stats.isFile()) {
+        snapshot.push({
+          path: resolvedPath,
+          kind: 'file',
+          digest: createHash('sha256').update(await readFile(inputPath)).digest('hex'),
+        });
+      } else if (stats.isDirectory()) {
+        snapshot.push({ path: resolvedPath, kind: 'directory' });
+      } else if (stats.isSymbolicLink()) {
+        snapshot.push({ path: resolvedPath, kind: 'symlink', target: await readlink(inputPath) });
+      } else {
+        snapshot.push({ path: resolvedPath, kind: 'other', size: Number(stats.size) });
+      }
       if (stats.isDirectory()) {
         const entries = await readdir(inputPath);
         for (const entry of entries.sort()) await visit(join(inputPath, entry));
       }
     } catch {
-      snapshot.push({ path: resolve(inputPath), kind: 'missing', size: 0, mtimeMs: 0 });
+      snapshot.push({ path: resolve(inputPath), kind: 'missing' });
     }
   };
   for (const inputPath of inputPaths) await visit(inputPath);
@@ -102,7 +114,11 @@ function snapshotsMatch(before, after) {
   if (!Array.isArray(before) || !Array.isArray(after) || before.length !== after.length) return false;
   return before.every((entry, index) => {
     const candidate = after[index];
-    return entry.path === candidate?.path && entry.kind === candidate.kind && entry.size === candidate.size && entry.mtimeMs === candidate.mtimeMs;
+    return entry.path === candidate?.path
+      && entry.kind === candidate.kind
+      && entry.digest === candidate.digest
+      && entry.target === candidate.target
+      && entry.size === candidate.size;
   });
 }
 
@@ -135,7 +151,6 @@ export async function inspectDependencyRefresh({ installDir, componentDir = inst
 export async function withDependencyRefresh({
   installDir,
   componentDir = installDir,
-  env = process.env,
   onDependenciesReady = null,
 }, refresh) {
   if (typeof refresh !== 'function') throw new TypeError('withDependencyRefresh requires a refresh callback');
@@ -149,11 +164,11 @@ export async function withDependencyRefresh({
   return await withJsonOwnerFileLock(async () => {
     const afterDependencyLock = await inspectDependencyRefresh({ installDir, componentDir });
     if (!afterDependencyLock.required && !shouldRunDependencyReadyAction) return { refreshed: false, reason: 'up-to-date' };
-    const mutate = async (heldCliLockValue = null) => {
+    const mutate = async () => {
       const beforeMutation = await inspectDependencyRefresh({ installDir, componentDir });
       let result = { refreshed: false, reason: 'up-to-date' };
       if (beforeMutation.required) {
-        await refresh({ heldCliLockValue });
+        await refresh({});
         const refreshedInputPaths = await collectDependencyInputPaths({ installDir, componentDir });
         const refreshedInputSnapshot = await readInputSnapshot(refreshedInputPaths);
         const superseded = !snapshotsMatch(beforeMutation.inputSnapshot, refreshedInputSnapshot);
@@ -173,12 +188,7 @@ export async function withDependencyRefresh({
       }
       return result;
     };
-    const monorepoRoot = coerceHappyMonorepoRootFromPath(installDir);
-    if (!monorepoRoot || resolve(monorepoRoot) !== resolve(installDir)) return await mutate();
-    return await withCliDistBuildLock(({ heldLockValue }) => mutate(heldLockValue), {
-      lockPath: resolveCliDistBuildLockPath(monorepoRoot),
-      env,
-    });
+    return await mutate();
   }, {
     lockPath: resolveDependencyRefreshLockPath(installDir),
     errorLabel: 'dependency refresh lock',

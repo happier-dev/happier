@@ -70,3 +70,76 @@ test('install.ps1 applies setup-relay default relay-host arguments for both shor
     'expected PowerShell setup-relay invocation to filter unsupported default args before invoking older CLIs',
   );
 });
+
+// PowerShell double-quoted strings do NOT treat backslash as an escape character (the escape
+// character is a backtick). A regex written as "\\s" inside a double-quoted string therefore
+// reaches .NET Regex as an escaped literal backslash followed by a literal "s" -- never
+// whitespace. The -Run / -SetupRelay support gate builds its pattern in a double-quoted string
+// (it needs $(...) subexpression interpolation), so a stray doubled backslash there silently
+// makes the gate unmatchable and every -Run / -SetupRelay invocation throws
+// "Installed Happier CLI does not support ...". No PowerShell host is available in CI, so this
+// test reproduces the PowerShell string rule in JS and evaluates the resulting regex for real.
+const POWERSHELL_HELP_FIXTURE = [
+  'Usage: happier relay <command>',
+  '',
+  'Commands:',
+  '  happier relay host        Manage relay hosts',
+  '  happier relay status      Show relay status',
+  '',
+].join('\n');
+
+const POWERSHELL_HELP_FIXTURE_WITHOUT_SUBCOMMAND = [
+  'Usage: happier <command>',
+  '',
+  'Commands:',
+  '  happier doctor            Diagnose the installation',
+  '',
+].join('\n');
+
+const escapeForDotNetRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+test('install.ps1 -Run support gate builds a regex that actually matches CLI help output', async () => {
+  const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
+  const raw = await readFile(path, 'utf8');
+
+  const patternAssignment = raw.match(/\$pattern\s*=\s*"([^"\n]*)"/);
+  assert.ok(patternAssignment, 'expected the -Run support gate to assign $pattern from a double-quoted string');
+
+  // PowerShell interpolation of the two $([Regex]::Escape(...)) subexpressions. Everything else
+  // in the literal is passed through verbatim, because backslash is not an escape here.
+  const interpolated = patternAssignment[1]
+    .replace('$([Regex]::Escape($invokerName))', escapeForDotNetRegex('happier.exe'))
+    .replace('$([Regex]::Escape($requiredSubcommand))', escapeForDotNetRegex('relay'));
+
+  assert.ok(
+    interpolated.startsWith('(?m)'),
+    `expected the gate pattern to be multiline; got ${interpolated}`,
+  );
+  const compiled = new RegExp(interpolated.slice('(?m)'.length), 'm');
+
+  assert.ok(
+    compiled.test(POWERSHELL_HELP_FIXTURE),
+    `the -Run support gate regex ${compiled.source} does not match real 'happier relay --help' output, so every -Run/-SetupRelay invocation would throw`,
+  );
+  assert.ok(
+    !compiled.test(POWERSHELL_HELP_FIXTURE_WITHOUT_SUBCOMMAND),
+    `the -Run support gate regex ${compiled.source} matches help output that lacks the required subcommand`,
+  );
+});
+
+test('install.ps1 never writes a regex shorthand class as a doubled backslash', async () => {
+  const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
+  const raw = await readFile(path, 'utf8');
+
+  const offenders = raw
+    .split('\n')
+    .map((line, index) => ({ line, lineNumber: index + 1 }))
+    .filter(({ line }) => /\\\\[sSdDwWbB]/.test(line))
+    .map(({ line, lineNumber }) => `install.ps1:${lineNumber}: ${line.trim()}`);
+
+  assert.deepEqual(
+    offenders,
+    [],
+    'PowerShell does not treat backslash as an escape in double-quoted strings, so a doubled backslash before a regex shorthand class matches a literal backslash instead',
+  );
+});

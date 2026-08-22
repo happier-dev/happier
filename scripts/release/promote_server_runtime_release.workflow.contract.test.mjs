@@ -11,29 +11,24 @@ async function loadWorkflow(name) {
   return readFile(join(repoRoot, '.github', 'workflows', name), 'utf8');
 }
 
-test('promote-server delegates server runtime publishing to the shared pipeline command', async () => {
+test('promote-server delegates server runtime publishing to the trusted reusable workflow', async () => {
   const raw = await loadWorkflow('promote-server.yml');
 
   assert.match(
     raw,
-    /node scripts\/pipeline\/run\.mjs publish-server-runtime[\s\S]*?--channel "\$\{CHANNEL\}"[\s\S]*?--allow-stable "\$\{ALLOW_STABLE\}"[\s\S]*?--run-contracts false[\s\S]*?--check-installers false/,
-    'promote-server should keep runtime publishing delegated to publish-server-runtime',
+    /publish_runtime_release:[\s\S]*?uses:\s*\.\/\.github\/workflows\/publish-server-runtime\.yml[\s\S]*?authorized_sha:/,
+    'promote-server should keep runtime publishing delegated to the trusted reusable workflow',
   );
   assert.doesNotMatch(raw, /gh release upload/, 'promote-server should not embed gh release upload');
   assert.doesNotMatch(raw, /gh release create/, 'promote-server should not embed gh release create');
 });
 
-test('promote-server bootstraps minisign through the shared pinned action', async () => {
+test('promote-server does not inline signing setup in the promotion workflow', async () => {
   const raw = await loadWorkflow('promote-server.yml');
 
-  assert.match(
-    raw,
-    /- name: Install minisign \(signing \+ verification\)[\s\S]*?uses:\s*\.\/\.github\/actions\/bootstrap-minisign/,
-    'promote-server should use the shared bootstrap-minisign action for signing tool setup',
-  );
   assert.doesNotMatch(
     raw,
-    /- name: Install minisign \(signing \+ verification\)[\s\S]*?apt-get install -y minisign/,
-    'promote-server should not rely on apt minisign installation',
+    /bootstrap-minisign|apt-get install -y minisign/,
+    'promote-server should leave signing setup to publish-server-runtime.yml',
   );
 });

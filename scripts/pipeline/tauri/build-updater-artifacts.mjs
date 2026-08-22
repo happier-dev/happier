@@ -70,6 +70,23 @@ export function normalizeTauriBuildVersionForWindows(buildVersion) {
  * @param {{ environment: string }} opts
  * @returns {string | null}
  */
+/**
+ * Resolves the `--features` arguments for a Tauri build.
+ *
+ * `devtools` compiles in the native webview inspector. It belongs in the development and preview
+ * channels — the `tauri:build:dev` / `tauri:build:preview` package scripts already declare that
+ * intent — and must never be compiled into a production artifact users install. This resolver is
+ * the single owner of that decision for the release pipeline, which builds via the Tauri CLI
+ * directly rather than through those package scripts.
+ *
+ * Unrecognized or missing environments fail closed (no devtools).
+ */
+export function resolveTauriFeatureArgs(opts) {
+  const environment = String(opts?.environment ?? '');
+  const devtoolsEnvironments = new Set(['publicdev', 'preview']);
+  return devtoolsEnvironments.has(environment) ? ['--features', 'devtools'] : [];
+}
+
 export function resolveLinuxProductNameOverride(opts) {
   const env = String(opts.environment ?? '').trim();
   if (!env || env === 'production') return null;
@@ -505,6 +522,8 @@ function main() {
     configs.push('--config', codesignOverride);
   }
 
+  const featureArgs = resolveTauriFeatureArgs({ environment });
+
   const baseTauriEnv = {
     CI: 'true',
     APP_ENV: environment,
@@ -556,7 +575,7 @@ function main() {
 
     if (platform === 'win32') {
       const tauri = resolveTauriCliInvocation({ platform, absUiDir });
-      run(opts, tauri.cmd, [bundleOnly ? 'bundle' : 'build', '-v', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs, ...(noBundle ? ['--no-bundle'] : [])], {
+      run(opts, tauri.cmd, [bundleOnly ? 'bundle' : 'build', '-v', '--config', configPath, '--config', versionOverride, ...configs, ...featureArgs, ...targetArgs, ...(noBundle ? ['--no-bundle'] : [])], {
         cwd: absUiDir,
         env: baseTauriEnv,
       });
@@ -565,7 +584,7 @@ function main() {
         run(
           opts,
           yarn.cmd,
-          [...yarn.prefixArgs, 'tauri', bundleOnly ? 'bundle' : 'build', '-v', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs, ...(noBundle ? ['--no-bundle'] : [])],
+          [...yarn.prefixArgs, 'tauri', bundleOnly ? 'bundle' : 'build', '-v', '--config', configPath, '--config', versionOverride, ...configs, ...featureArgs, ...targetArgs, ...(noBundle ? ['--no-bundle'] : [])],
           {
             cwd: absUiDir,
             env: baseTauriEnv,
@@ -581,14 +600,14 @@ function main() {
 
   if (platform === 'win32') {
     const tauri = resolveTauriCliInvocation({ platform, absUiDir });
-    run(opts, tauri.cmd, [bundleOnly ? 'bundle' : 'build', '-v', ...configs, ...targetArgs, ...(noBundle ? ['--no-bundle'] : [])], {
+    run(opts, tauri.cmd, [bundleOnly ? 'bundle' : 'build', '-v', ...configs, ...featureArgs, ...targetArgs, ...(noBundle ? ['--no-bundle'] : [])], {
       cwd: absUiDir,
       env: baseTauriEnv,
     });
     return;
   }
 
-  run(opts, yarn.cmd, [...yarn.prefixArgs, 'tauri', bundleOnly ? 'bundle' : 'build', '-v', ...configs, ...targetArgs, ...(noBundle ? ['--no-bundle'] : [])], {
+  run(opts, yarn.cmd, [...yarn.prefixArgs, 'tauri', bundleOnly ? 'bundle' : 'build', '-v', ...configs, ...featureArgs, ...targetArgs, ...(noBundle ? ['--no-bundle'] : [])], {
     cwd: absUiDir,
     env: baseTauriEnv,
   });

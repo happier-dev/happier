@@ -1,5 +1,7 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+import { collectFileInventory } from '../../lib/collectFileInventory.ts';
 
 export const VALIDATOR_ID = 'J.X-no-host-imposed-permission-ttl';
 export const LOCAL_PERMISSION_BRIDGE_ALLOWLIST_MARKER =
@@ -10,14 +12,32 @@ const ACCEPTED_ALLOWLIST_PATHS = [
   'packages/plugins/claude/src/agent/permissions/bridge/localPermissionBridge.ts',
 ] as const;
 
-const SCAN_ROOTS = [
+const SCAN_DIRECTORY_ROOTS = [
   'apps/cli/src/agent/permissions',
   'packages/plugins',
+] as const;
+const DIRECT_SCAN_FILES = [
   'apps/cli/src/backends/claude/runtime/terminal/permissions/localPermissionBridge.ts',
 ] as const;
 
+// L-25 is about permission and interactive-prompt lifetimes, so the context probe must say
+// "permission", not merely "request". A bare `request` substring matches unrelated neighbours
+// such as `reconnectRequested` / `requestReconnect()` and turned wire-protocol keepalives into
+// phantom violations, which is how a guard stops being believed. Detection is therefore split
+// into two tiers: vocabulary that can only mean a permission/interactive-prompt lifetime, and
+// generic request-store vocabulary that only counts when the neighbourhood also cancels
+// something. The second tier keeps reach over an `agentStateRequestStore.requests` GC timer in
+// a file that never spells out "permission".
 const PERMISSION_CONTEXT_PATTERN =
-  /permission|request|waiter|lateDecision|lateDecisions|agentState|coordinator|pendingRequests|cachedDecisions/i;
+  /permission|agentStateRequest|pendingRequests?\b|lateDecisions?\b|cachedDecisions?\b|askUserQuestion|exitPlanMode|canUseTool/i;
+const REQUEST_STORE_CONTEXT_PATTERN =
+  /\brequests?\b|\bwaiters?\b|\bcoordinator\b|\bagentState\b|\bdecisions?\b/i;
+const LIFETIME_CANCELLATION_INTENT_PATTERN =
+  /\b(?:abort(?:ed|s)?|cancel(?:led|s)?|delete|evict|expire[sd]?|expiresAt|expiry|prune|reject(?:ed|s)?|revoke[sd]?|timedOut|timeout|ttl)\b/i;
+const PERMISSION_CONTEXT_SUMMARY_PATTERN =
+  /createdAt|timestamp|lateDecisions?|cachedDecisions?|pendingRequests?|permissionRequests?|PermissionRequestCoordinator|permission|agentStateRequest|askUserQuestion|exitPlanMode|canUseTool|\brequests?\b|\bwaiters?\b|\bagentState\b|\bcoordinator\b/i;
+const PERMISSION_WALL_CLOCK_STATEMENT_PATTERN =
+  /permission|waiter|lateDecision|lateDecisions|agentState|coordinator|pendingRequests|cachedDecisions/i;
 const TIMER_PATTERN = /\b(setTimeout|setInterval)\s*\(/;
 const SOURCE_FILE_PATTERN = /\.[cm]?[jt]sx?$/;
 const TEST_FILE_PATTERN = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -65,60 +85,30 @@ export function validateNoHostImposedPermissionTtl(options?: Readonly<{
 }
 
 function collectSourceFiles(rootDir: string): PermissionTtlValidatorFile[] {
-  const files: PermissionTtlValidatorFile[] = [];
+  const files: PermissionTtlValidatorFile[] = collectFileInventory({
+    rootDir,
+    searchRoots: SCAN_DIRECTORY_ROOTS,
+    include: SOURCE_FILE_PATTERN,
+  }).filter((file) => shouldScanFile(file.filePath));
 
-  for (const scanRoot of SCAN_ROOTS) {
-    const absolutePath = resolve(rootDir, scanRoot);
+  for (const filePath of DIRECT_SCAN_FILES) {
+    const absolutePath = resolve(rootDir, filePath);
     if (!existsSync(absolutePath)) {
       continue;
     }
     const stats = statSync(absolutePath);
     if (stats.isFile()) {
-      if (shouldScanFile(scanRoot)) {
+      if (shouldScanFile(filePath)) {
         files.push({
-          filePath: scanRoot,
+          filePath,
           content: readFileSync(absolutePath, 'utf8'),
         });
       }
       continue;
     }
-    collectSourceFilesFromDirectory({
-      rootDir,
-      directory: absolutePath,
-      files,
-    });
   }
 
   return dedupeFiles(files);
-}
-
-function collectSourceFilesFromDirectory(params: Readonly<{
-  rootDir: string;
-  directory: string;
-  files: PermissionTtlValidatorFile[];
-}>): void {
-  for (const entry of readdirSync(params.directory, { withFileTypes: true })) {
-    const absolutePath = join(params.directory, entry.name);
-    if (entry.isDirectory()) {
-      collectSourceFilesFromDirectory({
-        ...params,
-        directory: absolutePath,
-      });
-      continue;
-    }
-    if (!entry.isFile()) {
-      continue;
-    }
-
-    const filePath = normalizeRepoPath(relative(params.rootDir, absolutePath));
-    if (!shouldScanFile(filePath)) {
-      continue;
-    }
-    params.files.push({
-      filePath,
-      content: readFileSync(absolutePath, 'utf8'),
-    });
-  }
 }
 
 function shouldScanFile(filePath: string): boolean {
@@ -202,11 +192,14 @@ function validateWallClockExpiration(file: PermissionTtlValidatorFile): string[]
       continue;
     }
 
-    const context = contextLines(lines, index, 3).join('\n');
     const pathIsPermissionOwned = isPermissionOwnedPath(file.filePath);
-    if (!pathIsPermissionOwned && !PERMISSION_CONTEXT_PATTERN.test(context)) {
+    const statementContext = statementContextLines(lines, index).join('\n');
+    if (!pathIsPermissionOwned && !PERMISSION_WALL_CLOCK_STATEMENT_PATTERN.test(statementContext)) {
       continue;
     }
+    const context = pathIsPermissionOwned
+      ? contextLines(lines, index, 3).join('\n')
+      : statementContext;
     const splitClockExpiration = findSplitClockExpiration(lines, index);
     if (splitClockExpiration) {
       errors.push(
@@ -312,7 +305,11 @@ function extractAssignedVariable(line: string, valuePattern: RegExp): string | n
 }
 
 function isPermissionTimerCandidate(lines: readonly string[], index: number): boolean {
-  return PERMISSION_CONTEXT_PATTERN.test(contextLines(lines, index, 5).join('\n'));
+  const context = contextLines(lines, index, 5).join('\n');
+  if (PERMISSION_CONTEXT_PATTERN.test(context)) {
+    return true;
+  }
+  return REQUEST_STORE_CONTEXT_PATTERN.test(context) && LIFETIME_CANCELLATION_INTENT_PATTERN.test(context);
 }
 
 function hasAllowlistMarkerWithinThreeLines(lines: readonly string[], index: number): boolean {
@@ -324,15 +321,40 @@ function contextLines(lines: readonly string[], index: number, radius: number): 
   return lines.slice(Math.max(0, index - radius), Math.min(lines.length, index + radius + 1));
 }
 
+function statementContextLines(lines: readonly string[], index: number): readonly string[] {
+  let start = index;
+  while (start > 0 && !isStatementStart(lines[start] ?? '')) {
+    const previousLine = lines[start - 1] ?? '';
+    if (isStatementEnd(previousLine)) {
+      break;
+    }
+    start -= 1;
+  }
+
+  let end = index;
+  while (end + 1 < lines.length && !isStatementEnd(lines[end] ?? '')) {
+    end += 1;
+  }
+  return lines.slice(start, end + 1);
+}
+
+function isStatementStart(line: string): boolean {
+  return /^\s*(?:const|if|let|return|throw|var|while)\b/.test(line);
+}
+
+function isStatementEnd(line: string): boolean {
+  return /[;{}]\s*$/.test(line);
+}
+
 function formatLocation(filePath: string, lineIndex: number): string {
   return `${filePath}:${lineIndex + 1}`;
 }
 
+// Summarize over the same window the decision used, so the reported reason is a token that
+// actually triggered the finding rather than an unrelated word two lines away.
 function summarizeContext(lines: readonly string[], index: number): string {
-  const context = contextLines(lines, index, 2).join(' ');
-  const match = context.match(
-    /createdAt|timestamp|lateDecisions|cachedDecisions|pendingRequests|PermissionRequestCoordinator|permission|request|waiter|agentState/i,
-  );
+  const context = contextLines(lines, index, 5).join(' ');
+  const match = context.match(PERMISSION_CONTEXT_SUMMARY_PATTERN);
   return match?.[0] ?? 'permission state';
 }
 

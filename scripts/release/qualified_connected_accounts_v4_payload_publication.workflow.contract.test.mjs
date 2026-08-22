@@ -36,42 +36,35 @@ function assertPayloadAdmissionStep(step, expectedChannelExpression) {
   assert.match(source, /--baseline-ref "\$baseline_ref"/);
 }
 
-test('CLI binary source and immutable retry publication use deployed-server payload admission', async () => {
+test('CLI binary publication uses secret-free source admission and immutable retry admission', async () => {
   const workflow = YAML.parse(await readFile(binaryWorkflowPath, 'utf8'));
-  const prepare = workflow.jobs?.prepare;
+  const admissionJob = workflow.jobs?.admit_publication;
   const publish = workflow.jobs?.publish;
   const promoteExisting = workflow.jobs?.promote_existing;
 
-  const prepareAdmission = findStep(
-    prepare,
-    'Admit Qualified V4 CLI payload publication',
-  );
-  assertPayloadAdmissionStep(prepareAdmission, '${{ inputs.channel }}');
-  assert.ok(
-    prepare.steps.indexOf(prepareAdmission)
-      > prepare.steps.findIndex((step) => step.name === 'Checkout exact source'),
-    'source publication admission must inspect the exact checked-out candidate',
-  );
-  assert.ok(
-    prepare.steps.indexOf(prepareAdmission)
-      < prepare.steps.findIndex((step) => step.name === 'Allocate one release version for the native matrix'),
-    'source publication admission must precede artifact construction',
-  );
-
   const finalAdmission = findStep(
-    publish,
+    admissionJob,
     'Re-admit Qualified V4 CLI payload publication',
   );
   assertPayloadAdmissionStep(finalAdmission, '${{ inputs.channel }}');
   assert.ok(
-    publish.steps.indexOf(finalAdmission)
-      > publish.steps.findIndex((step) => step.name === 'Create GitHub App token'),
+    admissionJob.steps.indexOf(finalAdmission)
+      > admissionJob.steps.findIndex((step) => step.name === 'Checkout trusted workflow control bytes'),
+    'publication admission must execute from trusted workflow control bytes',
+  );
+  assert.match(String(finalAdmission.run ?? ''), /git update-ref "\$candidate_ref" FETCH_HEAD/);
+  assert.match(String(finalAdmission.run ?? ''), /--candidate-ref "\$candidate_ref"/);
+  assert.equal(admissionJob.environment, undefined);
+  assert.doesNotMatch(
+    JSON.stringify(admissionJob),
+    /secrets\.|create-github-app-token|MINISIGN/,
+    'candidate source admission must remain outside the publication-secret job',
   );
   assert.ok(
-    publish.steps.indexOf(finalAdmission)
-      < publish.steps.findIndex((step) => step.name === 'Sign manifests and publish prepared CLI matrix'),
-    'the deployed-server baseline must be re-read immediately before external publication',
+    publish.needs.includes('admit_publication'),
+    'external publication must depend on the separate admission result',
   );
+  assert.equal(findStep(publish, 'Re-admit Qualified V4 CLI payload publication'), undefined);
 
   const retryAdmission = findStep(
     promoteExisting,

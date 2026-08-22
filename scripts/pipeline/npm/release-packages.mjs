@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { resolveWindowsCommandInvocation } from '../lib/windows/resolveWindowsCommandInvocation.mjs';
 import { resolvePackedTarball } from './resolvePackedTarball.mjs';
+import { resolveCliPublicationBuildSteps } from '../../../apps/cli/scripts/buildPublication.mjs';
 import {
   formatPublicReleaseChannel,
   formatPublicReleaseChannelChoices,
@@ -307,11 +308,14 @@ async function main() {
       dir: 'apps/cli',
       outDir: 'dist/release-assets/cli',
       prepare: () => {
-        const cmd = 'yarn';
+        // Canonical publication build: every included generator-owned plugin compiles from
+        // current source, the bundled plugin inventory is regenerated from those outputs,
+        // and the CLI dist build runs after that regeneration.
+        for (const step of resolveCliPublicationBuildSteps({ repoRoot })) {
+          run(opts, step.command, step.args, { cwd: step.cwd });
+        }
         if (runTests) {
-          run(opts, cmd, ['prepublishOnly'], { cwd: withinRepo(repoRoot, 'apps/cli') });
-        } else {
-          run(opts, cmd, ['build'], { cwd: withinRepo(repoRoot, 'apps/cli') });
+          run(opts, 'yarn', ['prepublishOnly'], { cwd: withinRepo(repoRoot, 'apps/cli') });
         }
         run(opts, process.execPath, ['scripts/bundleWorkspaceDeps.mjs', '--artifact'], { cwd: withinRepo(repoRoot, 'apps/cli') });
       },

@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { resolvePackedTarball } from '../npm/resolvePackedTarball.mjs';
+import { resolveCliPublicationBuildSteps } from '../../../apps/cli/scripts/buildPublication.mjs';
 import { resolveInstalledBinPath } from './resolveInstalledBinPath.mjs';
 
 const EXPECTED_PROVIDER_PROJECTIONS = Object.freeze([
@@ -299,6 +300,25 @@ function withinRepo(repoRoot, rel) {
  */
 function mkTmpDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+/**
+ * The smoke gate installs and drives the packed artifact, so the tarball it packs must
+ * correspond to current source. The CLI package reaches that only through its canonical
+ * publication build: a live workspace build isolates a failing generator-owned plugin and
+ * leaves its last-green package installed, and the pack then ships those stale bytes.
+ *
+ * @param {{ dryRun: boolean }} opts
+ * @param {{ absPkgDir: string; workspaceName: string; repoRoot: string }} params
+ */
+function buildSmokePackage(opts, { absPkgDir, workspaceName, repoRoot }) {
+  if (path.basename(absPkgDir) !== 'cli') {
+    run(opts, 'yarn', ['workspace', workspaceName, 'build'], { cwd: repoRoot });
+    return;
+  }
+  for (const step of resolveCliPublicationBuildSteps({ packageRoot: absPkgDir })) {
+    run(opts, step.command, step.args, { cwd: step.cwd, timeoutMs: 30 * 60_000 });
+  }
 }
 
 /**
@@ -650,7 +670,7 @@ async function main() {
   };
 
   if (!skipBuild) {
-    run(opts, 'yarn', ['workspace', workspaceName, 'build'], { cwd: repoRoot });
+    buildSmokePackage(opts, { absPkgDir, workspaceName, repoRoot });
   }
 
   if (!dryRun) {

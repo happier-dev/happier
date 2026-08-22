@@ -1,0 +1,6 @@
+# Generated public-contract records. Marking them generated keeps them out of
+# language stats and out of blame, and collapses them by default in forge
+# diffs, while `check:api-surface` / `check:api-declarations` keep gating their
+# freshness. Deliberately not `-diff`: that makes Git treat them as binary, and
+# the reviewable declaration diff is the whole reason these files are tracked.
+packages/*/api-declarations.md linguist-generated=true

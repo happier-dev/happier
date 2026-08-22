@@ -61,6 +61,10 @@ test('hstack stack runtime activate --web updates only the current runtime web p
     HAPPIER_STACK_STACK: fixture.stackName,
     HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: fixture.stackName,
     HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+    // This test exercises the checkout-local runtime command. Do not let a
+    // user's canonical hstack pointer re-exec the fixture through an older
+    // installed checkout.
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
     // Keep the command's source identity stable even while other agents edit the
     // shared checkout during this two-invocation reuse assertion.
     HAPPIER_STACK_REPO_DIR: fixture.root,

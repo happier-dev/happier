@@ -15,6 +15,17 @@ const IGNORED_DIRS = new Set([
   'out',
 ]);
 
+/**
+ * Build tooling snapshots sources into a sibling `.tmp.<something>` directory while it
+ * works — `apps/cli/scripts/build.mjs` creates `.tmp.hstack-cli-build-source.<random>`
+ * and excludes that same prefix from its own walk. A build racing this walk would
+ * otherwise duplicate every test it copied, inflating each lane count and producing
+ * issues against a path that no longer exists by the time anyone reads them.
+ */
+function isTransientStagingDirectory(name: string): boolean {
+  return name.startsWith('.tmp.');
+}
+
 function normalizePath(filePath: string): string {
   return filePath.split('\\').join('/');
 }
@@ -22,7 +33,7 @@ function normalizePath(filePath: string): string {
 function walkDirectory(rootDir: string, absoluteDir: string, output: string[]): void {
   for (const entry of readdirSync(absoluteDir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
-      if (!IGNORED_DIRS.has(entry.name)) {
+      if (!IGNORED_DIRS.has(entry.name) && !isTransientStagingDirectory(entry.name)) {
         walkDirectory(rootDir, join(absoluteDir, entry.name), output);
       }
       continue;

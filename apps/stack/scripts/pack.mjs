@@ -21,6 +21,7 @@ import {
   stat,
   symlink,
   unlink,
+  writeFile,
 } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
@@ -346,11 +347,79 @@ export async function resolvePackSandboxSourceRelDirs({ monorepoRoot, packageRel
     ))
     .filter(Boolean);
 
+  // The generator's own selector is the sole external-consumer inventory. An
+  // installed hstack resolves it from the monorepo being packed rather than
+  // importing SDK source from its own package installation.
+  const publicToolchainGeneratorPath = join(
+    monorepoRoot,
+    'packages',
+    'plugin-sdk',
+    'scripts',
+    'generatePublicToolchainCompatibility.mjs',
+  );
+  const publicToolchainConsumerSourceRelDirs = [];
+  if (await pathExists(publicToolchainGeneratorPath)) {
+    const { resolvePublicToolchainRequiredInputStagingRelDirs } = await import(
+      pathToFileURL(publicToolchainGeneratorPath).href,
+    );
+    if (typeof resolvePublicToolchainRequiredInputStagingRelDirs !== 'function') {
+      throw new Error('[pack] public toolchain generator has no staging selector');
+    }
+    for (const relativeDir of resolvePublicToolchainRequiredInputStagingRelDirs()) {
+      if (await pathExists(join(monorepoRoot, relativeDir))) {
+        publicToolchainConsumerSourceRelDirs.push(relativeDir);
+      }
+    }
+  }
+  // Capability availability is only valid when its declared public proof
+  // consumer remains a regular source file. The matrix owns that inventory;
+  // pack converts its selected leaves to source directories for staging.
+  const capabilityMatrixCliPath = join(
+    monorepoRoot,
+    'packages',
+    'plugin-sdk',
+    'scripts',
+    'capabilityMatrixCli.mjs',
+  );
+  const capabilityMatrixProvingConsumerSourceRelDirs = [];
+  if (await pathExists(capabilityMatrixCliPath)) {
+    const { resolveAvailableCapabilityMatrixProvingConsumerSourcePaths } = await import(
+      pathToFileURL(capabilityMatrixCliPath).href,
+    );
+    if (typeof resolveAvailableCapabilityMatrixProvingConsumerSourcePaths !== 'function') {
+      throw new Error('[pack] capability matrix has no available proving-consumer source selector');
+    }
+    const sourcePaths = await resolveAvailableCapabilityMatrixProvingConsumerSourcePaths({
+      packageRoot: join(monorepoRoot, 'packages', 'plugin-sdk'),
+    });
+    for (const relativePath of sourcePaths) {
+      const relativeDir = relativePath.slice(0, relativePath.lastIndexOf('/'));
+      if (await pathExists(join(monorepoRoot, relativeDir))) {
+        capabilityMatrixProvingConsumerSourceRelDirs.push(relativeDir);
+      }
+    }
+  }
+  // The CLI prepack publisher is a build owner, not a migration-tree utility.
+  // Retain its entrypoint and canonical publisher module whenever a package
+  // prepack reaches that owner from the temporary sandbox.
+  const canonicalBuildOwnerRelDirs = [
+    'apps/cli/scripts/buildSharedDeps.mjs',
+    'apps/cli/scripts/build-owned',
+  ];
+  const canonicalBuildOwnerSourceRelDirs = [];
+  for (const relativePath of canonicalBuildOwnerRelDirs) {
+    if (await pathExists(join(monorepoRoot, relativePath))) {
+      canonicalBuildOwnerSourceRelDirs.push(relativePath);
+    }
+  }
   const sourceRelDirs = [...new Set([
     'scripts/workspaces',
     'scripts/testing/process',
     ...buildWorkspaceRelDirs,
     ...runtimeWorkspaceRelDirs,
+    ...publicToolchainConsumerSourceRelDirs,
+    ...capabilityMatrixProvingConsumerSourceRelDirs,
+    ...canonicalBuildOwnerSourceRelDirs,
   ])].sort((left, right) => left.localeCompare(right));
   return await validatePackSandboxSourceRelDirs({
     monorepoRoot,
@@ -457,10 +526,24 @@ function isTransientPackSandboxEntryName(name) {
   );
 }
 
-export function shouldIncludePackSandboxSourcePath(relativePath) {
+function isPluginSdkGeneratedExampleOutputPath(relativePath, workspaceRelDir) {
+  if (workspaceRelDir !== 'packages/plugin-sdk') return false;
+  const segments = String(relativePath ?? '').replaceAll('\\', '/').split('/');
+  return segments[0] === 'examples' && segments.slice(1).includes('dist');
+}
+
+function isTypeScriptPackageBuildWorkTreePath(segments) {
+  return segments.some((segment, index) => (
+    segment === '.happier' && segments[index + 1] === 'typescript-package-build'
+  ));
+}
+
+export function shouldIncludePackSandboxSourcePath(relativePath, { workspaceRelDir } = {}) {
   const normalizedRelativePath = String(relativePath ?? '').replaceAll('\\', '/');
   if (normalizedRelativePath === '') return true;
   const segments = normalizedRelativePath.split('/');
+  if (isPluginSdkGeneratedExampleOutputPath(normalizedRelativePath, workspaceRelDir)) return false;
+  if (isTypeScriptPackageBuildWorkTreePath(segments)) return false;
   if (
     segments.some((segment) => (
       PACK_SANDBOX_IGNORED_DIRECTORY_NAMES.has(segment)
@@ -488,6 +571,7 @@ async function copyWorkspaceSourceDir({
   src,
   dest,
   runtimeDependencies,
+  workspaceRelDir,
 }) {
   const sourceRoot = resolve(src);
   runtimeDependencies.copyDirDereferenceContainedSync({
@@ -496,7 +580,7 @@ async function copyWorkspaceSourceDir({
     dereferenceRootDir: sourceRoot,
     shouldCopyPath: (sourcePath) => {
       const relativePath = relative(sourceRoot, sourcePath);
-      return shouldIncludePackSandboxSourcePath(relativePath);
+      return shouldIncludePackSandboxSourcePath(relativePath, { workspaceRelDir });
     },
   });
   const packageJsonPath = join(sourceRoot, 'package.json');
@@ -809,6 +893,13 @@ export async function createPackSandbox({
       monorepoRoot,
       packageRelDir: normalizedPackageRelDir,
     }));
+    // The copy set additionally carries build-only internal workspaces so prepack scripts resolve.
+    // Only the package's declared runtime bundle closure may have its external runtime dependency
+    // tree vendored: a tooling-only workspace's runtime dependencies never reach the tarball.
+    const runtimeBundleRelDirs = await resolvePackSandboxWorkspaceRelDirs({
+      monorepoRoot,
+      packageRelDir: normalizedPackageRelDir,
+    });
     for (const d of dirsToCopy) {
       const { segments } = normalizeWorkspaceRelDir(d);
       const src = join(monorepoRoot, ...segments);
@@ -838,6 +929,7 @@ export async function createPackSandbox({
         src,
         dest: destinationPath,
         runtimeDependencies,
+        workspaceRelDir: d,
       });
       const destinationStats = await lstat(destinationPath);
       const realDestinationPath = await realpath(destinationPath);
@@ -887,7 +979,7 @@ export async function createPackSandbox({
     await materializePackSandboxRuntimeDependencyClosure({
       monorepoRoot,
       sandboxRoot,
-      workspaceRelDirs: dirsToCopy,
+      workspaceRelDirs: runtimeBundleRelDirs,
       runtimeDependencies,
     });
     const sandboxBinDir = join(sandboxRoot, 'node_modules', '.bin');
@@ -1018,6 +1110,7 @@ export async function exportPackSandboxTarball({
   monorepoRoot,
   packageRelDir,
   destinationDir,
+  packageVersion = null,
   env = process.env,
   createPackSandboxImpl = createPackSandbox,
   runCaptureImpl = runCapture,
@@ -1028,6 +1121,26 @@ export async function exportPackSandboxTarball({
   const sandboxPackDir = join(sandboxRoot, packageRelDir);
 
   try {
+    if (packageVersion !== null) {
+      const normalizedPackageVersion = String(packageVersion).trim();
+      if (
+        normalizedPackageVersion !== packageVersion
+        || !normalizedPackageVersion
+        || normalizedPackageVersion.length > 128
+        || !/^[0-9A-Za-z][0-9A-Za-z.-]*$/u.test(normalizedPackageVersion)
+      ) {
+        throw new Error('[pack] package version override must be a bounded portable package version');
+      }
+      const sandboxPackageJsonPath = join(sandboxPackDir, 'package.json');
+      const sandboxPackageJson = await readJson(sandboxPackageJsonPath);
+      await writeFile(
+        sandboxPackageJsonPath,
+        `${JSON.stringify({
+          ...sandboxPackageJson,
+          version: normalizedPackageVersion,
+        }, null, 2)}\n`,
+      );
+    }
     await runCaptureImpl('npm', ['pack', '--dry-run'], {
       cwd: sandboxPackDir,
       env: {

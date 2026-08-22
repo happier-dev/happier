@@ -93,6 +93,7 @@ function sanitizeBundledPackageJsonFallback(raw) {
     module,
     types,
     exports,
+    bin,
     dependencies,
     peerDependencies,
     optionalDependencies,
@@ -109,6 +110,7 @@ function sanitizeBundledPackageJsonFallback(raw) {
     module,
     types,
     exports,
+    ...(bin === undefined ? {} : { bin }),
     dependencies: stripInternalBundledWorkspaceDependencies(dependencies),
     peerDependencies,
     optionalDependencies: stripInternalBundledWorkspaceDependencies(optionalDependencies),
@@ -520,8 +522,10 @@ function replaceDirFromSourceSync(targetDir, srcDir, fsOps, options = {}) {
 export function bundleWorkspacePackageFallbackTransactionally({
   srcPackageDir,
   destPackageDir,
+  packageName,
   syncId,
   dereferenceRootDir = srcPackageDir,
+  validatePreparedPackage,
   vendorBundledPackageRuntimeDependencies =
     vendorBundledPackageRuntimeDependenciesImpl ?? vendorBundledPackageRuntimeDependenciesFallback,
 }) {
@@ -564,6 +568,7 @@ export function bundleWorkspacePackageFallbackTransactionally({
       `${JSON.stringify(sanitizeBundledWorkspacePackageJson(raw), null, 2)}\n`,
       'utf8',
     );
+    validatePreparedPackage?.({ packageName, packageDir: preparedDir });
 
     replaceDirFromSourceSync(
       destPackageDir,
@@ -645,6 +650,7 @@ export function syncBundledWorkspacePackages(opts = {}) {
           // Currentness-bearing callers opt into exact reconciliation. Presence-only preflight
           // refreshes intentionally retain prior targets for in-flight module resolution.
           pruneStale: opts.pruneStale === true,
+          validatePreparedPackage: opts.validatePreparedPackage,
         });
         continue;
       }
@@ -655,9 +661,11 @@ export function syncBundledWorkspacePackages(opts = {}) {
         bundleWorkspacePackageFallbackTransactionally({
           srcPackageDir,
           destPackageDir,
+          packageName: `@happier-dev/${pkg}`,
           syncId,
           dereferenceRootDir: repoRoot,
           vendorBundledPackageRuntimeDependencies,
+          validatePreparedPackage: opts.validatePreparedPackage,
         });
         continue;
       }

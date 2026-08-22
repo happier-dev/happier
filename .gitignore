@@ -53,6 +53,8 @@ __pycache__/
 /.reviews-*.md
 /qa-wave.md
 /LEDGER.md
+/.probe-*.mts
+/.sweep-*.mjs
 
 # Bundled plugin daemon runtime, published by
 # apps/cli/scripts/build-owned/generateBundledPluginEntries.ts beside the tracked plugin

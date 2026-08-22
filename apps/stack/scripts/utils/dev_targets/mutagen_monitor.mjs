@@ -10,7 +10,7 @@ export function buildMutagenMonitorArgs(sessionNames) {
   ];
 }
 
-export function createMutagenMonitorLineFilter() {
+export function createMutagenMonitorLineFilter({ onStateChange = null } = {}) {
   const latestBySession = new Map();
   return ({ stream, line }) => {
     if (stream !== 'stdout') return true;
@@ -23,6 +23,16 @@ export function createMutagenMonitorLineFilter() {
       : line.slice(separator + 1);
     if (latestBySession.get(session) === semanticState) return false;
     latestBySession.set(session, semanticState);
+    if (fields.length >= 5 && typeof onStateChange === 'function') {
+      onStateChange({
+        sessionName: session,
+        status: fields[0],
+        successfulCycles: Number(fields[1]),
+        lastError: fields[2],
+        paused: fields[3] === 'true',
+        conflictCount: Number(fields[4]),
+      });
+    }
     return true;
   };
 }

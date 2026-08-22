@@ -52,6 +52,12 @@ async function writeYarnStub({ binDir, outputPath }) {
       '  exit 0',
       'fi',
       '',
+      'if [[ "${1:-}" == "-s" && "${2:-}" == "workspace" && "${3:-}" == "@happier-dev/app" && "${4:-}" == "postinstall:real" ]]; then',
+      '  mkdir -p "$(dirname "${PATCH_OUTPUT_PATH:?}")"',
+      '  printf "%s\\n" "export const patched = true;" > "${PATCH_OUTPUT_PATH}"',
+      '  exit 0',
+      'fi',
+      '',
       'if [[ "${1:-}" == "-s" && "${2:-}" == "build" && "$(pwd)" == */packages/protocol ]]; then',
       '  out_dir="${HAPPIER_WORKSPACE_DIST_OUTPUT_DIR:-dist}"',
       '  mkdir -p "$out_dir"',
@@ -190,7 +196,11 @@ test('expoSpawn can launch last-green workspace bytes without refreshing changed
   await mkdir(join(root, 'node_modules', '.bin'), { recursive: true });
   await writeJson(join(root, 'package.json'), { name: 'repo', private: true });
   await writeFile(join(root, 'yarn.lock'), '# changed lockfile\n', 'utf-8');
-  await writeJson(join(uiDir, 'package.json'), { name: '@happier-dev/app', private: true });
+  await writeJson(join(uiDir, 'package.json'), {
+    name: '@happier-dev/app',
+    private: true,
+    scripts: { 'postinstall:real': 'node ./tools/postinstall.mjs' },
+  });
   await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
   await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
 
@@ -200,17 +210,28 @@ test('expoSpawn can launch last-green workspace bytes without refreshing changed
   const expoPath = join(root, 'node_modules', '.bin', 'expo');
   await writeFile(expoPath, '#!/bin/sh\nexit 0\n', 'utf-8');
   await chmod(expoPath, 0o755);
+  const patchOutputPath = join(
+    root,
+    'node_modules',
+    'react-native-enriched-markdown',
+    'lib',
+    'module',
+    'web',
+    'streamingReveal.js',
+  );
+  await mkdir(join(root, 'node_modules', 'react-native-enriched-markdown'), { recursive: true });
 
   const env = {
     ...process.env,
     PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
     OUTPUT_PATH: outputPath,
+    PATCH_OUTPUT_PATH: patchOutputPath,
     npm_execpath: '',
     HAPPIER_STACK_ENV_FILE: '',
   };
   const child = await expoSpawn({
     label: 'expo-last-green',
-    dir: root,
+    dir: uiDir,
     projectDir: uiDir,
     args: ['--help'],
     env,
@@ -224,6 +245,8 @@ test('expoSpawn can launch last-green workspace bytes without refreshing changed
 
   const argvLog = await readFile(outputPath, 'utf-8');
   assert.doesNotMatch(argvLog, / :: install(?:\s|$)/);
+  assert.match(argvLog, /-s workspace @happier-dev\/app postinstall:real/u);
+  assert.equal(await fileExists(patchOutputPath), true);
 });
 
 test('expoExec builds workspace dist deps for the projectDir (not the runnerDir)', async (t) => {

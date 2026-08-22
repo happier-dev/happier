@@ -12,7 +12,7 @@ async function resolveWorkspacePackageFiles() {
     if (workspace === 'packages/plugins/[a-z]*') {
       const pluginEntries = await readdir('packages/plugins', { withFileTypes: true });
       for (const entry of pluginEntries) {
-        if (entry.isDirectory() && /^[a-z]/.test(entry.name)) {
+        if (entry.isDirectory() && entry.name !== 'node_modules' && /^[a-z]/.test(entry.name)) {
           packageFiles.push(join('packages/plugins', entry.name, 'package.json'));
         }
       }

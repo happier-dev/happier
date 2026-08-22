@@ -93,6 +93,13 @@ function serializeDescriptorSignatures(descriptors, signatures) {
   return descriptors.map((descriptor) => `${descriptor.id}\0${signatures.get(descriptor.id) ?? ''}`).join('\n');
 }
 
+function serializeGenerationSignatures(descriptors, signatures) {
+  return serializeDescriptorSignatures(
+    descriptors.filter((descriptor) => descriptor.invalidatesGeneration !== false),
+    signatures,
+  );
+}
+
 function createExecutorMap(executors) {
   const map = new Map();
   for (const executor of Array.isArray(executors) ? executors : []) {
@@ -166,12 +173,16 @@ export function startDevReloadCoordinator(
   ));
   if (!watchPaths.length) return null;
   const descriptorIdsByWatchPath = new Map();
+  const generationInvalidatingWatchPaths = new Set();
   for (const descriptor of normalizedDescriptors) {
     for (const path of descriptor.paths) {
       const watchPath = resolve(path);
       const ids = descriptorIdsByWatchPath.get(watchPath) ?? new Set();
       ids.add(descriptor.id);
       descriptorIdsByWatchPath.set(watchPath, ids);
+      if (descriptor.invalidatesGeneration !== false) {
+        generationInvalidatingWatchPaths.add(watchPath);
+      }
     }
   }
 
@@ -212,10 +223,16 @@ export function startDevReloadCoordinator(
 
   const recordNamedChangeObservation = (event) => {
     if (
-      (event?.eventType === 'change' || event?.eventType === 'rename')
-      && typeof event?.filename === 'string'
-      && event.filename.trim()
-    ) pendingNamedChange = true;
+      event?.eventType !== 'change'
+      && event?.eventType !== 'rename'
+    ) return false;
+    if (typeof event?.filename !== 'string' || !event.filename.trim()) return false;
+    const watchPath = typeof event?.watchPath === 'string' && event.watchPath
+      ? resolve(event.watchPath)
+      : null;
+    if (watchPath && !generationInvalidatingWatchPaths.has(watchPath)) return false;
+    pendingNamedChange = true;
+    return true;
   };
 
   const clearScheduledRetry = () => {
@@ -347,9 +364,11 @@ export function startDevReloadCoordinator(
       // Observability must not become reload authority.
     }
     let staleGenerationLogged = false;
+    let lastRevalidatedSignatures = nextSignatures;
     context.revalidateGeneration = async () => {
       if (closed || isShuttingDown?.()) return false;
       const currentSignatures = await sampleSignatures();
+      lastRevalidatedSignatures = currentSignatures;
       const signatureInitializationChangedSinceAdmission = (
         (!signatureInitializationFallbackAllAtAdmission && signatureInitializationFallbackAll)
         || Array.from(signatureInitializationPendingDescriptorIds).some((descriptorId) => (
@@ -361,8 +380,8 @@ export function startDevReloadCoordinator(
         && forcedTargets.size === 0
         && !pendingNamedChange
         && !signatureInitializationChangedSinceAdmission
-        && serializeDescriptorSignatures(normalizedDescriptors, currentSignatures)
-          === serializeDescriptorSignatures(normalizedDescriptors, nextSignatures);
+        && serializeGenerationSignatures(normalizedDescriptors, currentSignatures)
+          === serializeGenerationSignatures(normalizedDescriptors, nextSignatures);
       if (!current) {
         pending = true;
         if (!staleGenerationLogged) {
@@ -485,7 +504,14 @@ export function startDevReloadCoordinator(
       }
     }
 
-    lastSignatures = nextSignatures;
+    lastSignatures = new Map(nextSignatures);
+    for (const descriptor of normalizedDescriptors) {
+      if (descriptor.invalidatesGeneration !== false) continue;
+      lastSignatures.set(
+        descriptor.id,
+        lastRevalidatedSignatures.get(descriptor.id) ?? nextSignatures.get(descriptor.id) ?? null,
+      );
+    }
     signatureInitializationPendingDescriptorIds.clear();
     signatureInitializationFallbackAll = false;
     clearScheduledRetry();
@@ -509,8 +535,7 @@ export function startDevReloadCoordinator(
     recordSignatureInitializationEvent(event);
     if (inFlight) {
       if (event?.observationHandled !== true) {
-        recordNamedChangeObservation(event);
-        pending = true;
+        if (recordNamedChangeObservation(event)) pending = true;
       }
       return;
     }
@@ -539,8 +564,7 @@ export function startDevReloadCoordinator(
     if (!shouldObserve(event)) return false;
     recordSignatureInitializationEvent(event);
     if (!inFlight) return false;
-    recordNamedChangeObservation(event);
-    pending = true;
+    if (recordNamedChangeObservation(event)) pending = true;
     return true;
   };
 

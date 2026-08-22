@@ -27,7 +27,6 @@ test('docker publish supports dev channel (tags + embedded policy)', () => {
       // Keep the output deterministic: avoid GH Actions cache args.
       GITHUB_ACTIONS: 'false',
       HAPPIER_DOCKER_SERVER_VERSION: '0.2.10-dev.docker-test',
-      HAPPIER_DOCKER_UI_WEB_VERSION: '0.2.10-dev.docker-ui-test',
       HAPPIER_DOCKER_CLI_VERSION: '0.2.10-dev.docker-cli-test',
     },
   });
@@ -35,8 +34,7 @@ test('docker publish supports dev channel (tags + embedded policy)', () => {
   assert.match(out, new RegExp(String.raw`--build-arg\s+HAPPIER_EMBEDDED_POLICY_ENV=preview`));
   assert.match(out, new RegExp(String.raw`--build-arg\s+HAPPIER_RELAY_SERVER_RELEASE_TAG=server-v0\.2\.10-dev\.docker-test`));
   assert.match(out, new RegExp(String.raw`--build-arg\s+HAPPIER_RELAY_SERVER_VERSION=0\.2\.10-dev\.docker-test`));
-  assert.match(out, new RegExp(String.raw`--build-arg\s+HAPPIER_RELAY_UI_WEB_RELEASE_TAG=ui-web-v0\.2\.10-dev\.docker-ui-test`));
-  assert.match(out, new RegExp(String.raw`--build-arg\s+HAPPIER_RELAY_UI_WEB_VERSION=0\.2\.10-dev\.docker-ui-test`));
+  assert.doesNotMatch(out, /HAPPIER_RELAY_UI_WEB_/);
   assert.match(out, new RegExp(String.raw`--build-arg\s+HAPPIER_DEVBOX_CLI_RELEASE_TAG=cli-v0\.2\.10-dev\.docker-cli-test`));
   assert.match(out, new RegExp(String.raw`--build-arg\s+HAPPIER_DEVBOX_CLI_VERSION=0\.2\.10-dev\.docker-cli-test`));
 

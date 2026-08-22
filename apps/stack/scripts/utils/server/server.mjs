@@ -162,6 +162,10 @@ export function createServerReadinessDeadline({
     getPhase() {
       return phase;
     },
+    extendCurrentPhase() {
+      deadlineMs = now() + (phase === 'migration' ? migrationMs : readyMs);
+      return deadlineMs;
+    },
     isExpired() {
       return now() >= startReadiness();
     },
@@ -173,6 +177,10 @@ export async function waitForServerReady(url, {
   intervalMs = 300,
   childProcess = null,
   startupDeadline = null,
+  continueWhileChildAlive = process.env.HAPPIER_STACK_TUI === '1',
+  onTimeoutCheckpoint = ({ phase }) => {
+    console.warn(`[stack] server ${phase} is still in progress at ${url}; continuing to wait (TUI is attended)`);
+  },
 } = {}) {
   const deadline = startupDeadline ?? createServerReadinessDeadline({
     readinessTimeoutMs: timeoutMs,
@@ -192,9 +200,17 @@ export async function waitForServerReady(url, {
   }
 
   try {
-    while (!deadline.isExpired()) {
+    while (true) {
       if (earlyExitError) {
         throw earlyExitError;
+      }
+      if (deadline.isExpired()) {
+        const childAlive = childProcess
+          && childProcess.exitCode == null
+          && childProcess.signalCode == null;
+        if (!continueWhileChildAlive || !childAlive) break;
+        onTimeoutCheckpoint?.({ phase: deadline.getPhase(), timeoutMs, url });
+        deadline.extendCurrentPhase();
       }
       // Runtime-backed stacks and modern server builds expose readiness on /health even when
       // the root route serves the app shell instead of the legacy welcome page.

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readFile, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -261,7 +261,7 @@ test('native launcher ignores an inherited local preference and dispatches to th
   assert.match(result.stdout, /remote:.*mac2-host.*probe-command.*ok/);
 });
 
-test('native launcher excludes a target whose repository filesystem reports full', async () => {
+test('native launcher excludes a target without enough repository scratch space', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-full-disk-'));
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
@@ -300,7 +300,7 @@ test('native launcher excludes a target whose repository filesystem reports full
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
     'case "$*" in',
-    '  *getconf*) case "$*" in *mac2-host*) printf "8 0.5 0.8 220000 100\\n" ;; *) printf "8 4 0.5 22000000 98\\n" ;; esac ;;',
+    '  *getconf*) case "$*" in *mac2-host*) printf "8 0.5 0.8 220000 99\\n" ;; *) printf "8 4 0.5 22000000 98\\n" ;; esac ;;',
     '  *command\\ -v*) exit 0 ;;',
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',
     '  *mac2-host*) printf "wrong-target:mac2\\n" ;;',
@@ -325,6 +325,124 @@ test('native launcher excludes a target whose repository filesystem reports full
   assert.match(result.stderr, /selected mac /);
   assert.match(result.stdout, /remote:mac:/);
   assert.doesNotMatch(result.stdout, /wrong-target:mac2/);
+});
+
+test('native launcher admits APFS targets that round capacity to 100 percent with useful free space', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-apfs-free-'));
+  const binDir = join(root, 'bin');
+  const storageDir = join(root, 'stacks');
+  const stackDir = join(storageDir, `repo-${repoToken}-native`);
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
+  await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
+  await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
+    `projection_repo_root='${repoRoot}'`,
+    "command_mode='auto'",
+    "include_local='0'",
+    "fallback_mode='local'",
+    "load_ttl_seconds='15'",
+    "unavailable_ttl_seconds='120'",
+    "target_count='1'",
+    "target_1_name='mac'",
+    "target_1_ssh='mac-host'",
+    "target_1_ssh_config=''",
+    "target_1_repo_dir='/remote/repo'",
+    "target_1_cli_home='/remote/home'",
+    "target_1_remote_path='/usr/bin:/bin'",
+    '',
+  ].join('\n'));
+  await executable(join(binDir, 'node'), '#!/bin/sh\nexit 97\n');
+  await executable(
+    join(binDir, 'mutagen'),
+    '#!/bin/sh\nprintf "%s|Watching|7||false|0\\n" "$3"\n',
+  );
+  await executable(join(binDir, 'ssh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  *getconf*) printf "8 0.5 0.8 7340032 100\\n" ;;',
+    '  *command\\ -v*) exit 0 ;;',
+    '  *-MNf*|*-O\\ exit*) exit 0 ;;',
+    '  *mac-host*) printf "remote:mac:%s\\n" "$*" ;;',
+    'esac',
+    '',
+  ].join('\n'));
+
+  const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'ok'], {
+    cwd: repoRoot,
+    env: {
+      ...executionNeutralEnv,
+      HOME: root,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      PATH: `${binDir}:/usr/bin:/bin`,
+      TMPDIR: root,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /selected mac /);
+  assert.match(result.stdout, /remote:mac:/);
+});
+
+test('native launcher re-probes a cached unavailable target as soon as its sync becomes ready', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-sync-recovered-'));
+  const binDir = join(root, 'bin');
+  const storageDir = join(root, 'stacks');
+  const stackDir = join(storageDir, `repo-${repoToken}-native`);
+  const cacheDir = join(stackDir, 'dev-target-command-load-native');
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
+  await mkdir(cacheDir, { recursive: true });
+  await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
+  await writeFile(join(cacheDir, 'mac.cache'), `${Math.floor(Date.now() / 1_000)} 0 - 1\n`);
+  await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
+    `projection_repo_root='${repoRoot}'`,
+    "command_mode='auto'",
+    "include_local='0'",
+    "fallback_mode='local'",
+    "load_ttl_seconds='15'",
+    "unavailable_ttl_seconds='120'",
+    "target_count='1'",
+    "target_1_name='mac'",
+    "target_1_ssh='mac-host'",
+    "target_1_ssh_config=''",
+    "target_1_repo_dir='/remote/repo'",
+    "target_1_cli_home='/remote/home'",
+    "target_1_remote_path='/usr/bin:/bin'",
+    '',
+  ].join('\n'));
+  await executable(join(binDir, 'node'), '#!/bin/sh\nexit 97\n');
+  await executable(
+    join(binDir, 'mutagen'),
+    '#!/bin/sh\nprintf "%s|Watching|8||false|0\\n" "$3"\n',
+  );
+  await executable(join(binDir, 'ssh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  *getconf*) printf "8 0.5 0.8 7340032 50\\n" ;;',
+    '  *command\\ -v*) exit 0 ;;',
+    '  *mac-host*) printf "remote:mac:%s\\n" "$*" ;;',
+    'esac',
+    '',
+  ].join('\n'));
+
+  const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'ok'], {
+    cwd: repoRoot,
+    env: {
+      ...executionNeutralEnv,
+      HOME: root,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      PATH: `${binDir}:/usr/bin:/bin`,
+      TMPDIR: root,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /selected mac /);
+  assert.match(result.stdout, /remote:mac:/);
 });
 
 test('native launcher retries another target when the selected host is unreachable before dispatch', async () => {
@@ -640,6 +758,162 @@ test('native launcher bootstraps Yarn commands before dispatching them and leave
   assert.equal(raw.status, 0, raw.stderr);
   assert.match(raw.stdout, /raw-search/);
   assert.doesNotMatch(raw.stdout, /remote_dependency_bootstrap\.mjs/);
+});
+
+test('native launcher keeps an unprepared dependency target out of automatic routing when install scratch is insufficient', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-cold-dependency-disk-'));
+  const binDir = join(root, 'bin');
+  const storageDir = join(root, 'stacks');
+  const stackDir = join(storageDir, `repo-${repoToken}-native`);
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
+  await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
+  await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
+    "dependency_direct_commands='node'",
+    "dependency_corepack_subcommands=''",
+    `projection_repo_root='${repoRoot}'`,
+    "command_mode='auto'",
+    "include_local='0'",
+    "fallback_mode='local'",
+    "load_ttl_seconds='15'",
+    "unavailable_ttl_seconds='120'",
+    "target_count='1'",
+    "target_1_name='mac2'",
+    "target_1_ssh='mac2-host'",
+    "target_1_ssh_config=''",
+    "target_1_repo_dir='/remote/repo'",
+    "target_1_cli_home='/remote/home'",
+    "target_1_remote_path='/usr/bin:/bin'",
+    '',
+  ].join('\n'));
+  await executable(join(binDir, 'node'), '#!/bin/sh\nprintf "local-node:%s\\n" "$*"\n');
+  await executable(
+    join(binDir, 'mutagen'),
+    '#!/bin/sh\nprintf "%s|Watching|7||false|0\\n" "$3"\n',
+  );
+  await executable(join(binDir, 'ssh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  *getconf*) printf "8 1 0.5 22000000 98\\n" ;;',
+    '  *command\\ -v*) case "$*" in *node_modules/.yarn-integrity*df\\ -Pk*) exit 76 ;; *) exit 0 ;; esac ;;',
+    '  *-MNf*|*-O\\ exit*) exit 0 ;;',
+    '  *remote_dependency_bootstrap.mjs*) printf "unexpected-remote-bootstrap\\n"; exit 42 ;;',
+    'esac',
+    '',
+  ].join('\n'));
+
+  const result = spawnSync('/bin/sh', [launcher, '--', 'node', '--version'], {
+    cwd: repoRoot,
+    env: {
+      ...executionNeutralEnv,
+      HOME: root,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      PATH: `${binDir}:/usr/bin:/bin`,
+      TMPDIR: root,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /no healthy execution target is available; running locally/i);
+  assert.equal(result.stdout, 'local-node:--version\n');
+  assert.doesNotMatch(result.stdout, /unexpected-remote-bootstrap/);
+});
+
+test('native launcher falls back locally instead of queueing behind a remote dependency refresh', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-busy-dependencies-'));
+  const binDir = join(root, 'bin');
+  const storageDir = join(root, 'stacks');
+  const stackDir = join(storageDir, `repo-${repoToken}-native`);
+  const dependencyBusyMarker = join(root, 'dependency-busy');
+  const dependencyStaleMarker = join(root, 'dependency-stale');
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
+  await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
+  await writeFile(dependencyBusyMarker, '1\n');
+  await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
+    "dependency_direct_commands='node'",
+    "dependency_corepack_subcommands=''",
+    `projection_repo_root='${repoRoot}'`,
+    "command_mode='auto'",
+    "include_local='0'",
+    "fallback_mode='local'",
+    "load_ttl_seconds='15'",
+    "unavailable_ttl_seconds='120'",
+    "target_count='1'",
+    "target_1_name='mac'",
+    "target_1_ssh='mac-host'",
+    "target_1_ssh_config=''",
+    "target_1_repo_dir='/remote/repo'",
+    "target_1_cli_home='/remote/home'",
+    "target_1_remote_path='/usr/bin:/bin'",
+    '',
+  ].join('\n'));
+  await executable(join(binDir, 'node'), '#!/bin/sh\nprintf "local-node:%s\\n" "$*"\n');
+  await executable(
+    join(binDir, 'mutagen'),
+    '#!/bin/sh\nprintf "%s|Watching|7||false|0\\n" "$3"\n',
+  );
+  await executable(join(binDir, 'ssh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  *getconf*) printf "8 1 0.5\\n" ;;',
+    `  *dependency-install.lock*) [ -f "${dependencyStaleMarker}" ] && case "$*" in *kill\\ -0*) exit 0 ;; esac; [ -f "${dependencyBusyMarker}" ] && exit 75; exit 0 ;;`,
+    '  *command\\ -v*) exit 0 ;;',
+    '  *-MNf*|*-O\\ exit*) exit 0 ;;',
+    '  *remote_dependency_bootstrap.mjs*) printf "remote-node:%s\\n" "$*" ;;',
+    '  *) printf "unexpected-remote:%s\\n" "$*"; exit 44 ;;',
+    'esac',
+    '',
+  ].join('\n'));
+
+  const result = spawnSync('/bin/sh', [launcher, '--', 'node', '--version'], {
+    cwd: repoRoot,
+    env: {
+      ...executionNeutralEnv,
+      HOME: root,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      PATH: `${binDir}:/usr/bin:/bin`,
+      TMPDIR: root,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /no healthy execution target is available; running locally/i);
+  assert.equal(result.stdout, 'local-node:--version\n');
+  assert.doesNotMatch(result.stdout, /unexpected-remote/);
+
+  const commandCacheDir = join(stackDir, 'dev-target-command-load-native');
+  const commandCacheName = (await readdir(commandCacheDir)).find((name) => name.startsWith('mac.command.'));
+  assert.ok(commandCacheName);
+  assert.match(
+    await readFile(join(commandCacheDir, commandCacheName), 'utf8'),
+    /^\d+ 0 busy\n$/,
+  );
+  await writeFile(
+    join(commandCacheDir, commandCacheName),
+    `${Math.floor(Date.now() / 1_000) - 6} 0 busy\n`,
+  );
+  await writeFile(dependencyStaleMarker, '1\n');
+
+  const recovered = spawnSync('/bin/sh', [launcher, '--', 'node', '--version'], {
+    cwd: repoRoot,
+    env: {
+      ...executionNeutralEnv,
+      HOME: root,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      PATH: `${binDir}:/usr/bin:/bin`,
+      TMPDIR: root,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(recovered.status, 0, recovered.stderr);
+  assert.match(recovered.stderr, /selected mac /);
+  assert.match(recovered.stdout, /remote-node:/);
 });
 
 test('native launcher cancellation verifies the recorded process identity before terminating it', async () => {

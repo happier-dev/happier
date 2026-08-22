@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS } from './mutagen_project.mjs';
+
 export const MUTAGEN_SYNC_LIST_JSON_TEMPLATE = '{{json .}}';
 
 const MUTAGEN_SYNCHRONIZING_STATUSES = new Set([
@@ -104,4 +106,40 @@ export function parseMutagenSyncList(raw, sessionName) {
     return { state: 'synchronizing', sessionName: expectedName, session };
   }
   return { state: 'ready', sessionName: expectedName, session };
+}
+
+function isSafeRelativeConflictRoot(value) {
+  const root = String(value ?? '').trim();
+  return Boolean(root)
+    && !root.startsWith('/')
+    && !root.startsWith('\\')
+    && !root.split(/[\\/]+/).some((segment) => segment === '..' || segment === '');
+}
+
+export function resolveRecoverableReplicaArtifactConflictRoots(session) {
+  if (session?.mode !== 'one-way-replica') return [];
+  const conflicts = Array.isArray(session?.conflicts) ? session.conflicts : [];
+  if (conflicts.length === 0) return [];
+  const roots = [];
+  const disposableArtifactRoots = new Set(DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS);
+  for (const conflict of conflicts) {
+    const root = String(conflict?.root ?? '').trim();
+    if (!isSafeRelativeConflictRoot(root)) continue;
+    const alphaChanges = Array.isArray(conflict?.alphaChanges) ? conflict.alphaChanges : [];
+    const betaChanges = Array.isArray(conflict?.betaChanges) ? conflict.betaChanges : [];
+    const alphaRemovesRoot = alphaChanges.length === 1
+      && alphaChanges[0]?.path === root
+      && (alphaChanges[0]?.old == null || alphaChanges[0]?.old?.kind === 'directory')
+      && alphaChanges[0]?.new == null;
+    const rootPrefix = `${root}/`;
+    const betaOnlyHasIgnoredArtifacts = betaChanges.length > 0 && betaChanges.every((change) => (
+      String(change?.path ?? '').startsWith(rootPrefix)
+      && disposableArtifactRoots.has(String(change.path).slice(rootPrefix.length).split(/[\\/]/, 1)[0])
+      && change?.old == null
+      && change?.new?.kind === 'untracked'
+    ));
+    if (!alphaRemovesRoot || !betaOnlyHasIgnoredArtifacts) continue;
+    roots.push(root);
+  }
+  return roots;
 }

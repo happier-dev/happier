@@ -256,7 +256,12 @@ export async function expoSpawn({
       quiet,
       env: preparationEnv,
       refreshExisting: !workspacePrepared,
-      prepareComponentOutputs: !workspacePrepared,
+      // `workspacePrepared` means the caller already owns the potentially
+      // expensive dependency/workspace refresh. Cheap component readiness is
+      // still required before every spawn: postinstall-owned files may be
+      // absent from a newly synchronized dev-target dependency tree even when
+      // the last-green workspace build is reusable.
+      prepareComponentOutputs: true,
     });
     if (!workspacePrepared) {
       try {

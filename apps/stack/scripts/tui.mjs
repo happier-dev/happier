@@ -59,6 +59,7 @@ import { reconcileDaemonPaneAfterDaemonStarts } from './utils/tui/daemon_pane_re
 import { buildScriptPtyArgs } from './utils/tui/script_pty_command.mjs';
 import { resolveTuiChildTerminationPlan } from './utils/tui/child_termination_plan.mjs';
 import { installTuiStdinErrorGuard } from './utils/tui/stdin_error_guard.mjs';
+import { enableTuiRescuePriority } from './utils/tui/rescue_priority.mjs';
 import { resolveTuiChildEnv } from './utils/tui/resolve_child_env.mjs';
 import {
   beginTuiRestartOperation,
@@ -632,7 +633,7 @@ async function buildExpoQrPaneLines({ rootDir, stackName }) {
 
 async function main() {
   const argvRaw = process.argv.slice(2);
-  const { forwardedArgs: rawForwardedArgs, withTauri } = extractTuiLaunchOptions(argvRaw);
+  const { forwardedArgs: rawForwardedArgs, rescue, withTauri } = extractTuiLaunchOptions(argvRaw);
   const forwarded = rawForwardedArgs;
 
   if (isTuiHelpRequest(argvRaw)) {
@@ -641,12 +642,13 @@ async function main() {
       data: { usage: 'hstack tui [<hstack args...>]', json: false, defaultCommand: 'dev' },
       text: [
         '[tui] usage:',
-        '  hstack tui [<hstack args...>] [--tauri]',
+        '  hstack tui [<hstack args...>] [--tauri] [--rescue]',
         '',
         'defaults:',
         '  hstack tui                 => hstack tui dev --mobile',
         '  hstack tui --tauri         => hstack tui dev with a Tauri pane',
         '  hstack tui --tauri --mobile => hstack tui dev --mobile with a Tauri pane',
+        '  hstack tui --rescue          => prioritize stack controls during severe system load',
         '  hstack tui --no-mobile     => hstack tui dev --no-mobile (web only)',
         '',
         'examples:',
@@ -682,6 +684,12 @@ async function main() {
 
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error('[tui] requires a TTY (interactive terminal)');
+  }
+
+  if (rescue) {
+    console.error('[tui] rescue mode: requesting elevated scheduling priority for stack controls...');
+    const applied = await enableTuiRescuePriority();
+    console.error(`[tui] rescue mode enabled (control nice=${applied.nice}); agent sessions remain at normal/background priority.`);
   }
 
   const rootDir = getRootDir(import.meta.url);
@@ -791,7 +799,13 @@ async function main() {
   // so any interactive prompts inside the child would deadlock.
   // Mark the child env so dependency installers can auto-approve safe prompts (Corepack yarn downloads).
   const stackEnvFromFile = stackEnvPath ? await readEnvObject(stackEnvPath) : {};
-  const childEnv = resolveTuiChildEnv({ stackEnvFromFile, processEnv: process.env });
+  const childEnv = resolveTuiChildEnv({
+    stackEnvFromFile,
+    processEnv: {
+      ...process.env,
+      ...(rescue ? { HAPPIER_STACK_RESCUE: '1' } : {}),
+    },
+  });
   const borrowedExpoProducerStackName = String(childEnv.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim();
   let borrowedExpoLogFollower = null;
   let borrowedExpoLogPath = '';

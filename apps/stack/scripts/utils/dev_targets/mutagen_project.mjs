@@ -1,6 +1,15 @@
-export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
+export const DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS = Object.freeze([
   'node_modules',
   'dist',
+  '.happier',
+  '.tsbuildinfo',
+]);
+
+const [NODE_MODULES, DIST, HAPPIER] = DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS;
+
+export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
+  NODE_MODULES,
+  DIST,
   'dist.staging.*',
   'dist.__finalize_backup__.*',
   'dist.__sync_tmp__.*',
@@ -13,7 +22,7 @@ export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
   '.backup.*',
   '.happier-plugin-ui-build-*',
   '.project',
-  '.happier',
+  HAPPIER,
   '.happier-stack',
   'coverage',
   '!packages/triage-qa/src/coverage',
@@ -131,6 +140,9 @@ export function renderMutagenProject({ sourceDir, targets, ownerId = null }) {
       `  ${resolveMutagenSessionName(target.name)}:`,
       `    alpha: ${yamlString(sourceDir)}`,
       `    beta: ${yamlString(`${target.ssh}:${target.repoDir}`)}`,
+      '    configurationBeta:',
+      '      watch:',
+      '        mode: "no-watch"',
     );
   }
   return `${lines.join('\n')}\n`;

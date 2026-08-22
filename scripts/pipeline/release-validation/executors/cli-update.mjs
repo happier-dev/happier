@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 
-import { execYarn } from '../../../workspaces/execYarnCommand.mjs';
+import { buildCliPublication } from '../../../../apps/cli/scripts/buildPublication.mjs';
 import { resolveCoreE2eSlowSuiteCommand } from './core-e2e-slow-suite.mjs';
 
 const CLI_UPDATE_CONTINUITY_TEST_FILES = [
@@ -90,23 +90,25 @@ function assertCliPackHasRuntimeEntrypoints({ tarballPath, exec }) {
 }
 
 /**
- * @param {{ repoRoot: string; exec: ExecFileSyncLike; platform?: NodeJS.Platform; npmExecPath?: string; comspec?: string }} params
+ * @param {{ repoRoot: string; exec: ExecFileSyncLike }} params
  * @returns {ReleaseValidationSource}
  */
-function packLocalBuildCliSource({ repoRoot, exec, platform = process.platform, npmExecPath = process.env.npm_execpath, comspec }) {
+function packLocalBuildCliSource({ repoRoot, exec }) {
   const packDir = createLocalBuildPackDir(repoRoot);
-  execYarn(['-s', 'workspace', '@happier-dev/cli', 'build'], {
-    execFileSync: exec,
-    platform,
-    npmExecPath,
-    comspec,
-    cwd: repoRoot,
+  // This gate reports on whatever the tarball contains, so the tarball must correspond to
+  // current source. Only the canonical publication build guarantees that: it compiles every
+  // included generator-owned plugin from current source and regenerates the bundled plugin
+  // inventory before the dist build the pack fingerprints. A live workspace build isolates a
+  // failing plugin and leaves its last-green package installed, and the pack then ships those
+  // stale bytes while still succeeding.
+  buildCliPublication({
+    repoRoot,
+    exec,
     env: {
       ...process.env,
       CI: '1',
     },
     stdio: 'inherit',
-    timeout: 10 * 60_000,
   });
   const tarballRaw = exec(process.execPath, [resolve(repoRoot, 'apps', 'cli', 'scripts', 'packTarball.mjs'), '--dest-dir', packDir], {
     cwd: resolve(repoRoot, 'apps', 'cli'),
@@ -125,16 +127,16 @@ function packLocalBuildCliSource({ repoRoot, exec, platform = process.platform, 
 }
 
 /**
- * @param {{ repoRoot: string; update: ReleaseValidationUpdate; exec: ExecFileSyncLike; platform?: NodeJS.Platform; npmExecPath?: string; comspec?: string }} params
+ * @param {{ repoRoot: string; update: ReleaseValidationUpdate; exec: ExecFileSyncLike }} params
  * @returns {ReleaseValidationUpdate}
  */
-function materializeCliUpdateSourcesForExecution({ repoRoot, update, exec, platform, npmExecPath, comspec }) {
+function materializeCliUpdateSourcesForExecution({ repoRoot, update, exec }) {
   if (update.to.kind !== 'local-build') {
     return update;
   }
   return {
     ...update,
-    to: packLocalBuildCliSource({ repoRoot, exec, platform, npmExecPath, comspec }),
+    to: packLocalBuildCliSource({ repoRoot, exec }),
   };
 }
 
@@ -177,15 +179,12 @@ export function resolveCliUpdateExecution({ repoRoot, update }) {
 }
 
 /**
- * @param {{ repoRoot: string; update: ReleaseValidationUpdate | null; exec?: ExecFileSyncLike; platform?: NodeJS.Platform; npmExecPath?: string; comspec?: string }} params
+ * @param {{ repoRoot: string; update: ReleaseValidationUpdate | null; exec?: ExecFileSyncLike }} params
  */
 export function runCliUpdateValidation({
   repoRoot,
   update,
   exec = execFileSync,
-  platform = process.platform,
-  npmExecPath = process.env.npm_execpath,
-  comspec,
 }) {
   const execution = resolveCliUpdateExecution({
     repoRoot,
@@ -193,9 +192,6 @@ export function runCliUpdateValidation({
       repoRoot,
       update: requireCliUpdateSources(update),
       exec,
-      platform,
-      npmExecPath,
-      comspec,
     }),
   });
   exec(execution.command, execution.args, {

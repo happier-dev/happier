@@ -79,8 +79,6 @@ const V2_ZERO_LANE_EXTRACT_SPECS: readonly V2ZeroLaneExtractSpec[] = Object.free
     description: 'CLI registry convergence, command/help split ownership, capability dispatch, and the remaining registry-facing ABI seams.',
     categoryIds: [
       'builtin-cli-catalog-consumers',
-      'command-handler-help-manifest',
-      'discovery-preflight-capabilities-rpc',
       'implicit-abi-surfaces',
       'shared-core-provider-branching',
     ],
@@ -91,7 +89,6 @@ const V2_ZERO_LANE_EXTRACT_SPECS: readonly V2ZeroLaneExtractSpec[] = Object.free
     description: 'Legacy customAcp removal, backend-target migration, and the compatibility seams that still leak through target identity.',
     categoryIds: [
       'customacp-sentinel-consumers',
-      'hardcoded-action-mcp-provider-id-surfaces',
       'implicit-abi-surfaces',
       'runtime-identity-publication-read',
       'shared-core-provider-branching',
@@ -103,7 +100,6 @@ const V2_ZERO_LANE_EXTRACT_SPECS: readonly V2ZeroLaneExtractSpec[] = Object.free
     description: 'Plugin install/provenance/runtime-loading hardening surfaces and the ABI seams that must stay narrow.',
     categoryIds: [
       'implicit-abi-surfaces',
-      'plugin-identity-install-provenance-trust',
     ],
   },
   {
@@ -111,10 +107,7 @@ const V2_ZERO_LANE_EXTRACT_SPECS: readonly V2ZeroLaneExtractSpec[] = Object.free
     title: 'Lane A5: Honest Supported Surface And Schema/Runtime Alignment',
     description: 'Unsupported-surface cleanup, schema/runtime honesty, and the explicit adapter split that the host now needs.',
     categoryIds: [
-      'discovery-preflight-capabilities-rpc',
-      'hardcoded-action-mcp-provider-id-surfaces',
       'implicit-abi-surfaces',
-      'provider-auth-preferences-connected-services-message-meta',
       'runtime-identity-publication-read',
       'shared-core-provider-branching',
     ],
@@ -122,13 +115,9 @@ const V2_ZERO_LANE_EXTRACT_SPECS: readonly V2ZeroLaneExtractSpec[] = Object.free
   {
     laneId: 'v2-1',
     title: 'Lane V2-1: Static Definition Split, Engine Spec, And Runtime Foundation',
-    description: 'Static-definition split, engine-spec foundation, runtime identity/discovery seams, and the intent-profile surface that must stay visible to migration tooling.',
+    description: 'Runtime identity publication seams that must stay visible to migration tooling.',
     categoryIds: [
-      'v2-1-static-definition-runtime-foundation',
-      'discovery-preflight-capabilities-rpc',
-      'provider-auth-preferences-connected-services-message-meta',
       'runtime-identity-publication-read',
-      'execution-run-intent-profiles',
     ],
   },
   {
@@ -137,10 +126,7 @@ const V2_ZERO_LANE_EXTRACT_SPECS: readonly V2ZeroLaneExtractSpec[] = Object.free
     description: 'Built-in and plugin executable engine registry convergence, including the merged contribution shell and command/help split ownership.',
     categoryIds: [
       'builtin-cli-catalog-consumers',
-      'command-handler-help-manifest',
-      'discovery-preflight-capabilities-rpc',
       'implicit-abi-surfaces',
-      'provider-auth-preferences-connected-services-message-meta',
       'shared-core-provider-branching',
     ],
   },
@@ -149,10 +135,8 @@ const V2_ZERO_LANE_EXTRACT_SPECS: readonly V2ZeroLaneExtractSpec[] = Object.free
     title: 'Lane V2-3: Execution-Run Host Bridge',
     description: 'Execution-run bridge extraction, intent-profile preservation, runtime lifecycle containment, the remaining provider-leaf execution-run semantic debt, and the voice/memory-hints constraints that must survive the bridge.',
     categoryIds: [
-      'discovery-preflight-capabilities-rpc',
       'execution-run-permission-interaction-centralization',
       'execution-run-agentbackend-semantic-debt',
-      'hardcoded-action-mcp-provider-id-surfaces',
       'implicit-abi-surfaces',
       'runtime-identity-publication-read',
       'shared-core-provider-branching',
@@ -165,9 +149,7 @@ const V2_ZERO_LANE_EXTRACT_SPECS: readonly V2ZeroLaneExtractSpec[] = Object.free
     description: 'Regular-session bridge extraction, session-target canonicalization, and the shared runtime identity and discovery seams that both bridges consume.',
     categoryIds: [
       'customacp-sentinel-consumers',
-      'discovery-preflight-capabilities-rpc',
       'implicit-abi-surfaces',
-      'provider-auth-preferences-connected-services-message-meta',
       'runtime-identity-publication-read',
       'shared-core-provider-branching',
     ],
@@ -178,7 +160,6 @@ const V2_ZERO_LANE_EXTRACT_SPECS: readonly V2ZeroLaneExtractSpec[] = Object.free
     description: 'UI descriptor projection, provider settings/auth view-model splits, and the remaining registry-facing UI seams.',
     categoryIds: [
       'implicit-abi-surfaces',
-      'provider-auth-preferences-connected-services-message-meta',
       'runtime-identity-publication-read',
       'shared-core-provider-branching',
       'static-ui-registry-consumers',
@@ -189,10 +170,7 @@ const V2_ZERO_LANE_EXTRACT_SPECS: readonly V2ZeroLaneExtractSpec[] = Object.free
     title: 'Lane V2-6: Plugin-Defined Non-ACP Backend Pilot',
     description: 'Plugin backend pilot wiring, install/provenance/trust boundaries, and the narrow author contract that should survive the first non-ACP pilot.',
     categoryIds: [
-      'hardcoded-action-mcp-provider-id-surfaces',
       'implicit-abi-surfaces',
-      'plugin-identity-install-provenance-trust',
-      'provider-auth-preferences-connected-services-message-meta',
       'shared-core-provider-branching',
     ],
   },
@@ -201,11 +179,8 @@ const V2_ZERO_LANE_EXTRACT_SPECS: readonly V2ZeroLaneExtractSpec[] = Object.free
     title: 'Lane V2-7: Hook Externalization On Unified Lifecycle Seams',
     description: 'Hook emission inventory, lifecycle-seam centralization, and the remaining ABI surfaces that must stay narrow before new hook families open.',
     categoryIds: [
-      'discovery-preflight-capabilities-rpc',
-      'hardcoded-action-mcp-provider-id-surfaces',
       'hook-emission-sites',
       'implicit-abi-surfaces',
-      'plugin-identity-install-provenance-trust',
       'shared-core-provider-branching',
     ],
   },
@@ -214,10 +189,9 @@ const V2_ZERO_LANE_EXTRACT_SPECS: readonly V2ZeroLaneExtractSpec[] = Object.free
     title: 'Lane B8: Voice, Action-Catalog, And MCP Closure',
     description: 'Voice entrypoints, closed action/MCP/provider-id surfaces, and the explicit adjacent closures that remain post-v2.',
     categoryIds: [
-      'discovery-preflight-capabilities-rpc',
-      'hardcoded-action-mcp-provider-id-surfaces',
       'runtime-identity-publication-read',
       'voice-runtime-entrypoints',
+      'voice-v3-f-v2-media-residue',
     ],
   },
 ] as const);

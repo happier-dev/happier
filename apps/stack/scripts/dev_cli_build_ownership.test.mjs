@@ -5,12 +5,54 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ensureCliBuilt } from './utils/proc/pm.mjs';
+import { ensureCliBuilt, syncSharedDepsForSourceDev } from './utils/proc/pm.mjs';
 import { writeCliDistBuildManifest } from './utils/cli/cliDistIntegrity.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(scriptsDir, '..', '..', '..');
 const sharedWorkspaceNames = ['protocol', 'agents', 'cli-common'];
+
+test('source-dev shared dependency publication runs outside the Stack owner process', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-source-dev-sync-boundary-'));
+  t.after(async () => rm(root, { recursive: true, force: true }));
+
+  const cliDir = join(root, 'apps', 'cli');
+  const scriptsDir = join(cliDir, 'scripts');
+  await mkdir(scriptsDir, { recursive: true });
+  await writeFile(
+    join(scriptsDir, 'buildSharedDeps.mjs'),
+    'export async function syncSharedDepsForSourceDev() { throw new Error("must not run in the Stack owner"); }\n',
+  );
+  await writeFile(join(scriptsDir, 'syncSharedDepsForDev.mjs'), '// canonical child entrypoint\n');
+
+  let invocation = null;
+  const result = await syncSharedDepsForSourceDev(root, {
+    cliDir,
+    env: { ...process.env },
+    quiet: true,
+    workspaceNames: ['protocol', '@happier-dev/agents'],
+    includeRuntimeDependencies: false,
+    spawnProcImpl: (label, command, args, env, options) => {
+      invocation = { command, args, options };
+      options.lineFilter({
+        stream: 'stdout',
+        line: '__HAPPIER_SOURCE_DEV_SYNC_RESULT__={"synced":true,"reason":"completed"}',
+      });
+      return { completion: Promise.resolve({ code: 0, signal: null }) };
+    },
+  });
+
+  assert.deepEqual(result, { synced: true, reason: 'completed' });
+  assert.equal(invocation?.command, process.execPath);
+  assert.deepEqual(invocation?.args, [
+    join(scriptsDir, 'syncSharedDepsForDev.mjs'),
+    '--json',
+    '--no-runtime-dependencies',
+    'protocol',
+    'agents',
+  ]);
+  assert.equal(invocation?.options.cwd, root);
+});
 
 function applyEnv(t, entries) {
   for (const [key, value] of Object.entries(entries)) {
@@ -87,6 +129,19 @@ async function createCliBuildFixture(t, { existingCliDist = false } = {}) {
       new URL('../../cli/scripts/buildSharedDeps.mjs', import.meta.url).href,
     )};\n`,
   );
+  await writeFile(
+    join(cliDir, 'scripts', 'syncSharedDepsForDev.mjs'),
+    [
+      "import { dirname, resolve } from 'node:path';",
+      "import { fileURLToPath } from 'node:url';",
+      "import { syncSharedDepsForSourceDev } from './buildSharedDeps.mjs';",
+      'const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");',
+      'const workspaceNames = process.argv.slice(2).filter((value) => !value.startsWith("--"));',
+      'const result = await syncSharedDepsForSourceDev({ repoRoot, workspaceNames });',
+      'process.stdout.write(`__HAPPIER_SOURCE_DEV_SYNC_RESULT__=${JSON.stringify(result ?? null)}\\n`);',
+      '',
+    ].join('\n'),
+  );
   await writeSharedWorkspace(root, 'protocol');
   await writeSharedWorkspace(root, 'agents', { '@happier-dev/protocol': '0.0.0' });
   await writeSharedWorkspace(root, 'cli-common', { '@happier-dev/agents': '0.0.0' });
@@ -103,6 +158,8 @@ async function createCliBuildFixture(t, { existingCliDist = false } = {}) {
     '*/packages/protocol|*/packages/agents|*/packages/cli-common)',
     '  workspace="${PWD##*/}"',
     '  echo "shared:$workspace" >> "${EVENTS_PATH:?}"',
+    '  if [ -e "$repo/.project/tmp/cli-dist-build.lock" ]; then lock_state=present; else lock_state=absent; fi',
+    '  echo "shared-lock:$workspace:$lock_state" >> "${EVENTS_PATH:?}"',
     '  out="${HAPPIER_WORKSPACE_DIST_OUTPUT_DIR:-dist}"',
     '  mkdir -p "$out"',
     '  printf "export const built = true;\\n" > "$out/index.js"',
@@ -115,10 +172,13 @@ async function createCliBuildFixture(t, { existingCliDist = false } = {}) {
     '  # Model Yarn automatic prebuild -> build:shared: this is the full-build owner.',
     '  for workspace in protocol agents cli-common; do',
     '    echo "shared:$workspace" >> "${EVENTS_PATH:?}"',
+    '    echo "shared-lock:$workspace:present" >> "${EVENTS_PATH:?}"',
     '    mkdir -p "$repo/packages/$workspace/dist"',
     '    printf "export const built = true;\\n" > "$repo/packages/$workspace/dist/index.js"',
     '  done',
-    '  echo "cli:build" >> "${EVENTS_PATH:?}"',
+    'fi',
+    'if [ "${1:-}" = "build" ] || [ "${1:-}" = "build:prepared" ]; then',
+    '  echo "cli:${1:-}" >> "${EVENTS_PATH:?}"',
     '  mkdir -p "$repo/apps/cli/dist"',
     '  printf "export const cli = true;\\n" > "$repo/apps/cli/dist/index.mjs"',
     '  node -e "const manifest = require(process.env.CLI_MANIFEST_HELPER); manifest.writeCliDistBuildManifest(process.argv[1]);" "$repo/apps/cli/dist/index.mjs"',
@@ -171,6 +231,50 @@ test('dev reaches Expo before starting remote development targets', async () => 
   );
 });
 
+test('remote Expo or daemon placement keeps generated plugin preparation on the local checkout owner', async () => {
+  const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
+
+  assert.match(source, /createHappyCliWorkspacePreparationExecutor/u);
+  assert.match(
+    source,
+    /servicePlans\.targets\.some\(\s*\(plan\) => plan\.services\.daemon \|\| plan\.services\.expo,?\s*\)/u,
+  );
+  assert.match(
+    source,
+    /const daemonRefreshEnabled = daemonReloadEnabled \|\| remoteCliWorkspacePreparationEnabled/u,
+  );
+  assert.match(source, /daemonReloadEnabled:\s*daemonRefreshEnabled/u);
+  const initialPreparationIndex = source.indexOf('await remoteWorkspacePreparationExecutor.build()');
+  const devTargetsStartIndex = source.indexOf(
+    'devTargetsController = startStackDevTargetsInBackground(',
+  );
+  assert.notEqual(initialPreparationIndex, -1, 'expected initial local generated-input preparation');
+  assert.ok(
+    initialPreparationIndex < devTargetsStartIndex,
+    'remote services must bootstrap only after the local source authority prepares generated inputs',
+  );
+});
+
+test('remote daemon preparation uses the same automatic runtime publisher as local daemon refresh', async () => {
+  const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
+
+  assert.match(
+    source,
+    /const daemonRefreshExecutor = daemonReloadEnabled[\s\S]*?: remoteWorkspacePreparationExecutor;/u,
+    'local activation and remote preparation must select one daemon refresh executor',
+  );
+  assert.match(
+    source,
+    /wrapReloadExecutorWithRuntimeSnapshotPublication\(\{\s*executor: daemonRefreshExecutor,/u,
+    'the selected daemon refresh executor must enter the one canonical runtime publisher',
+  );
+  assert.doesNotMatch(
+    source,
+    /reloadExecutors\.push\(remoteWorkspacePreparationExecutor\)/u,
+    'remote placement must not bypass automatic daemon publication',
+  );
+});
+
 test('dev publishes initial remote target state before background startup can publish a terminal state', async () => {
   const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
   const initialStateIndex = source.indexOf(
@@ -200,6 +304,11 @@ test('one full CLI admission owns every shared workspace build exactly once', as
     'yarn -s build:shared',
     'the actual CLI build lifecycle must delegate shared dependency admission to build:shared',
   );
+  assert.equal(
+    cliPackageJson.scripts?.['build:prepared'],
+    cliPackageJson.scripts?.build,
+    'Stack-owned preparation needs a lifecycle entrypoint that does not rerun Yarn prebuild',
+  );
   const { cliDir, eventsPath } = await createCliBuildFixture(t);
 
   await ensureCliBuilt(cliDir, { buildCli: true, quiet: true, env: process.env });
@@ -207,8 +316,13 @@ test('one full CLI admission owns every shared workspace build exactly once', as
   const events = await readFile(eventsPath, 'utf8');
   for (const workspaceName of sharedWorkspaceNames) {
     assert.equal(countEvent(events, `shared:${workspaceName}`), 1, `build events:\n${events}`);
+    assert.equal(
+      countEvent(events, `shared-lock:${workspaceName}:absent`),
+      1,
+      `workspace preparation must run before the final CLI dist lock:\n${events}`,
+    );
   }
-  assert.equal(countEvent(events, 'cli:build'), 1, `build events:\n${events}`);
+  assert.equal(countEvent(events, 'cli:build:prepared'), 1, `build events:\n${events}`);
 });
 
 test('one successful atomic CLI build is admitted as usable when later edits supersede it', async (t) => {
@@ -218,7 +332,7 @@ test('one successful atomic CLI build is admitted as usable when later edits sup
   const result = await ensureCliBuilt(cliDir, { buildCli: true, quiet: true, env: process.env });
   const events = await readFile(eventsPath, 'utf8');
 
-  assert.equal(countEvent(events, 'cli:build'), 1, `build events:\n${events}`);
+  assert.equal(countEvent(events, 'cli:build:prepared'), 1, `build events:\n${events}`);
   assert.deepEqual(result, {
     built: true,
     current: false,
@@ -236,5 +350,5 @@ test('adopting an existing CLI dist still repairs every missing shared workspace
   for (const workspaceName of sharedWorkspaceNames) {
     assert.equal(countEvent(events, `shared:${workspaceName}`), 1, `adoption events:\n${events}`);
   }
-  assert.equal(countEvent(events, 'cli:build'), 0, `adoption events:\n${events}`);
+  assert.equal(countEvent(events, 'cli:build:prepared'), 0, `adoption events:\n${events}`);
 });

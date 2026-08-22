@@ -13,15 +13,15 @@ async function loadWorkflow(name) {
 
 test('promote-server delegates deploy branch promotion to pipeline script', async () => {
   const raw = await loadWorkflow('promote-server.yml');
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs promote-deploy-branch/);
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs deploy/);
+  assert.match(raw, /node scripts\/pipeline\/github\/promote-deploy-branch\.mjs/);
+  assert.match(raw, /node scripts\/pipeline\/deploy\/trigger-webhooks\.mjs/);
   assert.doesNotMatch(raw, /Wait for deploy workflow/i);
 });
 
 test('server promotion admits the irreversible qualified V4 activation before deploy-branch mutation', async () => {
   const raw = await loadWorkflow('promote-server.yml');
   const admission = raw.indexOf('qualified-connected-accounts-v4-activation-admission.mjs');
-  const promotion = raw.indexOf('node scripts/pipeline/run.mjs promote-deploy-branch');
+  const promotion = raw.indexOf('node scripts/pipeline/github/promote-deploy-branch.mjs');
 
   assert.ok(admission >= 0, 'promote-server must run the qualified V4 activation admission check');
   assert.ok(promotion > admission, 'irreversible migration admission must precede deploy-branch mutation');

@@ -70,20 +70,24 @@ export const QUALIFIED_CONNECTED_ACCOUNTS_V4_ROLLBACK_SUPPORT = Object.freeze([
     ]),
   }),
   Object.freeze({
-    key: 'managedLocalServiceRunAttachment',
-    label: 'managed local-service run attachment preservation and verified reattachment',
+    key: 'publicManagedProviderRuntime',
+    label: 'public managed Provider runtime and session-demand custody',
     checks: Object.freeze([
       Object.freeze({
-        path: 'apps/cli/src/daemon/sessionRegistry.ts',
-        content: 'export const ManagedLocalServiceRunAttachmentV1Schema = z.object({',
+        path: 'apps/cli/src/providers/lifecycle/publicManagedProviderRuntimeStart.ts',
+        content: 'export async function startPublicManagedProviderRuntime',
       }),
       Object.freeze({
-        path: 'apps/cli/src/daemon/local/services/runtime.ts',
-        content: 'async reattachVerifiedRun(input:',
+        path: 'apps/cli/src/daemon/startup/startDaemonSessionControlRuntime.ts',
+        content: "'sessionDemand' as const,",
       }),
       Object.freeze({
         path: 'apps/cli/src/providers/lifecycle/managedEndpointRecovery.ts',
-        content: 'await input.localServices.reattachVerifiedRun({',
+        absent: true,
+      }),
+      Object.freeze({
+        path: 'apps/cli/src/providers/discovery/managedStart.ts',
+        absent: true,
       }),
     ]),
   }),
@@ -191,8 +195,9 @@ export function evaluateQualifiedConnectedAccountsV4PayloadPublicationAdmission(
     return {
       status: 'pre-activation',
       ...common,
-      oldServerRollbackAllowed: true,
-      oldDaemonRollbackAllowed: true,
+      exactPayloadReversionAllowed: true,
+      oldServerRollbackAllowed: false,
+      oldDaemonRollbackAllowed: false,
     };
   }
 
@@ -200,6 +205,7 @@ export function evaluateQualifiedConnectedAccountsV4PayloadPublicationAdmission(
   return {
     status: 'post-activation-compatible',
     ...common,
+    exactPayloadReversionAllowed: false,
     oldServerRollbackAllowed: false,
     oldDaemonRollbackAllowed: false,
   };
@@ -279,7 +285,12 @@ function readRollbackSupportAtRef(repoRoot, ref, { allowMissingRef = false } = {
   return Object.fromEntries(
     QUALIFIED_CONNECTED_ACCOUNTS_V4_ROLLBACK_SUPPORT.map(({ key, checks }) => [
       key,
-      checks.every(({ path, content }) => readPath(path)?.includes(content) === true),
+      checks.every(({ path, content, absent }) => {
+        const source = readPath(path);
+        return absent === true
+          ? source === null
+          : source?.includes(content) === true;
+      }),
     ]),
   );
 }
@@ -308,8 +319,9 @@ function renderSummary(result, { baselineRef, candidateRef, admissionKind }) {
     : '';
   const rollback = result.status === 'pre-activation'
     ? [
-        '- old-server rollback remains allowed before activation: `true`',
-        '- old-daemon rollback remains allowed before activation: `true`',
+        '- exact local payload reversion is admitted before activation: `true`',
+        '- old-server semantic rollback allowed: `false`',
+        '- old-daemon semantic rollback allowed: `false`',
       ]
     : [
         '- old-server rollback allowed after activation: `false`',

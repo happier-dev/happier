@@ -667,7 +667,7 @@ fs.existsSync = function patchedExistsSync(path) {
   const result = originalExistsSync.call(this, path);
   const locksDir = join(cliHomeDir, 'locks');
   const lockFiles = originalExistsSync.call(fs, locksDir)
-    ? originalReaddirSync.call(fs, locksDir).filter((name) => name.startsWith('daemon-lifecycle-'))
+    ? originalReaddirSync.call(fs, locksDir).filter((name) => name.startsWith('stack-daemon-orchestration-'))
     : [];
   if (!replacedUnderLifecycleLock && lockFiles.length === 1) {
     fs.renameSync(dirname(distEntrypoint), join(cliDir, '.admitted-dist'));
@@ -710,7 +710,7 @@ assert.equal(replacedUnderLifecycleLock, true);
 assert.equal(failure?.code, 'ECLIDISTSTALECOLDSTART');
 assert.equal(fs.existsSync(spawnMarker), false, 'no daemon stop/start command may spawn after final admission fails');
 const remainingLifecycleLocks = fs.existsSync(join(cliHomeDir, 'locks'))
-  ? fs.readdirSync(join(cliHomeDir, 'locks')).filter((name) => name.startsWith('daemon-lifecycle-'))
+  ? fs.readdirSync(join(cliHomeDir, 'locks')).filter((name) => name.startsWith('stack-daemon-orchestration-'))
   : [];
 assert.deepEqual(remainingLifecycleLocks, [], 'typed admission failure must release the existing lifecycle lock');
 `;
@@ -818,7 +818,7 @@ assert.equal(fs.existsSync(daemonStopMarker), true, 'the awaited daemon stop mus
 assert.equal(fs.existsSync(daemonStartMarker), false, 'no daemon start command may spawn after the workspace runtime changes during stop');
 assert.equal(failure?.code, 'ECLIDISTSTALECOLDSTART');
 const remainingLifecycleLocks = fs.existsSync(join(cliHomeDir, 'locks'))
-  ? fs.readdirSync(join(cliHomeDir, 'locks')).filter((name) => name.startsWith('daemon-lifecycle-'))
+  ? fs.readdirSync(join(cliHomeDir, 'locks')).filter((name) => name.startsWith('stack-daemon-orchestration-'))
   : [];
 assert.deepEqual(remainingLifecycleLocks, [], 'typed admission failure must release the existing lifecycle lock');
 `;
@@ -2872,7 +2872,12 @@ if (args[1] === 'start') {
 process.exit(0);
 `;
     const { cliBinDir } = await writeStubHappierCliFiles(monoRoot, {
-      packageJsonContent: JSON.stringify({ scripts: { build: 'node scripts/build.mjs' } }) + '\n',
+      packageJsonContent: JSON.stringify({
+        scripts: {
+          build: 'node scripts/build.mjs',
+          'build:prepared': 'node scripts/build.mjs',
+        },
+      }) + '\n',
       binHappierScript: 'process.exit(42);\n',
     });
     await mkdir(join(cliDir, 'scripts'), { recursive: true });

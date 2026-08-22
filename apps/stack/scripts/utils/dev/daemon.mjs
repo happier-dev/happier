@@ -5,7 +5,7 @@ import {
   readCliNodeWorkspaceRuntimeIdentity,
 } from '@happier-dev/cli-common/componentArtifacts/copyCliNodeRuntimePayload';
 
-import { ensureCliBuilt } from '../proc/pm.mjs';
+import { ensureCliBuilt, syncSharedDepsForSourceDev } from '../proc/pm.mjs';
 import { getAccountCountForServerComponent, prepareDaemonAuthSeedIfNeeded } from '../stack/startup.mjs';
 import { startLocalDaemonWithAuth } from '../../daemon.mjs';
 import {
@@ -66,11 +66,34 @@ export function createHappyCliReloadDescriptors({ cliDir, existsSyncImpl = exist
     {
       id: 'daemon:cli-publication',
       target: 'daemon',
+      invalidatesGeneration: false,
       paths: publicationPaths,
       readSignature: () => readHappyCliWatchChangeSignature(publicationPaths),
       readSignatureAsync: () => readHappyCliWatchChangeSignatureAsync(publicationPaths),
     },
   ];
+}
+
+export function createHappyCliWorkspacePreparationExecutor({
+  repoRoot,
+  cliDir,
+  env = process.env,
+}, {
+  syncSharedDepsForSourceDevImpl = syncSharedDepsForSourceDev,
+} = {}) {
+  return {
+    target: 'daemon',
+    async build() {
+      return await syncSharedDepsForSourceDevImpl(repoRoot, {
+        cliDir,
+        env,
+        quiet: true,
+      });
+    },
+    async restart() {
+      return { skipped: true, reason: 'preparation-only' };
+    },
+  };
 }
 
 function readHappyCliWatchChangeSignature(paths) {
@@ -352,6 +375,24 @@ export function createHappyCliReloadExecutor({
             || !currentInputFingerprint
             || publishedInputFingerprint !== currentInputFingerprint
           );
+          try {
+            assertSuccessorWorkspaceRuntimeStillCurrent();
+          } catch (error) {
+            if (error?.code !== CLI_WORKSPACE_RUNTIME_ADVANCED_ERROR_CODE) throw error;
+            successorDistClosureFingerprint = null;
+            successorWorkspaceRuntimeIdentity = null;
+            successorActivationMayOutliveGeneration = false;
+            successorPublicationSuperseded = false;
+            logger.warn(
+              '[local] watch: external happier-cli publication has no matching workspace runtime; ' +
+                'skipping activation and requesting the canonical shared build.',
+            );
+            return {
+              skipped: true,
+              reason: 'cli-publication-workspace-runtime-unavailable',
+              requestFollowup: true,
+            };
+          }
           logger.log('[local] watch: adopting externally published happier-cli dist before any trailing rebuild.');
           return {
             ok: true,

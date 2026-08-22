@@ -1,7 +1,10 @@
 // @ts-check
 
 import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+
+import { resolveLocalhostHost } from '../../apps/stack/scripts/utils/paths/localhost_host.mjs';
+import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer } from '../../apps/stack/scripts/runtime/shared/borrowed_expo.mjs';
 
 function readJsonFileBestEffort(path) {
   try {
@@ -62,6 +65,31 @@ function readPortFromRuntimeJson(json, path) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
+function readEnvValue(path, key) {
+  try {
+    const lines = readFileSync(path, 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#') || !trimmed.startsWith(`${key}=`)) continue;
+      let value = trimmed.slice(key.length + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      return value.trim();
+    }
+  } catch {}
+  return '';
+}
+
+function resolveQaStackName({ env, json, runtimePath }) {
+  return String(
+    env.HAPPIER_QA_STACK_NAME
+    ?? json?.stackName
+    ?? runtimePath.split(/[\\/]/).at(-2)
+    ?? '',
+  ).trim();
+}
+
 export function resolveQaUiUrl(env = process.env) {
   const runtimePath = resolveRuntimeJsonPathFromEnv(env);
   const json = runtimePath ? readJsonFileBestEffort(runtimePath) : null;
@@ -70,14 +98,46 @@ export function resolveQaUiUrl(env = process.env) {
   }
 
   const serverPort = readPortFromRuntimeJson(json, 'server');
-  const webPort = readPortFromRuntimeJson(json, 'web');
-  if (!serverPort || !webPort) {
-    throw new Error(`[qa-ui-url] stack.runtime.json missing ports (server=${String(serverPort)} web=${String(webPort)})`);
+  if (!serverPort) {
+    throw new Error(`[qa-ui-url] stack.runtime.json missing server port (server=${String(serverPort)})`);
   }
 
-  // Use loopback IPv4 to avoid IPv6/localhost resolution differences across hosts.
-  const out = new URL(`http://127.0.0.1:${webPort}/`);
-  out.searchParams.set('server', `http://127.0.0.1:${serverPort}`);
+  const stackName = resolveQaStackName({ env, json, runtimePath });
+  const host = stackName
+    ? resolveLocalhostHost({ stackMode: true, stackName })
+    : '127.0.0.1';
+  const uiMode = String(env.HAPPIER_QA_UI_MODE ?? '').trim().toLowerCase();
+  if (uiMode === 'snapshot') {
+    return new URL(`http://${host}:${serverPort}/`).toString();
+  }
+
+  const consumerStackDir = dirname(runtimePath);
+  const stacksDir = String(env.HAPPIER_QA_STACKS_DIR ?? '').trim() || dirname(consumerStackDir);
+  const borrowedExpoStackName = String(
+    env.HAPPIER_QA_EXPO_SOURCE_STACK
+    ?? readEnvValue(join(consumerStackDir, 'env'), 'HAPPIER_STACK_EXPO_SOURCE_STACK')
+    ?? '',
+  ).trim();
+  const borrowedExpo = isBorrowedExpoConsumer({
+    consumerStackName: stackName,
+    producerStackName: borrowedExpoStackName,
+  });
+  const expoRuntime = borrowedExpo
+    ? readJsonFileBestEffort(join(stacksDir, borrowedExpoStackName, 'stack.runtime.json'))
+    : json;
+  const webPort = readPortFromRuntimeJson(expoRuntime, 'web');
+  if (!webPort) {
+    throw new Error(
+      `[qa-ui-url] ${borrowedExpo ? `borrowed Expo stack ${borrowedExpoStackName}` : 'stack.runtime.json'} missing web port`,
+    );
+  }
+
+  if (borrowedExpo) {
+    return buildBorrowedExpoUiUrl({ consumerHost: host, expoPort: webPort, serverPort });
+  }
+
+  const out = new URL(`http://${host}:${webPort}/`);
+  out.searchParams.set('server', `http://${host}:${serverPort}`);
   return out.toString();
 }
 
@@ -104,4 +164,3 @@ export function isQaUiUrlPathSuffix(url, suffix) {
     return false;
   }
 }
-

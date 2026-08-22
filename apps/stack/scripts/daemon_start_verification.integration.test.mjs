@@ -12,7 +12,9 @@ import {
   checkDaemonState,
   DEFAULT_STACK_DAEMON_START_VERIFY_TIMEOUT_MS,
   matchDaemonEnvLine,
+  resolveAttendedStartupTimeoutMs,
   resolveStackDaemonStartVerifyTimeoutMs,
+  shouldContinueAttendedDaemonStartVerification,
   startLocalDaemonWithAuth,
 } from './daemon.mjs';
 import { killDetachedProcessGroup } from './testkit/core/spawn_daemon_like_process.mjs';
@@ -93,6 +95,26 @@ if (sub === 'start') {
 test('stack daemon start verification default matches the daemon restart wait budget', () => {
   assert.equal(resolveStackDaemonStartVerifyTimeoutMs({}), 120_000);
   assert.equal(resolveStackDaemonStartVerifyTimeoutMs({ HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '1234' }), 1234);
+});
+
+test('attended daemon verification only extends a checkpoint for a live daemon process', () => {
+  assert.equal(shouldContinueAttendedDaemonStartVerification({
+    isTui: true,
+    state: { status: 'starting', pid: 123 },
+  }), true);
+  assert.equal(shouldContinueAttendedDaemonStartVerification({
+    isTui: false,
+    state: { status: 'starting', pid: 123 },
+  }), false);
+  assert.equal(shouldContinueAttendedDaemonStartVerification({
+    isTui: true,
+    state: { status: 'not_running' },
+  }), false);
+});
+
+test('attended startup removes terminal lock and credential deadlines without changing unattended budgets', () => {
+  assert.equal(resolveAttendedStartupTimeoutMs({ isTui: true, timeoutMs: 1234 }), Infinity);
+  assert.equal(resolveAttendedStartupTimeoutMs({ isTui: false, timeoutMs: 1234 }), 1234);
 });
 
 test('matchDaemonEnvLine identifies which daemon env binding differs', () => {

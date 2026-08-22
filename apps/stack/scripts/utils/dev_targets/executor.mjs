@@ -36,7 +36,8 @@ function assertReadySyncStatus(status, { allowSynchronizing = false } = {}) {
   const detail = reason ? `: ${reason}` : '';
   throw new Error(
     `[dev-targets] ${status.sessionName} synchronization is ${status.state}${detail}; `
-      + 'start or resume yarn tui, or run hstack dev-targets status for details',
+      + 'run hstack dev-targets sync-service start --detached to resume synchronization, '
+      + 'or run hstack dev-targets status for details',
   );
 }
 
@@ -109,6 +110,7 @@ export async function runDevTargetDependencyBootstrap(
     target,
     stackBaseDir,
     syncAlreadyVerified = false,
+    flush = false,
     env = process.env,
   },
   { runCommand = runDevTargetCommand } = {},
@@ -125,6 +127,7 @@ export async function runDevTargetDependencyBootstrap(
     },
     dependencyAdmission: 'skip',
     syncAlreadyVerified,
+    ...(flush ? { flush: true } : {}),
     env,
   });
 }

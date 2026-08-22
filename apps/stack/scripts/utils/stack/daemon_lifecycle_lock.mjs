@@ -17,7 +17,7 @@ export function resolveStackDaemonLifecycleLockPath({ cliHomeDir, internalServer
   if (!home) {
     throw new Error('resolveStackDaemonLifecycleLockPath requires cliHomeDir');
   }
-  return join(home, 'locks', `daemon-lifecycle-${lockScopeHash({ internalServerUrl, stackName })}.lock`);
+  return join(home, 'locks', `stack-daemon-orchestration-${lockScopeHash({ internalServerUrl, stackName })}.lock`);
 }
 
 export function isStackDaemonLifecycleLockActive(lockPath, options = {}) {
@@ -31,7 +31,9 @@ export async function withStackDaemonLifecycleLock(scope, fn, options = {}) {
   const lockPath = options.lockPath ?? resolveStackDaemonLifecycleLockPath(scope);
   const timeoutMs = options.timeoutMs ?? 120_000;
   const pollIntervalMs = options.pollIntervalMs ?? 125;
-  const staleAfterMs = options.staleAfterMs ?? Math.max(60_000, timeoutMs);
+  const staleAfterMs = options.staleAfterMs ?? (
+    Number.isFinite(timeoutMs) ? Math.max(60_000, timeoutMs) : 180_000
+  );
 
   return withJsonOwnerFileLock(
     ({ waited }) => fn({ waited, lockPath }),
@@ -41,6 +43,7 @@ export async function withStackDaemonLifecycleLock(scope, fn, options = {}) {
       pollIntervalMs,
       staleAfterMs,
       errorLabel: 'daemon lifecycle lock',
+      onWait: options.onWait,
     },
   );
 }

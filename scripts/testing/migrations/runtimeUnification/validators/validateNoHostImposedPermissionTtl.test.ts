@@ -126,6 +126,130 @@ test('validateNoHostImposedPermissionTtl rejects copied plugin lifecycle timers 
   assert.ok(result.errors.some((error) => error.includes('pendingRequests')));
 });
 
+test('validateNoHostImposedPermissionTtl ignores dependency, generated, temporary, and restore artifacts without ignoring other dot-directories', async () => {
+  const { validateNoHostImposedPermissionTtl } = await loadValidator();
+  const rootDir = createRepo();
+  writeCurrentAllowlistedBridge(rootDir);
+  const artifactFiles = [
+    'packages/plugins/cliproxyapi/node_modules/vendor/permissionRuntime.ts',
+    'packages/plugins/google/generated/permissionRuntime.ts',
+    'packages/plugins/inspector/.tmp-build/permissionRuntime.ts',
+    'packages/plugins/claude/.restore.1234/agent/permissions/runtime.ts',
+  ];
+  for (const filePath of artifactFiles) {
+    writeRepoFile(
+      rootDir,
+      filePath,
+      'const pendingRequests = new Map();\nsetTimeout(() => pendingRequests.clear(), 1000);\n',
+    );
+  }
+
+  const artifactOnlyResult = validateNoHostImposedPermissionTtl({ rootDir });
+
+  assert.equal(artifactOnlyResult.ok, true);
+  assert.deepEqual(artifactOnlyResult.errors, []);
+  assert.ok(artifactFiles.every((filePath) => !artifactOnlyResult.scannedFiles.includes(filePath)));
+
+  const dotProductionPath = 'packages/plugins/claude/.owned-source/permissionRuntime.ts';
+  writeRepoFile(
+    rootDir,
+    dotProductionPath,
+    'const pendingRequests = new Map();\nsetTimeout(() => pendingRequests.clear(), 1000);\n',
+  );
+
+  const dotProductionResult = validateNoHostImposedPermissionTtl({ rootDir });
+
+  assert.equal(dotProductionResult.ok, false);
+  assert.ok(dotProductionResult.scannedFiles.includes(dotProductionPath));
+  assert.ok(dotProductionResult.errors.some((error) => error.includes(dotProductionPath)));
+});
+
+test('validateNoHostImposedPermissionTtl accepts external-session invocation readiness deadlines', async () => {
+  const { validateNoHostImposedPermissionTtl } = await loadValidator();
+  const rootDir = createRepo();
+  writeCurrentAllowlistedBridge(rootDir);
+  const externalSessionFiles = [
+    'packages/plugins/claude/src/agent/surfaces/sessions/external/hooks.ts',
+    'packages/plugins/codex/src/agent/surfaces/sessions/external/externalSessionHooks.ts',
+  ];
+  for (const filePath of externalSessionFiles) {
+    writeRepoFile(
+      rootDir,
+      filePath,
+      [
+        'function invocationFailure(request: { deadlineAtMs: number }) {',
+        '  if (Date.now() >= request.deadlineAtMs) {',
+        "    return { ok: false, code: 'timeout', message: 'Callback exceeded its deadline.' };",
+        '  }',
+        '  return null;',
+        '}',
+        '',
+      ].join('\n'),
+    );
+  }
+
+  const result = validateNoHostImposedPermissionTtl({ rootDir });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.errors, []);
+  assert.ok(externalSessionFiles.every((filePath) => result.scannedFiles.includes(filePath)));
+});
+
+test('validateNoHostImposedPermissionTtl accepts assistant terminalization grace beside an independent permission-denied outcome', async () => {
+  const { validateNoHostImposedPermissionTtl } = await loadValidator();
+  const rootDir = createRepo();
+  writeCurrentAllowlistedBridge(rootDir);
+  const filePath = 'packages/plugins/opencode/src/agent/runtime/server/runtimeController.ts';
+  writeRepoFile(
+    rootDir,
+    filePath,
+    [
+      'const acceptedAtMs = state.currentTurnPromptAcceptedAtMs;',
+      'const assistantGraceExpired = acceptedAtMs !== null',
+      '  && Date.now() - acceptedAtMs >= 60_000;',
+      'const permissionDenied = currentTurnPermissionRejectionMessage !== null;',
+      'if (terminalWithoutText || permissionDenied || assistantGraceExpired) {',
+      '  completeTurn();',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  const result = validateNoHostImposedPermissionTtl({ rootDir });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.errors, []);
+  assert.ok(result.scannedFiles.includes(filePath));
+});
+
+test('validateNoHostImposedPermissionTtl rejects a permission-denied deadline in the same branch condition', async () => {
+  const { validateNoHostImposedPermissionTtl } = await loadValidator();
+  const rootDir = createRepo();
+  writeCurrentAllowlistedBridge(rootDir);
+  const filePath = 'packages/plugins/sample/src/agent/runtime/requestDeadline.ts';
+  writeRepoFile(
+    rootDir,
+    filePath,
+    [
+      'const permissionDenied = currentPermissionDecision === "denied";',
+      'const deadline = request.deadlineAtMs;',
+      'if (',
+      '  permissionDenied',
+      '  && Date.now() >= deadline',
+      ') {',
+      '  cancelPermissionRequest(request.id);',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  const result = validateNoHostImposedPermissionTtl({ rootDir });
+
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes(filePath)));
+  assert.ok(result.errors.some((error) => error.includes('Date.now')));
+});
+
 test('validateNoHostImposedPermissionTtl treats permission-owned timers as suspicious by path', async () => {
   const { validateNoHostImposedPermissionTtl } = await loadValidator();
   const rootDir = createRepo();
@@ -319,4 +443,58 @@ test('validateNoHostImposedPermissionTtl rejects split-clock max-age permission 
   assert.equal(result.ok, false);
   assert.ok(result.errors.some((error) => error.includes('Date.now')));
   assert.ok(result.errors.some((error) => error.includes('createdAt')));
+});
+
+test('validateNoHostImposedPermissionTtl accepts a wire-protocol keepalive timer whose neighbourhood merely mentions reconnect requests', async () => {
+  const { validateNoHostImposedPermissionTtl } = await loadValidator();
+  const rootDir = createRepo();
+  writeCurrentAllowlistedBridge(rootDir);
+  const filePath = 'packages/plugins/channel-discord/src/discordGatewayWorker.ts';
+  writeRepoFile(
+    rootDir,
+    filePath,
+    [
+      "case 'scheduleHeartbeat':",
+      '  clearHeartbeat();',
+      '  heartbeatHandle = clock.setTimeout(() => {',
+      '    if (signal.aborted || controlResult || reconnectRequested) return;',
+      '    void processEffects(session.onHeartbeatTimer()).catch(() => requestReconnect());',
+      '  }, effect.afterMs);',
+      '  break;',
+      '',
+    ].join('\n'),
+  );
+
+  const result = validateNoHostImposedPermissionTtl({ rootDir });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.errors, []);
+  assert.ok(result.scannedFiles.includes(filePath));
+});
+
+test('validateNoHostImposedPermissionTtl still rejects a request-store expiry timer that never says permission', async () => {
+  const { validateNoHostImposedPermissionTtl } = await loadValidator();
+  const rootDir = createRepo();
+  writeCurrentAllowlistedBridge(rootDir);
+  const filePath = 'packages/plugins/sample/src/agent/state/agentStateRequestStore.ts';
+  writeRepoFile(
+    rootDir,
+    filePath,
+    [
+      'const requests = new Map<string, { createdAt: number }>();',
+      'setInterval(() => {',
+      '  for (const [id, entry] of requests) {',
+      '    if (isStale(entry)) requests.delete(id);',
+      '  }',
+      '}, 1_000);',
+      'function isStale(_entry: { createdAt: number }) { return false; }',
+      '',
+    ].join('\n'),
+  );
+
+  const result = validateNoHostImposedPermissionTtl({ rootDir });
+
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes(filePath)));
+  assert.ok(result.errors.some((error) => error.includes('setInterval')));
 });

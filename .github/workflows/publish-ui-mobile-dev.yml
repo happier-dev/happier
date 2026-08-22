@@ -394,12 +394,35 @@ jobs:
           token: ${{ steps.app_token.outputs.token }}
           persist-credentials: false
 
+      - name: Checkout trusted TestFlight preflight control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .testflight-preflight-control
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
+
+      - name: Validate configured external TestFlight groups
+        working-directory: .testflight-preflight-control
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs ui-mobile-release \
+            --environment dev \
+            --action native_submit \
+            --platform ios \
+            --profile dev \
+            --preflight-only \
+            --secrets-source env
 
       - name: Enable Corepack (Yarn)
         run: |
@@ -470,12 +493,35 @@ jobs:
           token: ${{ steps.app_token.outputs.token }}
           persist-credentials: false
 
+      - name: Checkout trusted TestFlight preflight control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .testflight-preflight-control
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
+
+      - name: Validate configured external TestFlight groups
+        working-directory: .testflight-preflight-control
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs ui-mobile-release \
+            --environment dev \
+            --action native_submit \
+            --platform ios \
+            --profile dev \
+            --preflight-only \
+            --secrets-source env
 
       - name: Enable Corepack (Yarn)
         run: |

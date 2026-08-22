@@ -42,6 +42,7 @@ test('nightly-dev verifies exact immutable candidates before promoting any user-
   assert.ok(candidate, 'nightly must bind its requested source ref once before parallel publication');
   assert.equal(candidate.outputs.source_sha, '${{ steps.identity.outputs.source_sha }}');
   assert.equal(candidate.outputs.release_message, '${{ steps.identity.outputs.release_message }}');
+  assert.equal(candidate.outputs.release_needed, '${{ steps.release_needed.outputs.release_needed }}');
   assert.doesNotMatch(
     JSON.stringify(candidate.steps),
     /project-release-notes\.mjs/,
@@ -53,6 +54,8 @@ test('nightly-dev verifies exact immutable candidates before promoting any user-
   for (const jobName of ['cli', 'hstack', 'server_runtime', 'ui_web']) {
     const job = workflow.jobs[jobName];
     assert.ok(job.needs.includes('prepare_release_candidate'), `${jobName} must wait for the exact nightly candidate`);
+    assert.ok(job.needs.includes('verify_source_ci'), `${jobName} must wait for ordinary CI on the exact source`);
+    assert.equal(job.if, "${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}");
     assert.equal(job.with.source_ref, exactSha, `${jobName} must consume the exact nightly candidate SHA`);
   }
   for (const jobName of ['cli', 'hstack', 'server_runtime', 'ui_web', 'docker']) {
@@ -119,7 +122,7 @@ test('nightly-dev verifies exact immutable candidates before promoting any user-
 
   const status = workflow.jobs.release_status;
   assert.ok(status, 'nightly must project terminal release status even when upstream work fails');
-  assert.equal(status.if, '${{ always() }}');
+  assert.equal(status.if, "${{ always() && needs.prepare_release_candidate.outputs.release_needed != 'false' }}");
   const projection = status.steps.find((step) => step.name === 'Project nightly release status facts');
   assert.equal(projection.env.RELEASE_RUN_URL, 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}');
   assert.match(projection.run, /project-release-status\.mjs/);
@@ -130,6 +133,29 @@ test('nightly-dev verifies exact immutable candidates before promoting any user-
     status.steps.find((step) => String(step.uses ?? '').startsWith('actions/upload-artifact@')).with.name,
     'happier-release-status',
   );
+});
+
+test('scheduled nightlies require exact-SHA CI and safely no-op only after a complete matching nightly', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'nightly-dev.yml'), 'utf8');
+  const workflow = YAML.parse(raw);
+  const candidate = workflow.jobs.prepare_release_candidate;
+  const verify = workflow.jobs.verify_source_ci;
+  const noOp = workflow.jobs.nightly_noop;
+
+  assert.equal(candidate.permissions.actions, 'read');
+  assert.match(JSON.stringify(candidate.steps), /gh run list/);
+  assert.match(JSON.stringify(candidate.steps), /--status success/);
+  for (const tag of ['server-dev', 'stack-dev', 'cli-dev', 'ui-web-dev']) {
+    assert.match(JSON.stringify(candidate.steps), new RegExp(tag));
+  }
+  assert.equal(verify.permissions.actions, 'read');
+  assert.deepEqual(verify.needs, ['prepare_release_candidate']);
+  assert.equal(verify.if, "${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}");
+  assert.match(JSON.stringify(verify.steps), /verify-existing-ci\.mjs/);
+  assert.match(JSON.stringify(verify.steps), /tests\.yml/);
+  assert.match(JSON.stringify(verify.steps), /needs\.prepare_release_candidate\.outputs\.source_sha/);
+  assert.equal(noOp.if, "${{ needs.prepare_release_candidate.outputs.release_needed == 'false' }}");
+  assert.match(JSON.stringify(noOp.steps), /already completed successfully/);
 });
 
 test('ordinary nightlies advance the pre-bound source issue snapshot only after dev promotion is verified', async () => {

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { lstat, mkdtemp, writeFile, mkdir, realpath, rm, readFile, symlink } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as packModule from './pack.mjs';
 import {
   assertPhysicalPathWithinApprovedRoot,
@@ -19,6 +19,86 @@ import {
   resolvePackDirForComponent,
   resolvePackSandboxWorkspaceRelDirs,
 } from './pack.mjs';
+
+test('public toolchain pack staging derives its required external inputs from one generator-owned selector', async () => {
+  const { resolvePublicToolchainRequiredInputStagingRelDirs } = await import(
+    '../../../packages/plugin-sdk/scripts/generatePublicToolchainCompatibility.mjs'
+  );
+
+  assert.deepEqual(
+    resolvePublicToolchainRequiredInputStagingRelDirs(),
+    [
+      'apps/cli/src/plugins/scaffold',
+      'apps/docs/content/docs/plugins/manifest',
+      'apps/docs/content/docs/plugins/packaging',
+      'packages/tests/pluginSdkConsumers',
+      'packages/tests/scripts/plugin-platform',
+    ],
+  );
+});
+
+test('createPackSandbox stages every available capability-matrix proving consumer through its owner selector', async () => {
+  const capabilityMatrixCliUrl = new URL(
+    '../../../packages/plugin-sdk/scripts/capabilityMatrixCli.mjs',
+    import.meta.url,
+  );
+  const capabilityMatrixPackageRoot = fileURLToPath(new URL('../../../packages/plugin-sdk', import.meta.url));
+  const { resolveAvailableCapabilityMatrixProvingConsumerSourcePaths } = await import(capabilityMatrixCliUrl.href);
+  const sourcePaths = await resolveAvailableCapabilityMatrixProvingConsumerSourcePaths({
+    packageRoot: capabilityMatrixPackageRoot,
+  });
+
+  assert.ok(sourcePaths.length > 0, 'the capability matrix must name available public proving consumers');
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-capability-matrix-proving-consumers-'));
+  let sandboxRoot = '';
+  try {
+    const monorepoRoot = await createHoistedRuntimePackFixture({ root });
+    await mkdir(join(monorepoRoot, 'packages', 'plugin-sdk', 'scripts'), { recursive: true });
+    await writeFile(
+      join(monorepoRoot, 'packages', 'plugin-sdk', 'scripts', 'capabilityMatrixCli.mjs'),
+      [
+        `import { resolveAvailableCapabilityMatrixProvingConsumerSourcePaths as resolveSourcePaths } from ${JSON.stringify(capabilityMatrixCliUrl.href)};`,
+        'export async function resolveAvailableCapabilityMatrixProvingConsumerSourcePaths() {',
+        `  return await resolveSourcePaths({ packageRoot: ${JSON.stringify(capabilityMatrixPackageRoot)} });`,
+        '}',
+        '',
+      ].join('\n'),
+    );
+    for (const sourcePath of sourcePaths) {
+      const fixtureSourcePath = join(monorepoRoot, sourcePath);
+      await mkdir(dirname(fixtureSourcePath), { recursive: true });
+      await writeFile(fixtureSourcePath, 'export const capabilityMatrixProvingConsumer = true;\n');
+    }
+    await mkdir(join(monorepoRoot, 'packages', 'plugin-ui'), { recursive: true });
+    await writeFile(
+      join(monorepoRoot, 'packages', 'plugin-ui', 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/plugin-ui',
+        bundledDependencies: ['@happier-dev/plugin-sdk', '@happier-dev/protocol'],
+      }),
+    );
+
+    sandboxRoot = await createPackSandbox({
+      monorepoRoot,
+      packageRelDir: 'packages/plugin-ui',
+    });
+
+    for (const sourcePath of sourcePaths) {
+      const stagedStats = await lstat(join(sandboxRoot, sourcePath)).catch((error) => {
+        if (error?.code === 'ENOENT') return null;
+        throw error;
+      });
+      assert.equal(
+        stagedStats?.isFile(),
+        true,
+        `Plugin UI prepack must retain capability-matrix proving consumer source: ${sourcePath}`,
+      );
+    }
+  } finally {
+    if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 async function writeFixtureRuntimeDependencyOwner(monorepoRoot) {
   await writeFile(
@@ -40,6 +120,7 @@ async function createHoistedRuntimePackFixture({
   symlinkRuntimeOutside = false,
   includeUndeclaredNestedRuntime = false,
   includeSiblingBorrowSymlink = false,
+  includeBuildOnlyWorkspace = false,
 }) {
   const monorepoRoot = join(root, 'repo');
   for (const relDir of [
@@ -92,8 +173,38 @@ async function createHoistedRuntimePackFixture({
       dependencies: {
         '@fixture/runtime': '^1.0.0',
       },
+      ...(includeBuildOnlyWorkspace
+        ? { devDependencies: { '@happier-dev/testkit': '0.0.0' } }
+        : {}),
     }),
   );
+  if (includeBuildOnlyWorkspace) {
+    // A build-only internal workspace enters the sandbox copy set so prepack scripts can resolve
+    // it, and it declares a runtime dependency on an unscoped workspace member that is linked into
+    // the root dependency tree (the `privacy-kit` shape).
+    await mkdir(join(monorepoRoot, 'packages', 'testkit'), { recursive: true });
+    await writeFile(
+      join(monorepoRoot, 'packages', 'testkit', 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/testkit',
+        dependencies: {
+          'workspace-linked-runtime': '^1.0.0',
+        },
+      }),
+    );
+    const workspaceLinkedRuntimeDir = join(monorepoRoot, 'packages', 'workspace-linked-runtime');
+    await mkdir(workspaceLinkedRuntimeDir, { recursive: true });
+    await writeFile(
+      join(workspaceLinkedRuntimeDir, 'package.json'),
+      JSON.stringify({ name: 'workspace-linked-runtime', version: '1.0.0' }),
+    );
+    await writeFile(join(workspaceLinkedRuntimeDir, 'index.js'), 'export const linked = true;\n');
+    await symlink(
+      join('..', 'packages', 'workspace-linked-runtime'),
+      join(monorepoRoot, 'node_modules', 'workspace-linked-runtime'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+  }
   await writeFile(join(monorepoRoot, 'scripts', 'workspaces', 'placeholder.mjs'), '');
   await writeFile(join(monorepoRoot, 'scripts', 'testing', 'process', 'placeholder.mjs'), '');
   await writeFile(
@@ -266,6 +377,61 @@ test('exportPackSandboxTarball persists exact validated bytes and returns path-f
     const serialized = JSON.stringify(metadata);
     assert.equal(serialized.includes(root), false);
     assert.equal(serialized.includes(sandboxRoot), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('exportPackSandboxTarball applies an explicit qualified version only inside the pack sandbox', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-version-override-'));
+  const sandboxRoot = join(root, 'sandbox');
+  const sandboxPackDir = join(sandboxRoot, 'apps', 'cli');
+  const sourceRoot = join(root, 'source');
+  const sourcePackageJsonPath = join(sourceRoot, 'apps', 'cli', 'package.json');
+  const destinationDir = join(root, 'destination');
+  const sourceVersion = '0.2.10';
+  const candidateVersion = '0.2.10-dev.1770000000.42';
+  const tarballName = `happier-dev-cli-${candidateVersion}.tgz`;
+  try {
+    await mkdir(sandboxPackDir, { recursive: true });
+    await mkdir(dirname(sourcePackageJsonPath), { recursive: true });
+    await mkdir(destinationDir);
+    await writeFile(sourcePackageJsonPath, JSON.stringify({
+      name: '@happier-dev/cli',
+      version: sourceVersion,
+    }));
+    await writeFile(join(sandboxPackDir, 'package.json'), JSON.stringify({
+      name: '@happier-dev/cli',
+      version: sourceVersion,
+    }));
+
+    const metadata = await exportPackSandboxTarball({
+      monorepoRoot: sourceRoot,
+      packageRelDir: 'apps/cli',
+      destinationDir,
+      packageVersion: candidateVersion,
+      createPackSandboxImpl: async () => sandboxRoot,
+      runCaptureImpl: async (command, args) => {
+        if (command === 'npm') {
+          const packedManifest = JSON.parse(
+            await readFile(join(sandboxPackDir, 'package.json'), 'utf8'),
+          );
+          assert.equal(packedManifest.version, candidateVersion);
+          if (args.includes('--dry-run')) return 'dry-run';
+          await writeFile(join(sandboxPackDir, tarballName), 'qualified-candidate');
+          return tarballName;
+        }
+        if (command === 'tar') return 'package/package.json\n';
+        throw new Error(`unexpected command: ${command}`);
+      },
+    });
+
+    assert.equal(metadata.package.version, candidateVersion);
+    assert.equal(metadata.tarball.name, tarballName);
+    assert.equal(
+      JSON.parse(await readFile(sourcePackageJsonPath, 'utf8')).version,
+      sourceVersion,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -541,6 +707,23 @@ test('resolvePackSandboxWorkspaceRelDirs fails when bundledDependencies omit tra
   }
 });
 
+test('Plugin SDK declares its complete transitive internal runtime bundle closure', async () => {
+  const monorepoRoot = fileURLToPath(new URL('../../..', import.meta.url));
+
+  const dirs = await resolvePackSandboxWorkspaceRelDirs({
+    monorepoRoot,
+    packageRelDir: 'packages/plugin-sdk',
+  });
+
+  assert.deepEqual(dirs, [
+    'packages/agents',
+    'packages/cli-common',
+    'packages/plugin-sdk',
+    'packages/protocol',
+    'packages/release-runtime',
+  ]);
+});
+
 test('createPackSandbox copies every internal workspace required by the packed package closure', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pack-test-sandbox-closure-'));
   const originalPath = process.env.PATH;
@@ -608,6 +791,11 @@ test('createPackSandbox copies every internal workspace required by the packed p
     await writeFile(
       join(root, 'packages', 'cli-common', 'workspaceBundleLock.mjs'),
       'export function withWorkspaceBundleLock() {}\n',
+    );
+    await mkdir(join(root, 'apps', 'cli', 'src', 'plugins', 'scaffold'), { recursive: true });
+    await writeFile(
+      join(root, 'apps', 'cli', 'src', 'plugins', 'scaffold', 'scaffold.ts'),
+      'export const publicToolchainScaffoldConsumer = true;\n',
     );
     await mkdir(join(root, 'packages', 'release-runtime'), { recursive: true });
     await writeFile(
@@ -693,13 +881,13 @@ test('createPackSandbox copies every internal workspace required by the packed p
       join(root, 'packages', 'plugins', 'cursor', 'package.json'),
       JSON.stringify({
         name: '@happier-dev/plugins-cursor',
-        devDependencies: { '@happier-dev/bundled-voice-runtime-contract': '0.0.0' },
+        devDependencies: { '@happier-dev/dev-only-build-fixture': '0.0.0' },
       }),
     );
-    await mkdir(join(root, 'packages', 'bundled-voice-runtime-contract'), { recursive: true });
+    await mkdir(join(root, 'packages', 'dev-only-build-fixture'), { recursive: true });
     await writeFile(
-      join(root, 'packages', 'bundled-voice-runtime-contract', 'package.json'),
-      JSON.stringify({ name: '@happier-dev/bundled-voice-runtime-contract' }),
+      join(root, 'packages', 'dev-only-build-fixture', 'package.json'),
+      JSON.stringify({ name: '@happier-dev/dev-only-build-fixture' }),
     );
     await mkdir(join(root, 'packages', 'plugin-sdk', 'node_modules', '@happier-dev', 'agents'), { recursive: true });
     await writeFile(
@@ -755,7 +943,7 @@ test('createPackSandbox copies every internal workspace required by the packed p
     assert.equal(existsSync(join(sandboxRoot, 'packages', 'plugins', 'cursor', 'package.json')), true);
     assert.equal(existsSync(join(sandboxRoot, 'packages', 'plugins', 'inspector', 'package.json')), true);
     assert.equal(
-      existsSync(join(sandboxRoot, 'packages', 'bundled-voice-runtime-contract', 'package.json')),
+      existsSync(join(sandboxRoot, 'packages', 'dev-only-build-fixture', 'package.json')),
       true,
     );
     assert.equal(
@@ -782,6 +970,11 @@ test('createPackSandbox copies every internal workspace required by the packed p
       );
     }
     assert.equal(
+      existsSync(join(sandboxRoot, 'apps', 'cli', 'src', 'plugins', 'scaffold', 'scaffold.ts')),
+      true,
+      'public toolchain scaffold consumer source must be copied into the pack sandbox',
+    );
+    assert.equal(
       await realpath(join(sandboxRoot, 'node_modules', '@typescript', 'native')),
       await realpath(join(root, 'node_modules', '@typescript', 'native')),
     );
@@ -796,8 +989,8 @@ test('createPackSandbox copies every internal workspace required by the packed p
       await realpath(join(sandboxRoot, 'packages', 'plugin-sdk')),
     );
     assert.equal(
-      await realpath(join(sandboxRoot, 'node_modules', '@happier-dev', 'bundled-voice-runtime-contract')),
-      await realpath(join(sandboxRoot, 'packages', 'bundled-voice-runtime-contract')),
+      await realpath(join(sandboxRoot, 'node_modules', '@happier-dev', 'dev-only-build-fixture')),
+      await realpath(join(sandboxRoot, 'packages', 'dev-only-build-fixture')),
     );
     assert.equal(
       (await lstat(join(sandboxRoot, 'packages', 'plugin-sdk', 'node_modules', 'zod'))).isSymbolicLink(),
@@ -936,6 +1129,164 @@ test('createPackSandbox materializes only the declared root-hoisted runtime clos
     );
   } finally {
     if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('createPackSandbox does not copy the Plugin UI manifest for self-contained Plugin SDK prepack', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-plugin-ui-toolchain-manifest-'));
+  let sandboxRoot = '';
+  try {
+    const monorepoRoot = await createHoistedRuntimePackFixture({ root });
+    await mkdir(join(monorepoRoot, 'packages', 'plugin-ui'), { recursive: true });
+    await writeFile(
+      join(monorepoRoot, 'packages', 'plugin-ui', 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/plugin-ui',
+        devDependencies: { 'react-native': '0.83.5' },
+      }),
+    );
+
+    sandboxRoot = await createPackSandbox({
+      monorepoRoot,
+      packageRelDir: 'packages/plugin-sdk',
+    });
+
+    assert.equal(
+      existsSync(join(sandboxRoot, 'packages', 'plugin-ui', 'package.json')),
+      false,
+      'Plugin SDK prepack must validate its generated compatibility input without sibling manifests',
+    );
+  } finally {
+    if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('createPackSandbox copies the public toolchain scaffold consumer source for Plugin UI prepack', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-public-toolchain-scaffold-'));
+  let sandboxRoot = '';
+  try {
+    const monorepoRoot = await createHoistedRuntimePackFixture({ root });
+    await mkdir(join(monorepoRoot, 'apps', 'cli', 'src', 'plugins', 'scaffold'), { recursive: true });
+    await writeFile(
+      join(monorepoRoot, 'apps', 'cli', 'src', 'plugins', 'scaffold', 'scaffold.ts'),
+      'export const publicToolchainScaffoldConsumer = true;\n',
+    );
+    await mkdir(join(monorepoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'packaging'), { recursive: true });
+    await writeFile(
+      join(monorepoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'packaging', 'versioning-compat.mdx'),
+      '# Versioning compatibility\n',
+    );
+    await mkdir(join(monorepoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'manifest'), { recursive: true });
+    await writeFile(
+      join(monorepoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'manifest', 'index.mdx'),
+      '# Plugin manifest\n',
+    );
+    await mkdir(join(monorepoRoot, 'packages', 'plugin-sdk', 'scripts'), { recursive: true });
+    await writeFile(
+      join(monorepoRoot, 'packages', 'plugin-sdk', 'scripts', 'generatePublicToolchainCompatibility.mjs'),
+      `export { resolvePublicToolchainRequiredInputStagingRelDirs } from ${JSON.stringify(
+        new URL('../../../packages/plugin-sdk/scripts/generatePublicToolchainCompatibility.mjs', import.meta.url).href,
+      )};\n`,
+    );
+    await mkdir(join(monorepoRoot, 'packages', 'plugin-ui'), { recursive: true });
+    await writeFile(
+      join(monorepoRoot, 'packages', 'plugin-ui', 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/plugin-ui',
+        bundledDependencies: ['@happier-dev/plugin-sdk', '@happier-dev/protocol'],
+      }),
+    );
+
+    sandboxRoot = await createPackSandbox({
+      monorepoRoot,
+      packageRelDir: 'packages/plugin-ui',
+    });
+
+    assert.equal(
+      existsSync(join(sandboxRoot, 'apps', 'cli', 'src', 'plugins', 'scaffold', 'scaffold.ts')),
+      true,
+      'Plugin UI prepack must retain the public toolchain scaffold consumer source',
+    );
+    for (const relativePath of [
+      'apps/docs/content/docs/plugins/packaging/versioning-compat.mdx',
+      'apps/docs/content/docs/plugins/manifest/index.mdx',
+    ]) {
+      assert.equal(
+        existsSync(join(sandboxRoot, relativePath)),
+        true,
+        `Plugin UI prepack must retain public toolchain documentation source: ${relativePath}`,
+      );
+    }
+  } finally {
+    if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('exportPackSandboxTarball reaches a canonical CLI prepack owner without the migration publisher tree', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-canonical-prepack-owner-'));
+  const destinationDir = join(root, 'destination');
+  try {
+    const monorepoRoot = await createHoistedRuntimePackFixture({ root });
+    const migrationPublisherDir = join(monorepoRoot, 'scripts', 'migrations', 'extensions');
+    await mkdir(migrationPublisherDir, { recursive: true });
+    await writeFile(
+      join(migrationPublisherDir, 'legacy-publisher.mjs'),
+      'export const legacyPublisher = true;\n',
+    );
+    const cliBuildOwnerDir = join(monorepoRoot, 'apps', 'cli', 'scripts', 'build-owned');
+    await mkdir(cliBuildOwnerDir, { recursive: true });
+    await writeFile(
+      join(monorepoRoot, 'apps', 'cli', 'scripts', 'buildSharedDeps.mjs'),
+      [
+        "import { publishCanonicalPrepackProof } from './build-owned/prepackPublisher.mjs';",
+        "await publishCanonicalPrepackProof({ packageRoot: process.cwd() });",
+        '',
+      ].join('\n'),
+    );
+    await writeFile(
+      join(cliBuildOwnerDir, 'prepackPublisher.mjs'),
+      [
+        "import { existsSync, writeFileSync } from 'node:fs';",
+        "import { resolve } from 'node:path';",
+        'export function publishCanonicalPrepackProof({ packageRoot }) {',
+        "  if (existsSync(resolve(packageRoot, '../../scripts/migrations/extensions'))) {",
+        "    throw new Error('private migration publisher tree was copied into the pack sandbox');",
+        '  }',
+        "  writeFileSync(resolve(packageRoot, 'prepack-proof.txt'), 'canonical-build-owner\\n');",
+        '}',
+        '',
+      ].join('\n'),
+    );
+    const packageRoot = join(monorepoRoot, 'packages', 'plugin-sdk');
+    await mkdir(join(packageRoot, 'dist'), { recursive: true });
+    await writeFile(join(packageRoot, 'dist', 'index.js'), 'export const packed = true;\n');
+    await writeFile(
+      join(packageRoot, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/plugin-sdk',
+        version: '0.0.0',
+        files: ['dist', 'prepack-proof.txt'],
+        scripts: {
+          prepack: 'node ../../apps/cli/scripts/buildSharedDeps.mjs',
+        },
+      }),
+    );
+
+    await mkdir(destinationDir, { recursive: true });
+    const metadata = await exportPackSandboxTarball({
+      monorepoRoot,
+      packageRelDir: 'packages/plugin-sdk',
+      destinationDir,
+    });
+
+    assert.equal(metadata.ok, true);
+    assert.equal(metadata.dryRun.ok, true);
+    assert.equal(metadata.tarball.name, 'happier-dev-plugin-sdk-0.0.0.tgz');
+    assert.equal(existsSync(join(destinationDir, metadata.tarball.name)), true);
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1095,6 +1446,52 @@ test('createPackSandbox rejects a declared runtime package symlinked outside the
   }
 });
 
+test('createPackSandbox vendors runtime dependencies only for the declared runtime bundle closure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-build-only-runtime-'));
+  let sandboxRoot = '';
+  try {
+    const monorepoRoot = await createHoistedRuntimePackFixture({
+      root,
+      includeBuildOnlyWorkspace: true,
+    });
+
+    sandboxRoot = await createPackSandbox({
+      monorepoRoot,
+      packageRelDir: 'packages/plugin-sdk',
+    });
+
+    // The build-only workspace source is still copied so prepack scripts can resolve it.
+    assert.equal(
+      existsSync(join(sandboxRoot, 'packages', 'testkit', 'package.json')),
+      true,
+      'expected the build-only internal workspace source to stay in the pack sandbox',
+    );
+    // Its runtime dependency tree is tooling-only and must not be vendored into the sandbox.
+    assert.equal(
+      existsSync(join(sandboxRoot, 'packages', 'testkit', 'node_modules', 'workspace-linked-runtime')),
+      false,
+      'expected a build-only workspace runtime dependency to stay out of the vendored closure',
+    );
+    // The declared runtime bundle closure is still vendored.
+    assert.equal(
+      existsSync(join(
+        sandboxRoot,
+        'packages',
+        'protocol',
+        'node_modules',
+        '@fixture',
+        'runtime',
+        'package.json',
+      )),
+      true,
+      'expected the declared runtime bundle closure to remain vendored',
+    );
+  } finally {
+    if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('createPackSandbox rejects malformed declared dependency names without a local node_modules directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pack-test-runtime-name-traversal-'));
   try {
@@ -1223,6 +1620,153 @@ test('createPackSandbox excludes nested transient build bytes omitted from the c
         '.build',
         'unattested-sentinel',
       )),
+      false,
+    );
+  } finally {
+    if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('createPackSandbox excludes TypeScript compiler work trees without excluding ordinary .happier package input', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-typescript-compiler-work-tree-'));
+  let sandboxRoot;
+  try {
+    assert.equal(
+      packModule.shouldIncludePackSandboxSourcePath(
+        '.happier\\typescript-package-build\\cache-key\\dist\\host\\registration\\staticRegistrationSnapshots.d.ts.map',
+        { workspaceRelDir: 'packages/plugin-sdk' },
+      ),
+      false,
+    );
+    assert.equal(
+      packModule.shouldIncludePackSandboxSourcePath(
+        '.happier\\plugin.json',
+        { workspaceRelDir: 'packages/plugin-sdk' },
+      ),
+      true,
+    );
+
+    const monorepoRoot = await createHoistedRuntimePackFixture({ root });
+    const pluginSdkRoot = join(monorepoRoot, 'packages', 'plugin-sdk');
+    const compilerMapPath = join(
+      pluginSdkRoot,
+      '.happier',
+      'typescript-package-build',
+      'cache-key',
+      'dist',
+      'host',
+      'registration',
+      'staticRegistrationSnapshots.d.ts.map',
+    );
+    const ordinaryHappierInputPath = join(pluginSdkRoot, '.happier', 'plugin.json');
+    await mkdir(dirname(compilerMapPath), { recursive: true });
+    await writeFile(compilerMapPath, 'transient compiler map\n');
+    await writeFile(ordinaryHappierInputPath, 'ordinary package input\n');
+
+    sandboxRoot = await createPackSandbox({
+      monorepoRoot,
+      packageRelDir: 'packages/plugin-sdk',
+    });
+
+    assert.equal(
+      existsSync(join(
+        sandboxRoot,
+        'packages',
+        'plugin-sdk',
+        '.happier',
+        'typescript-package-build',
+        'cache-key',
+        'dist',
+        'host',
+        'registration',
+        'staticRegistrationSnapshots.d.ts.map',
+      )),
+      false,
+    );
+    assert.equal(
+      await readFile(
+        join(sandboxRoot, 'packages', 'plugin-sdk', '.happier', 'plugin.json'),
+        'utf8',
+      ),
+      'ordinary package input\n',
+    );
+  } finally {
+    if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('createPackSandbox preserves Plugin SDK example sources but excludes their nested generated dist outputs', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-plugin-sdk-example-output-'));
+  let sandboxRoot;
+  try {
+    assert.equal(
+      packModule.shouldIncludePackSandboxSourcePath(
+        'examples\\react-native-panel\\dist\\ui\\stale-entry.mjs',
+        { workspaceRelDir: 'packages/plugin-sdk' },
+      ),
+      false,
+    );
+    assert.equal(
+      packModule.shouldIncludePackSandboxSourcePath('dist\\index.js', { workspaceRelDir: 'packages/plugin-sdk' }),
+      true,
+    );
+    assert.equal(
+      packModule.shouldIncludePackSandboxSourcePath(
+        'examples\\react-native-panel\\dist\\ui\\stale-entry.mjs',
+        { workspaceRelDir: 'packages/plugin-ui' },
+      ),
+      true,
+    );
+    const monorepoRoot = await createHoistedRuntimePackFixture({ root });
+    const pluginSdkRoot = join(monorepoRoot, 'packages', 'plugin-sdk');
+    const exampleRoot = join(
+      pluginSdkRoot,
+      'examples',
+      'react-native-panel',
+    );
+    await mkdir(join(pluginSdkRoot, 'dist'), { recursive: true });
+    await mkdir(join(exampleRoot, 'src'), { recursive: true });
+    await mkdir(join(exampleRoot, 'dist', 'ui'), { recursive: true });
+    await writeFile(join(pluginSdkRoot, 'API.md'), '# Public API\n');
+    await writeFile(join(pluginSdkRoot, 'dist', 'index.js'), 'export const packagedSdk = true;\n');
+    await writeFile(join(exampleRoot, 'src', 'surface.tsx'), 'export const sourceExample = true;\n');
+    await writeFile(join(exampleRoot, 'dist', 'ui', 'stale-entry.mjs'), 'stale generated bytes\n');
+
+    sandboxRoot = await createPackSandbox({
+      monorepoRoot,
+      packageRelDir: 'packages/plugin-sdk',
+    });
+
+    assert.equal(
+      await readFile(
+        join(sandboxRoot, 'packages', 'plugin-sdk', 'examples', 'react-native-panel', 'src', 'surface.tsx'),
+        'utf8',
+      ),
+      'export const sourceExample = true;\n',
+    );
+    assert.equal(
+      await readFile(join(sandboxRoot, 'packages', 'plugin-sdk', 'API.md'), 'utf8'),
+      '# Public API\n',
+    );
+    assert.equal(
+      await readFile(join(sandboxRoot, 'packages', 'plugin-sdk', 'dist', 'index.js'), 'utf8'),
+      'export const packagedSdk = true;\n',
+    );
+    assert.equal(
+      existsSync(
+        join(
+          sandboxRoot,
+          'packages',
+          'plugin-sdk',
+          'examples',
+          'react-native-panel',
+          'dist',
+          'ui',
+          'stale-entry.mjs',
+        ),
+      ),
       false,
     );
   } finally {

@@ -108,6 +108,7 @@ test('hstack stack auth login --force clears stale stack credential aliases whil
       HAPPIER_ACTIVE_SERVER_ID: `stack_${stackName}__id_default`,
     });
     const canonicalServerId = 'stack-dev-profile';
+    const historicalServerId = `127.0.0.1-${serverPort}`;
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(
       join(cliHomeDir, 'settings.json'),
@@ -125,6 +126,15 @@ test('hstack stack auth login --force clears stale stack credential aliases whil
               updatedAt: 1,
               lastUsedAt: 1,
             },
+            [historicalServerId]: {
+              id: historicalServerId,
+              name: historicalServerId,
+              serverUrl: internalServerUrl,
+              webappUrl: `http://localhost:${serverPort}`,
+              createdAt: 0,
+              updatedAt: 0,
+              lastUsedAt: 0,
+            },
           },
         },
         null,
@@ -133,7 +143,8 @@ test('hstack stack auth login --force clears stale stack credential aliases whil
       'utf-8',
     );
     const paths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl, env });
-    const stableAliasPath = join(cliHomeDir, 'servers', `stack_${stackName}__id_default`, 'access.key');
+    const canonicalAliasPath = join(cliHomeDir, 'servers', canonicalServerId, 'access.key');
+    const historicalCredentialPath = join(cliHomeDir, 'servers', historicalServerId, 'access.key');
     const unrelatedCredentialPath = join(cliHomeDir, 'servers', 'unrelated_server', 'access.key');
     const capturePath = join(cliHomeDir, 'force-cleanup-result.json');
 
@@ -141,7 +152,8 @@ test('hstack stack auth login --force clears stale stack credential aliases whil
     await writeCredential(paths.urlHashServerScopedPath, 'token-url-hash');
     await writeCredential(paths.hostPortServerScopedPath, 'token-host-port');
     await writeCredential(paths.legacyPath, 'token-legacy');
-    await writeCredential(stableAliasPath, 'token-stable-alias');
+    await writeCredential(canonicalAliasPath, 'token-canonical-alias');
+    await writeCredential(historicalCredentialPath, 'token-historical');
     await writeCredential(unrelatedCredentialPath, 'token-unrelated');
 
     await writeRuntimeCliSnapshot({
@@ -153,7 +165,8 @@ python3 - <<'PY'
 import json, os
 paths = {
   "serverScopedPath": os.environ["TEST_SERVER_SCOPED_PATH"],
-  "stableAliasPath": os.environ["TEST_STABLE_ALIAS_PATH"],
+  "canonicalAliasPath": os.environ["TEST_CANONICAL_ALIAS_PATH"],
+  "historicalCredentialPath": os.environ["TEST_HISTORICAL_CREDENTIAL_PATH"],
   "urlHashServerScopedPath": os.environ["TEST_URL_HASH_SERVER_SCOPED_PATH"],
   "hostPortServerScopedPath": os.environ["TEST_HOST_PORT_SERVER_SCOPED_PATH"],
   "legacyPath": os.environ["TEST_LEGACY_PATH"],
@@ -173,7 +186,8 @@ PY
         env: {
           ...env,
           TEST_SERVER_SCOPED_PATH: paths.serverScopedPath,
-          TEST_STABLE_ALIAS_PATH: stableAliasPath,
+          TEST_CANONICAL_ALIAS_PATH: canonicalAliasPath,
+          TEST_HISTORICAL_CREDENTIAL_PATH: historicalCredentialPath,
           TEST_URL_HASH_SERVER_SCOPED_PATH: paths.urlHashServerScopedPath,
           TEST_HOST_PORT_SERVER_SCOPED_PATH: paths.hostPortServerScopedPath,
           TEST_LEGACY_PATH: paths.legacyPath,
@@ -193,7 +207,8 @@ PY
     const observed = JSON.parse(await readFile(capturePath, 'utf-8'));
     assert.deepEqual(observed, {
       serverScopedPath: true,
-      stableAliasPath: false,
+      canonicalAliasPath: false,
+      historicalCredentialPath: true,
       urlHashServerScopedPath: false,
       hostPortServerScopedPath: false,
       legacyPath: false,

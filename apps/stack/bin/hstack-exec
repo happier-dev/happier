@@ -251,6 +251,23 @@ remote_command_probe() {
     *) availability="command -v $(quote_remote "$preflight_command") >/dev/null 2>&1" ;;
   esac
   remote_command="${path_setup}cd -- $(quote_remote "$remote_cwd") && $availability"
+  if [ "$requires_remote_dependencies" -eq 1 ]; then
+    # Exit distinctly for the narrow dependency-refresh mutation window. That
+    # lets the cache retry a busy target quickly without turning genuine SSH or
+    # command unavailability into a hot probe loop.
+    # A dead owner must be admitted so the canonical lock owner can reclaim its
+    # stale file. Treating mere path existence as busy would permanently fence
+    # the target after an interrupted install or controller crash.
+    dependency_lock=$(quote_remote "$remote_repo/.project/tmp/dependency-install.lock")
+    dependency_integrity=$(quote_remote "$remote_repo/node_modules/.yarn-integrity")
+    # The current workspace's cold Yarn v1 install materializes an approximately
+    # 12 GiB exploded cache before linking the approximately 4 GiB dependency
+    # tree. We measured 13 GiB free failing with ENOSPC. Keep cold automatic
+    # admission above that real boundary; already-prepared targets only need the
+    # generic routed-command scratch floor from the load probe.
+    cold_install_min_free_kib=16777216
+    remote_command="$remote_command && { dependency_lock=$dependency_lock; if [ -e \"\$dependency_lock\" ]; then dependency_owner_pid=\$(sed -n 's/.*\"pid\"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' \"\$dependency_lock\" | sed -n '1p'); case \"\$dependency_owner_pid\" in ''|*[!0-9]*) ;; *) if kill -0 \"\$dependency_owner_pid\" 2>/dev/null; then exit 75; fi ;; esac; fi; if [ ! -f $dependency_integrity ]; then dependency_free_kib=\$(df -Pk $(quote_remote "$remote_repo") 2>/dev/null | awk 'NR==2 {print \$4}'); case \"\$dependency_free_kib\" in ''|*[!0-9]*) exit 76 ;; esac; [ \"\$dependency_free_kib\" -ge $cold_install_min_free_kib ] || exit 76; fi; }"
+  fi
   if [ -n "$ssh_config" ]; then
     ssh -T -F "$ssh_config" -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$remote_command" >/dev/null 2>&1
   else
@@ -265,21 +282,35 @@ command_is_available() {
   cache_path="$cache_dir/$name.command.$command_key.cache"
   now=$(date +%s)
   if [ -r "$cache_path" ]; then
-    IFS=' ' read -r sampled available < "$cache_path" || true
+    IFS=' ' read -r sampled available unavailable_reason < "$cache_path" || true
     case "$sampled:$available" in
       *[!0-9:]*|'':*) ;;
       *)
-        if [ "$available" = 1 ]; then ttl=300; else ttl=${unavailable_ttl_seconds-120}; fi
+        if [ "$available" = 1 ] && [ "$requires_remote_dependencies" -eq 1 ]; then
+          ttl=5
+        elif [ "$available" = 1 ]; then
+          ttl=300
+        elif [ "$unavailable_reason" = busy ]; then
+          ttl=5
+        else
+          ttl=${unavailable_ttl_seconds-120}
+        fi
         if [ $((now - sampled)) -lt "$ttl" ]; then [ "$available" = 1 ]; return; fi
         ;;
     esac
   fi
   temporary="$cache_path.$$.tmp"
-  if remote_command_probe "$number"; then
+  remote_command_probe "$number"
+  probe_status=$?
+  if [ "$probe_status" -eq 0 ]; then
     printf '%s 1\n' "$now" > "$temporary" && mv -f -- "$temporary" "$cache_path"
     return 0
   fi
-  printf '%s 0\n' "$now" > "$temporary" && mv -f -- "$temporary" "$cache_path"
+  if [ "$probe_status" -eq 75 ]; then
+    printf '%s 0 busy\n' "$now" > "$temporary" && mv -f -- "$temporary" "$cache_path"
+  else
+    printf '%s 0 unavailable\n' "$now" > "$temporary" && mv -f -- "$temporary" "$cache_path"
+  fi
   return 1
 }
 
@@ -298,6 +329,12 @@ read_fresh_cache() {
 probe_target() {
   number=$1
   name=$(value_for_target name "$number")
+  case " ${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} " in
+    *" $name "*)
+      printf '%s %s 0 - 1 pre-dispatch-unavailable\n' "$number" "$name"
+      return
+      ;;
+  esac
   if ! command_is_available "$number" "$name"; then
     printf '%s %s 0 - 1 command-unavailable\n' "$number" "$name"
     return
@@ -307,8 +344,11 @@ probe_target() {
   now=$(date +%s)
   cached=$(read_fresh_cache "$cache_path" "$now" 2>/dev/null || true)
   if [ -n "$cached" ]; then
-    printf '%s %s %s cached\n' "$number" "$name" "$cached"
-    return
+    cached_available=${cached%% *}
+    if [ "$cached_available" = 1 ] || ! sync_is_ready "$name"; then
+      printf '%s %s %s cached\n' "$number" "$name" "$cached"
+      return
+    fi
   fi
   lock_acquired=0
   if mkdir "$lock_path" 2>/dev/null; then
@@ -350,10 +390,11 @@ probe_target() {
   score=
   capacity=
   if [ -n "$sample" ]; then
-    # A filesystem that reports 100% usage is not an execution target: even a
-    # read-mostly command may need SSH, compiler, or package-manager scratch
-    # space. Older three-field cached/test probes remain valid until refreshed.
-    score=$(printf '%s\n' "$sample" | awk '{if ($1 > 0 && $2 >= 0 && ($5 == "" || $5 < 100)) printf "%.6f", ($2 / $1) + (($3 < 0.1) ? 1 : 0)}')
+    # APFS rounds capacity to 100% while still reporting multiple GiB as
+    # available. Admit from the authoritative available-block count instead;
+    # one GiB is the minimum useful scratch budget for the routed build/test
+    # commands. Older three-field cached/test probes remain valid until refreshed.
+    score=$(printf '%s\n' "$sample" | awk '{if ($1 > 0 && $2 >= 0 && ($4 == "" || $4 >= 1048576)) printf "%.6f", ($2 / $1) + (($3 < 0.1) ? 1 : 0)}')
     capacity=$(printf '%s\n' "$sample" | awk '{if ($1 ~ /^[0-9]+$/ && $1 > 0) print $1}')
   fi
   temporary="$cache_path.$$.tmp"
@@ -385,9 +426,9 @@ if [ "${include_local-0}" = 1 ]; then
   free=$(memory_pressure -Q 2>/dev/null | awk '/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}')
   [ -n "$free" ] || free=$(awk '/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} END {if(t>0) print a/t}' /proc/meminfo 2>/dev/null)
   [ -n "$free" ] || free=1
-  local_disk_used=$(df -Pk "$repo_root" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
+  local_disk_free=$(df -Pk "$repo_root" 2>/dev/null | awk 'NR==2 {print $4}')
   local_score=$(awk -v load="$load" -v cpu="$cpu" -v free="$free" 'BEGIN {if(cpu>0) printf "%.6f", (load/cpu)+((free<0.1)?1:0); else print "999999"}')
-  if [ -n "$local_disk_used" ] && [ "$local_disk_used" -ge 100 ]; then
+  if [ -n "$local_disk_free" ] && [ "$local_disk_free" -lt 1048576 ]; then
     printf '0 local 0 - %s local\n' "$cpu" > "$probe_tmp/local"
   else
     printf '0 local 1 %s %s local\n' "$local_score" "$cpu" > "$probe_tmp/local"
@@ -505,6 +546,7 @@ if ! printf '%s\n' "$$" > "$reservation_path.$$.tmp" || ! mv -f -- "$reservation
   printf '%s\n' '[preferred-execution] command dispatch reservation failed; running locally' >&2
   run_local "$@"
 fi
+release_reservation() { rm -f -- "$reservation_path" 2>/dev/null || true; }
 rmdir "$dispatch_lock" 2>/dev/null || true
 printf '[preferred-execution] selected %s (load=%s, active=%s, effective=%s, %s)\n' \
   "$selected_name" "$selected_base_score" "$selected_active" "$selected_score" "$selected_cache" >&2
@@ -575,9 +617,13 @@ if ! open_selected_control; then
   case "$retry_count" in ''|*[!0-9]*) retry_count=0 ;; esac
   retry_count=$((retry_count + 1))
   if [ "$retry_count" -lt "$target_count" ]; then
-    HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT=$retry_count exec "$0" -- "$@"
+    retry_excluded_targets="${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} $selected_name"
+    HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT=$retry_count \
+      HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS=$retry_excluded_targets \
+      exec "$0" -- "$@"
   fi
   unset HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT
+  unset HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS
   if [ "${fallback_mode-local}" = error ]; then
     printf '%s\n' '[preferred-execution] no execution target accepted a command connection' >&2
     exit 1
@@ -596,7 +642,6 @@ run_selected_ssh() {
 
 cleanup_probe_tmp
 trap - EXIT HUP INT TERM
-release_reservation() { rm -f -- "$reservation_path" 2>/dev/null || true; }
 run_selected_ssh &
 ssh_pid=$!
 cancel_remote() {

@@ -1,20 +1,16 @@
 {
-  "generatedAt": "2026-04-17T00:00:00.000Z",
+  "generatedAt": "2026-06-23T00:00:00.000Z",
   "maxAllowedCounts": {
-    "builtin-cli-catalog-consumers": 35,
-    "static-ui-registry-consumers": 130,
-    "customacp-sentinel-consumers": 52,
-    "shared-core-provider-branching": 90,
-    "hook-emission-sites": 14,
-    "hardcoded-action-mcp-provider-id-surfaces": 9,
-    "voice-runtime-entrypoints": 13,
-    "v2-1-static-definition-runtime-foundation": 18,
-    "provider-auth-preferences-connected-services-message-meta": 42,
-    "command-handler-help-manifest": 130,
-    "execution-run-intent-profiles": 11,
+    "builtin-cli-catalog-consumers": 25,
+    "static-ui-registry-consumers": 105,
+    "customacp-sentinel-consumers": 32,
+    "shared-core-provider-branching": 58,
+    "hook-emission-sites": 6,
+    "voice-runtime-entrypoints": 12,
+    "voice-v3-f-v2-media-residue": 0,
     "acp-shared-session-compatibility-surfaces": 6,
-    "implicit-abi-surfaces": 8,
-    "provider-session-loop-primitive-imports": 7,
+    "implicit-abi-surfaces": 4,
+    "provider-session-loop-primitive-imports": 0,
     "codex-legacy-direct-session-runner-imports": 0,
     "runtimecore-create-session-runtime-whole-runner-delegation": 0,
     "provider-execution-run-policy-plumbing": 0,
@@ -23,8 +19,6 @@
     "permission-taxonomy-forks": 0,
     "runtimeforloop-agentbackend-shrink-only": 0,
     "execution-run-agentbackend-semantic-debt": 0,
-    "runtime-identity-publication-read": 9,
-    "discovery-preflight-capabilities-rpc": 22,
-    "plugin-identity-install-provenance-trust": 34
+    "runtime-identity-publication-read": 9
   }
 }

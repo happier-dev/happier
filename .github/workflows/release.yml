@@ -1,17 +1,17 @@
 name: RELEASE — Publish (preview + production)
+run-name: ${{ inputs.hmaint_operation_id != '' && format('RELEASE — Publish ({0}, {1})', inputs.hmaint_operation_id, inputs.hmaint_attempt_id) || 'RELEASE — Publish (manual)' }}
 
 on:
   workflow_dispatch:
     inputs:
-      checks_profile:
-        description: "Checks — Profile (full=all standard checks, fast=skip slow builds/smoke, none=skip all checks)"
+      validation_profile:
+        description: "Validation — Bounded public release profile"
         required: true
         type: choice
-        default: full
+        default: integrated
         options:
-          - full
-          - fast
-          - none
+          - integrated
+          - stable
       dry_run:
         description: "Safety — Run checks and show plan, but do not push/deploy"
         required: true
@@ -55,17 +55,19 @@ on:
           - build_only
           - build_and_publish
       bump:
-        description: "Version bump (Preset) — Default bump for changed components. Preview releases bump/commit to dev then promote dev→preview. Production releases typically promote preview→main (dev→main is supported for urgencies)."
+        description: "Version bump (Preset) — Final exact-SHA promotion requires none. Materialize CHANGELOG and version bumps in the approved candidate before final preparation."
         required: true
         type: choice
         default: none
         options:
           - none
-          - patch
-          - minor
-          - major
+      qualified_v4_activation_approval:
+        description: "Qualified V4 activation — explicit irreversible-migration approval only: attests backup/restore readiness, all old API and worker writers are stopped and remain stopped if migration fails, and no old-server or old-daemon rollback."
+        required: false
+        default: false
+        type: boolean
       confirm:
-        description: "Confirm — Choose the exact action. If the plan reports Qualified V4 activation, this also attests backup/restore readiness, all old API and worker writers are stopped, they will remain stopped if migration fails, and no old-server or old-daemon rollback."
+        description: "Confirm — Choose the exact branch-promotion action."
         required: true
         type: choice
         options:
@@ -74,8 +76,47 @@ on:
           - reset main from preview
           - release dev to main
           - reset main from dev
-      release_message:
-        description: "Release message — Optional note to include in Expo OTA metadata and GitHub rolling release notes"
+      candidate_run_id:
+        description: "Preview CLI candidate — exact prior workflow run ID (requires candidate_version and candidate_source_sha)"
+        required: false
+        default: ""
+        type: string
+      candidate_version:
+        description: "Preview CLI candidate — exact embedded CLI version"
+        required: false
+        default: ""
+        type: string
+      candidate_source_sha:
+        description: "Preview CLI candidate — exact 40-character source SHA"
+        required: false
+        default: ""
+        type: string
+      authorized_promotion_source_sha:
+        description: "Safety — exact source branch SHA approved for promotion"
+        required: false
+        default: ""
+        type: string
+      workflow_control_sha:
+        description: "Safety — dispatcher-observed dev SHA; leave empty only for emergency direct manual dispatch"
+        required: false
+        default: ""
+        type: string
+      hmaint_operation_id:
+        description: "Safety — conductor operation ID; leave empty only for emergency direct manual dispatch"
+        required: false
+        default: ""
+        type: string
+      hmaint_attempt_id:
+        description: "Safety — conductor execution attempt identity"
+        required: false
+        default: "attempt_1"
+        type: string
+      release_notes_id:
+        description: "Release notes — Exact approved project release ID"
+        required: true
+        type: string
+      resume_run_id:
+        description: "Resume — prior full-release run ID whose verified immutable candidates may be reused"
         required: false
         default: ""
         type: string
@@ -89,14 +130,57 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  trusted_ref_guard:
+    name: Admit trusted release workflow ref
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Reject cross-repository or untrusted release control
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+        run: |
+          set -euo pipefail
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/release.yml@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/release.yml@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/release.yml@refs/heads/main") ;;
+            *) echo "Untrusted release workflow ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+      - name: Verify workflow-control SHA
+        env:
+          WORKFLOW_CONTROL_SHA: ${{ inputs.workflow_control_sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$WORKFLOW_CONTROL_SHA" ]; then
+            exit 0
+          fi
+          if ! [[ "$WORKFLOW_CONTROL_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "workflow_control_sha must be exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          fi
+          if [ "$WORKFLOW_SHA" != "$WORKFLOW_CONTROL_SHA" ]; then
+            echo "Workflow-control SHA drift: loaded '$WORKFLOW_SHA', expected '$WORKFLOW_CONTROL_SHA'." >&2
+            exit 1
+          fi
+
   release_actor_guard:
     name: Release actor guard
+    needs: [trusted_ref_guard]
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -104,37 +188,168 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-  ci:
-    name: CI Checks (tests.yml)
+  snapshot_release_issues:
+    name: Snapshot issues eligible for this channel release
     needs: [release_actor_guard]
-    if: inputs.checks_profile != 'none'
-    uses: ./.github/workflows/tests.yml
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      eligible: ${{ steps.snapshot.outputs.eligible }}
+      source_issues_json: ${{ steps.snapshot.outputs.source_issues_json }}
+      dev_issues_json: ${{ steps.snapshot.outputs.dev_issues_json }}
+      preview_issues_json: ${{ steps.snapshot.outputs.preview_issues_json }}
+    steps:
+      - name: Checkout trusted release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Snapshot open issues from the source channel
+        id: snapshot
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          GITHUB_TOKEN: ${{ github.token }}
+          INCLUDE_DEVELOPMENT_STAGES: ${{ inputs.environment == 'preview' || (inputs.environment == 'production' && (inputs.confirm == 'release dev to main' || inputs.confirm == 'reset main from dev')) }}
+          INCLUDE_PREVIEW_STAGE: ${{ inputs.environment == 'production' && (inputs.confirm == 'release preview to main' || inputs.confirm == 'reset main from preview') }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "source_issues_json=[]" >> "$GITHUB_OUTPUT"
+            echo "dev_issues_json=[]" >> "$GITHUB_OUTPUT"
+            echo "preview_issues_json=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          source_issues_json="[]"
+          dev_issues_json="[]"
+          preview_issues_json="[]"
+          if [ "$INCLUDE_DEVELOPMENT_STAGES" = "true" ]; then
+            source_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:source")"
+            dev_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:dev")"
+          fi
+          if [ "$INCLUDE_PREVIEW_STAGE" = "true" ]; then
+            preview_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:preview")"
+          fi
+          echo "source_issues_json=$source_issues_json" >> "$GITHUB_OUTPUT"
+          echo "dev_issues_json=$dev_issues_json" >> "$GITHUB_OUTPUT"
+          echo "preview_issues_json=$preview_issues_json" >> "$GITHUB_OUTPUT"
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+
+  resolve_resume:
+    name: Resolve verified prior release candidates
+    needs: [release_actor_guard, ci]
+    if: ${{ needs.release_actor_guard.result == 'success' && needs.ci.result == 'success' }}
+    uses: ./.github/workflows/resolve-release-resume.yml
     with:
-      run_ui: true
-      run_server: true
-      run_cli: true
-      run_stack: true
-      run_typecheck: true
-      run_cli_daemon_e2e: true
-      run_e2e_core: ${{ inputs.checks_profile == 'full' }}
-      run_e2e_core_slow: ${{ inputs.checks_profile == 'full' }}
-      run_server_db_contract: ${{ inputs.checks_profile == 'full' }}
-      run_providers: false
-      providers_preset: all
-      providers_tier: smoke
-      run_stress: false
-      run_release_contracts: true
-      run_installers_smoke: false
-      run_binary_smoke: false
-      run_self_host_systemd: false
-      run_self_host_launchd: false
-      run_self_host_schtasks: false
-      run_self_host_daemon: false
+      origin_run_id: ${{ inputs.resume_run_id }}
+      expected_workflow: .github/workflows/release.yml
+      expected_channel: ${{ inputs.environment }}
+      expected_source_sha: ${{ inputs.authorized_promotion_source_sha }}
+      expected_operation_id: ${{ inputs.hmaint_operation_id }}
+
+  resolve_validation_profile:
+    name: Resolve bounded release validation profile
+    needs: [release_actor_guard]
+    if: ${{ needs.release_actor_guard.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      profile: ${{ steps.resolve.outputs.profile }}
+      checks_profile: ${{ steps.resolve.outputs.checks_profile }}
+    steps:
+      - name: Checkout trusted release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Resolve public profile
+        id: resolve
+        env:
+          VALIDATION_PROFILE: ${{ inputs.validation_profile }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release-validation/resolve-profile.mjs "$VALIDATION_PROFILE"
+
+  ci:
+    name: Verify exact-SHA CI evidence
+    needs: [resolve_validation_profile]
+    if: ${{ needs.resolve_validation_profile.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      source_ref: ${{ steps.dispatch.outputs.source_ref }}
+      base_ref: ${{ steps.dispatch.outputs.base_ref }}
+      compare_label: ${{ steps.dispatch.outputs.compare_label }}
+      ci_run_id: ${{ steps.existing_ci.outputs.ci_run_id }}
+      ci_run_url: ${{ steps.existing_ci.outputs.ci_run_url }}
+    steps:
+      - name: Checkout trusted release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Validate release dispatch
+        id: dispatch
+        env:
+          AUTHORIZED_PROMOTION_SOURCE_SHA: ${{ inputs.authorized_promotion_source_sha }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          HMAINT_OPERATION_ID: ${{ inputs.hmaint_operation_id }}
+          HMAINT_ATTEMPT_ID: ${{ inputs.hmaint_attempt_id }}
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
+          BUMP: ${{ inputs.bump }}
+          CONFIRM: ${{ inputs.confirm }}
+          DEPLOY_TARGETS: ${{ inputs.deploy_targets }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/validate-release-dispatch.mjs
+      - name: Verify successful existing CI for exact source
+        id: existing_ci
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.authorized_promotion_source_sha }}
+          SOURCE_BRANCH: ${{ steps.dispatch.outputs.source_ref }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/verify-existing-ci.mjs \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow tests.yml \
+            --source-sha "$SOURCE_SHA" \
+            --source-branch "$SOURCE_BRANCH" \
+            --github-output "$GITHUB_OUTPUT"
 
   plan:
     name: Release Plan (inputs + changes + bump/publish decisions)
-    needs: [release_actor_guard, ci]
-    if: ${{ always() && needs.release_actor_guard.result == 'success' && (needs.ci.result == 'success' || needs.ci.result == 'skipped') }}
+    needs: [release_actor_guard, resolve_resume, resolve_validation_profile, ci, snapshot_release_issues]
+    if: ${{ always() && needs.release_actor_guard.result == 'success' && needs.resolve_resume.result == 'success' && needs.resolve_validation_profile.result == 'success' && needs.ci.result == 'success' && needs.snapshot_release_issues.result == 'success' }}
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     outputs:
       changed_ui: ${{ steps.plan.outputs.changed_ui }}
@@ -152,97 +367,52 @@ jobs:
       bump_website: ${{ steps.bump_plan.outputs.bump_website }}
       should_bump: ${{ steps.bump_plan.outputs.should_bump }}
       publish_cli: ${{ steps.bump_plan.outputs.publish_cli }}
-      publish_stack: ${{ steps.bump_plan.outputs.publish_stack }}
+      publish_stack: ${{ needs.resolve_resume.outputs.stack_requested == 'true' || steps.bump_plan.outputs.publish_stack == 'true' }}
       publish_server: ${{ steps.bump_plan.outputs.publish_server }}
+      source_sha: ${{ steps.planning_source.outputs.source_sha }}
+      publish_server_runtime_needed: ${{ needs.resolve_resume.outputs.server_requested == 'true' || inputs.force_deploy == true || steps.bump_plan.outputs.publish_server == 'true' || steps.plan.outputs.changed_ui == 'true' || steps.plan.outputs.changed_server == 'true' || steps.plan.outputs.changed_shared == 'true' }}
+      publish_cli_binaries_needed: ${{ needs.resolve_resume.outputs.cli_requested == 'true' || inputs.candidate_run_id != '' || inputs.force_deploy == true || steps.bump_plan.outputs.publish_cli == 'true' || steps.plan.outputs.changed_cli == 'true' || steps.plan.outputs.changed_cli_stack_shared == 'true' || steps.plan.outputs.changed_shared == 'true' }}
+      validation_profile: ${{ needs.resolve_validation_profile.outputs.profile }}
+      checks_profile: ${{ needs.resolve_validation_profile.outputs.checks_profile }}
+      compatibility_analysis_required: ${{ steps.plan.outputs.compatibility_analysis_required }}
+      risk_cli_upgrade: ${{ steps.plan.outputs.risk_cli_upgrade }}
+      risk_session_continuity: ${{ steps.plan.outputs.risk_session_continuity }}
+      risk_relay_upgrade: ${{ steps.plan.outputs.risk_relay_upgrade }}
+      risk_mysql_contract: ${{ steps.plan.outputs.risk_mysql_contract }}
+      risk_platform_services: ${{ steps.plan.outputs.risk_platform_services }}
+      risk_trust_roots: ${{ steps.plan.outputs.risk_trust_roots }}
     steps:
-      - name: Validate inputs
-        run: |
-          set -euo pipefail
-          confirm="${{ inputs.confirm }}"
-          env_name="${{ inputs.environment }}"
-          mode=""
-
-          if [ "$env_name" = "preview" ]; then
-            if [ "$confirm" != "release dev to preview" ]; then
-              echo "Confirmation mismatch for preview releases." >&2
-              echo "Expected: release dev to preview" >&2
-              echo "Got:      $confirm" >&2
-              exit 1
-            fi
-            mode="preview_release"
-          else
-            case "$confirm" in
-              "release preview to main") mode="promote_main_from_preview_fast_forward" ;;
-              "reset main from preview") mode="promote_main_from_preview_reset" ;;
-              "release dev to main") mode="promote_main_from_dev_fast_forward" ;;
-              "reset main from dev") mode="promote_main_from_dev_reset" ;;
-              *)
-                echo "Unknown confirmation phrase: $confirm" >&2
-                exit 1
-                ;;
-            esac
-          fi
-
-          # Validate deploy_targets extras (cli/stack are publishable targets).
-          raw_targets="${{ inputs.deploy_targets }}"
-          norm="$(printf '%s' "${raw_targets}" | tr '[:upper:]' '[:lower:]' | tr -d ' \t\r\n')"
-          if [ -n "${norm:-}" ]; then
-            IFS=',' read -r -a parts <<< "${norm}"
-            for p in "${parts[@]}"; do
-              [ -z "${p:-}" ] && continue
-              case "${p}" in
-                ui|server|website|docs|cli|stack|server_runner) ;;
-                *)
-                  echo "Unknown deploy_targets entry: '${p}'. Expected: ui,server,website,docs,cli,stack,server_runner" >&2
-                  exit 1
-                  ;;
-              esac
-            done
-          fi
-
-      - name: Enforce trusted refs for manual dispatch
-        run: |
-          set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
-            exit 0
-          fi
-          case "${GITHUB_REF_NAME}" in
-            dev|preview|main) ;;
-            *)
-              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, or main." >&2
-              exit 1
-              ;;
-          esac
-
-      - name: Resolve release planning refs
-        id: plan_refs
-        env:
-          ENVIRONMENT: ${{ inputs.environment }}
-          CONFIRM: ${{ inputs.confirm }}
-        run: |
-          set -euo pipefail
-
-          source_ref="dev"
-          compare_label="main..dev"
-
-          if [ "$ENVIRONMENT" = "production" ] && { [ "$CONFIRM" = "release preview to main" ] || [ "$CONFIRM" = "reset main from preview" ]; }; then
-            source_ref="preview"
-            compare_label="main..preview"
-          fi
-
-          {
-            echo "source_ref=$source_ref"
-            echo "compare_label=$compare_label"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Checkout release planning source
-        uses: actions/checkout@v4
+      - name: Checkout authorized release planning source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ steps.plan_refs.outputs.source_ref }}
+          ref: ${{ inputs.authorized_promotion_source_sha || needs.ci.outputs.source_ref }}
           fetch-depth: 0
 
+      - name: Verify authorized promotion source
+        id: planning_source
+        env:
+          AUTHORIZED_PROMOTION_SOURCE_SHA: ${{ inputs.authorized_promotion_source_sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          SOURCE_REF: ${{ needs.ci.outputs.source_ref }}
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          echo "source_sha=$checked_out_sha" >> "$GITHUB_OUTPUT"
+          if [ "$DRY_RUN" = "true" ]; then
+            exit 0
+          fi
+          current_source_sha="$(git ls-remote --exit-code origin "refs/heads/$SOURCE_REF" | awk 'NR == 1 { print $1 }')"
+          if [ "$checked_out_sha" != "$AUTHORIZED_PROMOTION_SOURCE_SHA" ]; then
+            echo "Release planning checkout does not match authorized promotion source SHA." >&2
+            exit 1
+          fi
+          if [ "$current_source_sha" != "$AUTHORIZED_PROMOTION_SOURCE_SHA" ]; then
+            echo "Source branch '$SOURCE_REF' no longer resolves to the authorized promotion source SHA." >&2
+            exit 1
+          fi
+
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -251,7 +421,7 @@ jobs:
       - name: Admit irreversible Qualified V4 activation
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          RELEASE_CONFIRM: ${{ inputs.confirm }}
+          QUALIFIED_V4_ACTIVATION_APPROVAL: ${{ inputs.qualified_v4_activation_approval }}
         run: |
           set -euo pipefail
           deploy_branch="deploy/${DEPLOY_ENVIRONMENT}/server"
@@ -268,57 +438,25 @@ jobs:
           node scripts/release/qualified-connected-accounts-v4-activation-admission.mjs \
             --baseline-ref "$baseline_ref" \
             --candidate-ref HEAD \
-            --approval-kind release-confirm \
-            --approval-value "$RELEASE_CONFIRM" \
+            --approval-kind explicit-checkbox \
+            --approval-value "$QUALIFIED_V4_ACTIVATION_APPROVAL" \
             --summary-file "$GITHUB_STEP_SUMMARY"
 
-      - name: Enable Corepack (Yarn)
-        if: ${{ inputs.checks_profile == 'full' }}
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
-
-      - name: Install dependencies
-        if: ${{ inputs.checks_profile == 'full' }}
-        env:
-          YARN_PRODUCTION: "false"
-          npm_config_production: "false"
-        uses: ./.github/actions/install-yarn-dependencies
-        with:
-          args: --frozen-lockfile --ignore-engines
-
-      - name: Test + typecheck
-        if: inputs.checks_profile != 'none'
-        run: |
-          set -euo pipefail
-          echo "CI checks ran in job 'ci' (tests/typecheck/e2e/providers/stress as configured)."
-
-      - name: Build website
-        if: ${{ inputs.checks_profile == 'full' }}
-        run: yarn website:build
-
-      - name: Build docs
-        if: ${{ inputs.checks_profile == 'full' }}
-        run: yarn docs:build
-
-      - name: CLI smoke test (Linux)
-        if: ${{ inputs.checks_profile == 'full' }}
-        run: node scripts/pipeline/run.mjs smoke-cli
-
-      - name: Compute changed components (main..release source)
+      - name: Compute changed components (current target..release source)
         id: plan
         env:
-          PLAN_SOURCE_REF: ${{ steps.plan_refs.outputs.source_ref }}
+          PLAN_SOURCE_REF: ${{ needs.ci.outputs.source_ref }}
+          PLAN_BASE_REF: ${{ needs.ci.outputs.base_ref }}
         run: |
           set -euo pipefail
 
-          git fetch origin main "${PLAN_SOURCE_REF}" --prune --tags
+          git fetch origin "${PLAN_BASE_REF}" "${PLAN_SOURCE_REF}" --prune --tags
 
           plan_head_sha="$(git rev-parse HEAD)"
-          main_sha="$(git rev-parse origin/main)"
+          base_sha="$(git rev-parse "origin/${PLAN_BASE_REF}")"
 
           node scripts/pipeline/run.mjs release-compute-changed-components \
-            --base "$main_sha" \
+            --base "$base_sha" \
             --head "$plan_head_sha" \
             --out "$GITHUB_OUTPUT"
 
@@ -339,40 +477,69 @@ jobs:
             --out "$GITHUB_OUTPUT"
 
       - name: Release plan summary
+        env:
+          APP_BASELINE_TAG: ${{ steps.versioned_plan.outputs.app_baseline_tag || 'none' }}
+          CHANGED_CLI: ${{ steps.plan.outputs.changed_cli }}
+          CHANGED_CLI_STACK_SHARED: ${{ steps.plan.outputs.changed_cli_stack_shared }}
+          CHANGED_DOCS: ${{ steps.plan.outputs.changed_docs }}
+          CHANGED_SERVER: ${{ steps.plan.outputs.changed_server }}
+          CHANGED_SHARED: ${{ steps.plan.outputs.changed_shared }}
+          CHANGED_STACK: ${{ steps.plan.outputs.changed_stack }}
+          CHANGED_UI: ${{ steps.plan.outputs.changed_ui }}
+          CHANGED_WEBSITE: ${{ steps.plan.outputs.changed_website }}
+          CHECKS_PROFILE: ${{ needs.resolve_validation_profile.outputs.checks_profile }}
+          CLI_BASELINE_TAG: ${{ steps.versioned_plan.outputs.cli_baseline_tag || 'none' }}
+          COMMIT_COUNT: ${{ steps.plan.outputs.commit_count }}
+          COMPARE_LABEL: ${{ needs.ci.outputs.compare_label }}
+          CONFIRM: ${{ inputs.confirm }}
+          DEPLOY_TARGETS: ${{ inputs.deploy_targets }}
+          DESKTOP_MODE: ${{ inputs.desktop_mode }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          FORCE_DEPLOY: ${{ inputs.force_deploy }}
+          PLAN_SOURCE_REF: ${{ needs.ci.outputs.source_ref }}
+          RELEASE_BUMP: ${{ inputs.bump }}
+          STACK_BASELINE_TAG: ${{ steps.versioned_plan.outputs.stack_baseline_tag || 'none' }}
+          UI_EXPO_ACTION: ${{ inputs.ui_expo_action }}
+          VERSIONED_APP_CHANGED: ${{ steps.versioned_plan.outputs.changed_app }}
+          VERSIONED_CLI_CHANGED: ${{ steps.versioned_plan.outputs.changed_cli }}
+          VERSIONED_SERVER_CHANGED: ${{ steps.versioned_plan.outputs.changed_server }}
+          VERSIONED_STACK_CHANGED: ${{ steps.versioned_plan.outputs.changed_stack }}
+          SERVER_BASELINE_TAG: ${{ steps.versioned_plan.outputs.server_baseline_tag || 'none' }}
         run: |
           set -euo pipefail
 
           {
-            echo "## Release plan (\`${{ steps.plan_refs.outputs.compare_label }}\`)"
+            echo "## Release plan (\`$COMPARE_LABEL\`)"
             echo ""
-            echo "- release planning source ref: \`${{ steps.plan_refs.outputs.source_ref }}\`"
-            echo "- checks_profile: \`${{ inputs.checks_profile }}\`"
-            echo "- environment: \`${{ inputs.environment }}\`"
-            echo "- confirm: \`${{ inputs.confirm }}\`"
-            echo "- dry_run: \`${{ inputs.dry_run }}\`"
-            echo "- deploy_targets: \`${{ inputs.deploy_targets }}\`"
-            echo "- force_deploy: \`${{ inputs.force_deploy }}\`"
-            echo "- bump: \`${{ inputs.bump }}\`"
-            echo "- ui_expo_action: \`${{ inputs.ui_expo_action }}\` (builder=\`eas_cloud\`, platform=\`all\`, profile=\`auto\`)"
-            echo "- desktop_mode: \`${{ inputs.desktop_mode }}\`"
+            echo "- release planning source ref: \`$PLAN_SOURCE_REF\`"
+            echo "- checks_profile: \`$CHECKS_PROFILE\`"
+            echo "- environment: \`$ENVIRONMENT\`"
+            echo "- confirm: \`$CONFIRM\`"
+            echo "- dry_run: \`$DRY_RUN\`"
+            echo "- deploy_targets: \`$DEPLOY_TARGETS\`"
+            echo "- force_deploy: \`$FORCE_DEPLOY\`"
+            echo "- bump: \`$RELEASE_BUMP\`"
+            echo "- ui_expo_action: \`$UI_EXPO_ACTION\` (builder=\`eas_cloud\`, platform=\`all\`, profile=\`auto\`)"
+            echo "- desktop_mode: \`$DESKTOP_MODE\`"
             echo ""
-            echo "- commits to release (${{ steps.plan_refs.outputs.compare_label }}): \`${{ steps.plan.outputs.commit_count }}\`"
+            echo "- commits to release ($COMPARE_LABEL): \`$COMMIT_COUNT\`"
             echo ""
-            echo "### Changed components (${{ steps.plan_refs.outputs.compare_label }})"
-            echo "- ui: \`${{ steps.plan.outputs.changed_ui }}\`"
-            echo "- cli: \`${{ steps.plan.outputs.changed_cli }}\`"
-            echo "- server: \`${{ steps.plan.outputs.changed_server }}\`"
-            echo "- stack: \`${{ steps.plan.outputs.changed_stack }}\`"
-            echo "- website: \`${{ steps.plan.outputs.changed_website }}\`"
-            echo "- docs: \`${{ steps.plan.outputs.changed_docs }}\`"
-            echo "- cli/stack shared (cli-common): \`${{ steps.plan.outputs.changed_cli_stack_shared }}\`"
-            echo "- shared (agents/protocol): \`${{ steps.plan.outputs.changed_shared }}\`"
+            echo "### Changed components ($COMPARE_LABEL)"
+            echo "- ui: \`$CHANGED_UI\`"
+            echo "- cli: \`$CHANGED_CLI\`"
+            echo "- server: \`$CHANGED_SERVER\`"
+            echo "- stack: \`$CHANGED_STACK\`"
+            echo "- website: \`$CHANGED_WEBSITE\`"
+            echo "- docs: \`$CHANGED_DOCS\`"
+            echo "- cli/stack shared (cli-common): \`$CHANGED_CLI_STACK_SHARED\`"
+            echo "- shared (agents/protocol): \`$CHANGED_SHARED\`"
             echo ""
             echo "### Versioned components since latest release tags"
-            echo "- app: \`${{ steps.versioned_plan.outputs.changed_app }}\` (baseline=\`${{ steps.versioned_plan.outputs.app_baseline_tag || 'none' }}\`)"
-            echo "- cli: \`${{ steps.versioned_plan.outputs.changed_cli }}\` (baseline=\`${{ steps.versioned_plan.outputs.cli_baseline_tag || 'none' }}\`)"
-            echo "- stack: \`${{ steps.versioned_plan.outputs.changed_stack }}\` (baseline=\`${{ steps.versioned_plan.outputs.stack_baseline_tag || 'none' }}\`)"
-            echo "- server: \`${{ steps.versioned_plan.outputs.changed_server }}\` (baseline=\`${{ steps.versioned_plan.outputs.server_baseline_tag || 'none' }}\`)"
+            echo "- app: \`$VERSIONED_APP_CHANGED\` (baseline=\`$APP_BASELINE_TAG\`)"
+            echo "- cli: \`$VERSIONED_CLI_CHANGED\` (baseline=\`$CLI_BASELINE_TAG\`)"
+            echo "- stack: \`$VERSIONED_STACK_CHANGED\` (baseline=\`$STACK_BASELINE_TAG\`)"
+            echo "- server: \`$VERSIONED_SERVER_CHANGED\` (baseline=\`$SERVER_BASELINE_TAG\`)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Resolve publish + bump plan
@@ -417,51 +584,209 @@ jobs:
             --versioned-server-changed "${VERSIONED_SERVER_CHANGED}" \
             --github-output "$GITHUB_OUTPUT"
 
+  mysql_db_contract:
+    name: Server DB Contract (MySQL 8)
+    needs: [plan]
+    if: ${{ needs.plan.outputs.publish_server_runtime_needed == 'true' && needs.plan.outputs.risk_mysql_contract == 'true' }}
+    uses: ./.github/workflows/extended-db-tests.yml
+    with:
+      run_e2e_postgres: false
+      run_e2e_mysql: false
+      run_db_contract_postgres: false
+      run_db_contract_mysql: true
+
+  platform_service_validation:
+    name: Platform service validation
+    needs: [plan]
+    if: ${{ needs.plan.outputs.risk_platform_services == 'true' && (needs.plan.outputs.publish_server_runtime_needed == 'true' || needs.plan.outputs.publish_cli_binaries_needed == 'true') }}
+    uses: ./.github/workflows/tests.yml
+    with:
+      select_jobs_explicitly: true
+      run_ui_e2e: false
+      run_wsrepl_lima: false
+      run_mobile_e2e_android: false
+      run_mobile_e2e_ios: false
+      run_ui: false
+      run_plugin_workspaces: false
+      run_server: false
+      run_server_db_contract: false
+      run_cli: false
+      run_stack: false
+      run_typecheck: false
+      run_cli_daemon_e2e: false
+      run_e2e_core: false
+      run_e2e_core_slow: false
+      run_providers: false
+      run_stress: false
+      run_release_contracts: false
+      run_installers_smoke: false
+      run_binary_smoke: false
+      run_cli_update_continuity: false
+      run_daemon_continuity: false
+      run_session_continuity: false
+      run_release_assets_docker: false
+      run_self_host_systemd: true
+      run_self_host_launchd: true
+      run_self_host_schtasks: true
+      run_self_host_daemon: true
+
+  trust_root_validation:
+    name: Installer and updater trust-root validation
+    needs: [plan]
+    if: ${{ needs.plan.outputs.risk_trust_roots == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact authorized release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.authorized_promotion_source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Validate installer and updater trust roots
+        run: |
+          set -euo pipefail
+          node --test scripts/release/installers_security.test.mjs
+          node scripts/pipeline/run.mjs release-sync-installers --check
+          node scripts/pipeline/run.mjs tauri-validate-updater-pubkey --config-path apps/ui/src-tauri/tauri.conf.json
+
+  release_notes_admission:
+    name: Admit canonical release notes for authorized source
+    needs: [plan]
+    if: ${{ always() && needs.plan.result == 'success' && inputs.dry_run != true }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Checkout exact authorized release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.authorized_promotion_source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: release-source
+
+      - name: Verify exact authorized release source
+        working-directory: release-source
+        env:
+          SOURCE_SHA: ${{ inputs.authorized_promotion_source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Validate approved release notes from exact source
+        id: release_notes
+        env:
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
+          SOURCE_SHA: ${{ inputs.authorized_promotion_source_sha }}
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/scripts/pipeline/release/release-notes/project-release-notes.mjs" \
+            --release-id "$RELEASE_NOTES_ID" \
+            --source-sha "$SOURCE_SHA" \
+            --repo-root "$GITHUB_WORKSPACE/release-source" \
+            --changelog "$GITHUB_WORKSPACE/release-source/apps/ui/CHANGELOG.md" > /dev/null
+
+  release_admission:
+    name: Admit release mutation and publication
+    needs: [plan, mysql_db_contract, platform_service_validation, trust_root_validation]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Enforce stable and risk-selected publication admission
+        env:
+          CHECKS_PROFILE: ${{ needs.plan.outputs.checks_profile }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          PUBLISH_SERVER_RUNTIME_NEEDED: ${{ needs.plan.outputs.publish_server_runtime_needed }}
+          PUBLISH_CLI_BINARIES_NEEDED: ${{ needs.plan.outputs.publish_cli_binaries_needed }}
+          RISK_MYSQL_CONTRACT: ${{ needs.plan.outputs.risk_mysql_contract }}
+          RISK_PLATFORM_SERVICES: ${{ needs.plan.outputs.risk_platform_services }}
+          RISK_TRUST_ROOTS: ${{ needs.plan.outputs.risk_trust_roots }}
+          MYSQL_GATE_RESULT: ${{ needs.mysql_db_contract.result }}
+          PLATFORM_GATE_RESULT: ${{ needs.platform_service_validation.result }}
+          TRUST_ROOT_GATE_RESULT: ${{ needs.trust_root_validation.result }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/admit-release.mjs
+
   deploy_plan:
     name: deploy_plan (source → deploy branches)
     runs-on: ubuntu-latest
-    environment: release-shared
+    permissions:
+      contents: read
     if: >-
       always() && needs.plan.result == 'success' && (
+        (inputs.dry_run == true && needs.prepare_release_candidate.result == 'skipped') ||
+        (inputs.dry_run != true && needs.prepare_release_candidate.result == 'success')
+      ) && (
         contains(format(',{0},', inputs.deploy_targets), ',server,') ||
         contains(format(',{0},', inputs.deploy_targets), ',website,') ||
         contains(format(',{0},', inputs.deploy_targets), ',docs,') ||
         (inputs.environment == 'production' && contains(format(',{0},', inputs.deploy_targets), ',ui,'))
       )
-    needs: [plan, bump_versions_dev, promote_preview, promote_main]
+    needs: [plan, release_notes_admission, promote_preview, promote_main, prepare_release_candidate]
     outputs:
       deploy_ui_needed: ${{ steps.plan.outputs.deploy_ui_needed }}
       deploy_server_needed: ${{ steps.plan.outputs.deploy_server_needed }}
       deploy_website_needed: ${{ steps.plan.outputs.deploy_website_needed }}
       deploy_docs_needed: ${{ steps.plan.outputs.deploy_docs_needed }}
     steps:
-      - name: Create GitHub App token
-        id: app_token
-        uses: actions/create-github-app-token@v1
+      - name: Checkout trusted release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: read
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
 
-      - name: Checkout release source
-        uses: actions/checkout@v4
+      - name: Checkout release source as inert data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.dry_run == true && needs.plan.outputs.source_sha || needs.prepare_release_candidate.outputs.source_sha }}
           fetch-depth: 0
-          token: ${{ steps.app_token.outputs.token }}
+          persist-credentials: false
+          path: release-source
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
       - name: Compute deploy plan (deploy/<env>/* behind release source?)
         id: plan
+        working-directory: release-source
         env:
           ENVIRONMENT: ${{ inputs.environment }}
-          SOURCE_REF: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
+          SOURCE_REF: ${{ inputs.dry_run == true && needs.plan.outputs.source_sha || needs.prepare_release_candidate.outputs.source_sha }}
           FORCE_DEPLOY: ${{ inputs.force_deploy }}
           DEPLOY_UI: ${{ contains(format(',{0},', inputs.deploy_targets), ',ui,') }}
           DEPLOY_SERVER: ${{ contains(format(',{0},', inputs.deploy_targets), ',server,') }}
@@ -469,7 +794,7 @@ jobs:
           DEPLOY_DOCS: ${{ contains(format(',{0},', inputs.deploy_targets), ',docs,') }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs release-compute-deploy-plan \
+          node ../scripts/pipeline/release/compute-deploy-plan.mjs \
             --deploy-environment "${ENVIRONMENT}" \
             --source-ref "${SOURCE_REF}" \
             --force-deploy "${FORCE_DEPLOY}" \
@@ -480,15 +805,13 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
   promote_main:
-    # GitHub skips dependent jobs when a needed job is skipped unless we use always().
-    # In production, bump_versions_dev is frequently skipped (bump=none), but we still
-    # must promote preview -> main (or dev -> main) so downstream deploy/publish jobs can run.
-    if: always() && needs.plan.result == 'success' && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && inputs.dry_run != true && inputs.environment == 'production'
-    needs: [plan, bump_versions_dev]
+    if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.release_notes_admission.result == 'success' && inputs.dry_run != true && inputs.environment == 'production'
+    needs: [plan, release_admission, release_notes_admission]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit
     with:
       source: ${{ (inputs.confirm == 'release preview to main' || inputs.confirm == 'reset main from preview') && 'preview' || 'dev' }}
+      source_sha: ${{ inputs.authorized_promotion_source_sha }}
       target: main
       mode: ${{ (inputs.confirm == 'reset main from preview' || inputs.confirm == 'reset main from dev') && 'reset' || 'fast_forward' }}
       dry_run: ${{ inputs.dry_run }}
@@ -501,98 +824,95 @@ jobs:
         }}
 
   promote_preview:
-    if: always() && needs.plan.result == 'success' && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && inputs.dry_run != true && inputs.environment == 'preview'
-    needs: [plan, bump_versions_dev]
+    if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.release_notes_admission.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview'
+    needs: [plan, release_admission, release_notes_admission]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit
     with:
       source: dev
+      source_sha: ${{ inputs.authorized_promotion_source_sha }}
       target: preview
       mode: fast_forward
       dry_run: ${{ inputs.dry_run }}
       allow_reset: false
       confirm: promote preview from dev
 
-  bump_versions_dev:
-    if: inputs.dry_run != true && needs.plan.outputs.should_bump == 'true' && inputs.confirm != 'release preview to main' && inputs.confirm != 'reset main from preview'
-    needs: [plan]
-    runs-on: ubuntu-latest
-    environment: release-shared
-    steps:
-      - name: Create GitHub App token
-        id: app_token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
-
-      - name: Checkout dev
-        uses: actions/checkout@v4
-        with:
-          ref: dev
-          fetch-depth: 0
-          token: ${{ steps.app_token.outputs.token }}
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
-
-      - name: Enable Corepack (Yarn)
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
-
-      - name: Install dependencies
-        env:
-          YARN_PRODUCTION: "false"
-          npm_config_production: "false"
-        uses: ./.github/actions/install-yarn-dependencies
-        with:
-          args: --frozen-lockfile --ignore-engines
-
-      - name: Apply version bumps (single commit)
-        id: bumps
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs release-bump-versions-dev \
-            --bump-app "${{ needs.plan.outputs.bump_app }}" \
-            --bump-server "${{ needs.plan.outputs.bump_server }}" \
-            --bump-website "${{ needs.plan.outputs.bump_website }}" \
-            --bump-cli "${{ needs.plan.outputs.bump_cli }}" \
-            --bump-stack "${{ needs.plan.outputs.bump_stack }}" \
-            --github-output "$GITHUB_OUTPUT"
-
-  bind_server_source:
-    name: Bind promoted release source SHA
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, bump_versions_dev, promote_preview, promote_main]
+  prepare_release_candidate:
+    name: Prepare exact promoted release candidate
+    if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && inputs.dry_run != true && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    needs: [plan, release_admission, promote_preview, promote_main]
     runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
-      authorized_sha: ${{ steps.source.outputs.authorized_sha }}
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      build_run_id: ${{ steps.identity.outputs.build_run_id }}
+      release_notes_github_markdown: ${{ steps.release_notes.outputs.github_markdown }}
+      release_notes_expo_message: ${{ steps.release_notes.outputs.expo_message }}
     steps:
       - name: Resolve promoted branch once
-        id: source
+        id: identity
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           SOURCE_BRANCH: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
+          AUTHORIZED_PROMOTION_SOURCE_SHA: ${{ inputs.authorized_promotion_source_sha }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
         run: |
           set -euo pipefail
-          authorized_sha="$(gh api "repos/${GH_REPO}/branches/${SOURCE_BRANCH}" --jq '.commit.sha')"
-          test "$(printf '%s' "$authorized_sha" | wc -c | tr -d ' ')" = "40"
-          echo "authorized_sha=$authorized_sha" >> "$GITHUB_OUTPUT"
+          source_sha="$(gh api "repos/${GH_REPO}/branches/${SOURCE_BRANCH}" --jq '.commit.sha')"
+          test "$(printf '%s' "$source_sha" | wc -c | tr -d ' ')" = "40"
+          if [ "$AUTHORIZED_PROMOTION_SOURCE_SHA" != "$source_sha" ]; then
+            echo "Promoted branch does not match the authorized promotion source SHA." >&2
+            exit 1
+          fi
+          if [ -n "$CANDIDATE_SOURCE_SHA" ] && [ "$CANDIDATE_SOURCE_SHA" != "$source_sha" ]; then
+            echo "CLI candidate source does not match the promoted preview source." >&2
+            exit 1
+          fi
+          {
+            echo "source_sha=$source_sha"
+            echo "build_run_id=${GITHUB_RUN_ID}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout trusted release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Checkout exact candidate release notes source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.identity.outputs.source_sha }}
+          path: release-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Project approved release notes from exact candidate
+        id: release_notes
+        env:
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
+          SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/scripts/pipeline/release/release-notes/project-release-notes.mjs" \
+            --release-id "$RELEASE_NOTES_ID" \
+            --source-sha "$SOURCE_SHA" \
+            --repo-root "$GITHUB_WORKSPACE/release-source" \
+            --changelog "$GITHUB_WORKSPACE/release-source/apps/ui/CHANGELOG.md" \
+            --github-output "$GITHUB_OUTPUT"
 
   deploy_ui:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.plan.outputs.bump_app != 'none' || inputs.force_deploy == true || inputs.ui_expo_action != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, bump_versions_dev, promote_preview, promote_main, deploy_plan]
+    if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.plan.outputs.bump_app != 'none' || inputs.force_deploy == true || inputs.ui_expo_action != 'none')
+    needs: [plan, release_admission, prepare_release_candidate, deploy_plan, verify_release_candidates]
     permissions:
       contents: write
       actions: read
@@ -601,18 +921,18 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       force_deploy: ${{ inputs.force_deploy }}
-      source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
-      allow_cross_promote: false
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      allow_cross_promote: true
       bump: none
       deploy_web: ${{ inputs.environment == 'production' }}
       expo_action: ${{ inputs.ui_expo_action }}
       desktop_mode: ${{ inputs.desktop_mode }}
       run_tests: false
-      expo_update_message: ${{ inputs.release_message }}
+      release_notes_id: ${{ inputs.release_notes_id }}
 
   deploy_server:
-    if: always() && needs.plan.result == 'success' && needs.bind_server_source.result == 'success' && (needs.publish_server_runtime.result == 'success' || needs.publish_server_runtime.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.plan.outputs.bump_server != 'none' || inputs.force_deploy == true)
-    needs: [plan, bind_server_source, publish_server_runtime, deploy_plan]
+    if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && (needs.promote_server_runtime.result == 'success' || needs.promote_server_runtime.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.plan.outputs.bump_server != 'none' || inputs.force_deploy == true)
+    needs: [plan, release_admission, prepare_release_candidate, promote_server_runtime, deploy_plan]
     permissions:
       contents: write
       actions: read
@@ -621,58 +941,182 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       force_deploy: ${{ inputs.force_deploy }}
-      source_ref: ${{ needs.bind_server_source.outputs.authorized_sha }}
-      allow_cross_promote: false
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      allow_cross_promote: true
       bump: none
       publish_runtime_release: false
       run_tests: false
-      qualified_v4_activation_approval: true
+      qualified_v4_activation_approval: ${{ inputs.qualified_v4_activation_approval }}
 
   publish_server_runtime:
-    if: always() && needs.plan.result == 'success' && needs.bind_server_source.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_server == 'true' || inputs.force_deploy == true || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_shared == 'true')
-    needs: [plan, bind_server_source]
+    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_server_runtime_needed == 'true'
+    needs: [resolve_resume, plan, release_admission, prepare_release_candidate]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-server-runtime.yml
     secrets: inherit
     with:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
-      source_ref: ${{ needs.bind_server_source.outputs.authorized_sha }}
-      authorized_sha: ${{ needs.bind_server_source.outputs.authorized_sha }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.server_version }}
       allow_stable: ${{ inputs.environment == 'production' }}
-      release_message: ${{ inputs.release_message }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      publish_rolling: false
 
   publish_ui_web:
-    if: always() && needs.plan.result == 'success' && needs.bind_server_source.result == 'success' && inputs.dry_run != true && (contains(format(',{0},', inputs.deploy_targets), ',ui,') || inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_shared == 'true')
-    needs: [plan, bind_server_source]
+    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && (needs.resolve_resume.outputs.ui_web_requested == 'true' || contains(format(',{0},', inputs.deploy_targets), ',ui,') || inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_shared == 'true')
+    needs: [resolve_resume, plan, release_admission, prepare_release_candidate]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-ui-web.yml
     secrets: inherit
     with:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
-      source_ref: ${{ needs.bind_server_source.outputs.authorized_sha }}
-      authorized_sha: ${{ needs.bind_server_source.outputs.authorized_sha }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.ui_web_version }}
       allow_stable: ${{ inputs.environment == 'production' }}
-      release_message: ${{ inputs.release_message }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      publish_rolling: false
 
   publish_cli_binaries:
-    if: always() && needs.plan.result == 'success' && needs.bind_server_source.result == 'success' && inputs.dry_run != true && (inputs.force_deploy == true || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_cli_stack_shared == 'true' || needs.plan.outputs.changed_shared == 'true')
-    needs: [plan, bind_server_source]
+    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_cli_binaries_needed == 'true'
+    needs: [resolve_resume, plan, release_admission, prepare_release_candidate]
     permissions:
+      actions: read
       contents: write
     uses: ./.github/workflows/publish-cli-binaries.yml
     secrets: inherit
     with:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
-      source_ref: ${{ needs.bind_server_source.outputs.authorized_sha }}
-      authorized_sha: ${{ needs.bind_server_source.outputs.authorized_sha }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.cli_version }}
       allow_stable: ${{ inputs.environment == 'production' }}
-      release_message: ${{ inputs.release_message }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      candidate_run_id: ${{ inputs.candidate_run_id }}
+      candidate_version: ${{ inputs.candidate_version }}
+      candidate_source_sha: ${{ inputs.candidate_source_sha }}
+      publish_rolling: false
+
+  publish_hstack_binaries:
+    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_stack == 'true'
+    needs: [resolve_resume, plan, release_admission, prepare_release_candidate]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-hstack-binaries.yml
+    secrets: inherit
+    with:
+      channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.stack_version }}
+      allow_stable: ${{ inputs.environment == 'production' }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      publish_rolling: false
+
+  verify_release_candidates:
+    name: Verify exact immutable release candidates
+    if: ${{ always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && (needs.publish_cli_binaries.result == 'success' || needs.publish_cli_binaries.result == 'skipped') && (needs.publish_hstack_binaries.result == 'success' || needs.publish_hstack_binaries.result == 'skipped') && (needs.publish_server_runtime.result == 'success' || needs.publish_server_runtime.result == 'skipped') && (needs.publish_ui_web.result == 'success' || needs.publish_ui_web.result == 'skipped') }}
+    needs: [resolve_resume, plan, release_admission, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web]
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      channel: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+      candidate_source_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      candidate_build_run_id: ${{ needs.prepare_release_candidate.outputs.build_run_id }}
+      cli_candidate_build_run_id: ${{ inputs.candidate_run_id }}
+      publication_run_id: ${{ github.run_id }}
+      candidate_cli_version: ${{ needs.publish_cli_binaries.outputs.version }}
+      candidate_stack_version: ${{ needs.publish_hstack_binaries.outputs.version }}
+      candidate_server_version: ${{ needs.publish_server_runtime.outputs.version }}
+      candidate_ui_web_version: ${{ needs.publish_ui_web.outputs.version }}
+      verify_cli_release: ${{ needs.publish_cli_binaries.result == 'success' && needs.resolve_resume.outputs.cli_version == '' }}
+      verify_stack_release: ${{ needs.publish_hstack_binaries.result == 'success' && needs.resolve_resume.outputs.stack_version == '' }}
+      verify_server_release: ${{ needs.publish_server_runtime.result == 'success' && needs.resolve_resume.outputs.server_version == '' }}
+      verify_ui_web_release: ${{ needs.publish_ui_web.result == 'success' && needs.resolve_resume.outputs.ui_web_version == '' }}
+      validation_profile: ${{ needs.plan.outputs.validation_profile }}
+      risk_cli_upgrade: ${{ needs.plan.outputs.risk_cli_upgrade == 'true' }}
+      risk_session_continuity: ${{ needs.plan.outputs.risk_session_continuity == 'true' }}
+      risk_relay_upgrade: ${{ needs.plan.outputs.risk_relay_upgrade == 'true' }}
+
+  verify_resume_candidates:
+    name: Verify successful immutable siblings for resume
+    if: ${{ always() && inputs.dry_run != true && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result != 'success' }}
+    needs: [prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web, verify_release_candidates]
+    uses: ./.github/workflows/verify-release-resume-candidates.yml
+    with:
+      channel: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+      candidate_source_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      candidate_cli_version: ${{ needs.publish_cli_binaries.result == 'success' && needs.publish_cli_binaries.outputs.version || '' }}
+      candidate_stack_version: ${{ needs.publish_hstack_binaries.result == 'success' && needs.publish_hstack_binaries.outputs.version || '' }}
+      candidate_server_version: ${{ needs.publish_server_runtime.result == 'success' && needs.publish_server_runtime.outputs.version || '' }}
+      candidate_ui_web_version: ${{ needs.publish_ui_web.result == 'success' && needs.publish_ui_web.outputs.version || '' }}
+
+  promote_server_runtime:
+    if: ${{ always() && needs.verify_release_candidates.result == 'success' && needs.publish_server_runtime.result == 'success' && needs.publish_server_runtime.outputs.version != '' }}
+    needs: [prepare_release_candidate, verify_release_candidates, publish_server_runtime]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-server-runtime.yml
+    secrets: inherit
+    with:
+      channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      allow_stable: ${{ inputs.environment == 'production' }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      retry_version: ${{ needs.publish_server_runtime.outputs.version }}
+
+  promote_ui_web:
+    if: ${{ always() && needs.verify_release_candidates.result == 'success' && needs.publish_ui_web.result == 'success' && needs.publish_ui_web.outputs.version != '' && (needs.promote_server_runtime.result == 'success' || needs.promote_server_runtime.result == 'skipped') }}
+    needs: [prepare_release_candidate, verify_release_candidates, publish_ui_web, promote_server_runtime]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-ui-web.yml
+    secrets: inherit
+    with:
+      channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      allow_stable: ${{ inputs.environment == 'production' }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      retry_version: ${{ needs.publish_ui_web.outputs.version }}
+
+  promote_cli_binaries:
+    if: ${{ always() && needs.verify_release_candidates.result == 'success' && needs.publish_cli_binaries.result == 'success' && needs.publish_cli_binaries.outputs.version != '' && (needs.promote_ui_web.result == 'success' || needs.promote_ui_web.result == 'skipped') }}
+    needs: [prepare_release_candidate, verify_release_candidates, publish_cli_binaries, promote_ui_web]
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/publish-cli-binaries.yml
+    secrets: inherit
+    with:
+      channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      allow_stable: ${{ inputs.environment == 'production' }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      retry_version: ${{ needs.publish_cli_binaries.outputs.version }}
+
+  promote_hstack_binaries:
+    if: ${{ always() && needs.verify_release_candidates.result == 'success' && needs.publish_hstack_binaries.result == 'success' && needs.publish_hstack_binaries.outputs.version != '' && (needs.promote_cli_binaries.result == 'success' || needs.promote_cli_binaries.result == 'skipped') }}
+    needs: [prepare_release_candidate, verify_release_candidates, publish_hstack_binaries, promote_cli_binaries]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-hstack-binaries.yml
+    secrets: inherit
+    with:
+      channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      allow_stable: ${{ inputs.environment == 'production' }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
+      retry_version: ${{ needs.publish_hstack_binaries.outputs.version }}
 
   publish_docker:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && (inputs.force_deploy == true || needs.plan.outputs.publish_server == 'true' || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_cli_stack_shared == 'true' || needs.plan.outputs.changed_shared == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success')) && (needs.publish_cli_binaries.result == 'success' || needs.publish_cli_binaries.result == 'skipped') && (needs.publish_server_runtime.result == 'success' || needs.publish_server_runtime.result == 'skipped') && (needs.publish_ui_web.result == 'success' || needs.publish_ui_web.result == 'skipped')
-    needs: [plan, bump_versions_dev, promote_preview, promote_main, publish_cli_binaries, publish_server_runtime, publish_ui_web]
+    if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && (inputs.force_deploy == true || needs.plan.outputs.publish_server == 'true' || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_cli_stack_shared == 'true' || needs.plan.outputs.changed_shared == 'true') && (needs.promote_cli_binaries.result == 'success' || needs.promote_cli_binaries.result == 'skipped') && (needs.promote_server_runtime.result == 'success' || needs.promote_server_runtime.result == 'skipped') && (needs.promote_ui_web.result == 'success' || needs.promote_ui_web.result == 'skipped')
+    needs: [plan, release_admission, prepare_release_candidate, verify_release_candidates, publish_cli_binaries, publish_server_runtime, promote_cli_binaries, promote_server_runtime, promote_ui_web]
     permissions:
       contents: read
     uses: ./.github/workflows/publish-docker.yml
@@ -680,13 +1124,16 @@ jobs:
     with:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      server_version: ${{ needs.publish_server_runtime.outputs.version }}
+      cli_version: ${{ needs.publish_cli_binaries.outputs.version }}
       push_latest: true
       build_relay: ${{ inputs.force_deploy == true || needs.plan.outputs.publish_server == 'true' || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_shared == 'true' }}
       build_dev_box: ${{ inputs.force_deploy == true || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_cli_stack_shared == 'true' || needs.plan.outputs.changed_shared == 'true' }}
 
   deploy_website:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, bump_versions_dev, promote_preview, promote_main, deploy_plan]
+    if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true)
+    needs: [plan, release_admission, prepare_release_candidate, deploy_plan]
     permissions:
       contents: read
       actions: read
@@ -695,14 +1142,14 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       force_deploy: ${{ inputs.force_deploy }}
-      source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
-      allow_cross_promote: false
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      allow_cross_promote: true
       bump: none
       run_build: true
 
   deploy_docs:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && (needs.deploy_plan.outputs.deploy_docs_needed == 'true' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, bump_versions_dev, promote_preview, promote_main, deploy_plan]
+    if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && (needs.deploy_plan.outputs.deploy_docs_needed == 'true' || inputs.force_deploy == true)
+    needs: [plan, release_admission, prepare_release_candidate, deploy_plan]
     permissions:
       contents: read
       actions: read
@@ -711,13 +1158,13 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       force_deploy: ${{ inputs.force_deploy }}
-      source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
-      allow_cross_promote: false
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      allow_cross_promote: true
       run_build: true
 
   publish_npm:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.publish_server == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, bump_versions_dev, promote_preview, promote_main]
+    if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.publish_stack == 'true' || needs.plan.outputs.publish_server == 'true')
+    needs: [plan, release_admission, prepare_release_candidate, verify_release_candidates]
     permissions:
       contents: write
       id-token: write
@@ -725,30 +1172,184 @@ jobs:
     secrets: inherit
     with:
       publish_cli: ${{ needs.plan.outputs.publish_cli == 'true' }}
+      publish_stack: ${{ needs.plan.outputs.publish_stack == 'true' }}
       publish_server: ${{ needs.plan.outputs.publish_server == 'true' }}
       channel: ${{ inputs.environment }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
-      release_message: ${{ inputs.release_message }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
 
   release_verify:
     name: Release Verification (release-verify.yml)
-    needs: [plan, publish_cli_binaries, publish_server_runtime, publish_ui_web, publish_docker, publish_npm]
-    if: ${{ always() && inputs.checks_profile == 'full' && inputs.dry_run != true && needs.plan.result == 'success' && (needs.publish_cli_binaries.result == 'success' || needs.publish_cli_binaries.result == 'skipped') && (needs.publish_server_runtime.result == 'success' || needs.publish_server_runtime.result == 'skipped') && (needs.publish_ui_web.result == 'success' || needs.publish_ui_web.result == 'skipped') && (needs.publish_docker.result == 'success' || needs.publish_docker.result == 'skipped') && (needs.publish_npm.result == 'success' || needs.publish_npm.result == 'skipped') }}
+    needs: [plan, release_admission, prepare_release_candidate, deploy_ui, deploy_server, deploy_website, deploy_docs, publish_hstack_binaries, promote_cli_binaries, promote_hstack_binaries, promote_server_runtime, promote_ui_web, publish_docker, publish_npm]
+    if: ${{ always() && inputs.dry_run != true && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && (needs.deploy_ui.result == 'success' || needs.deploy_ui.result == 'skipped') && (needs.deploy_server.result == 'success' || needs.deploy_server.result == 'skipped') && (needs.deploy_website.result == 'success' || needs.deploy_website.result == 'skipped') && (needs.deploy_docs.result == 'success' || needs.deploy_docs.result == 'skipped') && (needs.publish_hstack_binaries.result == 'success' || needs.publish_hstack_binaries.result == 'skipped') && (needs.promote_cli_binaries.result == 'success' || needs.promote_cli_binaries.result == 'skipped') && (needs.plan.outputs.publish_stack != 'true' || needs.promote_hstack_binaries.result == 'success') && (needs.promote_server_runtime.result == 'success' || needs.promote_server_runtime.result == 'skipped') && (needs.promote_ui_web.result == 'success' || needs.promote_ui_web.result == 'skipped') && (needs.publish_docker.result == 'success' || needs.publish_docker.result == 'skipped') && (needs.publish_npm.result == 'success' || needs.publish_npm.result == 'skipped') }}
     uses: ./.github/workflows/release-verify.yml
     with:
       channel: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+      candidate_source_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      candidate_build_run_id: ${{ needs.prepare_release_candidate.outputs.build_run_id }}
+      cli_candidate_build_run_id: ${{ inputs.candidate_run_id }}
+      publication_run_id: ${{ github.run_id }}
+      candidate_stack_version: ${{ needs.publish_hstack_binaries.outputs.version }}
+      verify_deploy_ui: ${{ needs.deploy_ui.result == 'success' && inputs.environment == 'production' }}
+      verify_deploy_server: ${{ needs.deploy_server.result == 'success' }}
+      server_api_version_url: ${{ inputs.environment == 'production' && vars.HAPPIER_SERVER_API_PRODUCTION_VERSION_URL || vars.HAPPIER_SERVER_API_PREVIEW_VERSION_URL }}
+      verify_deploy_website: ${{ needs.deploy_website.result == 'success' }}
+      verify_deploy_docs: ${{ needs.deploy_docs.result == 'success' }}
+      verify_cli_release: ${{ needs.promote_cli_binaries.result == 'success' }}
+      verify_stack_release: ${{ needs.promote_hstack_binaries.result == 'success' }}
+      verify_server_release: ${{ needs.promote_server_runtime.result == 'success' }}
+      verify_ui_web_release: ${{ needs.promote_ui_web.result == 'success' }}
+      run_installers_smoke: false
+      run_binary_smoke: false
+      run_cli_update_continuity: false
+      run_daemon_continuity: false
+      run_session_continuity: false
+      run_self_host_systemd: false
+      run_self_host_launchd: false
+      run_self_host_schtasks: false
+      run_self_host_daemon: false
+
+  advance_release_issues:
+    name: Advance issues to the released channel
+    if: ${{ needs.release_verify.result == 'success' && needs.snapshot_release_issues.outputs.eligible == 'true' }}
+    needs: [snapshot_release_issues, release_verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Reconcile the snapshotted issues
+        env:
+          DEV_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.dev_issues_json }}
+          GITHUB_TOKEN: ${{ github.token }}
+          INCLUDE_PREVIEW_STAGE: ${{ inputs.environment == 'production' && (inputs.confirm == 'release preview to main' || inputs.confirm == 'reset main from preview') }}
+          PREVIEW_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.preview_issues_json }}
+          SOURCE_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.source_issues_json }}
+          TO_STAGE: ${{ inputs.environment == 'production' && 'stage:stable' || 'stage:preview' }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/github/reconcile-issue-stage.mjs advance \
+            --repo "$GITHUB_REPOSITORY" \
+            --issues-json "$SOURCE_ISSUES_JSON" \
+            --from-stage "stage:source" \
+            --to-stage "$TO_STAGE"
+          node scripts/pipeline/github/reconcile-issue-stage.mjs advance \
+            --repo "$GITHUB_REPOSITORY" \
+            --issues-json "$DEV_ISSUES_JSON" \
+            --from-stage "stage:dev" \
+            --to-stage "$TO_STAGE"
+          if [ "$INCLUDE_PREVIEW_STAGE" = "true" ]; then
+            node scripts/pipeline/github/reconcile-issue-stage.mjs advance \
+              --repo "$GITHUB_REPOSITORY" \
+              --issues-json "$PREVIEW_ISSUES_JSON" \
+              --from-stage "stage:preview" \
+              --to-stage "$TO_STAGE"
+          fi
 
   sync_dev:
-    if: ${{ inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true') && (needs.release_verify.result == 'success' || needs.release_verify.result == 'skipped') }}
-    needs: [plan, bump_versions_dev, promote_main, release_verify]
+    if: ${{ inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true') && needs.release_admission.result == 'success' && needs.release_verify.result == 'success' }}
+    needs: [plan, release_admission, promote_main, prepare_release_candidate, release_verify]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit
     with:
       source: main
+      source_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       target: dev
       mode: fast_forward
       dry_run: false
       allow_reset: false
       confirm: promote dev from main
+
+  release_status:
+    name: Project terminal release status
+    if: ${{ always() && inputs.dry_run != true }}
+    needs: [resolve_resume, plan, deploy_plan, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web, verify_release_candidates, verify_resume_candidates, promote_cli_binaries, promote_hstack_binaries, promote_server_runtime, promote_ui_web, deploy_ui, deploy_server, deploy_website, deploy_docs, publish_docker, publish_npm, release_verify, advance_release_issues, sync_dev]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-control
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Project release status facts
+        env:
+          RELEASE_RUN: ${{ github.run_id }}
+          RELEASE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RELEASE_RUN_NAME: ${{ inputs.hmaint_operation_id != '' && format('RELEASE — Publish ({0}, {1})', inputs.hmaint_operation_id, inputs.hmaint_attempt_id) || 'RELEASE — Publish (manual)' }}
+          HMAINT_OPERATION_ID: ${{ inputs.hmaint_operation_id }}
+          RELEASE_CHANNEL: ${{ inputs.environment }}
+          SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha || inputs.authorized_promotion_source_sha }}
+          REQUEST_CLI: ${{ needs.plan.outputs.publish_cli_binaries_needed == 'true' }}
+          REQUEST_STACK: ${{ needs.plan.outputs.publish_stack == 'true' }}
+          REQUEST_SERVER: ${{ needs.plan.outputs.publish_server_runtime_needed == 'true' }}
+          REQUEST_UI_WEB: ${{ needs.resolve_resume.outputs.ui_web_requested == 'true' || contains(format(',{0},', inputs.deploy_targets), ',ui,') || inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_shared == 'true' }}
+          CLI_CANDIDATE_RESULT: ${{ needs.publish_cli_binaries.result }}
+          STACK_CANDIDATE_RESULT: ${{ needs.publish_hstack_binaries.result }}
+          SERVER_CANDIDATE_RESULT: ${{ needs.publish_server_runtime.result }}
+          UI_WEB_CANDIDATE_RESULT: ${{ needs.publish_ui_web.result }}
+          CLI_VERSION: ${{ needs.publish_cli_binaries.outputs.version }}
+          STACK_VERSION: ${{ needs.publish_hstack_binaries.outputs.version }}
+          SERVER_VERSION: ${{ needs.publish_server_runtime.outputs.version }}
+          UI_WEB_VERSION: ${{ needs.publish_ui_web.outputs.version }}
+          CLI_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.cli_verified }}
+          HSTACK_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.stack_verified }}
+          SERVER_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.server_verified }}
+          UI_WEB_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.ui_web_verified }}
+          REQUEST_DEPLOY_UI: ${{ contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.plan.outputs.bump_app != 'none' || inputs.force_deploy == true || inputs.ui_expo_action != 'none') }}
+          REQUEST_DEPLOY_SERVER: ${{ contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.plan.outputs.bump_server != 'none' || inputs.force_deploy == true) }}
+          REQUEST_DEPLOY_WEBSITE: ${{ contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true) }}
+          REQUEST_DEPLOY_DOCS: ${{ contains(format(',{0},', inputs.deploy_targets), ',docs,') && (needs.deploy_plan.outputs.deploy_docs_needed == 'true' || inputs.force_deploy == true) }}
+          REQUEST_DOCKER: ${{ inputs.force_deploy == true || needs.plan.outputs.publish_server == 'true' || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_cli_stack_shared == 'true' || needs.plan.outputs.changed_shared == 'true' }}
+          REQUEST_NPM: ${{ needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.publish_stack == 'true' || needs.plan.outputs.publish_server == 'true' }}
+          CANDIDATE_RESULT: ${{ needs.prepare_release_candidate.result }}
+          IMMUTABLE_VERIFICATION_RESULT: ${{ needs.verify_release_candidates.result }}
+          CLI_RESULT: ${{ needs.promote_cli_binaries.result }}
+          STACK_RESULT: ${{ needs.promote_hstack_binaries.result }}
+          SERVER_RESULT: ${{ needs.promote_server_runtime.result }}
+          UI_WEB_RESULT: ${{ needs.promote_ui_web.result }}
+          DEPLOY_UI_RESULT: ${{ needs.deploy_ui.result }}
+          DEPLOY_SERVER_RESULT: ${{ needs.deploy_server.result }}
+          DEPLOY_WEBSITE_RESULT: ${{ needs.deploy_website.result }}
+          DEPLOY_DOCS_RESULT: ${{ needs.deploy_docs.result }}
+          DOCKER_RESULT: ${{ needs.publish_docker.result }}
+          NPM_RESULT: ${{ needs.publish_npm.result }}
+          RELEASE_VERIFY_RESULT: ${{ needs.release_verify.result }}
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/release/project-release-status.mjs" \
+            --mode standard \
+            --out "$RUNNER_TEMP/release-status.json" \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release status artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: happier-release-status
+          path: ${{ runner.temp }}/release-status.json
+          if-no-files-found: error
+          overwrite: true

@@ -51,7 +51,7 @@ test('validateAgentIdsGenerated rejects production protocol agent provider id ar
   const rootDir = createRepo();
   writeRepoFile(
     rootDir,
-    'packages/protocol/src/providers/agentProviderIdsV1.ts',
+    'packages/protocol/src/generated/providers/agentProviderIdsV1.ts',
     "export const AGENT_PROVIDER_IDS_V1 = ['claude', 'codex'] as const;\n",
   );
 
@@ -66,16 +66,31 @@ test('validateAgentIdsGenerated accepts generated agent provider id output', asy
   const rootDir = createRepo();
   writeRepoFile(
     rootDir,
-    'packages/agents/src/generated/agentProviderIds.ts',
+    'packages/agents/src/generated/agentIds.ts',
     [
       '/**',
       ' * GENERATED FILE CONTRACT (A.X-agent-ids-codegen)',
       ' */',
-      'export const AGENT_PROVIDER_IDS = Object.freeze([',
+      'export const AGENT_IDS = Object.freeze([',
       "  'claude',",
       "  'codex',",
       '] as const);',
-      'export type AgentProviderId = (typeof AGENT_PROVIDER_IDS)[number];',
+      'export type AgentId = (typeof AGENT_IDS)[number];',
+      '',
+    ].join('\n'),
+  );
+  writeRepoFile(
+    rootDir,
+    'packages/protocol/src/generated/providers/agentProviderIdsV1.ts',
+    [
+      '/**',
+      ' * GENERATED FILE CONTRACT (A.X-agent-ids-codegen)',
+      ' */',
+      'export const AGENT_PROVIDER_IDS_V1 = Object.freeze([',
+      "  'claude',",
+      "  'codex',",
+      '] as const);',
+      'export type AgentProviderIdV1 = (typeof AGENT_PROVIDER_IDS_V1)[number];',
       '',
     ].join('\n'),
   );
@@ -106,7 +121,7 @@ test('validateAgentIdsGenerated does not reject non-agent provider id arrays', a
   const rootDir = createRepo();
   writeRepoFile(
     rootDir,
-    'packages/protocol/src/providers/azure-devops/installables.ts',
+    'packages/protocol/src/agents/azure-devops/installables.ts',
     "export const SCM_PROVIDER_IDS = ['github', 'gitlab', 'azure-devops'] as const;\n",
   );
 

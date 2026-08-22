@@ -365,7 +365,11 @@ export async function startStackDevTargets(
               await runDependencyBootstrap({
                 target,
                 stackBaseDir,
-                syncAlreadyVerified: true,
+                // Local generated inputs are published immediately before the
+                // supervisor starts. Use the existing explicit Mutagen barrier
+                // once before executing component bootstrap on the replica.
+                syncAlreadyVerified: false,
+                flush: true,
                 env: infraEnv,
               }),
               `${target.name} dependency bootstrap`,

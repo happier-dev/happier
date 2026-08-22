@@ -11,6 +11,7 @@ export const REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS = [
   '--production=false',
   '--ignore-engines',
   '--ignore-scripts',
+  '--pure-lockfile',
 ];
 
 function resolveInitialInstallEnv(env) {
@@ -68,11 +69,12 @@ export async function bootstrapRemoteDependencies({
     domain,
     'index.js',
   ));
-  await withDependencyRefreshImpl(
-    { installDir: repoDir, componentDir, env },
-    async () => await installInitialDependenciesImpl({ repoDir, env }),
-  );
-  if (dependencyOwnerEntrypoints.some((entrypoint) => !packageExists(entrypoint))) {
+  const dependencyOwnerReady = dependencyOwnerEntrypoints.every((entrypoint) => packageExists(entrypoint));
+  if (!dependencyOwnerReady) {
+    await withDependencyRefreshImpl(
+      { installDir: repoDir, componentDir, env },
+      async () => await installInitialDependenciesImpl({ repoDir, env }),
+    );
     const { ensureWorkspacePackagesBuiltByName } = await loadWorkspaceBuildOwner();
     await ensureWorkspacePackagesBuiltByName(
       repoDir,

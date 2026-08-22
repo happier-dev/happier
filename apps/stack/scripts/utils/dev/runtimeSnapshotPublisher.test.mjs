@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
   createBackgroundRuntimeSnapshotPublisher,
   createRepositoryRuntimePublicationController,
   isRepositoryRuntimePublicationOwner,
+  publishRepositoryRuntimeSnapshotInChildProcess,
+  RUNTIME_PUBLICATION_RESULT_PREFIX,
   wrapReloadExecutorWithRuntimeSnapshotPublication,
 } from './runtimeSnapshotPublisher.mjs';
 
@@ -17,6 +22,89 @@ function createDeferred() {
   });
   return { promise, resolve, reject };
 }
+
+test('repository publication executes in a tracked child process and returns its canonical result', async () => {
+  const children = [];
+  const calls = [];
+  const expectedResult = {
+    snapshotId: 'snapshot-new',
+    changed: true,
+  };
+
+  const result = await publishRepositoryRuntimeSnapshotInChildProcess({
+    rootDir: '/work/happier',
+    authority: {
+      producerStackName: 'repo-dev-a1cc5e0671',
+      producerStackBaseDir: '/stacks/repo-dev-a1cc5e0671',
+    },
+    requestedComponents: ['daemon'],
+    env: { HAPPIER_STACK_STACK: 'repo-dev-a1cc5e0671' },
+    children,
+    workerPath: '/work/happier/runtime-publication-worker.mjs',
+    spawnProcImpl(label, command, args, env, options) {
+      calls.push({ label, command, args, env, options });
+      options.lineFilter({
+        stream: 'stdout',
+        line: `${RUNTIME_PUBLICATION_RESULT_PREFIX}${JSON.stringify(expectedResult)}`,
+      });
+      return {
+        exitCode: null,
+        completion: Promise.resolve({ code: 0, signal: null }),
+      };
+    },
+  });
+
+  assert.deepEqual(result, expectedResult);
+  assert.deepEqual(children, []);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].label, 'runtime-publisher');
+  assert.equal(calls[0].command, process.execPath);
+  assert.equal(calls[0].args[0], '/work/happier/runtime-publication-worker.mjs');
+  assert.deepEqual(
+    JSON.parse(Buffer.from(calls[0].args[1], 'base64url').toString('utf8')),
+    {
+      rootDir: '/work/happier',
+      authority: {
+        producerStackName: 'repo-dev-a1cc5e0671',
+        producerStackBaseDir: '/stacks/repo-dev-a1cc5e0671',
+      },
+      requestedComponents: ['daemon'],
+    },
+  );
+  assert.equal(
+    calls[0].options.lineFilter({
+      stream: 'stdout',
+      line: `${RUNTIME_PUBLICATION_RESULT_PREFIX}${JSON.stringify(expectedResult)}`,
+    }),
+    false,
+  );
+});
+
+test('repository publication parses a machine result that is filtered from human-facing child output', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-runtime-publication-result-'));
+  t.after(async () => await rm(root, { recursive: true, force: true }));
+  const workerPath = join(root, 'worker.mjs');
+  await writeFile(workerPath, [
+    `process.stdout.write(${JSON.stringify(RUNTIME_PUBLICATION_RESULT_PREFIX)} + JSON.stringify({`,
+    "  snapshotId: 'snapshot-real-child',",
+    '  changed: true,',
+    '}) + \'\\n\');',
+    '',
+  ].join('\n'));
+
+  const result = await publishRepositoryRuntimeSnapshotInChildProcess({
+    rootDir: root,
+    authority: { producerStackName: 'repo-dev-a1cc5e0671' },
+    requestedComponents: ['web'],
+    env: process.env,
+    workerPath,
+  });
+
+  assert.deepEqual(result, {
+    snapshotId: 'snapshot-real-child',
+    changed: true,
+  });
+});
 
 test('only the managed checkout-pinned repository producer owns automatic publication', () => {
   const authority = { producerStackName: 'repo-dev-a1cc5e0671', explicit: false };
@@ -433,7 +521,7 @@ test('restart reconstruction compares every component identity instead of restor
   assert.deepEqual(publications, [['server']]);
 });
 
-test('only a successful live refresh marks its existing executor-target component dirty', async () => {
+test('successful preparation marks its component publishable before stale activation is fenced', async () => {
   const marked = [];
   const publisher = {
     markRefreshed(components) {
@@ -456,17 +544,22 @@ test('only a successful live refresh marks its existing executor-target componen
   const skippedExecutor = wrapReloadExecutorWithRuntimeSnapshotPublication({
     executor: {
       target: 'daemon',
+      async build() {
+        return { skipped: true, reason: 'stale-generation' };
+      },
       async restart() {
-        return { skipped: true, reason: 'daemon-control-unavailable' };
+        throw new Error('a skipped preparation must not reach restart');
       },
     },
     publisher,
   });
 
+  assert.deepEqual(await executor.build({}), { ok: true });
+  assert.deepEqual(marked, [['server']], 'publication must not wait for live activation');
   assert.deepEqual(await executor.restart({}), { restarted: true });
-  assert.deepEqual(await skippedExecutor.restart({}), {
+  assert.deepEqual(await skippedExecutor.build({}), {
     skipped: true,
-    reason: 'daemon-control-unavailable',
+    reason: 'stale-generation',
   });
-  assert.deepEqual(marked, [['server']]);
+  assert.deepEqual(marked, [['server']], 'restart must not enqueue the same prepared component twice');
 });

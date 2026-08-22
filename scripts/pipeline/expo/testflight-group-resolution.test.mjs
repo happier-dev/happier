@@ -29,7 +29,7 @@ test('resolveExternalGroupSelections de-duplicates repeated external group selec
   ]);
 });
 
-test('resolveExternalGroupSelections preserves and de-duplicates an explicit App Store Connect group id without a list result', () => {
+test('resolveExternalGroupSelections rejects an explicit App Store Connect group id that is absent from the app group list', () => {
   const explicitGroupId = '78315e16-c539-43ae-a65e-4f465dccaf68';
 
   const resolved = resolveExternalGroupSelections({
@@ -37,5 +37,5 @@ test('resolveExternalGroupSelections preserves and de-duplicates an explicit App
     selections: [explicitGroupId, explicitGroupId],
   });
 
-  assert.deepEqual(resolved.map((group) => group?.id), [explicitGroupId]);
+  assert.deepEqual(resolved, [null, null]);
 });

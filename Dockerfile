@@ -413,6 +413,9 @@ RUN apt-get update \
 ENV NODE_ENV=production
 ENV PORT=3005
 ENV RUN_MIGRATIONS=1
+ARG SENTRY_RELEASE=""
+ENV SENTRY_RELEASE=$SENTRY_RELEASE
+ENV HAPPIER_RELEASE_SOURCE_SHA=$SENTRY_RELEASE
 COPY --from=server-builder --chown=node:node /repo/node_modules /repo/node_modules
 COPY --from=server-builder --chown=node:node /repo/packages/agents /repo/packages/agents
 COPY --from=server-builder --chown=node:node /repo/packages/cli-common /repo/packages/cli-common
@@ -454,8 +457,6 @@ ARG TARGETARCH
 ARG HAPPIER_RELEASE_BASE_URL="https://github.com/happier-dev/happier/releases/download"
 ARG HAPPIER_RELAY_SERVER_RELEASE_TAG=""
 ARG HAPPIER_RELAY_SERVER_VERSION=""
-ARG HAPPIER_RELAY_UI_WEB_RELEASE_TAG=""
-ARG HAPPIER_RELAY_UI_WEB_VERSION=""
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl tar minisign \
     && rm -rf /var/lib/apt/lists/*
@@ -477,16 +478,6 @@ RUN set -eux; \
       --arch "$artifact_arch" \
       --dest /opt/happier/server \
       --pubkey /tmp/happier-release.pub; \
-    fetch-verified-release-artifact \
-      --base-url "$HAPPIER_RELEASE_BASE_URL" \
-      --release-tag "$HAPPIER_RELAY_UI_WEB_RELEASE_TAG" \
-      --product happier-ui-web \
-      --version "$HAPPIER_RELAY_UI_WEB_VERSION" \
-      --os web \
-      --arch any \
-      --dest /opt/happier/ui-web \
-      --pubkey /tmp/happier-release.pub; \
-    rm -rf /opt/happier/server/ui-web; \
     rm -rf /opt/happier/server/generated/mysql-client; \
     case "$TARGETARCH" in \
       amd64) \
@@ -507,12 +498,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 RUN useradd -m -s /bin/bash happier \
-    && mkdir -p /data /opt/happier/server /opt/happier/ui-web \
+    && mkdir -p /data /opt/happier/server \
     && chown -R happier:happier /data /opt/happier
 COPY --from=relay-artifacts --chown=happier:happier /opt/happier/server /opt/happier/server
-COPY --from=relay-artifacts --chown=happier:happier /opt/happier/ui-web /opt/happier/ui-web
 ARG SENTRY_RELEASE=""
 ENV SENTRY_RELEASE=$SENTRY_RELEASE
+ENV HAPPIER_RELEASE_SOURCE_SHA=$SENTRY_RELEASE
 ARG SENTRY_SERVER_CENTRAL_DSN=""
 ENV HAPPIER_SENTRY_CENTRAL_DSN=$SENTRY_SERVER_CENTRAL_DSN
 ENV HAPPIER_SENTRY_USE_CENTRAL_DSN=1
@@ -524,7 +515,7 @@ ENV HAPPIER_DB_PROVIDER=sqlite
 ENV HAPPY_DB_PROVIDER=sqlite
 ENV HAPPIER_SERVER_LIGHT_DATA_DIR=/data
 ENV HAPPY_SERVER_LIGHT_DATA_DIR=/data
-ENV HAPPIER_SERVER_UI_DIR=/opt/happier/ui-web
+ENV HAPPIER_SERVER_UI_DIR=/opt/happier/server/ui-web/current
 ENV HAPPIER_SERVER_UI_PREFIX=/
 ENV HAPPIER_SERVER_UI_REQUIRED=1
 ENV HAPPIER_SQLITE_AUTO_MIGRATE=1

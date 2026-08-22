@@ -1,18 +1,27 @@
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { killProcessTree, spawnProc } from '../proc/proc.mjs';
-import { inspectDevTargetSync } from './executor.mjs';
-import { isMutagenProjectOwnedBy, resolveMutagenSessionName } from './mutagen_project.mjs';
+import { inspectDevTargetSync, runDevTargetCommand } from './executor.mjs';
+import {
+  DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS,
+  isMutagenProjectOwnedBy,
+  resolveMutagenSessionName,
+} from './mutagen_project.mjs';
 import {
   buildMutagenMonitorArgs,
   createMutagenMonitorLineFilter,
 } from './mutagen_monitor.mjs';
-import { resolveDevTargetMutagenRuntime } from './mutagen_runtime.mjs';
+import {
+  resolveDevTargetMutagenRuntime,
+  resolveRecoverableReplicaArtifactConflictRoots,
+} from './mutagen_runtime.mjs';
 import {
   ensureDevTargetSyncProject,
   INDEPENDENT_DEV_TARGET_SYNC_OWNER,
   releaseIndependentDevTargetSyncProject,
+  runDevTargetControlProcess,
 } from './sync_project.mjs';
 
 function defaultSpawnMonitor({ command, args, env, lineFilter }) {
@@ -64,6 +73,91 @@ function assertUsableStatus(target, status) {
   );
 }
 
+export async function repairRecoverableDevTargetSyncConflicts(
+  { target, status, sourceDir, stackBaseDir, env },
+  {
+    pathExists = existsSync,
+    runCommand = runDevTargetCommand,
+    runControl = runDevTargetControlProcess,
+  } = {},
+) {
+  if (target.platform !== 'posix') return { repaired: false, roots: [] };
+  const roots = resolveRecoverableReplicaArtifactConflictRoots(status?.session)
+    .filter((root) => !pathExists(join(sourceDir, root)));
+  if (roots.length === 0) return { repaired: false, roots: [] };
+  for (const root of roots) {
+    const result = await runCommand({
+      target,
+      stackBaseDir,
+      cwd: '.',
+      commandArgs: [
+        'sh',
+        '-ceu',
+        [
+          'repo=$1',
+          'relative=$2',
+          'shift 2',
+          'candidate="$repo/$relative"',
+          '[ -d "$candidate" ]',
+          'found_marker=0',
+          'for marker in "$@"; do',
+          '  if [ -e "$candidate/$marker" ] || [ -L "$candidate/$marker" ]; then',
+          '    found_marker=1',
+          '    break',
+          '  fi',
+          'done',
+          '[ "$found_marker" -eq 1 ]',
+          'rm -rf -- "$candidate"',
+        ].join('\n'),
+        'hstack-sync-repair',
+        target.repoDir,
+        root,
+        ...DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS,
+      ],
+      dependencyAdmission: 'skip',
+      syncAlreadyVerified: true,
+      env,
+    });
+    if (result?.code !== 0) {
+      throw new Error(
+        `[dev-targets] ${target.name} refused stale replica artifact repair for ${root}`,
+      );
+    }
+  }
+  const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
+  const sessionName = resolveMutagenSessionName(target.name);
+  for (const action of ['reset', 'flush']) {
+    const result = await runControl({
+      label: `sync:${target.name}`,
+      command: 'mutagen',
+      args: ['sync', action, sessionName],
+      env: runtime.env,
+    });
+    if (result?.code !== 0) {
+      throw new Error(`[dev-targets] ${target.name} synchronization ${action} failed after repair`);
+    }
+  }
+  return { repaired: true, roots };
+}
+
+async function inspectAndRepairSync({
+  target,
+  sourceDir,
+  stackBaseDir,
+  env,
+  inspectSync,
+  repairSync,
+}) {
+  const status = await inspectSync({ target, stackBaseDir, env });
+  const repair = await repairSync({ target, status, sourceDir, stackBaseDir, env });
+  if (!repair?.repaired) return status;
+  return {
+    state: 'synchronizing',
+    sessionName: status.sessionName,
+    repairedRoots: repair.roots,
+  };
+}
+
 export async function startDevTargetSyncService(
   {
     stackBaseDir,
@@ -77,6 +171,7 @@ export async function startDevTargetSyncService(
     inspectSync = inspectDevTargetSync,
     resumeSync = defaultResumeSync,
     spawnMonitor = defaultSpawnMonitor,
+    repairSync = repairRecoverableDevTargetSyncConflicts,
     writePreparationState = defaultWritePreparationState,
   } = {},
 ) {
@@ -124,7 +219,14 @@ export async function startDevTargetSyncService(
     throw error;
   }
   const statusResults = await Promise.allSettled(targets.map(async (target) => {
-    const status = await inspectSync({ target, stackBaseDir, env });
+    const status = await inspectAndRepairSync({
+      target,
+      sourceDir,
+      stackBaseDir,
+      env,
+      inspectSync,
+      repairSync,
+    });
     assertUsableStatus(target, status);
     return { target: target.name, status };
   }));
@@ -149,6 +251,33 @@ export async function startDevTargetSyncService(
   });
   if (failedPreparation !== -1) throw statusResults[failedPreparation].reason;
   const statuses = statusResults.map((result) => result.value);
+  const targetBySession = new Map(
+    targets.map((target) => [resolveMutagenSessionName(target.name), target]),
+  );
+  const recoveryByTarget = new Map();
+  const scheduleConflictRecovery = ({ sessionName, conflictCount }) => {
+    if (!Number.isFinite(conflictCount) || conflictCount <= 0) return;
+    const target = targetBySession.get(sessionName);
+    if (!target) return;
+    const prior = recoveryByTarget.get(target.name) ?? Promise.resolve();
+    const recovery = prior
+      .catch(() => null)
+      .then(async () => {
+        const status = await inspectSync({ target, stackBaseDir, env });
+        const result = await repairSync({ target, status, sourceDir, stackBaseDir, env });
+        if (result?.repaired) {
+          process.stderr.write(
+            `[dev-targets] ${target.name} removed stale ignored artifacts for deleted source ${result.roots.join(', ')}\n`,
+          );
+        }
+      })
+      .catch((error) => {
+        process.stderr.write(
+          `[dev-targets] ${target.name} synchronization conflict requires manual resolution: ${errorMessage(error)}\n`,
+        );
+      });
+    recoveryByTarget.set(target.name, recovery);
+  };
   const monitor = detached
     ? null
     : spawnMonitor({
@@ -156,7 +285,7 @@ export async function startDevTargetSyncService(
         args: buildMutagenMonitorArgs(
           targets.map((target) => resolveMutagenSessionName(target.name)),
         ),
-        lineFilter: createMutagenMonitorLineFilter(),
+        lineFilter: createMutagenMonitorLineFilter({ onStateChange: scheduleConflictRecovery }),
         env: project.env,
       });
   return { project, statuses, monitor };

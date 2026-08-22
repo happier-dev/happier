@@ -11,9 +11,9 @@ const SCAN_ROOTS = [
   'apps/ui/sources',
 ] as const;
 
-const GENERATED_AGENT_PROVIDER_ID_PATHS = [
-  'packages/agents/src/generated/agentProviderIds.ts',
-  'packages/protocol/src/providers/agentProviderIdsV1.ts',
+const GENERATED_AGENT_ID_PATHS = [
+  'packages/agents/src/generated/agentIds.ts',
+  'packages/protocol/src/generated/providers/agentProviderIdsV1.ts',
 ] as const;
 
 const GENERATED_AGENT_IDS_MARKER = 'GENERATED FILE CONTRACT (A.X-agent-ids-codegen)';
@@ -21,7 +21,7 @@ const SOURCE_FILE_PATTERN = /\.[cm]?[jt]sx?$/;
 const TEST_FILE_PATTERN = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 const DIST_PATH_PATTERN = /(^|\/)dist\//;
 const MANUAL_AGENT_ID_ARRAY_PATTERN =
-  /\b(?:export\s+)?const\s+(CANONICAL_AGENT_IDS|AGENT_PROVIDER_IDS(?:_V1)?)\s*(?::[^=]+)?=\s*(?:Object\.freeze\s*\(\s*)?\[/;
+  /\b(?:export\s+)?const\s+(CANONICAL_AGENT_IDS|AGENT_IDS|AGENT_PROVIDER_IDS(?:_V1)?)\s*(?::[^=]+)?=\s*(?:Object\.freeze\s*\(\s*)?\[/;
 
 export interface AgentIdsGeneratedValidatorFile {
   filePath: string;
@@ -136,7 +136,7 @@ function dedupeFiles(files: readonly AgentIdsGeneratedValidatorFile[]): AgentIds
 }
 
 function validateManualAgentIdArrays(file: AgentIdsGeneratedValidatorFile): string[] {
-  if (isAcceptedGeneratedAgentProviderIdsFile(file)) {
+  if (isAcceptedGeneratedAgentIdsFile(file)) {
     return [];
   }
 
@@ -155,9 +155,9 @@ function validateManualAgentIdArrays(file: AgentIdsGeneratedValidatorFile): stri
   return errors;
 }
 
-function isAcceptedGeneratedAgentProviderIdsFile(file: AgentIdsGeneratedValidatorFile): boolean {
+function isAcceptedGeneratedAgentIdsFile(file: AgentIdsGeneratedValidatorFile): boolean {
   const normalizedPath = normalizeRepoPath(file.filePath);
-  if (!GENERATED_AGENT_PROVIDER_ID_PATHS.includes(normalizedPath as (typeof GENERATED_AGENT_PROVIDER_ID_PATHS)[number])) {
+  if (!GENERATED_AGENT_ID_PATHS.includes(normalizedPath as (typeof GENERATED_AGENT_ID_PATHS)[number])) {
     return false;
   }
   return file.content.includes(GENERATED_AGENT_IDS_MARKER);

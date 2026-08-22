@@ -2748,6 +2748,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'eas-cli-version': { type: 'string', default: '' },
         'dump-view': { type: 'string', default: 'true' },
         'fingerprint-mode': { type: 'string', default: 'always' },
+        'preflight-only': { type: 'boolean', default: false },
         'release-message': { type: 'string', default: '' },
         'runtime-version': { type: 'string', default: '' },
         'ui-version-bump': { type: 'string', default: '' },
@@ -2844,6 +2845,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     /** @type {'host' | 'dagger'} */
     const nativeLocalRuntime = nativeLocalRuntimeRaw;
     const dryRun = values['dry-run'] === true;
+    const preflightOnly = values['preflight-only'] === true;
+    if (preflightOnly && action !== 'native_submit') {
+      fail('--preflight-only is supported only for --action native_submit.');
+    }
 
     const { env, sources } = loadPipelineEnv({
       repoRoot,
@@ -2889,6 +2894,36 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     if (usedKeychain) {
       console.log(`[pipeline] loaded secrets from Keychain service '${keychainService}'`);
     }
+
+      if (preflightOnly) {
+        const shouldHandleIos = platform === 'ios' || platform === 'all';
+        if (!shouldHandleIos) {
+          console.log('[pipeline] ui-mobile release: no iOS TestFlight configuration to validate.');
+          return;
+        }
+        const testflightDistribution = resolveTestflightDistributionConfig({
+          environment,
+          env: mergedEnv,
+        });
+        if (!testflightDistribution.enabled) {
+          console.log('[pipeline] ui-mobile release: TestFlight external distribution is not configured.');
+          return;
+        }
+        runExpoTestflightDistribute({
+          repoRoot,
+          env: mergedEnv,
+          dryRun,
+          args: [
+            '--environment',
+            environmentArg,
+            '--external-groups',
+            testflightDistribution.externalGroups,
+            '--validate-groups-only',
+            ...(dryRun ? ['--dry-run'] : []),
+          ],
+        });
+        return;
+      }
 
       console.log(`[pipeline] ui-mobile release: environment=${environmentArg} action=${action} platform=${platform}`);
 

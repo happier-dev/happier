@@ -13,7 +13,7 @@ on:
           - fast
           - custom
       custom_checks:
-        description: "Custom — Comma-separated checks used only when profile=custom (ui,ui_e2e,wsrepl_lima,mobile_e2e_android,mobile_e2e_ios,server,cli,stack,typecheck,daemon_e2e,e2e_core,e2e_core_slow,server_db_contract,providers,stress,release_contracts,installers_smoke,binary_smoke,cli_update_continuity,daemon_continuity,session_continuity,release_assets_docker,self_host_systemd,self_host_launchd,self_host_schtasks,self_host_daemon)"
+        description: "Custom — Comma-separated checks used only when profile=custom (ui,ui_e2e,wsrepl_lima,mobile_e2e_android,mobile_e2e_ios,plugin_workspaces,server,cli,stack,typecheck,daemon_e2e,e2e_core,e2e_core_slow,server_db_contract,providers,stress,release_contracts,installers_smoke,binary_smoke,cli_update_continuity,daemon_continuity,session_continuity,release_assets_docker,self_host_systemd,self_host_launchd,self_host_schtasks,self_host_daemon)"
         required: true
         default: ""
         type: string
@@ -55,6 +55,7 @@ jobs:
       run_mobile_e2e_android: ${{ steps.flags.outputs.run_mobile_e2e_android }}
       run_mobile_e2e_ios: ${{ steps.flags.outputs.run_mobile_e2e_ios }}
       run_ui: ${{ steps.flags.outputs.run_ui }}
+      run_plugin_workspaces: ${{ steps.flags.outputs.run_plugin_workspaces }}
       run_server: ${{ steps.flags.outputs.run_server }}
       run_cli: ${{ steps.flags.outputs.run_cli }}
       run_stack: ${{ steps.flags.outputs.run_stack }}
@@ -103,6 +104,7 @@ jobs:
             run_mobile_e2e_android=false
             run_mobile_e2e_ios=false
             run_ui=true
+            run_plugin_workspaces=true
             run_server=true
             run_cli=true
             run_stack=true
@@ -130,6 +132,7 @@ jobs:
             run_mobile_e2e_android=false
             run_mobile_e2e_ios=false
             run_ui=true
+            run_plugin_workspaces=true
             run_server=true
             run_cli=true
             run_stack=true
@@ -157,6 +160,7 @@ jobs:
             run_mobile_e2e_android=false
             run_mobile_e2e_ios=false
             run_ui=false
+            run_plugin_workspaces=false
             run_server=false
             run_cli=false
             run_stack=false
@@ -180,6 +184,7 @@ jobs:
             run_self_host_daemon=false
 
             if has ui; then run_ui=true; fi
+            if has plugin_workspaces; then run_plugin_workspaces=true; fi
             if has ui_e2e; then run_ui_e2e=true; fi
             if has wsrepl_lima; then run_wsrepl_lima=true; fi
             if has mobile_e2e_android; then run_mobile_e2e_android=true; fi
@@ -213,6 +218,7 @@ jobs:
             echo "run_mobile_e2e_android=${run_mobile_e2e_android}"
             echo "run_mobile_e2e_ios=${run_mobile_e2e_ios}"
             echo "run_ui=${run_ui}"
+            echo "run_plugin_workspaces=${run_plugin_workspaces}"
             echo "run_server=${run_server}"
             echo "run_cli=${run_cli}"
             echo "run_stack=${run_stack}"
@@ -241,11 +247,13 @@ jobs:
     needs: [resolve]
     uses: ./.github/workflows/tests.yml
     with:
+      select_jobs_explicitly: true
       run_ui_e2e: ${{ needs.resolve.outputs.run_ui_e2e == 'true' }}
       run_wsrepl_lima: ${{ needs.resolve.outputs.run_wsrepl_lima == 'true' }}
       run_mobile_e2e_android: ${{ needs.resolve.outputs.run_mobile_e2e_android == 'true' }}
       run_mobile_e2e_ios: ${{ needs.resolve.outputs.run_mobile_e2e_ios == 'true' }}
       run_ui: ${{ needs.resolve.outputs.run_ui == 'true' }}
+      run_plugin_workspaces: ${{ needs.resolve.outputs.run_plugin_workspaces == 'true' }}
       run_server: ${{ needs.resolve.outputs.run_server == 'true' }}
       run_cli: ${{ needs.resolve.outputs.run_cli == 'true' }}
       run_stack: ${{ needs.resolve.outputs.run_stack == 'true' }}

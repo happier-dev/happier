@@ -58,3 +58,21 @@ export interface RewriteEdit {
 export interface RewritePlan {
   edits: readonly RewriteEdit[];
 }
+
+export type DeclarationRewriteAction =
+  | 'retain'
+  | 'move'
+  | 'rename'
+  | 'internalize'
+  | 'delete'
+  | 'manual_semantic_migration';
+
+export interface DeclarationRewriteRow {
+  sourceSpecifier: string;
+  sourceSymbol: string;
+  targetSpecifier: string | null;
+  targetSymbol: string | null;
+  action: DeclarationRewriteAction;
+  owner: string;
+  reason?: string;
+}

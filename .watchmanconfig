@@ -1,6 +1,5 @@
 {
     "ignore_dirs": [
-        "node_modules",
         ".project",
         "graphify-out",
         ".expo",
@@ -9,6 +8,9 @@
         ".nyc_output",
         "coverage",
         "playwright-report",
-        "test-results"
+        "test-results",
+        "dist",
+        "output",
+        "subagents"
     ]
 }

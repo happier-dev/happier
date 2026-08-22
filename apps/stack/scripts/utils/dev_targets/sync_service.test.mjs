@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   inspectDevTargetSyncService,
+  repairRecoverableDevTargetSyncConflicts,
   startDevTargetSyncService,
   stopDevTargetSyncService,
   waitForDevTargetSyncMonitor,
@@ -217,4 +218,230 @@ test('detached sync start records every synchronization observation before rejec
     mac: { state: 'failed', error: '[dev-targets] mac synchronization is unavailable: mac session unavailable' },
     mac2: { state: 'ready' },
   });
+});
+
+test('sync service repairs a deleted source root blocked only by ignored beta artifacts', async () => {
+  const repaired = [];
+  const conflictStatus = {
+    state: 'unhealthy',
+    sessionName: 'happier-mac',
+    session: {
+      mode: 'one-way-replica',
+      conflicts: [{
+        root: 'packages/plugins/retired-plugin',
+        alphaChanges: [{
+          path: 'packages/plugins/retired-plugin',
+          old: { kind: 'directory' },
+          new: null,
+        }],
+        betaChanges: [
+          {
+            path: 'packages/plugins/retired-plugin/node_modules',
+            old: null,
+            new: { kind: 'untracked' },
+          },
+          {
+            path: 'packages/plugins/retired-plugin/dist/runtime.js',
+            old: null,
+            new: { kind: 'untracked' },
+          },
+          {
+            path: 'packages/plugins/retired-plugin/.happier',
+            old: null,
+            new: { kind: 'untracked' },
+          },
+          {
+            path: 'packages/plugins/retired-plugin/.tsbuildinfo',
+            old: null,
+            new: { kind: 'untracked' },
+          },
+        ],
+      }],
+    },
+  };
+  const result = await startDevTargetSyncService({
+    stackBaseDir: '/stack',
+    sourceDir: '/repo',
+    targets: [{ name: 'mac', platform: 'posix', repoDir: '/remote/repo' }],
+    detached: true,
+    env: {},
+  }, {
+    ensureProject: async () => ({ ownership: 'owned', env: {} }),
+    resumeSync: async () => {},
+    inspectSync: async () => conflictStatus,
+    repairSync: async (options) => {
+      repaired.push(options);
+      return { repaired: true, roots: ['packages/plugins/retired-plugin'] };
+    },
+    writePreparationState: async () => {},
+  });
+
+  assert.equal(repaired.length, 1);
+  assert.equal(repaired[0].status, conflictStatus);
+  assert.equal(result.statuses[0].status.state, 'synchronizing');
+  assert.deepEqual(result.statuses[0].status.repairedRoots, ['packages/plugins/retired-plugin']);
+});
+
+test('recoverable conflict repair deletes only the exact managed replica root after source absence is rechecked', async () => {
+  const calls = [];
+  const target = {
+    name: 'mac',
+    platform: 'posix',
+    repoDir: '/remote/repo',
+  };
+  const status = {
+    session: {
+      mode: 'one-way-replica',
+      conflicts: [{
+        root: 'packages/plugins/retired-plugin',
+        alphaChanges: [{
+          path: 'packages/plugins/retired-plugin',
+          old: { kind: 'directory' },
+          new: null,
+        }],
+        betaChanges: [{
+          path: 'packages/plugins/retired-plugin/node_modules',
+          old: null,
+          new: { kind: 'untracked' },
+        }],
+      }],
+    },
+  };
+  const result = await repairRecoverableDevTargetSyncConflicts({
+    target,
+    status,
+    sourceDir: '/source/repo',
+    stackBaseDir: '/stack',
+    env: { TEST_ENV: '1' },
+  }, {
+    pathExists: (path) => {
+      calls.push({ kind: 'exists', path });
+      return false;
+    },
+    runCommand: async (options) => {
+      calls.push({ kind: 'run', options });
+      return { code: 0 };
+    },
+    runControl: async (options) => {
+      calls.push({ kind: 'control', options });
+      return { code: 0 };
+    },
+  });
+
+  assert.deepEqual(result, {
+    repaired: true,
+    roots: ['packages/plugins/retired-plugin'],
+  });
+  assert.deepEqual(calls[0], {
+    kind: 'exists',
+    path: '/source/repo/packages/plugins/retired-plugin',
+  });
+  assert.equal(calls[1].options.syncAlreadyVerified, true);
+  assert.equal(calls[1].options.dependencyAdmission, 'skip');
+  assert.deepEqual(calls[1].options.commandArgs.slice(-7), [
+    'hstack-sync-repair',
+    '/remote/repo',
+    'packages/plugins/retired-plugin',
+    'node_modules',
+    'dist',
+    '.happier',
+    '.tsbuildinfo',
+  ]);
+  assert.match(calls[1].options.commandArgs[2], /rm -rf -- "\$candidate"/);
+  assert.match(calls[1].options.commandArgs[2], /"\$candidate\/\$marker"/);
+  assert.deepEqual(calls.slice(2).map((call) => call.options.args.slice(0, 2)), [
+    ['sync', 'reset'],
+    ['sync', 'flush'],
+  ]);
+});
+
+test('recoverable conflict repair refuses when the alpha source root exists again', async () => {
+  let ran = false;
+  const result = await repairRecoverableDevTargetSyncConflicts({
+    target: { name: 'mac', platform: 'posix', repoDir: '/remote/repo' },
+    status: {
+      session: {
+        mode: 'one-way-replica',
+        conflicts: [{
+          root: 'packages/plugins/retired-plugin',
+          alphaChanges: [{
+            path: 'packages/plugins/retired-plugin',
+            old: { kind: 'directory' },
+            new: null,
+          }],
+          betaChanges: [{
+            path: 'packages/plugins/retired-plugin/node_modules',
+            old: null,
+            new: { kind: 'untracked' },
+          }],
+        }],
+      },
+    },
+    sourceDir: '/source/repo',
+    stackBaseDir: '/stack',
+    env: {},
+  }, {
+    pathExists: () => true,
+    runCommand: async () => { ran = true; return { code: 0 }; },
+    runControl: async () => { ran = true; return { code: 0 }; },
+  });
+
+  assert.deepEqual(result, { repaired: false, roots: [] });
+  assert.equal(ran, false);
+});
+
+test('recoverable conflict repair skips a root that reappeared without blocking other safe roots', async () => {
+  const repairedRoots = [];
+  const result = await repairRecoverableDevTargetSyncConflicts({
+    target: { name: 'mac', platform: 'posix', repoDir: '/remote/repo' },
+    status: {
+      session: {
+        mode: 'one-way-replica',
+        conflicts: [
+          {
+            root: 'packages/plugins/reappeared-plugin',
+            alphaChanges: [{
+              path: 'packages/plugins/reappeared-plugin',
+              old: { kind: 'directory' },
+              new: null,
+            }],
+            betaChanges: [{
+              path: 'packages/plugins/reappeared-plugin/node_modules',
+              old: null,
+              new: { kind: 'untracked' },
+            }],
+          },
+          {
+            root: 'packages/plugins/retired-plugin',
+            alphaChanges: [{
+              path: 'packages/plugins/retired-plugin',
+              old: { kind: 'directory' },
+              new: null,
+            }],
+            betaChanges: [{
+              path: 'packages/plugins/retired-plugin/dist',
+              old: null,
+              new: { kind: 'untracked' },
+            }],
+          },
+        ],
+      },
+    },
+    sourceDir: '/source/repo',
+    stackBaseDir: '/stack',
+    env: {},
+  }, {
+    pathExists: (path) => path.endsWith('/reappeared-plugin'),
+    runCommand: async ({ commandArgs }) => {
+      repairedRoots.push(commandArgs[5]);
+      return { code: 0 };
+    },
+    runControl: async () => ({ code: 0 }),
+  });
+
+  assert.deepEqual(result, {
+    repaired: true,
+    roots: ['packages/plugins/retired-plugin'],
+  });
+  assert.deepEqual(repairedRoots, ['packages/plugins/retired-plugin']);
 });

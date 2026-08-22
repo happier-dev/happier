@@ -626,7 +626,7 @@ export async function stopStackOwnedServerForRestart(
 }
 
 export async function preflightDevServerRestart(
-  { serverDir, serverEnv = {}, reloadMigrationMode = null, consoleImpl = console },
+  { serverDir, serverEnv = {}, consoleImpl = console },
   { pmExecBinImpl = pmExecBin } = {},
 ) {
   const parentPreflightAlreadyDone = String(
@@ -646,7 +646,7 @@ export async function preflightDevServerRestart(
   if (!runtimeTypecheckScript) return { ran: false, reason: 'missing-build-script' };
 
   consoleImpl.log('[local] watch: server changed → preflight build...');
-  if (reloadMigrationMode === 'apply' && hasPackageScript(serverDir, 'generate:providers')) {
+  if (runtimeTypecheckScript === 'typecheck:runtime' && hasPackageScript(serverDir, 'generate:providers')) {
     await pmExecBinImpl({
       dir: serverDir,
       bin: 'generate:providers',

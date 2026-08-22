@@ -1,4 +1,10 @@
-import { TEST_LANE_DEFINITIONS, type LaneId } from './testLaneMap.ts';
+import {
+  describeWorkspaceScriptTarget,
+  matchesWorkspaceScriptTarget,
+  resolveRootScriptWorkspaceTargets,
+  scanYarnInvocations,
+} from './rootScriptWorkspaceTargets.ts';
+import { ROOT_UNIT_LANE_SCRIPT_NAME, TEST_LANE_DEFINITIONS, type LaneId } from './testLaneMap.ts';
 
 export interface WorkflowScriptParityIssue {
   laneId?: LaneId | GovernanceCommandId;
@@ -31,32 +37,34 @@ export type GovernanceCommandId =
   | 'test:migration:inventory'
   | 'test:migration:v2-zero:enforce'
   | 'test:migration:bundled-plugin-projections'
+  | 'test:migration:bundled-plugin-runtime-determinism'
   | 'test:migration:governance';
 
 const CANONICAL_LANE_PARITY: readonly ParityDefinition[] = Object.freeze([
   {
+    // Workflow coverage for the root unit lane is derived from the root script itself
+    // (see collectRootUnitLaneWorkflowIssues), not from a second maintained command list.
     id: 'test',
     rootScriptName: 'test',
     docsCommands: ['yarn test'],
-    workflowCommands: [
-      'yarn workspace privacy-kit test',
-      'yarn workspace @happier-dev/protocol test',
-      'yarn workspace @happier-dev/peer-mediation test',
-      'yarn workspace @happier-dev/transfers test',
-      'yarn workspace @happier-dev/agents test',
-      'yarn workspace @happier-dev/cli-common test',
-      'yarn workspace @happier-dev/support test',
-      'yarn workspace @happier-dev/connection-supervisor test',
-      'yarn workspace @happier-dev/bootstrap test',
-      'yarn workspace @happier-dev/plugin-sdk test',
-      'yarn workspace @happier-dev/plugin-ui test',
-      'yarn workspace @happier-dev/app test:unit',
-      'yarn workspace @happier-dev/cli test:unit',
-      'yarn --cwd apps/server test:unit',
-      'yarn --cwd packages/relay-server test',
-      'yarn --cwd apps/stack test:unit',
-    ],
+    workflowCommands: [],
     workflowMode: 'all',
+    triggerMode: 'required',
+  },
+  {
+    id: 'test:plugin-workspaces',
+    rootScriptName: 'test:plugin-workspaces',
+    docsCommands: ['yarn test:plugin-workspaces'],
+    workflowCommands: ['yarn test:plugin-workspaces'],
+    workflowMode: 'any',
+    triggerMode: 'required',
+  },
+  {
+    id: 'test:plugin-platform:contracts',
+    rootScriptName: 'test:plugin-platform:contracts',
+    docsCommands: ['yarn test:plugin-platform:contracts'],
+    workflowCommands: ['yarn test:plugin-platform:contracts'],
+    workflowMode: 'any',
     triggerMode: 'required',
   },
   {
@@ -227,6 +235,23 @@ const GOVERNANCE_COMMAND_PARITY: readonly ParityDefinition[] = Object.freeze([
     requiredScriptBodyPatterns: [
       /scripts\/migrations\/extensions\/generateBundledPluginEntries\.ts/,
       /--mode check/,
+      /--scope projections/,
+    ],
+  },
+  {
+    // Same publisher, the other question: the re-stage inlines the current
+    // shared workspace output into every bundled runtime, so byte equality is a
+    // whole-repo build-determinism signal and carries its own name.
+    id: 'test:migration:bundled-plugin-runtime-determinism',
+    rootScriptName: 'test:migration:bundled-plugin-runtime-determinism',
+    docsCommands: [],
+    workflowCommands: ['yarn test:migration:governance'],
+    workflowMode: 'any',
+    triggerMode: 'local-only',
+    requiredScriptBodyPatterns: [
+      /scripts\/migrations\/extensions\/generateBundledPluginEntries\.ts/,
+      /--mode check/,
+      /--scope all/,
     ],
   },
   {
@@ -240,6 +265,7 @@ const GOVERNANCE_COMMAND_PARITY: readonly ParityDefinition[] = Object.freeze([
       /test:migration:v2-zero:enforce/,
       /test:migration:wire-compat/,
       /test:migration:bundled-plugin-projections/,
+      /test:migration:bundled-plugin-runtime-determinism/,
     ],
   },
 ]);
@@ -292,10 +318,42 @@ function hasAnyCommand(text: string, commands: readonly string[]): boolean {
   return commands.length === 0 ? true : commands.some((command) => text.includes(command));
 }
 
+/**
+ * The root unit lane runs one workspace test script per workspace. CI must run the same set, so the
+ * expected commands are read out of the root script instead of a parallel maintained list.
+ */
+function collectRootUnitLaneWorkflowIssues(
+  input: WorkflowScriptParityInput,
+  scripts: Readonly<Record<string, string>>,
+): WorkflowScriptParityIssue[] {
+  const issues: WorkflowScriptParityIssue[] = [];
+  const workflowTargets = scanYarnInvocations(input.workflowText).workspaceTargets
+    .filter((target) => target.scriptName.startsWith('test'));
+  const seen = new Set<string>();
+
+  for (const target of resolveRootScriptWorkspaceTargets(scripts, ROOT_UNIT_LANE_SCRIPT_NAME)) {
+    if (!target.scriptName.startsWith('test')) continue;
+    const workspaceLabel = describeWorkspaceScriptTarget(target);
+    if (seen.has(workspaceLabel)) continue;
+    seen.add(workspaceLabel);
+
+    if (!workflowTargets.some((candidate) => matchesWorkspaceScriptTarget(target, candidate))) {
+      issues.push({
+        laneId: 'test',
+        message: `Workflow coverage is missing for test: no CI step runs the ${workspaceLabel} test script.`,
+      });
+    }
+  }
+
+  return issues;
+}
+
 export function collectWorkflowScriptParityReport(input: WorkflowScriptParityInput): WorkflowScriptParityReport {
   const issues: WorkflowScriptParityIssue[] = [];
   const scripts = parseScripts(input.packageJsonText);
   const docsCommands = new Set(extractRootCommandMentions(input.docsText).map((mention) => mention.command));
+
+  issues.push(...collectRootUnitLaneWorkflowIssues(input, scripts));
 
   for (const definition of [...CANONICAL_LANE_PARITY, ...GOVERNANCE_COMMAND_PARITY]) {
     if (!(definition.rootScriptName in scripts)) {

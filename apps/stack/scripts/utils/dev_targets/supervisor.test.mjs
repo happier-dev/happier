@@ -202,7 +202,8 @@ test('dependency bootstrap delegates to the cancellable remote execution owner',
     assert.equal(bootstrapCalls.length, 1);
     assert.equal(bootstrapCalls[0].target, target);
     assert.equal(bootstrapCalls[0].stackBaseDir, join(root, 'stack'));
-    assert.equal(bootstrapCalls[0].syncAlreadyVerified, true);
+    assert.equal(bootstrapCalls[0].syncAlreadyVerified, false);
+    assert.equal(bootstrapCalls[0].flush, true);
     assert.equal(
       processCalls.some(({ command, args }) => (
         command === 'ssh'

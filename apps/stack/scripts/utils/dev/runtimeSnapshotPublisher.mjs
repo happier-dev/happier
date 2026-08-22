@@ -1,5 +1,11 @@
+import { fileURLToPath } from 'node:url';
+
+import { spawnProc } from '../proc/proc.mjs';
+
 const RUNTIME_COMPONENTS = ['web', 'server', 'daemon'];
 const RUNTIME_COMPONENT_SET = new Set(RUNTIME_COMPONENTS);
+
+export const RUNTIME_PUBLICATION_RESULT_PREFIX = '__HAPPIER_RUNTIME_PUBLICATION_RESULT__=';
 
 function normalizeComponents(components) {
   const selected = new Set(
@@ -26,6 +32,68 @@ export function isRepositoryRuntimePublicationOwner({
     && producerStackName
     && String(stackName ?? '').trim() === producerStackName,
   );
+}
+
+/**
+ * Run the canonical repository publisher outside the Stack owner process. Artifact
+ * assembly is intentionally CPU/filesystem-heavy; keeping it in this process can
+ * starve the public proxy even while the last-green backend remains healthy.
+ */
+export async function publishRepositoryRuntimeSnapshotInChildProcess({
+  rootDir,
+  authority,
+  requestedComponents,
+  env = process.env,
+  children = [],
+  workerPath = fileURLToPath(new URL('./runtimeSnapshotPublicationWorker.mjs', import.meta.url)),
+  spawnProcImpl = spawnProc,
+} = {}) {
+  const request = Buffer.from(JSON.stringify({
+    rootDir,
+    authority,
+    requestedComponents: normalizeComponents(requestedComponents),
+  }), 'utf8').toString('base64url');
+  let result = null;
+  let resultError = null;
+  const child = spawnProcImpl(
+    'runtime-publisher',
+    process.execPath,
+    [workerPath, request],
+    env,
+    {
+      cwd: rootDir,
+      lineFilter({ stream, line }) {
+        if (stream !== 'stdout' || !line.startsWith(RUNTIME_PUBLICATION_RESULT_PREFIX)) return true;
+        try {
+          result = JSON.parse(line.slice(RUNTIME_PUBLICATION_RESULT_PREFIX.length));
+        } catch (error) {
+          resultError = error;
+        }
+        return false;
+      },
+    },
+  );
+  children.push(child);
+  let completion;
+  try {
+    completion = await child.completion;
+  } finally {
+    const childIndex = children.indexOf(child);
+    if (childIndex >= 0) children.splice(childIndex, 1);
+  }
+  if (completion?.error) throw completion.error;
+  if (completion?.code !== 0) {
+    throw new Error(
+      `runtime publisher child failed (code=${completion?.code ?? 'null'}, sig=${completion?.signal ?? 'null'})`,
+    );
+  }
+  if (resultError) {
+    throw new Error('runtime publisher child returned an invalid result', { cause: resultError });
+  }
+  if (!result || typeof result !== 'object') {
+    throw new Error('runtime publisher child exited without returning a result');
+  }
+  return result;
 }
 
 export function createRepositoryRuntimePublicationController({
@@ -78,23 +146,34 @@ export function wrapReloadExecutorWithRuntimeSnapshotPublication({
 } = {}) {
   const normalizedComponent = normalizeComponents([component ?? executor?.target])[0];
   if (!normalizedComponent || !executor || typeof executor.restart !== 'function') return executor;
+  const build = typeof executor.build === 'function' ? executor.build : null;
   const restart = executor.restart;
-  return {
-    ...executor,
-    async restart(context = {}) {
-      const result = await restart.call(executor, context);
-      if (result?.restarted !== true || typeof publisher?.markRefreshed !== 'function') return result;
-      try {
-        void Promise.resolve(publisher.markRefreshed([normalizedComponent])).catch((error) => {
-          logger.error?.(
-            `[local] runtime publication request failed after ${normalizedComponent} refresh: ${errorMessage(error)}`,
-          );
-        });
-      } catch (error) {
+  const requestPublication = () => {
+    if (typeof publisher?.markRefreshed !== 'function') return;
+    try {
+      void Promise.resolve(publisher.markRefreshed([normalizedComponent])).catch((error) => {
         logger.error?.(
           `[local] runtime publication request failed after ${normalizedComponent} refresh: ${errorMessage(error)}`,
         );
-      }
+      });
+    } catch (error) {
+      logger.error?.(
+        `[local] runtime publication request failed after ${normalizedComponent} refresh: ${errorMessage(error)}`,
+      );
+    }
+  };
+  return {
+    ...executor,
+    ...(build ? {
+      async build(context = {}) {
+        const result = await build.call(executor, context);
+        if (result?.skipped !== true) requestPublication();
+        return result;
+      },
+    } : {}),
+    async restart(context = {}) {
+      const result = await restart.call(executor, context);
+      if (!build && result?.restarted === true) requestPublication();
       return result;
     },
   };

@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import {
   createHappyCliReloadDescriptors,
   createHappyCliReloadExecutor,
+  createHappyCliWorkspacePreparationExecutor,
   startDevDaemon,
 } from './daemon.mjs';
 import { createDevServerReloadDescriptors } from './server.mjs';
@@ -114,8 +115,40 @@ test('CLI reload descriptors own source inputs and exclude generated refresh out
     descriptors.find((descriptor) => descriptor.id === 'daemon:cli-publication')?.paths,
     [join(cliDir, 'dist', '.build-manifest.json')],
   );
+  assert.equal(
+    descriptors.find((descriptor) => descriptor.id === 'daemon:cli-publication')?.invalidatesGeneration,
+    false,
+  );
   assert.ok(!paths.some((path) => path.includes('/node_modules')));
   assert.ok(!paths.some((path) => path.includes('/dist') && !path.endsWith('/dist/.build-manifest.json')));
+});
+
+test('workspace preparation executor refreshes generated plugin inputs without owning daemon lifecycle', async () => {
+  const calls = [];
+  const executor = createHappyCliWorkspacePreparationExecutor(
+    {
+      repoRoot: '/repo',
+      cliDir: '/repo/apps/cli',
+      env: { HAPPIER_STACK_STACK: 'repo-dev' },
+    },
+    {
+      syncSharedDepsForSourceDevImpl: async (repoRoot, options) => {
+        calls.push({ repoRoot, options });
+        return { synced: true, reason: 'completed' };
+      },
+    },
+  );
+
+  assert.deepEqual(await executor.build(), { synced: true, reason: 'completed' });
+  assert.deepEqual(await executor.restart(), { skipped: true, reason: 'preparation-only' });
+  assert.deepEqual(calls, [{
+    repoRoot: '/repo',
+    options: {
+      cliDir: '/repo/apps/cli',
+      env: { HAPPIER_STACK_STACK: 'repo-dev' },
+      quiet: true,
+    },
+  }]);
 });
 
 test('reload executor immediately adopts an external superseded CLI publication before requesting the trailing build', async (t) => {
@@ -170,6 +203,79 @@ test('reload executor immediately adopts an external superseded CLI publication 
   });
   assert.equal(ensureBuildCalls, 0);
   assert.equal(runtimeProbeCalls, 1);
+});
+
+test('reload executor builds a successor when an external publication workspace payload is unavailable', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-daemon-external-workspace-unavailable-'));
+  t.after(async () => rm(root, { recursive: true, force: true }));
+  const cliDir = join(root, 'apps', 'cli');
+  const distIndexPath = join(cliDir, 'dist', 'index.mjs');
+  await mkdir(dirname(distIndexPath), { recursive: true });
+  await writeFile(distIndexPath, 'export const daemon = true;\n', 'utf-8');
+  const workspaceRuntimeIdentity = 'a'.repeat(64);
+  writeDistBuildManifestForTest(distIndexPath, {
+    inputFingerprint: 'b'.repeat(64),
+    workspaceRuntimeIdentity,
+    workspaceRuntimePackages: ['@happier-dev/protocol'],
+  });
+
+  let buildCompleted = false;
+  let ensureBuildCalls = 0;
+  let coldStartCalls = 0;
+  const executor = createHappyCliReloadExecutor(
+    {
+      startDaemon: true,
+      buildCli: true,
+      cliDir,
+      cliBin: join(cliDir, 'bin', 'happier.mjs'),
+      cliHomeDir: join(root, 'home'),
+      internalServerUrl: 'http://127.0.0.1:3009',
+      publicServerUrl: 'http://localhost:3009',
+      isShuttingDown: () => false,
+      stackName: 'dev',
+    },
+    {
+      ensureCliBuiltImpl: async () => {
+        ensureBuildCalls += 1;
+        buildCompleted = true;
+        return { built: true, current: true, reason: 'test' };
+      },
+      readCliRuntimeInputFreshnessImpl: async () => ({
+        fingerprint: 'c'.repeat(64),
+        newestMtimeNs: 2n,
+      }),
+      readCliWorkspaceRuntimeIdentityImpl: () => {
+        if (!buildCompleted) throw new Error('workspace payload is absent');
+        return {
+          fingerprint: workspaceRuntimeIdentity,
+          packageCount: 1,
+          packageNames: ['@happier-dev/protocol'],
+        };
+      },
+      pingDaemonImpl: async () => ({ ok: false, reason: 'daemon_not_running' }),
+      startLocalDaemonWithAuthImpl: async () => {
+        coldStartCalls += 1;
+      },
+      logger: { log() {}, warn() {}, error() {} },
+    },
+  );
+
+  assert.deepEqual(await executor.build({
+    changedDescriptors: ['daemon:cli-publication'],
+  }), {
+    skipped: true,
+    reason: 'cli-publication-workspace-runtime-unavailable',
+    requestFollowup: true,
+  });
+  assert.equal(ensureBuildCalls, 0);
+
+  assert.deepEqual(await executor.build({ changedDescriptors: [] }), {
+    ok: true,
+    allowSupersededActivation: true,
+  });
+  assert.equal(ensureBuildCalls, 1);
+  assert.deepEqual(await executor.restart(), { restarted: true, mode: 'cold-start' });
+  assert.equal(coldStartCalls, 1);
 });
 
 test('reload executor rejects bare dist entrypoint without build manifest', async () => {

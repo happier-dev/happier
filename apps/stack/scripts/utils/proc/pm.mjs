@@ -318,13 +318,14 @@ async function readScriptEntrypointKind(path) {
   return classifyScriptEntrypointSource(source);
 }
 
-function buildDependencyInstallArgs(packageManagerName, { force = false } = {}) {
+function buildDependencyInstallArgs(packageManagerName, { force = false, preserveLockfile = false } = {}) {
   const args = ['install'];
   if (force) {
     args.push('--force');
   }
   if (packageManagerName === 'yarn') {
     args.push('--production=false', '--ignore-engines');
+    if (preserveLockfile) args.push('--pure-lockfile');
   }
   return args;
 }
@@ -338,7 +339,10 @@ async function repairCorruptedCliPkgrollInstallIfNeeded(cliDir, { quiet = false,
 
   const pm = await getComponentPm(installDir, env);
   const stdio = quiet ? 'ignore' : 'inherit';
-  const repairArgs = buildDependencyInstallArgs(pm.name, { force: true });
+  const repairArgs = buildDependencyInstallArgs(pm.name, {
+    force: true,
+    preserveLockfile: String(env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1',
+  });
 
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir: installDir, env, quiet, pm });
@@ -534,8 +538,69 @@ async function ensureServerGeneratedProviderOutputs(componentDir, installDir, { 
   });
 }
 
-async function ensureComponentPrerequisites(componentDir, _label, { quiet = false, env = process.env } = {}) {
-  await ensureServerGeneratedProviderOutputs(componentDir, resolveDependencyInstallRoot(componentDir), { quiet, env });
+function findInstalledEnrichedMarkdownPackageDirs(componentDir, installDir) {
+  return Array.from(new Set([
+    join(componentDir, 'node_modules', 'react-native-enriched-markdown'),
+    join(installDir, 'node_modules', 'react-native-enriched-markdown'),
+  ])).filter((packageDir) => existsSync(packageDir));
+}
+
+async function ensureUiPostinstallOutputs(componentDir, installDir, { quiet = false, env: envIn, pm: pmIn } = {}) {
+  const componentPkg = await readPackageJsonIfExists(join(componentDir, 'package.json'));
+  if (componentPkg?.name !== '@happier-dev/app') return;
+  if (typeof componentPkg?.scripts?.['postinstall:real'] !== 'string') return;
+
+  const requiredRelativePath = join('lib', 'module', 'web', 'streamingReveal.js');
+  const readMissingOutputs = () => {
+    const packageDirs = findInstalledEnrichedMarkdownPackageDirs(componentDir, installDir);
+    if (packageDirs.length === 0) {
+      return [join(componentDir, 'node_modules', 'react-native-enriched-markdown', requiredRelativePath)];
+    }
+    return packageDirs
+      .map((packageDir) => join(packageDir, requiredRelativePath))
+      .filter((outputPath) => !existsSync(outputPath));
+  };
+  if (readMissingOutputs().length === 0) return;
+
+  const env = pmIn
+    ? (envIn ?? process.env)
+    : await preparePmEnv(installDir, envIn ?? process.env);
+  const pm = pmIn ?? await getComponentPm(installDir, env);
+  const stdio = quiet ? 'ignore' : 'inherit';
+  if (!quiet) {
+    // eslint-disable-next-line no-console
+    console.log('[local] repairing happier-ui postinstall outputs...');
+  }
+
+  if (pm.name === 'yarn') {
+    await ensureYarnReady({ dir: installDir, env, quiet, pm });
+    await runPm(pm, ['-s', 'workspace', '@happier-dev/app', 'postinstall:real'], {
+      cwd: installDir,
+      stdio,
+      env,
+    });
+  } else {
+    await runPm(pm, ['run', '-s', 'postinstall:real'], {
+      cwd: componentDir,
+      stdio,
+      env,
+    });
+  }
+
+  const missingOutputs = readMissingOutputs();
+  if (missingOutputs.length > 0) {
+    throw new Error(
+      `[local] happier-ui postinstall completed without required patched outputs:\n${missingOutputs
+        .map((outputPath) => `- ${outputPath}`)
+        .join('\n')}`,
+    );
+  }
+}
+
+async function ensureComponentPrerequisites(componentDir, _label, { quiet = false, env = process.env, pm } = {}) {
+  const installDir = resolveDependencyInstallRoot(componentDir);
+  await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
+  await ensureUiPostinstallOutputs(componentDir, installDir, { quiet, env, pm });
 }
 
 async function ensureYarnReady({ dir, env, quiet = false, pm }) {
@@ -694,14 +759,36 @@ export async function ensureDepsInstalled(
   const nodeModules = join(installDir, 'node_modules');
   const stdio = quiet ? 'ignore' : 'inherit';
   const env = await preparePmEnv(installDir, envIn);
-  const pm = await getComponentPm(installDir, env);
-  if (pm.name === 'yarn') {
-    await ensureYarnReady({ dir: installDir, env, quiet, pm });
+  // Stack explicitly prepares the three component-owned lifecycle outputs after
+  // dependency admission. Keep Yarn from compiling every first-party workspace
+  // as an incidental install side effect while preserving third-party install
+  // scripts and the UI/CLI postinstalls that own real runtime prerequisites.
+  // Server provider generation is already owned explicitly by
+  // ensureComponentPrerequisites; its postinstall also runs build:shared and
+  // would duplicate the source-dev/package publication owners.
+  if (!String(env.HAPPIER_INSTALL_SCOPE ?? '').trim()) {
+    env.HAPPIER_INSTALL_SCOPE = 'ui,cli';
   }
+  const pm = await getComponentPm(installDir, env);
   if (onDependenciesReady && pm.name !== 'yarn') {
     throw new Error(`[local] ${label} dependency-ready actions require the canonical Yarn dependency refresh owner`);
   }
-  const installArgs = buildDependencyInstallArgs(pm.name);
+  const ensureCanonicalYarnReady = async () => {
+    if (pm.name === 'yarn') {
+      await ensureYarnReady({ dir: installDir, env, quiet, pm });
+    }
+  };
+  const guardedDependencyReadyAction = onDependenciesReady
+    ? async () => {
+        await ensureCanonicalYarnReady();
+        await onDependenciesReady();
+      }
+    : null;
+  const installArgs = buildDependencyInstallArgs(pm.name, {
+    // A dev target is a one-way synchronized replica. Its dependency tree is
+    // mutable, but dependency inputs remain owned by the source checkout.
+    preserveLockfile: String(env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1',
+  });
 
   if (await pathExists(nodeModules)) {
     const skipRefresh =
@@ -713,7 +800,7 @@ export async function ensureDepsInstalled(
         throw new Error(`[local] cannot run ${label} dependency-ready actions while dependency refresh is disabled`);
       }
       if (prepareComponentOutputs) {
-        await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
+        await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
       }
       return;
     }
@@ -729,13 +816,19 @@ export async function ensureDepsInstalled(
         throw new Error(`[local] cannot run ${label} dependency-ready actions in a service without dependency refresh permission`);
       }
       if (prepareComponentOutputs) {
-        await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
+        await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
       }
       return;
     }
 
     if (pm.name === 'yarn') {
-      await withDependencyRefresh({ installDir, componentDir, env, onDependenciesReady }, async ({ heldCliLockValue }) => {
+      await withDependencyRefresh({
+        installDir,
+        componentDir,
+        env,
+        onDependenciesReady: guardedDependencyReadyAction,
+      }, async () => {
+        await ensureCanonicalYarnReady();
         if (!quiet) {
           // eslint-disable-next-line no-console
           console.log(`[local] refreshing ${label} dependencies (yarn.lock/package.json/workspace package.json/patches changed)...`);
@@ -743,18 +836,19 @@ export async function ensureDepsInstalled(
         await runPm(pm, installArgs, {
           cwd: installDir,
           stdio,
-          env: heldCliLockValue ? { ...env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldCliLockValue } : env,
+          env,
         });
       });
     }
 
     if (prepareComponentOutputs) {
-      await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
+      await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
     }
     return;
   }
 
-  const installFirstRun = async (heldCliLockValue = null) => {
+  const installFirstRun = async () => {
+    await ensureCanonicalYarnReady();
     if (!quiet) {
       // eslint-disable-next-line no-console
       console.log(`[local] installing ${label} dependencies (first run)...`);
@@ -762,18 +856,23 @@ export async function ensureDepsInstalled(
     await runPm(pm, installArgs, {
       cwd: installDir,
       stdio,
-      env: heldCliLockValue ? { ...env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldCliLockValue } : env,
+      env,
     });
   };
   if (pm.name === 'yarn') {
     await withDependencyRefresh(
-      { installDir, componentDir, env, onDependenciesReady },
-      async ({ heldCliLockValue }) => installFirstRun(heldCliLockValue),
+      {
+        installDir,
+        componentDir,
+        env,
+        onDependenciesReady: guardedDependencyReadyAction,
+      },
+      installFirstRun,
     );
   } else {
     await installFirstRun();
   }
-  await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
+  await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
 }
 
 const stackWorkspaceBuildBoundary = {
@@ -828,28 +927,54 @@ export async function syncSharedDepsForSourceDev(repoRoot, {
   quiet,
   workspaceNames,
   includeRuntimeDependencies = true,
+  spawnProcImpl = spawnProc,
 } = {}) {
   const sourceDevSyncModulePath = join(cliDir, 'scripts', 'buildSharedDeps.mjs');
   if (!(await pathExists(sourceDevSyncModulePath))) {
     return null;
   }
-  const sourceDevSyncModule = await import(pathToFileURL(sourceDevSyncModulePath).href);
-  if (typeof sourceDevSyncModule.syncSharedDepsForSourceDev !== 'function') {
+  const sourceDevSyncEntrypoint = join(cliDir, 'scripts', 'syncSharedDepsForDev.mjs');
+  if (!(await pathExists(sourceDevSyncEntrypoint))) {
     throw new Error(
-      `Current CLI source-dev dependency owner is unavailable: ${sourceDevSyncModulePath}`,
+      `Current CLI source-dev dependency entrypoint is unavailable: ${sourceDevSyncEntrypoint}`,
     );
   }
-  return await sourceDevSyncModule.syncSharedDepsForSourceDev({
-    repoRoot,
-    env,
-    quiet,
-    workspaceNames,
-    includeRuntimeDependencies,
-    lockOptions: {
-      heldLockValue,
-      lockPath,
+  const normalizedWorkspaceNames = [...new Set((workspaceNames ?? [])
+    .map((value) => String(value ?? '').trim().replace(/^@happier-dev\//, ''))
+    .filter(Boolean))];
+  const args = [
+    sourceDevSyncEntrypoint,
+    '--json',
+    ...(!includeRuntimeDependencies ? ['--no-runtime-dependencies'] : []),
+    ...normalizedWorkspaceNames,
+  ];
+  const childEnv = {
+    ...(env ?? process.env),
+    ...(heldLockValue ? { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue } : {}),
+    ...(lockPath ? { HAPPIER_SOURCE_DEV_SHARED_DEPS_LOCK_PATH: lockPath } : {}),
+  };
+  let resultPayload = null;
+  const resultPrefix = '__HAPPIER_SOURCE_DEV_SYNC_RESULT__=';
+  const child = spawnProcImpl('local', process.execPath, args, childEnv, {
+    cwd: repoRoot,
+    silent: Boolean(quiet),
+    lineFilter: ({ stream, line }) => {
+      if (stream !== 'stdout' || !line.startsWith(resultPrefix)) return true;
+      resultPayload = JSON.parse(line.slice(resultPrefix.length));
+      return false;
     },
   });
+  const completion = await child.completion;
+  if (completion.code !== 0) {
+    throw new Error(
+      `Current CLI source-dev dependency publication failed ` +
+      `(code=${completion.code ?? 'null'}, sig=${completion.signal ?? 'null'})`,
+    );
+  }
+  if (!resultPayload || typeof resultPayload !== 'object') {
+    throw new Error('Current CLI source-dev dependency publication did not report its result');
+  }
+  return resultPayload;
 }
 
 export async function inspectUsableSourceDevSharedDepsLastGreen(repoRoot, {
@@ -880,30 +1005,26 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
     : join(cliDir, '.dist.hstack-build.lock');
   await ensureDepsInstalled(cliDir, 'happier-cli', { quiet, env: envIn });
 
-  return await withCliDistBuildLock(async ({ heldLockValue }) => {
-    const prepareWorkspaceOutputs = async () => {
-      const workspacePreparation = await ensureWorkspacePackagesBuiltForComponent(
+  const prepareWorkspaceOutputs = async () => {
+    const workspacePreparation = await ensureWorkspacePackagesBuiltForComponent(
+      cliDir,
+      { quiet, env: envIn },
+    );
+    let sourceDevPreparation = null;
+    if (repoRoot) {
+      sourceDevPreparation = await syncSharedDepsForSourceDev(repoRoot, {
         cliDir,
-        { quiet, env: envIn },
-      );
-      let sourceDevPreparation = null;
-      if (repoRoot) {
-        sourceDevPreparation = await syncSharedDepsForSourceDev(repoRoot, {
-          cliDir,
-          env: envIn,
-          heldLockValue,
-          lockPath,
-          quiet,
-        });
-      }
-      return { workspacePreparation, sourceDevPreparation };
-    };
-    const skipAfterWorkspacePreparation = async (result) => {
-      await prepareWorkspaceOutputs();
-      return result;
-    };
+        env: envIn,
+        quiet,
+      });
+    }
+    return { workspacePreparation, sourceDevPreparation };
+  };
+  const preparation = await prepareWorkspaceOutputs();
+
+  return await withCliDistBuildLock(async ({ heldLockValue }) => {
     if (!buildCli) {
-      return await skipAfterWorkspacePreparation({ built: false, reason: 'disabled' });
+      return { built: false, reason: 'disabled' };
     }
     // Default: build only when needed (fast + reliable for worktrees that haven't been built yet).
     //
@@ -1009,7 +1130,7 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
     if (mode === 'never') {
       if (await readUsableCliDistFreshness(distEntrypoint) !== null) {
         return await completeWithReleaseBackupRollback(
-          () => skipAfterWorkspacePreparation({ built: false, current: false, reason: 'mode_never' }),
+          () => ({ built: false, current: false, reason: 'mode_never' }),
         );
       }
       // fallthrough to build
@@ -1022,10 +1143,6 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
       } else if (!(await pathExists(distEntrypoint))) {
         // fallthrough to build
       } else if (await isCliDistFreshForInputs(distEntrypoint, inputFreshness)) {
-        const preparation = await completeWithReleaseBackupRollback(
-          prepareWorkspaceOutputs,
-          { retainReleaseBackupOnSuccess: true },
-        );
         if (
           preparation.workspacePreparation.built.length === 0
           && preparation.sourceDevPreparation?.synced !== true
@@ -1050,7 +1167,7 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
           ? { HAPPIER_CLI_BUILD_INPUT_FINGERPRINT: inputFreshness.fingerprint }
           : {}),
       };
-      await runPm(pm, ['build'], {
+      await runPm(pm, ['build:prepared'], {
         cwd: cliDir,
         env: buildEnv,
         stdio: quiet ? 'ignore' : 'inherit',
@@ -1061,7 +1178,7 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
             `[local] happier-cli build finished but did not produce expected entrypoint.\n` +
             `Expected: ${distEntrypoint}\n` +
             `Fix: run the component build directly and inspect its output:\n` +
-            `  cd "${cliDir}" && ${formatPmCommand(pm, ['build'])}`
+            `  cd "${cliDir}" && ${formatPmCommand(pm, ['build:prepared'])}`
         );
       }
 

@@ -6,7 +6,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { withStackDaemonLifecycleLock } from './daemon_lifecycle_lock.mjs';
+import {
+  resolveStackDaemonLifecycleLockPath,
+  withStackDaemonLifecycleLock,
+} from './daemon_lifecycle_lock.mjs';
+
+test('Stack orchestration lock does not reuse the legacy CLI daemon lifecycle namespace', () => {
+  const lockPath = resolveStackDaemonLifecycleLockPath({
+    cliHomeDir: '/tmp/happier-cli-home',
+    internalServerUrl: 'http://127.0.0.1:3011',
+    stackName: 'dev',
+  });
+
+  assert.match(lockPath, /[/\\]locks[/\\]stack-daemon-orchestration-[a-f0-9]{16}\.lock$/);
+  assert.doesNotMatch(lockPath, /[/\\]locks[/\\]daemon-lifecycle-/);
+});
 
 test('withStackDaemonLifecycleLock does not reclaim an old lock while the owner pid is alive', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-daemon-lifecycle-lock-live-owner-'));

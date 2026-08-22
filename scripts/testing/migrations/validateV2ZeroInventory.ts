@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { collectV2ZeroSourceFiles, formatV2ZeroInventoryMarkdown, runV2ZeroInventory } from './lib/v2ZeroInventory.ts';
 import {
   enforceAcpSharedSessionCompatibilityAllowlist,
-  enforceAgentBackendOperationSetParity,
+  enforceRetiredRuntimeAdapterAliasAbsence,
   enforceExecutionRunIntentProfileOwnerFence,
   enforceExecutionRunBackendRegistryImportAllowlist,
   enforceTrackedV2ZeroReportFreshness,
@@ -15,13 +15,73 @@ import {
   loadV2ZeroInventoryEnforcementBaseline,
 } from './lib/v2ZeroInventoryEnforcement.ts';
 
+export interface V2ZeroInventoryGateResult {
+  ok: boolean;
+  errors: readonly string[];
+}
+
+export function enforceV2ZeroInventoryReport(params: Readonly<{
+  report: Awaited<ReturnType<typeof runV2ZeroInventory>>;
+  files: ReturnType<typeof collectV2ZeroSourceFiles>;
+  rootDir: string;
+  baselinePath?: string;
+}>): V2ZeroInventoryGateResult {
+  const errors: string[] = [];
+  const baselinePath = params.baselinePath
+    ?? process.env.HAPPIER_V2_ZERO_INVENTORY_BASELINE
+    ?? 'scripts/testing/migrations/baselines/v2ZeroInventoryBaseline.json';
+
+  try {
+    const baseline = loadV2ZeroInventoryEnforcementBaseline({
+      rootDir: params.rootDir,
+      baselinePath,
+    });
+    errors.push(...enforceV2ZeroInventoryBaseline(params.report, baseline).errors);
+  } catch (error) {
+    errors.push(`- v2-zero-baseline: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  errors.push(
+    ...enforceRetiredRuntimeAdapterAliasAbsence(params.files).errors,
+    ...enforceExecutionRunBackendRegistryImportAllowlist(params.files).errors,
+    ...enforceRuntimeCoreSessionCommandRoutingNoLoadRun(params.files).errors,
+    ...enforceSharedRuntimeForLoopCompatibilityRetirement(params.files).errors,
+    ...enforceSharedSessionCanonicalPlanBoundary(params.files).errors,
+    ...enforceAcpSharedSessionCompatibilityAllowlist(params.files).errors,
+    ...enforceSharedSessionRetirementSurfaceAllowlist(params.files).errors,
+    ...enforceExecutionRunIntentProfileOwnerFence(params.files).errors,
+    ...enforceTrackedV2ZeroReportFreshness(params.report, { rootDir: params.rootDir }).errors,
+  );
+
+  return { ok: errors.length === 0, errors };
+}
+
+export async function runV2ZeroInventoryGate(params: Readonly<{
+  rootDir?: string;
+  writeReports?: boolean;
+}> = {}): Promise<V2ZeroInventoryGateResult & { report: Awaited<ReturnType<typeof runV2ZeroInventory>> }> {
+  const rootDir = params.rootDir ?? process.cwd();
+  const files = collectV2ZeroSourceFiles(rootDir);
+  const report = await runV2ZeroInventory({
+    files,
+    rootDir,
+    writeReports: params.writeReports,
+  });
+  return {
+    ...enforceV2ZeroInventoryReport({ report, files, rootDir }),
+    report,
+  };
+}
+
 export async function main(): Promise<void> {
-  const files = collectV2ZeroSourceFiles();
+  const rootDir = process.cwd();
+  const files = collectV2ZeroSourceFiles(rootDir);
   const shouldWriteReports =
     process.argv.includes('--write-reports') ||
     process.env.HAPPIER_V2_ZERO_INVENTORY_WRITE_REPORTS === '1';
   const report = await runV2ZeroInventory({
     files,
+    rootDir,
     writeReports: shouldWriteReports,
   });
 
@@ -41,37 +101,10 @@ export async function main(): Promise<void> {
     return;
   }
 
-  const baselinePath = process.env.HAPPIER_V2_ZERO_INVENTORY_BASELINE ?? 'scripts/testing/migrations/baselines/v2ZeroInventoryBaseline.json';
-  const baseline = loadV2ZeroInventoryEnforcementBaseline({
-    rootDir: process.cwd(),
-    baselinePath,
-  });
-  const baselineResult = enforceV2ZeroInventoryBaseline(report, baseline);
-  const agentBackendParityResult = enforceAgentBackendOperationSetParity(files);
-  const registryImportResult = enforceExecutionRunBackendRegistryImportAllowlist(files);
-  const sessionRoutingResult = enforceRuntimeCoreSessionCommandRoutingNoLoadRun(files);
-  const sharedD3RetirementResult = enforceSharedRuntimeForLoopCompatibilityRetirement(files);
-  const sharedSessionCanonicalBoundaryResult = enforceSharedSessionCanonicalPlanBoundary(files);
-  const acpSharedSessionCompatibilityResult = enforceAcpSharedSessionCompatibilityAllowlist(files);
-  const sharedSessionRetirementSurfaceResult = enforceSharedSessionRetirementSurfaceAllowlist(files);
-  const executionRunIntentOwnerFenceResult = enforceExecutionRunIntentProfileOwnerFence(files);
-  const trackedReportFreshnessResult = enforceTrackedV2ZeroReportFreshness(report, { rootDir: process.cwd() });
-
-  const errors = [
-    ...baselineResult.errors,
-    ...agentBackendParityResult.errors,
-    ...registryImportResult.errors,
-    ...sessionRoutingResult.errors,
-    ...sharedD3RetirementResult.errors,
-    ...sharedSessionCanonicalBoundaryResult.errors,
-    ...acpSharedSessionCompatibilityResult.errors,
-    ...sharedSessionRetirementSurfaceResult.errors,
-    ...executionRunIntentOwnerFenceResult.errors,
-    ...trackedReportFreshnessResult.errors,
-  ];
-  if (errors.length > 0) {
+  const gateResult = enforceV2ZeroInventoryReport({ report, files, rootDir });
+  if (gateResult.errors.length > 0) {
     console.error('V2-0 inventory enforcement failed:');
-    for (const error of errors) {
+    for (const error of gateResult.errors) {
       console.error(error);
     }
     process.exitCode = 1;

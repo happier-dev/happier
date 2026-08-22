@@ -100,14 +100,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  trusted_ref_guard:
+    name: Trusted workflow ref guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Admit trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE: promote-server.yml
+        run: |
+          set -euo pipefail
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
+            *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
   release_actor_guard:
+    needs: [trusted_ref_guard]
     name: Release actor guard
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -115,215 +142,260 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-  promote:
+  resolve_source:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
-    environment: release-shared
+    permissions:
+      contents: read
+    outputs:
+      source_ref: ${{ steps.resolve.outputs.source_ref }}
+      candidate_sha: ${{ steps.candidate.outputs.authorized_sha }}
     steps:
-      - name: Resolve source ref
-        id: resolve
+      - name: Checkout trusted workflow control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Enforce trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
         run: |
           set -euo pipefail
-          env_name="${{ inputs.environment }}"
-          src="${{ inputs.source_ref }}"
-          if [ "$src" = "auto" ]; then
-            if [ "$env_name" = "preview" ]; then
-              src="preview"
-            else
-              src="main"
-            fi
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-server.yml@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-server.yml@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-server.yml@refs/heads/main") ;;
+            *) echo "Untrusted promote-server workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+      - name: Resolve and validate source ref
+        id: resolve
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          ALLOW_CROSS_PROMOTE: ${{ inputs.allow_cross_promote }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          src="$SOURCE_REF"
+          if [ "$src" = auto ]; then if [ "$DEPLOY_ENVIRONMENT" = preview ]; then src=preview; else src=main; fi; fi
+          if [ "$DEPLOY_ENVIRONMENT" = production ] && [ "$src" != main ] && [ "$ALLOW_CROSS_PROMOTE" != true ]; then exit 1; fi
+          if [ "$BUMP" != none ] && [ "$src" != main ] && [ "$src" != preview ] && [ "$src" != dev ]; then exit 1; fi
+          if [[ "$src" == *$'\n'* || "$src" == *$'\r'* ]] || ! git check-ref-format --branch "$src" >/dev/null 2>&1; then
+            if [[ ! "$src" =~ ^[a-f0-9]{40}$ ]]; then echo "Invalid promotion source ref." >&2; exit 1; fi
           fi
-
-          # Guardrails: allow using non-default source ref only when explicitly confirmed.
-          if [ "$env_name" = "production" ] && [ "$src" != "main" ] && [ "${{ inputs.allow_cross_promote }}" != "true" ]; then
-            echo "Refusing to promote '$src' to production without allow_cross_promote=true." >&2
-            exit 1
-          fi
-
-          # Bumps require a real branch target we can push back to.
-          if [ "${{ inputs.bump }}" != "none" ] && [ "$src" != "main" ] && [ "$src" != "preview" ] && [ "$src" != "dev" ]; then
-            echo "Refusing to bump versions when source_ref is not a branch (main/preview/dev). Set bump=none or use a branch." >&2
-            exit 1
-          fi
-
-          echo "ref=$src" >> "$GITHUB_OUTPUT"
-
+          echo "source_ref=$src" >> "$GITHUB_OUTPUT"
       - name: Enforce trusted refs for manual dispatch
         run: |
-          set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
-            exit 0
-          fi
-          case "${GITHUB_REF_NAME}" in
-            dev|preview|main) ;;
-            *)
-              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, or main." >&2
-              exit 1
-              ;;
-          esac
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then exit 0; fi
+          case "$GITHUB_REF_NAME" in dev|preview|main) ;; *) exit 1 ;; esac
+      - name: Bind exact authorized source SHA
+        id: candidate
+        env:
+          SOURCE_REF: ${{ steps.resolve.outputs.source_ref }}
+        run: node scripts/pipeline/github/resolve-authorized-release-source.mjs --source-ref "$SOURCE_REF" --remote origin --github-output "$GITHUB_OUTPUT"
 
+  apply_bump:
+    needs: [release_actor_guard, resolve_source]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    permissions:
+      contents: write
+    outputs:
+      release_sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - name: Checkout trusted workflow control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Checkout exact candidate as inert data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ needs.resolve_source.outputs.candidate_sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Apply server version bump with trusted control
+        id: bump
+        working-directory: candidate
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          out="$(node "$GITHUB_WORKSPACE/scripts/pipeline/release/bump-version.mjs" --component server --bump "$BUMP")"
+          if [ "$out" = SKIP ]; then echo "skipped=true" >> "$GITHUB_OUTPUT"; else echo "skipped=false" >> "$GITHUB_OUTPUT"; echo "version=$out" >> "$GITHUB_OUTPUT"; fi
       - name: Create GitHub App token
         id: app_token
-        uses: actions/create-github-app-token@v1
+        if: steps.bump.outputs.skipped != 'true'
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
+      - name: Commit and push server bump with trusted control
+        if: steps.bump.outputs.skipped != 'true'
+        working-directory: candidate
+        env:
+          APP_TOKEN: ${{ steps.app_token.outputs.token }}
+          SOURCE_REF: ${{ needs.resolve_source.outputs.source_ref }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          node "$GITHUB_WORKSPACE/scripts/pipeline/github/commit-and-push.mjs" \
+            --paths "apps/server/package.json,packages/relay-server/package.json" --allow-missing false \
+            --message "chore(release): bump server to v$VERSION" --push-ref "$SOURCE_REF" --push-mode auto
+      - name: Capture exact release SHA
+        id: release
+        working-directory: candidate
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout source ref
-        uses: actions/checkout@v4
+  validate_candidate:
+    needs: [apply_bump]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted validation control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ steps.resolve.outputs.ref }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ needs.apply_bump.outputs.release_sha }}
+          path: candidate
           fetch-depth: 0
-          token: ${{ steps.app_token.outputs.token }}
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
-
+          persist-credentials: false
       - name: Admit irreversible Qualified V4 activation
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           QUALIFIED_V4_ACTIVATION_APPROVED: ${{ inputs.qualified_v4_activation_approval }}
         run: |
           set -euo pipefail
-          deploy_branch="deploy/${DEPLOY_ENVIRONMENT}/server"
-          baseline_ref="refs/remotes/origin/${deploy_branch}"
+          deploy_branch="deploy/$DEPLOY_ENVIRONMENT/server"
+          baseline_ref="refs/remotes/origin/$deploy_branch"
           set +e
-          git ls-remote --exit-code --heads origin "refs/heads/${deploy_branch}" >/dev/null
-          baseline_status=$?
+          git -C candidate ls-remote --exit-code --heads origin "refs/heads/$deploy_branch" >/dev/null
+          status=$?
           set -e
-          case "$baseline_status" in
-            0) git fetch --no-tags origin "refs/heads/${deploy_branch}:${baseline_ref}" ;;
-            2) ;;
-            *) echo "Unable to resolve deployed server migration baseline ${deploy_branch}." >&2; exit "$baseline_status" ;;
-          esac
+          case "$status" in 0) git -C candidate fetch --no-tags origin "refs/heads/$deploy_branch:$baseline_ref" ;; 2) ;; *) exit "$status" ;; esac
           node scripts/release/qualified-connected-accounts-v4-activation-admission.mjs \
-            --baseline-ref "$baseline_ref" \
-            --candidate-ref HEAD \
-            --approval-kind explicit-checkbox \
-            --approval-value "$QUALIFIED_V4_ACTIVATION_APPROVED" \
+            --repo-root "$GITHUB_WORKSPACE/candidate" --baseline-ref "$baseline_ref" --candidate-ref HEAD \
+            --approval-kind explicit-checkbox --approval-value "$QUALIFIED_V4_ACTIVATION_APPROVED" \
             --summary-file "$GITHUB_STEP_SUMMARY"
-
-      - name: Enable Corepack (Yarn)
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: candidate/yarn.lock
+      - name: Enable Corepack
         run: |
-          set -euo pipefail
           corepack enable
           corepack prepare yarn@1.22.22 --activate
-
-      - name: Install dependencies
+      - name: Install candidate dependencies
+        working-directory: candidate
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
-        uses: ./.github/actions/install-yarn-dependencies
-        with:
-          args: --frozen-lockfile --ignore-engines
-
+        run: bash scripts/ci/yarn-install-with-retry.sh --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
       - name: Run release contract tests
+        working-directory: candidate
         run: yarn -s test:release:contracts
-
       - name: Verify installer assets are synced
+        working-directory: candidate
         run: node scripts/pipeline/run.mjs release-sync-installers --check
-
-      - name: Setup Bun
-        if: inputs.publish_runtime_release == true
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.5
-
-      - name: Install minisign (signing + verification)
-        if: inputs.publish_runtime_release == true
-        uses: ./.github/actions/bootstrap-minisign
-
-      - name: Bump server version (source ref)
-        id: bump_server
-        run: |
-          set -euo pipefail
-          out="$(node scripts/pipeline/run.mjs release-bump-version --component server --bump "${{ inputs.bump }}")"
-          if [ "$out" = "SKIP" ]; then
-            echo "skipped=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "skipped=false" >> "$GITHUB_OUTPUT"
-          echo "version=$out" >> "$GITHUB_OUTPUT"
-
       - name: Run server tests
         if: inputs.run_tests
+        working-directory: candidate
         run: yarn --cwd apps/server test
 
-      - name: Commit + push version bump (pipeline)
-        if: steps.bump_server.outputs.skipped != 'true'
-        run: |
-          set -euo pipefail
-          src="${{ steps.resolve.outputs.ref }}"
-          node scripts/pipeline/run.mjs github-commit-and-push \
-            --paths "apps/server/package.json,packages/relay-server/package.json" \
-            --allow-missing false \
-            --message "chore(release): bump server to v${{ steps.bump_server.outputs.version }}" \
-            --push-ref "${src}" \
-            --push-mode auto
+  publish_runtime_release:
+    if: inputs.publish_runtime_release == true
+    needs: [apply_bump, validate_candidate]
+    uses: ./.github/workflows/publish-server-runtime.yml
+    with:
+      channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+      source_ref: ${{ needs.apply_bump.outputs.release_sha }}
+      authorized_sha: ${{ needs.apply_bump.outputs.release_sha }}
+      allow_stable: ${{ inputs.environment == 'production' }}
+      release_message: ""
+    secrets: inherit
 
-      - name: Publish server runtime release (pipeline)
-        if: inputs.publish_runtime_release == true
-        env:
-          CHANNEL: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
-          ALLOW_STABLE: ${{ inputs.environment == 'production' && 'true' || 'false' }}
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-          MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs publish-server-runtime \
-            --channel "${CHANNEL}" \
-            --allow-stable "${ALLOW_STABLE}" \
-            --release-message "" \
-            --run-contracts false \
-            --check-installers false
-
-      - name: Resolve deploy branch SHA (before)
-        id: deploy_before
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          ref="deploy/${{ inputs.environment }}/server"
-          sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
-          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
-
-      - name: Promote source ref to deploy branch
+  promote:
+    if: always() && needs.validate_candidate.result == 'success' && (needs.publish_runtime_release.result == 'success' || needs.publish_runtime_release.result == 'skipped')
+    needs: [release_actor_guard, apply_bump, validate_candidate, publish_runtime_release]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    steps:
+      - name: Checkout trusted promotion control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Resolve deploy branch SHA before promotion
+        id: before
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs promote-deploy-branch \
-            --deploy-environment "${{ inputs.environment }}" \
-            --component server \
-            --sha "$(git rev-parse HEAD)" \
-            --summary-file "${GITHUB_STEP_SUMMARY}"
-
-      - name: Resolve deploy branch SHA (after)
-        id: deploy_after
+          ref="deploy/$DEPLOY_ENVIRONMENT/server"; sha="$(gh api "repos/$GH_REPO/git/ref/heads/$ref" --jq .object.sha 2>/dev/null || true)"; echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Promote exact release SHA
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
+        run: node scripts/pipeline/github/promote-deploy-branch.mjs --deploy-environment "$DEPLOY_ENVIRONMENT" --component server --sha "$RELEASE_SHA" --summary-file "$GITHUB_STEP_SUMMARY"
+      - name: Resolve deploy branch SHA after promotion
+        id: after
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          set -euo pipefail
-          ref="deploy/${{ inputs.environment }}/server"
-          sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
-          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
-
-      - name: Trigger deploy webhook(s) (force_deploy, no branch change)
-        if: inputs.force_deploy && steps.deploy_before.outputs.sha == steps.deploy_after.outputs.sha
+          ref="deploy/$DEPLOY_ENVIRONMENT/server"; sha="$(gh api "repos/$GH_REPO/git/ref/heads/$ref" --jq .object.sha 2>/dev/null || true)"; echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Trigger deploy webhooks when forced without branch change
+        if: inputs.force_deploy && steps.before.outputs.sha == steps.after.outputs.sha
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
@@ -331,17 +403,14 @@ jobs:
           DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
           HAPPIER_SERVER_API_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS }}
           HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS }}
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs deploy \
-            --deploy-environment "${{ inputs.environment }}" \
-            --component "server" \
-            --repository "${{ github.repository }}" \
-            --ref-name "deploy/${{ inputs.environment }}/server"
-
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOY_SHA: ${{ steps.after.outputs.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: node scripts/pipeline/deploy/trigger-webhooks.mjs --environment "$DEPLOY_ENVIRONMENT" --component server --repository "$REPOSITORY" --ref-name "deploy/$DEPLOY_ENVIRONMENT/server" --sha "$DEPLOY_SHA"
       - name: Deploy note
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOY_SHA: ${{ steps.after.outputs.sha }}
         run: |
-          set -euo pipefail
-          echo "Deployment is triggered automatically by pushes to deploy/${{ inputs.environment }}/server." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- deploy_branch_sha: \`${{ steps.deploy_after.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deployment is triggered automatically by pushes to deploy/$DEPLOY_ENVIRONMENT/server." >> "$GITHUB_STEP_SUMMARY"
+          echo "- deploy_branch_sha: $DEPLOY_SHA" >> "$GITHUB_STEP_SUMMARY"

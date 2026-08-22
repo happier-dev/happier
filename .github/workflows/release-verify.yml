@@ -492,7 +492,9 @@ jobs:
     needs: [verify_candidate_identity, resolve_validation_profile]
     uses: ./.github/workflows/tests.yml
     with:
+      select_jobs_explicitly: true
       run_ui: false
+      run_plugin_workspaces: false
       run_server: false
       run_cli: false
       run_stack: false

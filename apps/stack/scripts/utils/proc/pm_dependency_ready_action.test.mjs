@@ -15,6 +15,7 @@ async function writeYarnInstallStub(binDir) {
     [
       '#!/usr/bin/env node',
       "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "if (process.env.HAPPIER_SCOPE_LOG) require('node:fs').appendFileSync(process.env.HAPPIER_SCOPE_LOG, `${process.env.HAPPIER_INSTALL_SCOPE || ''}\\n`);",
       "if (process.argv[2] === '--version') {",
       "  process.stdout.write('1.22.22\\n');",
       '  process.exit(0);',
@@ -63,6 +64,7 @@ test('ensureDepsInstalled serializes dependency-ready actions inside the existin
     CI: '1',
     HAPPIER_STACK_ENV_FILE: '',
     HAPPIER_STACK_PM_CACHE_BASE_DIR: join(root, 'cache'),
+    HAPPIER_SCOPE_LOG: join(root, 'scope.log'),
   };
   const events = [];
   let releaseFirstAction;
@@ -79,7 +81,7 @@ test('ensureDepsInstalled serializes dependency-ready actions inside the existin
     env,
     onDependenciesReady: async () => {
       assert.equal((await stat(dependencyLockPath)).isFile(), true);
-      assert.equal((await stat(cliLockPath)).isFile(), true);
+      await assert.rejects(() => stat(cliLockPath), { code: 'ENOENT' });
       events.push('first:action:start');
       markFirstActionStarted();
       await releaseFirstActionPromise;
@@ -100,7 +102,7 @@ test('ensureDepsInstalled serializes dependency-ready actions inside the existin
     env,
     onDependenciesReady: async () => {
       assert.equal((await stat(dependencyLockPath)).isFile(), true);
-      assert.equal((await stat(cliLockPath)).isFile(), true);
+      await assert.rejects(() => stat(cliLockPath), { code: 'ENOENT' });
       events.push('second:action');
     },
   });
@@ -110,4 +112,9 @@ test('ensureDepsInstalled serializes dependency-ready actions inside the existin
   releaseFirstAction();
   await Promise.all([firstEnsure, secondEnsure]);
   assert.deepEqual(events, ['first:action:start', 'first:action:end', 'second:action']);
+  assert.match(
+    await (await import('node:fs/promises')).readFile(join(root, 'scope.log'), 'utf8'),
+    /^ui,cli$/m,
+    'Stack-managed dependency refresh must not run shared-package or server build postinstalls',
+  );
 });

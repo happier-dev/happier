@@ -5,7 +5,10 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import {
+  buildQualifiedPluginContributionKey,
+  ProviderContributionV1Schema,
+} from '@happier-dev/protocol';
 
 import {
   assertBundledProviderVerificationV1,
@@ -61,7 +64,26 @@ const contribution = {
   }],
 };
 
-function verificationFor(paths: readonly string[]) {
+type VerificationFixture = {
+  v: 1;
+  contributionKey: string;
+  reviewedAt: string;
+  sources: Array<{
+    id: string;
+    kind: 'official-doc' | 'repository-history' | 'product-decision';
+    url?: string;
+    locator?: string;
+    accessedAt: string;
+    revision: string;
+  }>;
+  facts: Array<{
+    path: string;
+    sourceIds: string[];
+    status: 'verified' | 'experimental';
+  }>;
+};
+
+function verificationFor(paths: readonly string[]): VerificationFixture {
   return {
     v: 1,
     contributionKey: 'happier.provider.fixture/fixture',
@@ -96,6 +118,207 @@ test('collectProviderExecutableFactPathsV1 derives stable semantic paths without
     'kind',
     'websiteUrl',
   ]);
+});
+
+test('collectProviderExecutableFactPathsV1 closes every managed-runtime declaration fact', () => {
+  const managedContribution = ProviderContributionV1Schema.parse({
+    ...contribution,
+    endpointTemplates: [...contribution.endpointTemplates, {
+      id: 'fixture-anthropic',
+      protocol: 'anthropic',
+      localUrlCandidates: ['http://127.0.0.1:1234'],
+      capabilities: {
+        streaming: 'supported',
+        toolRoundTrips: 'supported',
+        statefulResponses: 'unknown',
+        reasoningControls: 'unknown',
+      },
+    }],
+    managedRuntime: {
+      kind: 'managed',
+      dependencies: ['gateway-runtime'],
+      connectedAccounts: [{
+        purpose: 'subscription-auth',
+        service: 'subscription-accounts',
+        required: true,
+        materializationKinds: ['httpHeaders', 'environment'],
+      }, {
+        purpose: 'repository-auth',
+        service: { pluginId: 'acme.accounts', localId: 'repository' },
+        materializationKinds: ['files', 'httpHeaders'],
+      }],
+      requestAuthUses: [{
+        purpose: 'subscription-auth',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://accounts.example.com',
+          headerNames: ['authorization', 'x-subscription-id'],
+        },
+      }, {
+        purpose: 'repository-auth',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://repository.example.com',
+          headerNames: ['authorization'],
+        },
+      }],
+      endpointTemplateIds: ['fixture-openai'],
+    },
+  });
+  const managedRuntime = managedContribution.managedRuntime;
+  assert.ok(managedRuntime);
+  const requestAuthUses = managedRuntime.requestAuthUses ?? [];
+  const firstRequestAuthUse = requestAuthUses[0];
+  assert.ok(firstRequestAuthUse);
+
+  const requestAuthUseChanges = [{
+    ...managedRuntime,
+    requestAuthUses: requestAuthUses.map((use, index) => (
+      index === 0 ? { ...use, purpose: 'replacement-auth' } : use
+    )),
+  }, {
+    ...managedRuntime,
+    requestAuthUses: requestAuthUses.map((use, index) => (
+      index === 0
+        ? { ...use, materialization: { ...use.materialization, kind: 'environment' } }
+        : use
+    )),
+  }, {
+    ...managedRuntime,
+    requestAuthUses: requestAuthUses.map((use, index) => (
+      index === 0
+        ? { ...use, materialization: { ...use.materialization, origin: 'https://replacement.example.com' } }
+        : use
+    )),
+  }, {
+    ...managedRuntime,
+    requestAuthUses: requestAuthUses.map((use, index) => (
+      index === 0
+        ? {
+            ...use,
+            materialization: {
+              ...use.materialization,
+              headerNames: ['authorization', 'x-replacement-id'],
+            },
+          }
+        : use
+    )),
+  }];
+  const paths = collectProviderExecutableFactPathsV1(managedContribution);
+  for (const changedManagedRuntime of requestAuthUseChanges) {
+    const changedContribution = { ...managedContribution, managedRuntime: changedManagedRuntime };
+    assert.notDeepEqual(collectProviderExecutableFactPathsV1(changedContribution), paths);
+    assert.throws(() => assertBundledProviderVerificationV1({
+      buildQualifiedContributionKey: buildQualifiedPluginContributionKey,
+      pluginId: 'happier.provider.fixture',
+      contribution: changedContribution,
+      verification: verificationFor(paths),
+      todayUtc: '2026-07-12',
+    }), /Missing Provider verification|Orphaned Provider verification/);
+  }
+
+  const duplicateRequestAuthPurpose = {
+    ...managedContribution,
+    managedRuntime: {
+      ...managedRuntime,
+      requestAuthUses: [...requestAuthUses, firstRequestAuthUse],
+    },
+  };
+  assert.equal(ProviderContributionV1Schema.safeParse(duplicateRequestAuthPurpose).success, false);
+  assert.equal(ProviderContributionV1Schema.safeParse({
+    ...managedContribution,
+    managedRuntime: requestAuthUseChanges[1],
+  }).success, false);
+
+  const reorderedRequestAuthUses = {
+    ...managedContribution,
+    managedRuntime: {
+      ...managedRuntime,
+      requestAuthUses: [...requestAuthUses].reverse().map((use) => ({
+        ...use,
+        materialization: {
+          ...use.materialization,
+          headerNames: [...use.materialization.headerNames].reverse(),
+        },
+      })),
+    },
+  };
+  assert.deepEqual(collectProviderExecutableFactPathsV1(reorderedRequestAuthUses), paths);
+
+  const managedPaths = collectProviderExecutableFactPathsV1(managedContribution)
+    .filter((path) => path.startsWith('managedRuntime.'));
+  assert.deepEqual(managedPaths, [
+    'managedRuntime.connectedAccounts.repository-auth.materializationKinds.files',
+    'managedRuntime.connectedAccounts.repository-auth.materializationKinds.httpHeaders',
+    'managedRuntime.connectedAccounts.repository-auth.service.acme.accounts/repository',
+    'managedRuntime.connectedAccounts.subscription-auth.materializationKinds.environment',
+    'managedRuntime.connectedAccounts.subscription-auth.materializationKinds.httpHeaders',
+    'managedRuntime.connectedAccounts.subscription-auth.required',
+    'managedRuntime.connectedAccounts.subscription-auth.service.subscription-accounts',
+    'managedRuntime.dependencies.gateway-runtime',
+    'managedRuntime.endpointTemplateIds.fixture-openai',
+    'managedRuntime.kind',
+    'managedRuntime.requestAuthUses.repository-auth.materialization.headerNames.authorization',
+    'managedRuntime.requestAuthUses.repository-auth.materialization.kind.httpHeaders',
+    'managedRuntime.requestAuthUses.repository-auth.materialization.origin.https%3A%2F%2Frepository.example.com',
+    'managedRuntime.requestAuthUses.subscription-auth.materialization.headerNames.authorization',
+    'managedRuntime.requestAuthUses.subscription-auth.materialization.headerNames.x-subscription-id',
+    'managedRuntime.requestAuthUses.subscription-auth.materialization.kind.httpHeaders',
+    'managedRuntime.requestAuthUses.subscription-auth.materialization.origin.https%3A%2F%2Faccounts.example.com',
+  ]);
+
+  for (const changedManagedRuntime of [{
+    ...managedRuntime,
+    dependencies: ['replacement-runtime'],
+  }, {
+    ...managedRuntime,
+    connectedAccounts: (managedRuntime.connectedAccounts ?? []).map((entry, index) => (
+      index === 0 ? { ...entry, purpose: 'replacement-auth' } : entry
+    )),
+  }, {
+    ...managedRuntime,
+    endpointTemplateIds: ['fixture-anthropic'],
+  }]) {
+    const changedContribution = {
+      ...managedContribution,
+      managedRuntime: changedManagedRuntime,
+    };
+    assert.notDeepEqual(collectProviderExecutableFactPathsV1(changedContribution), paths);
+    assert.throws(() => assertBundledProviderVerificationV1({
+      buildQualifiedContributionKey: buildQualifiedPluginContributionKey,
+      pluginId: 'happier.provider.fixture',
+      contribution: changedContribution,
+      verification: verificationFor(paths),
+      todayUtc: '2026-07-12',
+    }), /Missing Provider verification|Orphaned Provider verification/);
+  }
+
+  assert.doesNotThrow(() => assertBundledProviderVerificationV1({
+    buildQualifiedContributionKey: buildQualifiedPluginContributionKey,
+    pluginId: 'happier.provider.fixture',
+    contribution: managedContribution,
+    verification: verificationFor(paths),
+    todayUtc: '2026-07-12',
+  }));
+  for (const missingPath of managedPaths) {
+    assert.throws(() => assertBundledProviderVerificationV1({
+      buildQualifiedContributionKey: buildQualifiedPluginContributionKey,
+      pluginId: 'happier.provider.fixture',
+      contribution: managedContribution,
+      verification: verificationFor(paths.filter((path) => path !== missingPath)),
+      todayUtc: '2026-07-12',
+    }), new RegExp(`Missing Provider verification for .*${missingPath.replaceAll('.', '\\.')}`));
+  }
+  assert.throws(() => assertBundledProviderVerificationV1({
+    buildQualifiedContributionKey: buildQualifiedPluginContributionKey,
+    pluginId: 'happier.provider.fixture',
+    contribution: managedContribution,
+    verification: {
+      ...verificationFor(paths),
+      managedRuntime: managedContribution.managedRuntime,
+    },
+    todayUtc: '2026-07-12',
+  }), /must not restate executable Provider facts/);
 });
 
 test('assertBundledProviderVerificationV1 accepts complete field-path provenance', () => {

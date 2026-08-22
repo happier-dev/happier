@@ -9,6 +9,10 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
+const { resolveCliPublicationBuildSteps } = await import(
+  resolve(repoRoot, 'apps', 'cli', 'scripts', 'buildPublication.mjs'),
+);
+
 test('pipeline CLI smoke dry-run schedules installed Provider verification on the canonical prefix', async () => {
   const out = execFileSync(
     process.execPath,
@@ -22,7 +26,25 @@ test('pipeline CLI smoke dry-run schedules installed Provider verification on th
     },
   );
 
-  assert.match(out, /(packTarball\.mjs|\bnpm pack\b)/);
+  // The smoke gate installs and drives the packed artifact, so it may only pack bytes the
+  // canonical CLI publication build produced. A live workspace build keeps a failing
+  // plugin's last-green package installed and the pack then ships those stale bytes.
+  const publicationSteps = resolveCliPublicationBuildSteps({ repoRoot });
+  const packIndex = out.search(/(packTarball\.mjs|\bnpm pack\b)/);
+  assert.notEqual(packIndex, -1);
+  for (const step of publicationSteps) {
+    const rendered = `(cwd: ${step.cwd}) ${step.command} ${step.args.join(' ')}`;
+    const stepIndex = out.indexOf(rendered);
+    assert.ok(
+      stepIndex !== -1,
+      `expected the smoke gate to schedule the canonical publication step ${step.name}: ${rendered}`,
+    );
+    assert.ok(
+      stepIndex < packIndex,
+      `expected the canonical publication step ${step.name} to run before the pack`,
+    );
+  }
+  assert.doesNotMatch(out, /yarn workspace @happier-dev\/cli build/);
   assert.match(out, /\bnpm install\b/);
   assert.match(out, /\bhappier\b.*--help/);
   assert.match(out, /\bhappier\b.*--version/);

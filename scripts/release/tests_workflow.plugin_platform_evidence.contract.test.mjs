@@ -17,7 +17,10 @@ test('automatic CI exercises the packed plugin-platform vertical with its natura
   const workflow = YAML.parse(raw);
   const packedJob = extractJobBlock(raw, 'plugin-platform-packed');
 
-  assert.equal(workflow?.jobs?.['plugin-platform-packed']?.name, 'Plugin Platform (packed author)');
+  assert.equal(
+    workflow?.jobs?.['plugin-platform-packed']?.name,
+    'Plugin Platform (natural packed artifacts)',
+  );
 
   assert.match(
     packedJob,

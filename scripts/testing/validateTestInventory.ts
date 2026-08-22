@@ -5,7 +5,7 @@ import { LANE_ROOT_SCRIPTS } from './lib/testLaneMap.ts';
 import { collectWiringReport, loadDefaultParityInput } from './validateTestWiring.ts';
 
 export async function main(): Promise<void> {
-  const report = collectWiringReport(discoverTestFiles(), loadDefaultParityInput() ?? {});
+  const report = await collectWiringReport(discoverTestFiles(), loadDefaultParityInput() ?? {});
 
   console.log('Test inventory summary:');
   for (const [lane, count] of Object.entries(report.laneCounts)) {

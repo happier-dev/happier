@@ -1,7 +1,17 @@
 import { FEATURE_IDS } from './protocolFeatureIds.ts';
+import {
+  matchesWorkspaceScriptTarget,
+  resolveRootScriptWorkspaceTargets,
+  resolveScriptNodeTestFiles,
+  type WorkspaceScriptTarget,
+} from './rootScriptWorkspaceTargets.ts';
+import { resolveOwningWorkspaceDirectory, type WorkspaceManifest } from './workspaceManifests.ts';
 
 export type LaneId =
   | 'test'
+  | 'test:plugin-workspaces'
+  | 'test:plugin-platform:contracts'
+  | 'workspace:test'
   | 'test:integration'
   | 'test:e2e:desktop:native'
   | 'cli:test:slow'
@@ -30,6 +40,21 @@ export interface TestLaneDefinition {
 
 export const TEST_LANE_DEFINITIONS: readonly TestLaneDefinition[] = Object.freeze([
   { id: 'test', category: 'unit', rootScriptName: 'test', rootCommand: 'yarn test', packageLocalOnly: false },
+  {
+    id: 'test:plugin-workspaces',
+    category: 'unit',
+    rootScriptName: 'test:plugin-workspaces',
+    rootCommand: 'yarn test:plugin-workspaces',
+    packageLocalOnly: false,
+  },
+  {
+    id: 'test:plugin-platform:contracts',
+    category: 'unit',
+    rootScriptName: 'test:plugin-platform:contracts',
+    rootCommand: 'yarn test:plugin-platform:contracts',
+    packageLocalOnly: false,
+  },
+  { id: 'workspace:test', category: 'unit', rootScriptName: null, rootCommand: null, packageLocalOnly: true },
   { id: 'test:integration', category: 'integration', rootScriptName: 'test:integration', rootCommand: 'yarn test:integration', packageLocalOnly: false },
   {
     id: 'test:e2e:desktop:native',
@@ -98,22 +123,183 @@ const CLI_INTEGRATION_RE = /\.(?:integration\.(?:test|spec)|real\.integration\.t
 const SERVER_INTEGRATION_RE = /\.(?:integration\.(?:test|spec)|real\.integration\.test)\.ts$/;
 const UNIT_TEST_RE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
-const ROOT_UNIT_PACKAGE_PREFIXES = [
-  'packages/channels-protocol/',
-  'packages/peer-mediation/',
-  'packages/plugin-sdk/',
-  'packages/protocol/',
-  'packages/transfers/',
-  'packages/agents/',
-  'packages/cli-common/',
-  'packages/support/',
-  'packages/connection-supervisor/',
-  'packages/relay-server/',
-  'packages/plugins/channels/',
-  'packages/plugins/channel-discord/',
-  'packages/plugins/channel-telegram/',
-  'packages/plugins/scm-github/',
-];
+/**
+ * Lane assignment for a workspace's own unit tests.
+ *
+ * `test` means the root unit executor runs the workspace; `workspace:test` means the workspace
+ * declares its own test script but no root lane invokes it (package-local only); `null` means the
+ * workspace declares no test script at all, so any test file inside it has no runner.
+ */
+export type WorkspaceUnitLane = 'test' | 'workspace:test';
+
+export interface TestLaneWorkspace {
+  /** Repo-relative workspace directory, `/`-separated, without a trailing separator. */
+  directory: string;
+  unitLane: WorkspaceUnitLane | null;
+  /**
+   * Repo-relative test files the workspace's own `test` chain names one by one
+   * (`node --test a b c`).
+   *
+   * The workspace's main runner covers a directory wholesale, so membership of that directory is
+   * enough to credit the unit lane. A directory the runner excludes is covered only by an explicit
+   * list, and there a file is credited only when the list actually names it.
+   */
+  explicitUnitLaneTestFiles: readonly string[];
+}
+
+export interface TestLaneContext {
+  workspaces: readonly TestLaneWorkspace[];
+  /**
+   * Repo-relative test files each lane's script chain names one by one, keyed by lane id.
+   *
+   * A lane that lists its files runs exactly those files. Crediting the rest of their directory to
+   * it reports coverage the lane's script never opens.
+   */
+  explicitTestFilesByLane: Readonly<Record<string, readonly string[]>>;
+}
+
+export const EMPTY_TEST_LANE_CONTEXT: TestLaneContext = Object.freeze({
+  workspaces: [],
+  explicitTestFilesByLane: Object.freeze({}),
+});
+
+/**
+ * The root script whose transitive workspace invocations define the `test` lane.
+ */
+export const ROOT_UNIT_LANE_SCRIPT_NAME = 'test';
+
+export function buildTestLaneContext(params: Readonly<{
+  workspaceManifests: readonly WorkspaceManifest[];
+  rootScripts: Readonly<Record<string, string>>;
+  rootUnitLaneScriptName?: string;
+}>): TestLaneContext {
+  const rootUnitTargets = resolveRootScriptWorkspaceTargets(
+    params.rootScripts,
+    params.rootUnitLaneScriptName ?? ROOT_UNIT_LANE_SCRIPT_NAME,
+  );
+
+  const workspaces = params.workspaceManifests.map((manifest): TestLaneWorkspace => {
+    if (manifest.invalidReason !== null || manifest.scripts.test === undefined) {
+      return { directory: manifest.workspaceDirectory, unitLane: null, explicitUnitLaneTestFiles: [] };
+    }
+
+    const workspaceTarget: WorkspaceScriptTarget = {
+      packageName: manifest.packageName,
+      workspaceDirectory: manifest.workspaceDirectory,
+      scriptName: 'test',
+    };
+    const isRootUnitWorkspace = rootUnitTargets.some((target) => matchesWorkspaceScriptTarget(workspaceTarget, target));
+    return {
+      directory: manifest.workspaceDirectory,
+      unitLane: isRootUnitWorkspace ? 'test' : 'workspace:test',
+      explicitUnitLaneTestFiles: resolveWorkspaceScriptTestFiles(manifest, 'test'),
+    };
+  });
+
+  return {
+    workspaces,
+    explicitTestFilesByLane: resolveExplicitTestFilesByLane(params.workspaceManifests, params.rootScripts),
+  };
+}
+
+function resolveWorkspaceScriptTestFiles(manifest: WorkspaceManifest, scriptName: string): readonly string[] {
+  if (manifest.invalidReason !== null) {
+    return [];
+  }
+
+  const prefix = manifest.workspaceDirectory === '' ? '' : `${manifest.workspaceDirectory}/`;
+  return resolveScriptNodeTestFiles(manifest.scripts, scriptName)
+    .map((filePath) => `${prefix}${filePath.replace(/^\.\//u, '')}`);
+}
+
+/**
+ * Files each lane's script chain names one by one, resolved through the root script to the
+ * workspace script it delegates to.
+ */
+function resolveExplicitTestFilesByLane(
+  workspaceManifests: readonly WorkspaceManifest[],
+  rootScripts: Readonly<Record<string, string>>,
+): Readonly<Record<string, readonly string[]>> {
+  const byLane: Record<string, readonly string[]> = {};
+
+  for (const definition of TEST_LANE_DEFINITIONS) {
+    if (definition.rootScriptName === null) continue;
+
+    const files = resolveRootScriptWorkspaceTargets(rootScripts, definition.rootScriptName).flatMap((target) => {
+      const manifest = workspaceManifests.find((candidate) =>
+        matchesWorkspaceScriptTarget(target, {
+          packageName: candidate.packageName,
+          workspaceDirectory: candidate.workspaceDirectory,
+          scriptName: target.scriptName,
+        }));
+      return manifest === undefined ? [] : resolveWorkspaceScriptTestFiles(manifest, target.scriptName);
+    });
+
+    if (files.length > 0) {
+      byLane[definition.id] = files;
+    }
+  }
+
+  return byLane;
+}
+
+function resolveOwningWorkspace(context: TestLaneContext, relativePath: string): TestLaneWorkspace | null {
+  const owningDirectory = resolveOwningWorkspaceDirectory(
+    relativePath,
+    context.workspaces.map((workspace) => workspace.directory),
+  );
+  if (owningDirectory === null) {
+    return null;
+  }
+  return context.workspaces.find((workspace) => workspace.directory === owningDirectory) ?? null;
+}
+
+function resolveWorkspaceUnitLane(context: TestLaneContext, relativePath: string): WorkspaceUnitLane | null {
+  return resolveOwningWorkspace(context, relativePath)?.unitLane ?? null;
+}
+
+/** True when the lane's script chain names this exact file. */
+function laneNamesTestFile(context: TestLaneContext, laneId: LaneId, relativePath: string): boolean {
+  return context.explicitTestFilesByLane[laneId]?.includes(relativePath) ?? false;
+}
+
+/**
+ * Lane for a test file whose only possible runner is an explicit `node --test` list.
+ *
+ * Used for directories the owning workspace's main runner does not cover, so "the workspace runs a
+ * test script" is not evidence that this file runs. A file no list names has no runner and returns
+ * `null`, which surfaces it as unwired instead of crediting a lane that never opens it.
+ */
+function resolveExplicitlyNamedUnitLane(context: TestLaneContext, relativePath: string): WorkspaceUnitLane | null {
+  const workspace = resolveOwningWorkspace(context, relativePath);
+  if (workspace === null || !workspace.explicitUnitLaneTestFiles.includes(relativePath)) {
+    return null;
+  }
+  return workspace.unitLane;
+}
+
+/**
+ * Test files that deliberately have no lane yet.
+ *
+ * Every entry names the blocking reason. They are reported separately from wiring issues so the
+ * residue stays visible instead of quietly passing, and an entry must be removed as soon as its
+ * reason clears. This is not a place to silence a test that merely needs wiring.
+ */
+export const DECLARED_UNWIRED_TEST_FILES: Readonly<Record<string, string>> = Object.freeze({
+  // Blocked on a build prerequisite no unit lane provides: this is the code-defined example, so it
+  // owns no handwritten `.happier-plugin/plugin.json` (its own first assertion requires that file to
+  // be absent) and its manifest exists only after `happier plugins author build .` emits
+  // `dist/index.js`. Measured 2026-08-21 without that build:
+  // `ERR_MODULE_NOT_FOUND: Cannot find module packages/plugin-sdk/examples/public-authoring/dist/index.js`.
+  // Its ten build-free sibling example tests are named by the plugin-sdk `test` chain and run there.
+  'packages/plugin-sdk/examples/public-authoring/test/index.test.mjs':
+    'Requires `happier plugins author build .` to emit dist/index.js; no unit lane builds the example.',
+
+  // Retired 2026-08-19: the C9 out-of-tree channel-socket provider fixture was realigned to the
+  // current definePlugin `execution.target` contract and now runs in the workspace `test` script
+  // (packages/tests test:local -> test:plugin-platform:out-of-tree-channel-socket-provider).
+  // Measured on realignment: 32 tests / 31 pass / 0 fail / 1 skip.
+});
 
 export function resolveFeatureTagIssue(relativePath: string): string | null {
   if (!relativePath.includes('.feat.')) {
@@ -127,7 +313,7 @@ export function resolveFeatureTagIssue(relativePath: string): string | null {
   return `Invalid feature test tag in ${relativePath}`;
 }
 
-export function classifyTestFile(relativePath: string): LaneId | null {
+export function classifyTestFile(context: TestLaneContext, relativePath: string): LaneId | null {
   if (relativePath.startsWith('apps/stack/')) {
     if (/\.real\.integration\.test\.[cm]?[jt]s$/.test(relativePath)) return 'stack:test:real-integration';
     if (/\.integration\.test\.[cm]?[jt]s$/.test(relativePath)) return 'stack:test:integration';
@@ -162,7 +348,17 @@ export function classifyTestFile(relativePath: string): LaneId | null {
 
   if (relativePath.startsWith('packages/tests/')) {
     if (relativePath.startsWith('packages/tests/scripts/') && /\.test\.mjs$/.test(relativePath)) {
-      return 'test:e2e:ui:wsrepl:lima:self';
+      // No vitest config includes `scripts/**`, so these files run only where a `node --test`
+      // command names them. The WSREPL Lima self-check lane names two of them; the workspace's own
+      // `test` chain names most of the rest. Classifying the whole directory into the Lima lane
+      // reported every neighbour as gated by a root script that opens neither.
+      if (laneNamesTestFile(context, 'test:e2e:ui:wsrepl:lima:self', relativePath)) {
+        return 'test:e2e:ui:wsrepl:lima:self';
+      }
+      return resolveExplicitlyNamedUnitLane(context, relativePath);
+    }
+    if (relativePath.startsWith('packages/tests/src/plugin-platform/')) {
+      return /\.test\.ts$/.test(relativePath) ? 'test:plugin-platform:contracts' : null;
     }
     if (relativePath.includes('/suites/ui-e2e/')) return /\.spec\.ts$/.test(relativePath) ? 'test:e2e:ui' : null;
     if (relativePath.includes('/suites/agents/')) return /\.test\.ts$/.test(relativePath) ? 'test:agents' : null;
@@ -171,22 +367,41 @@ export function classifyTestFile(relativePath: string): LaneId | null {
       if (/\.slow\.e2e\.test\.ts$/.test(relativePath)) return 'test:e2e:core:slow';
       return /\.test\.ts$/.test(relativePath) ? 'test:e2e:core:fast' : null;
     }
-    if (relativePath.includes('/src/testkit/')) return /\.(?:test|spec)\.ts$/.test(relativePath) ? 'test:e2e:core:fast' : null;
-    return null;
+    if (relativePath.includes('/suites/contracts/')) return /\.test\.ts$/.test(relativePath) ? 'test:e2e:core:fast' : null;
+    if (relativePath.includes('/src/testkit/') && /\.(?:test|spec)\.ts$/.test(relativePath)) return 'test:e2e:core:fast';
+    // Everything else in the workspace (`suites/core-layer`, `suites/runtime-unification`,
+    // `pluginSdkConsumers`, `fixtures/**`, `src/testkit/**/*.test.mjs`) runs through the
+    // @happier-dev/tests workspace `test` script, so it resolves through the derived workspace lane.
   }
 
   if (relativePath.startsWith('packages/release-runtime/')) {
     return /\.test\.mjs$/.test(relativePath) ? 'release-runtime:test' : null;
   }
 
-  if (ROOT_UNIT_PACKAGE_PREFIXES.some((prefix) => relativePath.startsWith(prefix))) {
-    return UNIT_TEST_RE.test(relativePath) ? 'test' : null;
+  if (relativePath.startsWith('packages/plugins/')) {
+    return UNIT_TEST_RE.test(relativePath) ? 'test:plugin-workspaces' : null;
+  }
+
+  if (relativePath in DECLARED_UNWIRED_TEST_FILES) {
+    return null;
+  }
+
+  if (relativePath.startsWith('packages/plugin-sdk/examples/')) {
+    // The published examples are `node:test` files, which the workspace's vitest run excludes (it
+    // reports them as empty suites). Only the explicit `node --test` list in the workspace `test`
+    // chain runs them, so an example the list does not name ships to plugin authors unverified.
+    return resolveExplicitlyNamedUnitLane(context, relativePath);
+  }
+
+  const workspaceUnitLane = resolveWorkspaceUnitLane(context, relativePath);
+  if (workspaceUnitLane !== null) {
+    return UNIT_TEST_RE.test(relativePath) ? workspaceUnitLane : null;
   }
 
   return null;
 }
 
-export function collectLaneIssues(relativePath: string): string[] {
+export function collectLaneIssues(context: TestLaneContext, relativePath: string): string[] {
   const issues: string[] = [];
 
   if (relativePath.startsWith('packages/tests/suites/ui-e2e/') && !/\.spec\.ts$/.test(relativePath)) {
@@ -227,7 +442,11 @@ export function collectLaneIssues(relativePath: string): string[] {
       (relativePath.startsWith('apps/stack/') && /\.spec\.[cm]?[jt]s$/.test(relativePath)) ||
       (relativePath.startsWith('packages/tests/suites/core-e2e/') && relativePath.includes('.slow.')));
 
-  if (classifyTestFile(relativePath) === null && !shouldSuppressGenericNoLaneIssue) {
+  if (relativePath in DECLARED_UNWIRED_TEST_FILES) {
+    return issues;
+  }
+
+  if (classifyTestFile(context, relativePath) === null && !shouldSuppressGenericNoLaneIssue) {
     issues.push(`No lane mapping matched ${relativePath}.`);
   }
 

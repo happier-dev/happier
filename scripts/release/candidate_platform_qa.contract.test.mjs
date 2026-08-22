@@ -23,6 +23,17 @@ const EXPECTED_NATIVE_TARGETS = [
   'windows-x64',
 ];
 
+async function captureCandidateForTest(candidate, options) {
+  return {
+    candidate,
+    cleanup: async () => await options.rmImpl('/private'),
+    manifestPath: '/private/candidate.json',
+    root: '/private',
+  };
+}
+
+async function ignoreCapturedCandidateCleanupForTest() {}
+
 test('candidate platform QA owns five native consumers and keeps Windows ARM64 compile-only', () => {
   assert.deepEqual(
     CANDIDATE_NATIVE_TARGETS.map((target) => target.id),
@@ -41,6 +52,7 @@ test('candidate platform QA owns five native consumers and keeps Windows ARM64 c
     () => resolveCandidatePlatformQaPlan({
       candidateManifestPath: '/candidate/run/candidate.json',
       expectedTarget: 'windows-arm64',
+      payloadPublicationAdmission: 'pre-activation',
       platform: 'win32',
       arch: 'arm64',
       repoRoot: '/repo',
@@ -65,12 +77,43 @@ test('candidate platform recipe transfers one whole portable run root and fans o
     recipe.compileOnlyTargets.map((target) => target.id),
     ['windows-arm64'],
   );
+  assert.deepEqual(recipe.payloadPublicationAdmission, {
+    owner:
+      'scripts/release/qualified-connected-accounts-v4-activation-admission.mjs',
+    requiredStatus: 'pre-activation',
+    localInstallStateIsAuthority: false,
+    postActivationAction: 'forward-fix',
+  });
   assert.deepEqual(recipe.nativeStageIds, [
     'candidate-integrity-native-binary-voice-notary',
     'candidate-direct-install-reinstall',
-    'released-dev-candidate-rollback-candidate',
+    'released-dev-candidate-previous-payload-candidate',
     'packed-managed-provider',
+    'packed-plugins-dev',
   ]);
+  assert.equal(
+    recipe.productQa.deviceScope,
+    'one isolated iOS simulator and one isolated Android emulator manual plus device-code acceptance',
+  );
+  assert.equal(
+    recipe.productQa.allProductConsumersReachTerminalBeforeCleanup,
+    true,
+  );
+  assert.equal(
+    Object.hasOwn(
+      recipe.productQa,
+      'bothConsumersReachTerminalBeforeCleanup',
+    ),
+    false,
+  );
+  assert.match(
+    recipe.cleanup.packedNovelHandoffRemovalOwner,
+    /every product consumer reaches a terminal result/u,
+  );
+  assert.match(
+    recipe.cleanup.triageGithubVoiceHandoffRemovalOwner,
+    /every product consumer reaches a terminal result/u,
+  );
   assert.equal(recipe.cleanup.candidateRunRootRetainedUntilFanoutComplete, true);
   assert.equal(recipe.cleanup.runnerMayDeleteSharedCandidateRunRoot, false);
 });
@@ -85,6 +128,7 @@ test('candidate platform recipe requires a genuine Intel host for Darwin x64', (
     () => resolveCandidatePlatformQaPlan({
       candidateManifestPath: '/candidate/run/candidate.json',
       expectedTarget: 'darwin-x64',
+      payloadPublicationAdmission: 'pre-activation',
       platform: 'darwin',
       arch: 'x64',
       hostFacts: {
@@ -102,6 +146,7 @@ test('candidate platform plan rejects an emulated Windows x64 consumer', () => {
     () => resolveCandidatePlatformQaPlan({
       candidateManifestPath: 'C:\\candidate\\run\\candidate.json',
       expectedTarget: 'windows-x64',
+      payloadPublicationAdmission: 'pre-activation',
       platform: 'win32',
       arch: 'x64',
       hostFacts: {
@@ -113,10 +158,25 @@ test('candidate platform plan rejects an emulated Windows x64 consumer', () => {
   );
 });
 
+test('candidate platform plan refuses previous-payload reversion after semantic activation', () => {
+  assert.throws(
+    () => resolveCandidatePlatformQaPlan({
+      candidateManifestPath: '/candidate/run/candidate.json',
+      expectedTarget: 'linux-x64',
+      payloadPublicationAdmission: 'post-activation-compatible',
+      platform: 'linux',
+      arch: 'x64',
+      repoRoot: '/repo',
+    }),
+    /pre-activation payload-publication admission/i,
+  );
+});
+
 test('native plan serializes full verification before installer effects and uses the exact candidate throughout', () => {
   const plan = resolveCandidatePlatformQaPlan({
     candidateManifestPath: '/transferred/run/candidate.json',
     expectedTarget: 'linux-arm64',
+    payloadPublicationAdmission: 'pre-activation',
     platform: 'linux',
     arch: 'arm64',
     repoRoot: '/repo',
@@ -127,8 +187,9 @@ test('native plan serializes full verification before installer effects and uses
   assert.deepEqual(plan.steps.map((step) => step.id), [
     'candidate-integrity-native-binary-voice-notary',
     'candidate-direct-install-reinstall',
-    'released-dev-candidate-rollback-candidate',
+    'released-dev-candidate-previous-payload-candidate',
     'packed-managed-provider',
+    'packed-plugins-dev',
   ]);
   assert.deepEqual(
     plan.steps[0].args,
@@ -145,7 +206,7 @@ test('native plan serializes full verification before installer effects and uses
     ],
   );
   assert.deepEqual(
-    plan.steps[2].args.slice(-10),
+    plan.steps[2].args.slice(-12),
     [
       '--from-source',
       'published-channel',
@@ -157,16 +218,106 @@ test('native plan serializes full verification before installer effects and uses
       '/transferred/run/candidate.json',
       '--release-channel',
       'dev',
+      '--payload-publication-admission',
+      'pre-activation',
     ],
   );
   assert.equal(
     plan.steps[3].args.at(-1),
     '/transferred/run/candidate.json',
   );
+  assert.equal(
+    plan.steps[4].args.at(-1),
+    '/transferred/run/candidate.json',
+  );
+});
+
+test('candidate platform plan reaches the approved external dev, Resources browser, and Voice packed gates', () => {
+  const nativePlan = resolveCandidatePlatformQaPlan({
+    candidateManifestPath: '/transferred/run/candidate.json',
+    expectedTarget: 'linux-arm64',
+    payloadPublicationAdmission: 'pre-activation',
+    platform: 'linux',
+    arch: 'arm64',
+    repoRoot: '/repo',
+  });
+  const productPlan = resolveCandidatePlatformQaPlan({
+    candidateManifestPath: '/transferred/run/candidate.json',
+    expectedTarget: 'darwin-arm64',
+    payloadPublicationAdmission: 'pre-activation',
+    packedNovelHandoffManifestPath:
+      '/handoff/packed-novel-connected-account-qa.json',
+    triageGithubVoiceHandoffManifestPath:
+      '/handoff/triage-github-voice-qa.json',
+    platform: 'darwin',
+    arch: 'arm64',
+    repoRoot: '/repo',
+  });
+
+  assert.deepEqual(nativePlan.steps.map((step) => step.id), [
+    'candidate-integrity-native-binary-voice-notary',
+    'candidate-direct-install-reinstall',
+    'released-dev-candidate-previous-payload-candidate',
+    'packed-managed-provider',
+    'packed-plugins-dev',
+  ]);
+  assert.equal(
+    nativePlan.steps[4].args.includes('test:plugin-platform:plugins-dev'),
+    true,
+  );
+  assert.equal(
+    nativePlan.steps[4].args.at(-1),
+    '/transferred/run/candidate.json',
+  );
+  assert.deepEqual(productPlan.productSteps.map((step) => step.id), [
+    'packed-novel-browser-oauth',
+    'packed-resources-browser',
+    'packed-voice',
+    'packed-novel-device-manual-device-ios',
+    'packed-novel-device-manual-device-android',
+  ]);
+  assert.equal(
+    productPlan.productSteps[1].args.includes(
+      'test:plugin-platform:candidate-resources-browser',
+    ),
+    true,
+  );
+  assert.equal(
+    productPlan.productSteps[1].args.at(-1),
+    '/transferred/run/candidate.json',
+  );
+  assert.equal(
+    productPlan.productSteps[2].args.includes(
+      'test:plugin-platform:packed-voice',
+    ),
+    true,
+  );
+  assert.equal(
+    productPlan.productSteps[2].envPatch
+      .HAPPIER_E2E_PACKED_NOVEL_QA_HANDOFF_MANIFEST,
+    '/handoff/packed-novel-connected-account-qa.json',
+  );
+});
+
+test('candidate platform product QA refuses to run without the Triage/GitHub/Voice handoff', () => {
+  assert.throws(
+    () => resolveCandidatePlatformQaPlan({
+      candidateManifestPath: '/transferred/run/candidate.json',
+      expectedTarget: 'darwin-arm64',
+      payloadPublicationAdmission: 'pre-activation',
+      packedNovelHandoffManifestPath:
+        '/handoff/packed-novel-connected-account-qa.json',
+      platform: 'darwin',
+      arch: 'arm64',
+      repoRoot: '/repo',
+    }),
+    /Triage\/GitHub\/Voice handoff is required/u,
+  );
 });
 
 test('preparation consumes the canonical candidate loader and rejects a missing native archive before effects', async () => {
   const calls = [];
+  const cleanup = [];
   const candidate = {
     standaloneCli: {
       archives: [
@@ -182,6 +333,7 @@ test('preparation consumes the canonical candidate loader and rejects a missing 
   const prepared = await prepareCandidatePlatformQa({
     candidateManifestPath: '/transferred/run/candidate.json',
     expectedTarget: 'linux-x64',
+    payloadPublicationAdmission: 'pre-activation',
     platform: 'linux',
     arch: 'x64',
     repoRoot: '/repo',
@@ -190,6 +342,7 @@ test('preparation consumes the canonical candidate loader and rejects a missing 
       calls.push({ argv, options });
       return candidate;
     },
+    captureCandidateImpl: captureCandidateForTest,
   });
 
   assert.deepEqual(calls, [{
@@ -202,18 +355,23 @@ test('preparation consumes the canonical candidate loader and rejects a missing 
     prepareCandidatePlatformQa({
       candidateManifestPath: '/transferred/run/candidate.json',
       expectedTarget: 'windows-x64',
+      payloadPublicationAdmission: 'pre-activation',
       platform: 'win32',
       arch: 'x64',
       repoRoot: '/repo',
     }, {
       loadCandidateImpl: async () => candidate,
+      captureCandidateImpl: captureCandidateForTest,
+      removeCapturedRootImpl: async (root) => cleanup.push(root),
     }),
     /does not contain native target windows-x64/u,
   );
+  assert.deepEqual(cleanup, ['/private']);
 });
 
 test('runner executes the canonical stages serially and never removes the shared candidate root', async () => {
   const invocations = [];
+  const cleanup = [];
   const candidate = {
     standaloneCli: {
       archives: [{
@@ -227,11 +385,28 @@ test('runner executes the canonical stages serially and never removes the shared
   const result = await runCandidatePlatformQa({
     candidateManifestPath: '/transferred/run/candidate.json',
     expectedTarget: 'linux-x64',
+    payloadPublicationAdmission: 'pre-activation',
     platform: 'linux',
     arch: 'x64',
     repoRoot: '/repo',
   }, {
     loadCandidateImpl: async () => candidate,
+    captureCandidateImpl: async (_sourceCandidate, options) => ({
+      candidate: {
+        ...candidate,
+        standaloneCli: {
+          ...candidate.standaloneCli,
+          archives: [{
+            ...candidate.standaloneCli.archives[0],
+            archivePath: '/private/native/happier-linux-x64.tar.gz',
+          }],
+        },
+      },
+      cleanup: async () => await options.rmImpl('/private'),
+      manifestPath: '/private/candidate.json',
+      root: '/private',
+    }),
+    removeCapturedRootImpl: async (root) => cleanup.push(root),
     runStepImpl: (step) => {
       invocations.push(step);
     },
@@ -240,12 +415,19 @@ test('runner executes the canonical stages serially and never removes the shared
   assert.deepEqual(invocations.map((step) => step.id), [
     'candidate-integrity-native-binary-voice-notary',
     'candidate-direct-install-reinstall',
-    'released-dev-candidate-rollback-candidate',
+    'released-dev-candidate-previous-payload-candidate',
     'packed-managed-provider',
+    'packed-plugins-dev',
   ]);
   assert.equal(result.ok, true);
   assert.equal(result.candidateRunRoot, '/transferred/run');
   assert.equal(result.candidateRunRootRemoved, false);
+  assert.deepEqual(cleanup, ['/private']);
+  for (const step of invocations) {
+    const serialized = JSON.stringify(step);
+    assert.doesNotMatch(serialized, /\/transferred\/run\/candidate\.json/u);
+    assert.match(serialized, /\/private\/candidate\.json/u);
+  }
 });
 
 test('runner stops at the first failed canonical stage and cannot continue to installer effects after failed verification', async () => {
@@ -264,11 +446,14 @@ test('runner stops at the first failed canonical stage and cannot continue to in
     runCandidatePlatformQa({
       candidateManifestPath: '/transferred/run/candidate.json',
       expectedTarget: 'linux-x64',
+      payloadPublicationAdmission: 'pre-activation',
       platform: 'linux',
       arch: 'x64',
       repoRoot: '/repo',
     }, {
       loadCandidateImpl: async () => candidate,
+      captureCandidateImpl: captureCandidateForTest,
+      removeCapturedRootImpl: ignoreCapturedCandidateCleanupForTest,
       runStepImpl: (step) => {
         invocations.push(step.id);
         throw new Error('candidate matrix verification failed');
@@ -281,7 +466,7 @@ test('runner stops at the first failed canonical stage and cannot continue to in
   ]);
 });
 
-test('packed novel product fanout runs both consumers to terminal results before marker-authorized cleanup', async () => {
+test('packed novel product fanout runs Android after an iOS failure before marker-authorized cleanup', async () => {
   const events = [];
   const candidate = {
     standaloneCli: {
@@ -298,38 +483,50 @@ test('packed novel product fanout runs both consumers to terminal results before
     runCandidatePlatformQa({
       candidateManifestPath: '/transferred/run/candidate.json',
       expectedTarget: 'darwin-arm64',
+      payloadPublicationAdmission: 'pre-activation',
       packedNovelHandoffManifestPath:
         '/handoff/packed-novel-connected-account-qa.json',
+      triageGithubVoiceHandoffManifestPath:
+        '/handoff/triage-github-voice-qa.json',
       platform: 'darwin',
       arch: 'arm64',
       repoRoot: '/repo',
     }, {
       loadCandidateImpl: async () => candidate,
+      captureCandidateImpl: captureCandidateForTest,
+      removeCapturedRootImpl: ignoreCapturedCandidateCleanupForTest,
       runStepImpl: (step) => {
         events.push(step.id);
-        if (step.id === CANDIDATE_PRODUCT_STAGE_IDS[0]) {
-          throw new Error('browser failed');
+        if (step.id === 'packed-novel-device-manual-device-ios') {
+          throw new Error('iOS device failed');
         }
       },
       cleanupPackedNovelHandoffImpl: async ({ manifestPath }) => {
         events.push(`cleanup:${manifestPath}`);
       },
+      cleanupPackedTriageGithubVoiceHandoffImpl: async ({ manifestPath }) => {
+        events.push(`cleanup-triage:${manifestPath}`);
+      },
     }),
-    /browser failed/u,
+    /iOS device failed/u,
   );
-  assert.deepEqual(events.slice(-3), [
-    'packed-novel-browser-oauth',
-    'packed-novel-device-manual-device',
+  assert.deepEqual(events.slice(-4), [
+    'packed-novel-device-manual-device-ios',
+    'packed-novel-device-manual-device-android',
+    'cleanup-triage:/handoff/triage-github-voice-qa.json',
     'cleanup:/handoff/packed-novel-connected-account-qa.json',
   ]);
 });
 
-test('Darwin arm64 product plan gives the same exact handoff to real browser OAuth and one isolated iOS device run', () => {
+test('Darwin arm64 product plan gives both native product steps the same exact candidate, authorization, and handoff', () => {
   const plan = resolveCandidatePlatformQaPlan({
     candidateManifestPath: '/transferred/run/candidate.json',
     expectedTarget: 'darwin-arm64',
+    payloadPublicationAdmission: 'pre-activation',
     packedNovelHandoffManifestPath:
       '/handoff/packed-novel-connected-account-qa.json',
+    triageGithubVoiceHandoffManifestPath:
+      '/handoff/triage-github-voice-qa.json',
     platform: 'darwin',
     arch: 'arm64',
     repoRoot: '/repo',
@@ -339,35 +536,91 @@ test('Darwin arm64 product plan gives the same exact handoff to real browser OAu
     plan.packedNovelHandoffManifestPath,
     '/handoff/packed-novel-connected-account-qa.json',
   );
+  assert.equal(
+    plan.triageGithubVoiceHandoffManifestPath,
+    '/handoff/triage-github-voice-qa.json',
+  );
   assert.deepEqual(
     plan.productSteps.map((step) => step.id),
     CANDIDATE_PRODUCT_STAGE_IDS,
   );
-  assert.deepEqual(plan.productSteps[0].args.slice(-4), [
+  assert.deepEqual(plan.productSteps[0].args.slice(-6), [
     '--candidate',
     '/transferred/run/candidate.json',
     '--novel-handoff',
     '/handoff/packed-novel-connected-account-qa.json',
+    '--triage-github-voice-handoff',
+    '/handoff/triage-github-voice-qa.json',
   ]);
   assert.equal(
-    plan.productSteps[1].envPatch
-      .HAPPIER_E2E_PLUGIN_PLATFORM_CANDIDATE,
+    plan.productSteps[1].args.at(-1),
     '/transferred/run/candidate.json',
   );
   assert.equal(
-    plan.productSteps[1].envPatch
+    plan.productSteps[1].args.includes(
+      'test:plugin-platform:candidate-resources-browser',
+    ),
+    true,
+  );
+  assert.equal(
+    plan.productSteps[2].envPatch
       .HAPPIER_E2E_PACKED_NOVEL_QA_HANDOFF_MANIFEST,
     '/handoff/packed-novel-connected-account-qa.json',
   );
   assert.equal(
-    plan.productSteps[1].args.includes(
+    plan.productSteps[2].args.includes(
+      'test:plugin-platform:packed-voice',
+    ),
+    true,
+  );
+  const deviceSteps = plan.productSteps.filter((step) => (
+    step.id === 'packed-novel-device-manual-device-ios'
+    || step.id === 'packed-novel-device-manual-device-android'
+  ));
+  assert.deepEqual(deviceSteps.map((step) => step.id), [
+    'packed-novel-device-manual-device-ios',
+    'packed-novel-device-manual-device-android',
+  ]);
+  assert.equal(
+    deviceSteps[0].args.includes(
       'test:mobile:e2e:ios:plugin-platform-candidate',
     ),
     true,
   );
+  assert.equal(
+    deviceSteps[1].args.includes(
+      'test:mobile:e2e:android:plugin-platform-candidate',
+    ),
+    true,
+  );
+  assert.deepEqual(
+    deviceSteps.map((step) => step.envPatch),
+    [
+      {
+        HAPPIER_E2E_PLUGIN_PLATFORM_CANDIDATE:
+          '/transferred/run/candidate.json',
+        HAPPIER_E2E_PLUGIN_PLATFORM_G5_AUTHORIZATION:
+          'G5_GENERATED_INPUTS_GREEN',
+        HAPPIER_E2E_PACKED_NOVEL_QA_HANDOFF_MANIFEST:
+          '/handoff/packed-novel-connected-account-qa.json',
+        HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_HANDOFF_MANIFEST:
+          '/handoff/triage-github-voice-qa.json',
+      },
+      {
+        HAPPIER_E2E_PLUGIN_PLATFORM_CANDIDATE:
+          '/transferred/run/candidate.json',
+        HAPPIER_E2E_PLUGIN_PLATFORM_G5_AUTHORIZATION:
+          'G5_GENERATED_INPUTS_GREEN',
+        HAPPIER_E2E_PACKED_NOVEL_QA_HANDOFF_MANIFEST:
+          '/handoff/packed-novel-connected-account-qa.json',
+        HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_HANDOFF_MANIFEST:
+          '/handoff/triage-github-voice-qa.json',
+      },
+    ],
+  );
 });
 
-test('native failure skips product consumers, cleans the retained handoff exactly once, and preserves cleanup failure beside the primary error', async () => {
+test('native failure skips product consumers, cleans both retained handoffs exactly once, and preserves cleanup failure beside the primary error', async () => {
   const events = [];
   const candidate = {
     standaloneCli: {
@@ -384,13 +637,18 @@ test('native failure skips product consumers, cleans the retained handoff exactl
     runCandidatePlatformQa({
       candidateManifestPath: '/transferred/run/candidate.json',
       expectedTarget: 'darwin-arm64',
+      payloadPublicationAdmission: 'pre-activation',
       packedNovelHandoffManifestPath:
         '/handoff/packed-novel-connected-account-qa.json',
+      triageGithubVoiceHandoffManifestPath:
+        '/handoff/triage-github-voice-qa.json',
       platform: 'darwin',
       arch: 'arm64',
       repoRoot: '/repo',
     }, {
       loadCandidateImpl: async () => candidate,
+      captureCandidateImpl: captureCandidateForTest,
+      removeCapturedRootImpl: ignoreCapturedCandidateCleanupForTest,
       runStepImpl: (step) => {
         events.push(step.id);
         throw new Error('native verification failed');
@@ -398,6 +656,9 @@ test('native failure skips product consumers, cleans the retained handoff exactl
       cleanupPackedNovelHandoffImpl: async ({ manifestPath }) => {
         events.push(`cleanup:${manifestPath}`);
         throw new Error('handoff cleanup failed');
+      },
+      cleanupPackedTriageGithubVoiceHandoffImpl: async ({ manifestPath }) => {
+        events.push(`cleanup-triage:${manifestPath}`);
       },
     }),
     (error) => {
@@ -411,6 +672,7 @@ test('native failure skips product consumers, cleans the retained handoff exactl
   );
   assert.deepEqual(events, [
     'candidate-integrity-native-binary-voice-notary',
+    'cleanup-triage:/handoff/triage-github-voice-qa.json',
     'cleanup:/handoff/packed-novel-connected-account-qa.json',
   ]);
 });

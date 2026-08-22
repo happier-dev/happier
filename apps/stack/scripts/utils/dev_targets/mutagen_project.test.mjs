@@ -37,6 +37,11 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
   assert.ok(rendered.includes('alpha: "/Users/dev/happier"'));
   assert.ok(rendered.includes('beta: "happier-stack-linux:/home/dev/happier"'));
   assert.ok(rendered.includes('beta: "happier-stack-windows:C:/Users/test_qa/happier"'));
+  assert.equal(
+    rendered.match(/configurationBeta:\n\s+watch:\n\s+mode: "no-watch"/g)?.length,
+    targets.length,
+    'one-way replicas must not watch target-local build and cache writes',
+  );
   assert.match(rendered, /vcs: true/);
   for (const ignored of [
     'node_modules',

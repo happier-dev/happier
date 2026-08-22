@@ -16,4 +16,15 @@ test('publish-ui-mobile-dev keeps TestFlight external distribution logic inside 
   assert.match(src, /APP_STORE_CONNECT_PUBLICDEV_PROCESSING_TIMEOUT_SECONDS:\s*\$\{\{\s*vars\.APP_STORE_CONNECT_PUBLICDEV_PROCESSING_TIMEOUT_SECONDS\s*\}\}/);
   assert.doesNotMatch(src, /node scripts\/pipeline\/run\.mjs expo-testflight-distribute/);
   assert.match(src, /--build-json "\/tmp\/eas_build\.ios\.json"/);
+  assert.equal(src.match(/--preflight-only/g)?.length, 2);
+
+  const iosCloud = src.slice(src.indexOf('  ios_cloud:'), src.indexOf('  ios_local:'));
+  const iosLocal = src.slice(src.indexOf('  ios_local:'));
+  for (const job of [iosCloud, iosLocal]) {
+    assert.match(job, /name: Checkout trusted TestFlight preflight control bytes/);
+    assert.match(job, /repository: \$\{\{ job\.workflow_repository \}\}/);
+    assert.match(job, /ref: \$\{\{ job\.workflow_sha \}\}/);
+    assert.match(job, /path: \.testflight-preflight-control/);
+    assert.match(job, /working-directory: \.testflight-preflight-control/);
+  }
 });

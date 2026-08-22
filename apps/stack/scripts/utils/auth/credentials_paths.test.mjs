@@ -195,6 +195,59 @@ test('findExistingStackCredentialPath accepts the stable scope alias when settin
   );
 });
 
+test('findExistingStackCredentialPath migrates from another matching profile when the stable profile has no credential', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-matching-profile-'));
+  const serverUrl = 'http://127.0.0.1:52753';
+  const stableServerId = 'stack_repo-dev__id_default';
+  const historicalServerId = '127.0.0.1-52753';
+  await writeFile(
+    join(dir, 'settings.json'),
+    JSON.stringify({
+      schemaVersion: 6,
+      activeServerId: stableServerId,
+      servers: {
+        [stableServerId]: {
+          id: stableServerId,
+          name: 'Stable stack scope',
+          serverUrl,
+          webappUrl: 'http://localhost:52753',
+          createdAt: 2,
+          updatedAt: 2,
+          lastUsedAt: 2,
+        },
+        [historicalServerId]: {
+          id: historicalServerId,
+          name: 'Historical URL profile',
+          serverUrl,
+          webappUrl: 'http://localhost:52753',
+          createdAt: 1,
+          updatedAt: 1,
+          lastUsedAt: 1,
+        },
+      },
+    }),
+    'utf-8',
+  );
+  const historicalCredentialPath = join(dir, 'servers', historicalServerId, 'access.key');
+  await mkdir(join(dir, 'servers', historicalServerId), { recursive: true });
+  await writeFile(historicalCredentialPath, 'historical-stack-credential\n', 'utf-8');
+
+  const env = {
+    HAPPIER_ACTIVE_SERVER_ID: stableServerId,
+    HAPPIER_STACK_STACK: 'repo-dev',
+  };
+  const resolved = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl, env });
+
+  assert.equal(resolved.activeServerId, stableServerId);
+  assert.equal(resolved.settingsServerId, stableServerId);
+  assert.equal(resolved.aliasServerScopedPaths.includes(historicalCredentialPath), false);
+  assert.ok(resolved.credentialSourcePaths.includes(historicalCredentialPath));
+  assert.equal(
+    findExistingStackCredentialPath({ cliHomeDir: dir, serverUrl, env }),
+    historicalCredentialPath,
+  );
+});
+
 test('resolveStackCredentialPaths prefers explicit active server id when its saved profile matches', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-explicit-settings-'));
   const serverUrl = 'http://127.0.0.1:3009';

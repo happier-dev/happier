@@ -172,6 +172,36 @@ test('waitForServerReady fails early when the child process exits before health 
   );
 });
 
+test('waitForServerReady treats attended TUI deadlines as checkpoints while the child is alive', async () => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  let readyAt = 0;
+  let checkpoints = 0;
+  const fixture = await listenServer((_req, res) => {
+    if (!readyAt) readyAt = Date.now() + 120;
+    const ready = Date.now() >= readyAt;
+    res.statusCode = ready ? 200 : 503;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(ready
+      ? { status: 'ok', service: 'happier-server' }
+      : { status: 'starting' }));
+  });
+
+  try {
+    await waitForServerReady(fixture.url, {
+      timeoutMs: 40,
+      intervalMs: 10,
+      childProcess: child,
+      continueWhileChildAlive: true,
+      onTimeoutCheckpoint: () => { checkpoints += 1; },
+    });
+    assert.equal(checkpoints >= 1, true);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('migration start switches readiness waiting to the bounded migration deadline', async () => {
   let readyAt = 0;
   const fixture = await listenServer((_req, res) => {

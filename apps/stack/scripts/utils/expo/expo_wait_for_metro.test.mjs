@@ -48,6 +48,31 @@ test('waitForExpoMetroRunning returns a non-ok result when the timeout elapses',
   assert.equal(result.probes >= 2, true);
 });
 
+test('waitForExpoMetroRunning treats attended TUI deadlines as checkpoints until its caller cancels', async () => {
+  let probes = 0;
+  let checkpoints = 0;
+  const result = await waitForExpoMetroRunning({
+    port: 8081,
+    timeoutMs: 25,
+    intervalMs: 10,
+    env: { HAPPIER_STACK_TUI: '1' },
+    onTimeoutCheckpoint: () => { checkpoints += 1; },
+  }, {
+    looksLikeExpoMetroImpl: async () => {
+      probes += 1;
+      return probes >= 5;
+    },
+    delayImpl: async () => {},
+    nowMsImpl: (() => {
+      let now = 0;
+      return () => { now += 10; return now; };
+    })(),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(checkpoints >= 1, true);
+});
+
 test('waitForExpoMetroRunning owns its default polling delay', async () => {
   let probes = 0;
   const result = await waitForExpoMetroRunning({

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import childProcess, { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
@@ -9,6 +10,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { sanitizeBundledPackageJson } from '@happier-dev/cli-common/workspaces';
+import {
+  computePluginUiArtifactFileSetSha256DigestV1,
+  computePluginUiArtifactSha256DigestV1,
+} from '@happier-dev/protocol/plugins/ui';
 import {
   resolveWorkspaceBundleLockPath,
   withWorkspaceBundleLock,
@@ -18,12 +23,61 @@ import {
   pluginPackageNameToPackageId,
   readBundledPluginPackageNames,
 } from './bundledPluginMembership.ts';
+import { requiresBundledImmutableArtifact } from '../../../apps/cli/scripts/build-owned/bundledImmutableArtifactEligibility.ts';
+import * as canonicalBundledPluginPublisher from '../../../apps/cli/scripts/build-owned/generateBundledPluginEntries.ts';
+import * as historicalBundledPluginPublisher from './generateBundledPluginEntries.ts';
 import { main as generateBundledPluginEntries } from './generateBundledPluginEntries.ts';
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(resolve(path, '..'), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
+
+function readGeneratedJsonExport<T>(source: string, exportName: string): T {
+  const prefix = `export const ${exportName} = Object.freeze(`;
+  const start = source.indexOf(prefix);
+  assert.notEqual(start, -1, `expected generated export '${exportName}'`);
+  const end = source.indexOf(' satisfies ', start + prefix.length);
+  assert.notEqual(end, -1, `expected generated export '${exportName}' to satisfy its declared type`);
+  return JSON.parse(source.slice(start + prefix.length, end)) as T;
+}
+
+test('historical publisher wrapper re-exports only the canonical generator entrypoint', () => {
+  assert.equal(historicalBundledPluginPublisher.main, canonicalBundledPluginPublisher.main);
+  assert.deepEqual(Object.keys(historicalBundledPluginPublisher), ['main']);
+});
+
+test('requires immutable bundled artifacts for executable daemon entries and independent non-daemon owners', () => {
+  const emptyOwner = {
+    hasDaemonEntrypoint: false,
+    hasResources: false,
+    requiresSessionRunnerFactory: false,
+    hasManagedProviderRuntime: false,
+    hasConnectedAccountDescriptors: false,
+  } as const;
+
+  assert.equal(requiresBundledImmutableArtifact({
+    ...emptyOwner,
+    hasDaemonEntrypoint: true,
+  }), true);
+  assert.equal(requiresBundledImmutableArtifact({
+    ...emptyOwner,
+    hasResources: true,
+  }), true);
+  assert.equal(requiresBundledImmutableArtifact({
+    ...emptyOwner,
+    requiresSessionRunnerFactory: true,
+  }), true);
+  assert.equal(requiresBundledImmutableArtifact({
+    ...emptyOwner,
+    hasManagedProviderRuntime: true,
+  }), true);
+  assert.equal(requiresBundledImmutableArtifact({
+    ...emptyOwner,
+    hasConnectedAccountDescriptors: true,
+  }), true);
+  assert.equal(requiresBundledImmutableArtifact(emptyOwner), false);
+});
 
 async function runGeneratorCliWithEnv(
   repoRoot: string,
@@ -72,26 +126,40 @@ const MUTABLE_GENERATOR_WORKSPACE_IMPORTS = Object.freeze([
   '@happier-dev/agents',
   '@happier-dev/cli-common/workspaces',
   '@happier-dev/protocol',
+  '@happier-dev/protocol/plugins/ui',
 ] as const);
+
+const CANONICAL_GENERATOR_WORKSPACE_IMPORT_URLS = Object.freeze([
+  pathToFileURL(fileURLToPath(new URL('../../../packages/agents/dist/index.js', import.meta.url))).href,
+  pathToFileURL(fileURLToPath(new URL('../../../packages/cli-common/dist/workspaces/index.js', import.meta.url))).href,
+  pathToFileURL(fileURLToPath(new URL('../../../packages/protocol/dist/index.js', import.meta.url))).href,
+  pathToFileURL(fileURLToPath(new URL('../../../packages/protocol/dist/plugins/ui/index.js', import.meta.url))).href,
+] as const);
+const CANONICAL_GENERATOR_REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 function createGeneratorImportProbeLoader(loaderPath: string): void {
   writeFileSync(
     loaderPath,
     [
+      "import { appendFileSync } from 'node:fs';",
       "const workspaceSpecifiers = new Set(JSON.parse(process.env.HAPPIER_GENERATOR_IMPORT_PROBE_SPECIFIERS ?? '[]'));",
+      "const canonicalSpecifierMap = new Map(Object.entries(JSON.parse(process.env.HAPPIER_GENERATOR_IMPORT_PROBE_CANONICAL_WORKSPACE_MAP ?? '{}')));",
+      "const wrappedUiUrls = new Set();",
       '',
       'export async function resolve(specifier, context, nextResolve) {',
       '  if (!workspaceSpecifiers.has(specifier)) return nextResolve(specifier, context);',
       '  const resolved = await nextResolve(specifier, context);',
+      '  const logicalSpecifier = canonicalSpecifierMap.get(specifier) ?? specifier;',
+      '  appendFileSync(process.env.HAPPIER_GENERATOR_IMPORT_PROBE_MARKER, "workspace:" + logicalSpecifier + "\\n", "utf8");',
+      '  if (logicalSpecifier !== "@happier-dev/protocol/plugins/ui" || wrappedUiUrls.has(resolved.url)) return resolved;',
+      '  wrappedUiUrls.add(resolved.url);',
       '  const wrapperSource = [',
       '    "import { appendFileSync } from \'node:fs\';",',
-      '    `appendFileSync(process.env.HAPPIER_GENERATOR_IMPORT_PROBE_MARKER, ${JSON.stringify(`workspace:${specifier}\\n`)}, "utf8");`,',
+      '    `import * as resolvedWorkspaceModule from ${JSON.stringify(resolved.url)};`,',
+      '    `appendFileSync(process.env.HAPPIER_GENERATOR_IMPORT_PROBE_MARKER, "workspace-ui-probe:" + JSON.stringify({ resolvedUrl: ${JSON.stringify(resolved.url)}, schemaType: typeof resolvedWorkspaceModule.PluginUiArtifactsManifestV1Schema, digestType: typeof resolvedWorkspaceModule.computePluginUiArtifactSha256DigestV1 }) + "\\\\n", "utf8");`,',
       '    `export * from ${JSON.stringify(resolved.url)};`,',
       '  ].join("\\n");',
-      '  return {',
-      '    url: `data:text/javascript;base64,${Buffer.from(wrapperSource).toString("base64")}`,',
-      '    shortCircuit: true,',
-      '  };',
+      '  return { url: `data:text/javascript;base64,${Buffer.from(wrapperSource).toString("base64")}`, shortCircuit: true };',
       '}',
       '',
       'export async function load(url, context, nextLoad) {',
@@ -113,6 +181,123 @@ function createGeneratorImportProbeLoader(loaderPath: string): void {
     ].join('\n'),
     'utf8',
   );
+}
+
+function createGeneratorSourceRuntimeClosureProbeLoader(loaderPath: string): void {
+  writeFileSync(
+    loaderPath,
+    [
+      "import { appendFileSync, existsSync, readFileSync } from 'node:fs';",
+      "import { resolve as resolvePath } from 'node:path';",
+      "import { pathToFileURL } from 'node:url';",
+      "const markerPath = process.env.HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_MARKER;",
+      "const buildSharedDepsUrl = process.env.HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_BUILD_SHARED_DEPS_URL;",
+      "const sourceModuleUrl = process.env.HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_SOURCE_MODULE_URL;",
+      "const cliSourceRoot = process.env.HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_CLI_SOURCE_ROOT;",
+      "const probeLabel = process.env.HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_LABEL;",
+      "const transitiveSpecifiers = new Set(['@happier-dev/protocol', '@happier-dev/plugin-sdk']);",
+      '',
+      'function append(line) {',
+      '  appendFileSync(markerPath, line + "\\n", "utf8");',
+      '}',
+      '',
+      'function sourceRuntimeClosureIsReady() {',
+      '  return existsSync(markerPath) && readFileSync(markerPath, "utf8").includes(`sync:${probeLabel}\\n`);',
+      '}',
+      '',
+      'export async function resolve(specifier, context, nextResolve) {',
+      '  if (specifier.startsWith("@/")) {',
+      '    const candidateBase = resolvePath(cliSourceRoot, specifier.slice(2));',
+      '    for (const candidate of [candidateBase, `${candidateBase}.ts`, `${candidateBase}.tsx`, `${candidateBase}.mts`, resolvePath(candidateBase, "index.ts")]) {',
+      '      if (existsSync(candidate)) return { url: pathToFileURL(candidate).href, shortCircuit: true };',
+      '    }',
+      '  }',
+      '  const resolved = await nextResolve(specifier, context);',
+      '  if (resolved.url === buildSharedDepsUrl) {',
+      '    const source = [',
+      '      "import { appendFileSync } from \'node:fs\';",',
+      '      "export async function syncSharedDepsForSourceDev(options) {",',
+      '      "  if (options?.includeRuntimeDependencies !== true) throw new Error(\'expected runtime dependency synchronization\');",',
+      '      "  if (options?.publishBundledPluginArtifacts !== false) throw new Error(\'expected generator-owned publication to remain single-owner\');",',
+      '      "  const stampPath = String(options?.stampPath ?? \'\');",',
+      '      "  const expectedPreservation = stampPath.endsWith(\'/cli-generator-authoring-stage-prep.json\');",',
+      '      "  if ((options?.preserveBundledPluginArtifacts === true) !== expectedPreservation) throw new Error(\'expected stage-prep bundled plugin artifact preservation\');",',
+      '      "  const workspaceNames = options?.workspaceNames ?? [];",',
+      '      "  if (!expectedPreservation && JSON.stringify(workspaceNames) !== JSON.stringify([\'plugin-sdk\'])) throw new Error(\'expected the complete plugin build closure\');",',
+      '      "  if (expectedPreservation && (!workspaceNames.includes(\'plugin-sdk\') || workspaceNames.some((workspaceName) => workspaceName.startsWith(\'plugins-\')))) throw new Error(\'expected host-only stage closure\');",',
+      '      "  if (!expectedPreservation && !stampPath.endsWith(\'/cli-generator-authoring-build-prep.json\')) throw new Error(\'expected generator-private readiness stamp\');",',
+      '      "  if (options?.lockOptions?.heldLockValue !== undefined) throw new Error(\'expected authoring preparation outside the generator publication lock\');",',
+      '      "  appendFileSync(process.env.HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_MARKER, \'sync:\' + process.env.HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_LABEL + \'\\\\n\', \'utf8\');",',
+      '      "  return { synced: true, reason: \'probe\' };",',
+      '      "}",',
+      '      "export function resolveCliBundledWorkspacePackageNames() { return [\'protocol\', \'plugin-sdk\', \'plugins-runtime-closure\']; }",',
+      '    ].join("\\n");',
+      '    return { url: `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`, shortCircuit: true };',
+      '  }',
+      '  if (transitiveSpecifiers.has(specifier) && context.parentURL?.startsWith(sourceModuleUrl)) {',
+      '    if (!sourceRuntimeClosureIsReady()) {',
+      '      throw new Error(`stale app-local ${specifier} resolved before source-runtime closure synchronization`);',
+      '    }',
+      '    append(`transitive:${probeLabel}:${specifier}`);',
+      '  }',
+      '  return resolved;',
+      '}',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+}
+
+async function runGeneratorProgrammaticWithEnv(
+  repoRoot: string,
+  mode: 'write' | 'check',
+  env: NodeJS.ProcessEnv,
+  probePath: string,
+): Promise<void> {
+  const generatorUrl = pathToFileURL(fileURLToPath(new URL('./generateBundledPluginEntries.ts', import.meta.url))).href;
+  writeFileSync(
+    probePath,
+    [
+      `const { main } = await import(${JSON.stringify(generatorUrl)});`,
+      `await main(['--root', ${JSON.stringify(repoRoot)}, '--mode', ${JSON.stringify(mode)}]);`,
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  await new Promise<void>((resolveRun, rejectRun) => {
+    const child = spawn(
+      process.execPath,
+      ['--experimental-strip-types', probePath],
+      {
+        cwd: fileURLToPath(new URL('../../../', import.meta.url)),
+        env,
+        stdio: ['ignore', 'ignore', 'pipe'],
+      },
+    );
+    let stderr = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      rejectRun(new Error(`programmatic generator source-runtime closure probe timed out: ${stderr}`));
+    }, 30_000);
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      rejectRun(error);
+    });
+    child.once('close', (code, signal) => {
+      clearTimeout(timeout);
+      if (code === 0 && signal === null) {
+        resolveRun();
+        return;
+      }
+      rejectRun(new Error(
+        `programmatic generator source-runtime closure probe failed: code=${String(code)} signal=${String(signal)} ${stderr}`,
+      ));
+    });
+  });
 }
 
 async function waitForGeneratorImportProbeEntry(markerPath: string, label: string): Promise<void> {
@@ -141,7 +326,13 @@ function startGeneratorImportProbe(input: Readonly<{
     HAPPIER_GENERATOR_IMPORT_PROBE_ENTRY_URL: generatorUrl,
     HAPPIER_GENERATOR_IMPORT_PROBE_MARKER: input.markerPath,
     HAPPIER_GENERATOR_IMPORT_PROBE_ROOT: input.repoRoot,
-    HAPPIER_GENERATOR_IMPORT_PROBE_SPECIFIERS: JSON.stringify(MUTABLE_GENERATOR_WORKSPACE_IMPORTS),
+    HAPPIER_GENERATOR_IMPORT_PROBE_SPECIFIERS: JSON.stringify([
+      ...MUTABLE_GENERATOR_WORKSPACE_IMPORTS,
+      ...CANONICAL_GENERATOR_WORKSPACE_IMPORT_URLS,
+    ]),
+    HAPPIER_GENERATOR_IMPORT_PROBE_CANONICAL_WORKSPACE_MAP: JSON.stringify(Object.fromEntries(
+      CANONICAL_GENERATOR_WORKSPACE_IMPORT_URLS.map((url, index) => [url, MUTABLE_GENERATOR_WORKSPACE_IMPORTS[index]]),
+    )),
     HAPPIER_GENERATOR_IMPORT_PROBE_TARGET_URL: generatorUrl,
   };
   delete env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD;
@@ -177,10 +368,12 @@ function startGeneratorImportProbe(input: Readonly<{
     child.stderr?.on('data', (chunk: string) => {
       stderr += chunk;
     });
+    // Canonical workspace dist imports are serialized behind the producer
+    // lock; allow one bounded import/build window on a busy shared host.
     const timeout = setTimeout(() => {
       child.kill('SIGKILL');
       rejectCompletion(new Error(`${input.invocation} generator import probe timed out: ${stderr}`));
-    }, 30_000);
+    }, 60_000);
     child.once('error', (error) => {
       clearTimeout(timeout);
       rejectCompletion(error);
@@ -318,7 +511,7 @@ test('serializes generator discovery, check, and writes through the workspace bu
     repoRoot,
     'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts',
   );
-  const lockPath = resolveWorkspaceBundleLockPath(repoRoot);
+  const lockPath = resolveWorkspaceBundleLockPath(CANONICAL_GENERATOR_REPO_ROOT);
 
   let releaseOwner: (() => void) | undefined;
   let ownerPromise: Promise<void> | undefined;
@@ -455,7 +648,19 @@ test('serializes generator discovery, check, and writes through the workspace bu
     const checkResult = await checkInvocationPromise;
     invocationPromise = undefined;
     assert.equal(checkResult.status, 'rejected');
-    assert.match(String(checkResult.error), /generated output differs/u);
+    // Final serialized plugin artifacts are the check-mode admission gate.
+    // The stale manifest must reject before a host projection could be read or
+    // replaced, preserving the last-green generated output from the prior
+    // successful write.
+    assert.match(
+      String(checkResult.error),
+      /Bundled plugin manifest artifact differs: .*\.happier-plugin[\\/]plugin\.json/u,
+    );
+    assert.equal(
+      readFileSync(generatedPath, 'utf8'),
+      updatedOutput,
+      'a rejected final-artifact admission must preserve the last-green host projection',
+    );
 
     await withWorkspaceBundleLock(
       async ({ heldLockValue }) => {
@@ -488,7 +693,7 @@ test('does not evaluate mutable workspace modules before direct or programmatic 
     repoRoot,
     'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts',
   );
-  const lockPath = resolveWorkspaceBundleLockPath(repoRoot);
+  const lockPath = resolveWorkspaceBundleLockPath(CANONICAL_GENERATOR_REPO_ROOT);
 
   let releaseOwner: (() => void) | undefined;
   let ownerPromise: Promise<void> | undefined;
@@ -560,10 +765,12 @@ test('does not evaluate mutable workspace modules before direct or programmatic 
         repoRoot,
       }),
     );
-    await Promise.all([
-      waitForGeneratorImportProbeEntry(directMarkerPath, 'direct CLI'),
-      waitForGeneratorImportProbeEntry(programmaticMarkerPath, 'programmatic main'),
-    ]);
+    // The child entry may be loaded before or after the lock owner becomes
+    // observable under a busy test host. The decision-material signal is the
+    // dependency marker itself: canonical workspace modules must not resolve
+    // until the child acquires the lock. Keep the owner held for one bounded
+    // observation window, then release it and require both children to finish.
+    await delay(2_000);
 
     for (const [index, markerPath] of [directMarkerPath, programmaticMarkerPath].entries()) {
       const invocation = index === 0 ? 'direct CLI' : 'programmatic main';
@@ -590,7 +797,7 @@ test('does not evaluate mutable workspace modules before direct or programmatic 
         assert.equal(
           markerLines.has(`workspace:${specifier}`),
           true,
-          `expected mutable workspace import after releasing the root lock: ${specifier}`,
+          `expected canonical workspace import after releasing the root lock: ${specifier}`,
         );
       }
     }
@@ -604,6 +811,96 @@ test('does not evaluate mutable workspace modules before direct or programmatic 
       ...(ownerPromise ? [ownerPromise] : []),
       ...probes.map((probe) => probe.completion),
     ]);
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('synchronizes the app-local authoring runtime closure before direct, check, and programmatic source staging imports', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-bundled-generator-source-runtime-closure-'));
+  const packageRoot = resolve(repoRoot, 'packages/plugins/runtime-closure');
+  const loaderPath = resolve(repoRoot, 'generator-source-runtime-closure-loader.mjs');
+  const markerPath = resolve(repoRoot, 'generator-source-runtime-closure.log');
+  const programmaticProbePath = resolve(repoRoot, 'generator-source-runtime-closure-programmatic.mjs');
+  const buildSharedDepsUrl = pathToFileURL(fileURLToPath(
+    new URL('../../../apps/cli/scripts/buildSharedDeps.mjs', import.meta.url),
+  )).href;
+  const sourceModuleUrl = pathToFileURL(fileURLToPath(
+    new URL('../../../apps/cli/src/plugins/authoring/sourceModule.ts', import.meta.url),
+  )).href;
+  const cliSourceRoot = fileURLToPath(new URL('../../../apps/cli/src', import.meta.url));
+
+  try {
+    writeJson(resolve(packageRoot, 'package.json'), {
+      name: '@happier-dev/plugins-runtime-closure',
+      version: '1.2.3',
+      type: 'module',
+      main: './dist/index.js',
+      files: ['dist', 'resources', 'package.json'],
+    });
+    mkdirSync(resolve(packageRoot, 'src'), { recursive: true });
+    writeFileSync(
+      resolve(packageRoot, 'src/manifest.ts'),
+      pluginManifestSource({
+        id: 'happier.fixture.runtime-closure',
+        daemon: true,
+        contributes: '{ resources: [{ id: "prompt", kind: "prompt", path: "./resources/prompt.md", contentType: "text/markdown" }] }',
+      }),
+      'utf8',
+    );
+    writeFileSync(
+      resolve(packageRoot, 'src/index.ts'),
+      [
+        "export { PLUGIN_MANIFEST as manifest } from './manifest.js';",
+        '',
+        'export function activate(): void {}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    mkdirSync(resolve(packageRoot, 'resources'), { recursive: true });
+    writeFileSync(resolve(packageRoot, 'resources/prompt.md'), 'fixture prompt\n', 'utf8');
+    writeGeneratorOutputScaffold(repoRoot);
+    createGeneratorSourceRuntimeClosureProbeLoader(loaderPath);
+
+    const runWithProbe = async (
+      label: 'direct-write' | 'direct-check' | 'programmatic-check',
+      run: (env: NodeJS.ProcessEnv) => Promise<void>,
+    ): Promise<void> => {
+      await run({
+        ...process.env,
+        HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_MARKER: markerPath,
+        HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_BUILD_SHARED_DEPS_URL: buildSharedDepsUrl,
+        HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_SOURCE_MODULE_URL: sourceModuleUrl,
+        HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_CLI_SOURCE_ROOT: cliSourceRoot,
+        HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_LABEL: label,
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --experimental-loader=${loaderPath}`.trim(),
+      });
+    };
+
+    await runWithProbe('direct-write', async (env) => {
+      await runGeneratorCliWithEnv(repoRoot, 'write', env);
+    });
+    await runWithProbe('direct-check', async (env) => {
+      await runGeneratorCliWithEnv(repoRoot, 'check', env);
+    });
+    await runWithProbe('programmatic-check', async (env) => {
+      await runGeneratorProgrammaticWithEnv(repoRoot, 'check', env, programmaticProbePath);
+    });
+
+    const markerLines = readFileSync(markerPath, 'utf8').trim().split('\n');
+    for (const label of ['direct-write', 'direct-check', 'programmatic-check'] as const) {
+      const syncIndex = markerLines.indexOf(`sync:${label}`);
+      assert.notEqual(syncIndex, -1, `${label} must synchronize the source-runtime closure`);
+      for (const specifier of ['@happier-dev/protocol', '@happier-dev/plugin-sdk']) {
+        const transitiveIndex = markerLines.indexOf(`transitive:${label}:${specifier}`);
+        assert.notEqual(transitiveIndex, -1, `${label} must load ${specifier} through sourceModule`);
+        assert.ok(
+          syncIndex < transitiveIndex,
+          `${label} must synchronize the source-runtime closure before importing ${specifier}`,
+        );
+      }
+    }
+  } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
@@ -746,10 +1043,11 @@ test('emits only bundled locators and structured trusted bindings into the CLI r
 
   await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
 
-  const output = readFileSync(
-    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
-    'utf8',
+  const outputPath = resolve(
+    repoRoot,
+    'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts',
   );
+  const output = readFileSync(outputPath, 'utf8');
   assert.match(output, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
   assert.doesNotMatch(output, /\\\\n/);
   assert.match(output, /BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS/);
@@ -758,6 +1056,11 @@ test('emits only bundled locators and structured trusted bindings into the CLI r
   assert.match(output, /daemonEntryPath:\s*null/);
   assert.doesNotMatch(output, /activationEvents/);
   assert.doesNotMatch(output, /BUNDLED_FIRST_PARTY_(?:AGENT|PROVIDER|SCM|MCP|CONNECTED|INSTALLABLE|EXECUTION_RUN).*CONTRIBUTIONS/);
+
+  const stableMtime = new Date('2026-01-01T00:00:00.000Z');
+  utimesSync(outputPath, stableMtime, stableMtime);
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+  assert.equal(statSync(outputPath).mtimeMs, stableMtime.getTime());
 });
 
 test('generates complete built-in legacy Connected Account compatibility from plugin-owned declarations', async () => {
@@ -962,7 +1265,7 @@ test('generates complete built-in legacy Connected Account compatibility from pl
       },
     },
   ]);
-  writePlugin('scm-github', 'happier.scm.hosting.github', [
+  writePlugin('scm-github', 'happier.scm.forge.github', [
     {
       legacyServiceId: 'github',
       id: 'github-account',
@@ -975,7 +1278,7 @@ test('generates complete built-in legacy Connected Account compatibility from pl
       exactV0_2_1ReaderQuotaProjection: false,
     },
   ]);
-  writePlugin('scm-bitbucket', 'happier.scm.hosting.bitbucket', [
+  writePlugin('scm-bitbucket', 'happier.scm.forge.bitbucket', [
     {
       legacyServiceId: 'bitbucket',
       id: 'bitbucket-account',
@@ -1135,7 +1438,7 @@ test('generates complete built-in legacy Connected Account compatibility from pl
   );
 });
 
-test('binds bundled resource artifact identity to exact package bytes rather than package version', async () => {
+test('separates structural bundled generation records from pack-time source artifact integrity', async () => {
   const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ws6-bundled-resource-artifact-'));
   const packageRoot = resolve(repoRoot, 'packages/plugins/resource-owner');
   const sourcePackageJson = {
@@ -1154,8 +1457,29 @@ test('binds bundled resource artifact identity to exact package bytes rather tha
     pluginManifestSource({
       id: 'happier.fixture.resource-owner',
       daemon: true,
-      contributes: '{ resources: [{ id: "prompt", kind: "prompt", path: "./resources/prompt.md", contentType: "text/markdown" }] }',
+      contributes: [
+        '{',
+        '  resources: [',
+        '    { id: "prompt", kind: "prompt", path: "./resources/prompt.md", contentType: "text/markdown" },',
+        '    { id: "live-status", source: "dynamic", kind: "config", contentType: "application/json", maxBytes: 1024 },',
+        '  ],',
+        '}',
+      ].join('\n'),
     }),
+    'utf8',
+  );
+  writeFileSync(
+    resolve(packageRoot, 'src/index.ts'),
+    [
+      "export { PLUGIN_MANIFEST as manifest } from './manifest.js';",
+      '',
+      'export function activate(api: {',
+      '  resources: { registerDynamicResource(localId: string, runtime: unknown): void };',
+      '}): void {',
+      "  api.resources.registerDynamicResource('live-status', { read: async () => '{}' });",
+      '}',
+      '',
+    ].join('\n'),
     'utf8',
   );
   mkdirSync(resolve(packageRoot, 'dist'), { recursive: true });
@@ -1165,6 +1489,7 @@ test('binds bundled resource artifact identity to exact package bytes rather tha
   writeFileSync(resolve(packageRoot, 'dist/index.js'), 'export const activate = () => undefined;\n', 'utf8');
   writeFileSync(resolve(packageRoot, 'dist/.tsbuildinfo'), 'first compiler cache\n', 'utf8');
   writeFileSync(resolve(packageRoot, 'resources/prompt.md'), 'first prompt\n', 'utf8');
+  writeFileSync(resolve(packageRoot, 'README.md'), 'resource owner readme\n', 'utf8');
   writeGeneratorOutputScaffold(repoRoot);
 
   await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
@@ -1172,31 +1497,81 @@ test('binds bundled resource artifact identity to exact package bytes rather tha
     resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
     'utf8',
   );
-  const firstGeneration = first.match(/"?immutableGenerationId"?:\s*"([^"]+)"/)?.[1];
-  assert.ok(firstGeneration, 'expected an immutable bundled generation identity');
-  const firstManifestDigest = first.match(/"manifestDigest":\s*"([^"]+)"/)?.[1];
-  assert.match(firstManifestDigest ?? '', /^sha256:[a-f0-9]{64}$/u);
-  assert.match(first, /"?relativePath"?:\s*"resources\/prompt\.md"/);
-  assert.match(first, /"?relativePath"?:\s*"dist\/index\.js"/);
-  assert.match(first, /"?relativePath"?:\s*"package\.json"/);
-  assert.doesNotMatch(first, /\.tsbuildinfo/);
-  const installedPackageJsonBytes = `${JSON.stringify(sanitizeBundledPackageJson(sourcePackageJson), null, 2)}\n`;
-  const installedPackageJsonDigest = `sha256:${createHash('sha256').update(installedPackageJsonBytes).digest('hex')}`;
-  assert.match(first, new RegExp(`"digest":\\s*"${installedPackageJsonDigest}"[\\s\\S]*"relativePath":\\s*"package\\.json"`, 'u'));
+  const [firstArtifact] = readGeneratedJsonExport<readonly Readonly<{
+    record: Readonly<{
+      createdAtMs: number;
+      files: readonly Readonly<{ byteLength: number; relativePath: string }>[];
+      immutableGenerationId: string;
+      manifestRelativePath: string;
+      pluginId: string;
+      schemaVersion: number;
+      t: string;
+    }>;
+  }>[]>(first, 'BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS');
+  assert.ok(firstArtifact, 'expected one immutable bundled artifact');
+  const firstRecord = firstArtifact.record;
+  assert.deepEqual(Object.keys(firstRecord).sort(), [
+    'createdAtMs',
+    'files',
+    'immutableGenerationId',
+    'manifestRelativePath',
+    'pluginId',
+    'schemaVersion',
+    't',
+  ]);
+  assert.equal(firstRecord.manifestRelativePath, '.happier-plugin/plugin.json');
+  assert.match(
+    firstRecord.immutableGenerationId,
+    /^bundled-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u,
+  );
   assert.deepEqual(
-    [...first.matchAll(/"relativePath":\s*"([^"]+)"/gu)].map((match) => match[1]).slice(0, 5),
-    ['dist/Z.js', 'dist/a.js', 'dist/index.js', 'package.json', 'resources/prompt.md'],
+    firstRecord.files.map((file) => file.relativePath),
+    [
+      '.happier-plugin/plugin.json',
+      'README.md',
+      'dist/Z.js',
+      'dist/a.js',
+      'dist/index.js',
+      'package.json',
+      'resources/prompt.md',
+    ],
+  );
+  assert.ok(firstRecord.files.every((file) => (
+    Number.isSafeInteger(file.byteLength) && file.byteLength >= 0
+  )));
+  assert.doesNotMatch(JSON.stringify(firstRecord), /digest|fingerprint|manifestDigest|packageDigest|runtimeDigest|installedArtifactRecord/u);
+  assert.doesNotMatch(JSON.stringify(firstRecord), /\.tsbuildinfo/u);
+
+  const [firstSourceIntegrity] = readGeneratedJsonExport<readonly Readonly<{
+    files: readonly Readonly<{ byteLength: number; digest: string; relativePath: string }>[];
+    packageName: string;
+  }>[]>(first, 'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES');
+  assert.ok(firstSourceIntegrity, 'expected one pack-time source-artifact integrity entry');
+  assert.equal(firstSourceIntegrity.packageName, '@happier-dev/plugins-resource-owner');
+  const firstManifestDigest = firstSourceIntegrity.files.find(
+    (file) => file.relativePath === '.happier-plugin/plugin.json',
+  )?.digest;
+  assert.match(firstManifestDigest ?? '', /^sha256:[a-f0-9]{64}$/u);
+  const installedPackageJsonBytes = `${JSON.stringify(sanitizeBundledPackageJson({
+    ...sourcePackageJson,
+    files: ['dist', 'resources', '.happier-plugin/plugin.json', 'package.json'],
+  }), null, 2)}\n`;
+  const installedPackageJsonDigest = `sha256:${createHash('sha256').update(installedPackageJsonBytes).digest('hex')}`;
+  assert.deepEqual(
+    firstSourceIntegrity.files.find((file) => file.relativePath === 'package.json'),
+    { byteLength: Buffer.byteLength(installedPackageJsonBytes), digest: installedPackageJsonDigest, relativePath: 'package.json' },
+  );
+  const installedReadmeDigest = `sha256:${createHash('sha256').update('resource owner readme\n').digest('hex')}`;
+  assert.deepEqual(
+    firstSourceIntegrity.files.find((file) => file.relativePath === 'README.md'),
+    { byteLength: Buffer.byteLength('resource owner readme\n'), digest: installedReadmeDigest, relativePath: 'README.md' },
   );
 
   const firstLocators = readFileSync(
     resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
     'utf8',
   );
-  const locatorManifestDigest = firstLocators.match(/manifestDigest:\s*"([^"]+)"/)?.[1];
-  assert.equal(locatorManifestDigest, firstManifestDigest);
-  const firstPackageDigest = first.match(/"packageDigest":\s*"([^"]+)"/)?.[1];
-  assert.ok(firstPackageDigest);
-  assert.match(firstLocators, new RegExp(`resolvedDigest:\\s*"${firstPackageDigest}"`, 'u'));
+  assert.doesNotMatch(firstLocators, /(?:manifestDigest|packageDigest|resolvedDigest):/u);
 
   writeFileSync(resolve(packageRoot, 'dist/.tsbuildinfo'), 'second compiler cache\n', 'utf8');
   await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
@@ -1204,17 +1579,45 @@ test('binds bundled resource artifact identity to exact package bytes rather tha
     resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
     'utf8',
   );
-  assert.equal(afterCompilerCacheChange, first);
+  assert.deepEqual(
+    readGeneratedJsonExport(afterCompilerCacheChange, 'BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS'),
+    [firstArtifact],
+  );
+  assert.deepEqual(
+    readGeneratedJsonExport(afterCompilerCacheChange, 'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES'),
+    [firstSourceIntegrity],
+  );
 
-  writeFileSync(resolve(packageRoot, 'resources/prompt.md'), 'second prompt\n', 'utf8');
+  writeFileSync(resolve(packageRoot, 'resources/prompt.md'), 'other prompt\n', 'utf8');
   await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
   const second = readFileSync(
     resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
     'utf8',
   );
-  const secondGeneration = second.match(/"?immutableGenerationId"?:\s*"([^"]+)"/)?.[1];
-  assert.ok(secondGeneration, 'expected a replacement immutable bundled generation identity');
-  assert.notEqual(secondGeneration, firstGeneration);
+  const [secondArtifact] = readGeneratedJsonExport<typeof firstArtifact[]>(
+    second,
+    'BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS',
+  );
+  const [secondSourceIntegrity] = readGeneratedJsonExport<typeof firstSourceIntegrity[]>(
+    second,
+    'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES',
+  );
+  assert.notEqual(
+    secondArtifact.record.immutableGenerationId,
+    firstArtifact.record.immutableGenerationId,
+  );
+  const {
+    immutableGenerationId: firstImmutableGenerationId,
+    ...firstRecordWithoutGenerationId
+  } = firstArtifact.record;
+  const {
+    immutableGenerationId: secondImmutableGenerationId,
+    ...secondRecordWithoutGenerationId
+  } = secondArtifact.record;
+  assert.ok(firstImmutableGenerationId);
+  assert.ok(secondImmutableGenerationId);
+  assert.deepEqual(secondRecordWithoutGenerationId, firstRecordWithoutGenerationId);
+  assert.notDeepEqual(secondSourceIntegrity, firstSourceIntegrity);
 
   writeJson(resolve(packageRoot, 'package.json'), {
     name: '@happier-dev/plugins-resource-owner',
@@ -1241,6 +1644,611 @@ test('binds bundled resource artifact identity to exact package bytes rather tha
   await assert.rejects(
     generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']),
     /package root export.*daemon entry|daemon entry.*package root export/iu,
+  );
+});
+
+test('rotates the CPX bundled daemon generation identity when its staged bytes change', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ws6-bundled-cpx-generation-'));
+  const packageRoot = resolve(repoRoot, 'packages/plugins/cliproxyapi');
+  writeJson(resolve(packageRoot, 'package.json'), {
+    name: '@happier-dev/plugins-cliproxyapi',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    files: ['dist', 'package.json'],
+    dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+  });
+  mkdirSync(resolve(packageRoot, 'src'), { recursive: true });
+  writeFileSync(
+    resolve(packageRoot, 'src/manifest.ts'),
+    pluginManifestSource({ id: 'happier.provider.cliproxyapi', daemon: true }),
+    'utf8',
+  );
+  const writeDaemonSource = (revision: string): void => {
+    writeFileSync(
+      resolve(packageRoot, 'src/index.ts'),
+      [
+        "export { PLUGIN_MANIFEST as manifest } from './manifest.js';",
+        '',
+        `export const CPX_DAEMON_REVISION = ${JSON.stringify(revision)};`,
+        'export function activate(): void {}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+  };
+  writeDaemonSource('g');
+  mkdirSync(resolve(packageRoot, 'dist'), { recursive: true });
+  writeFileSync(resolve(packageRoot, 'dist/index.js'), 'stale daemon output\n', 'utf8');
+  writeGeneratorOutputScaffold(repoRoot);
+  const loaderPath = resolve(repoRoot, 'generator-source-runtime-closure-loader.mjs');
+  const markerPath = resolve(repoRoot, 'generator-source-runtime-closure.log');
+  const buildSharedDepsUrl = pathToFileURL(fileURLToPath(
+    new URL('../../../apps/cli/scripts/buildSharedDeps.mjs', import.meta.url),
+  )).href;
+  const sourceModuleUrl = pathToFileURL(fileURLToPath(
+    new URL('../../../apps/cli/src/plugins/authoring/sourceModule.ts', import.meta.url),
+  )).href;
+  const cliSourceRoot = fileURLToPath(new URL('../../../apps/cli/src', import.meta.url));
+  createGeneratorSourceRuntimeClosureProbeLoader(loaderPath);
+  const generate = async (mode: 'write' | 'check'): Promise<void> => {
+    await runGeneratorCliWithEnv(repoRoot, mode, {
+      ...process.env,
+      HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_MARKER: markerPath,
+      HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_BUILD_SHARED_DEPS_URL: buildSharedDepsUrl,
+      HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_SOURCE_MODULE_URL: sourceModuleUrl,
+      HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_CLI_SOURCE_ROOT: cliSourceRoot,
+      HAPPIER_GENERATOR_SOURCE_RUNTIME_CLOSURE_PROBE_LABEL: 'cpx-generation-identity',
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --experimental-loader=${loaderPath}`.trim(),
+    });
+  };
+
+  const readArtifact = (source: string) => {
+    const artifacts = readGeneratedJsonExport<readonly Readonly<{
+      packageName: string;
+      record: Readonly<{ immutableGenerationId: string; pluginId: string }>;
+    }>[]>(source, 'BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS');
+    const artifact = artifacts.find(
+      (candidate) => candidate.packageName === '@happier-dev/plugins-cliproxyapi',
+    );
+    assert.ok(artifact, 'expected a CPX immutable bundled artifact');
+    return artifact;
+  };
+  const readSourceIntegrity = (source: string) => {
+    const integrities = readGeneratedJsonExport<readonly Readonly<{
+      files: readonly Readonly<{ digest: string; relativePath: string }>[];
+      packageName: string;
+    }>[]>(source, 'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES');
+    const integrity = integrities.find(
+      (candidate) => candidate.packageName === '@happier-dev/plugins-cliproxyapi',
+    );
+    assert.ok(integrity, 'expected CPX pack-time source-artifact integrity');
+    return integrity;
+  };
+
+  await generate('write');
+  const firstSource = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
+    'utf8',
+  );
+  const firstArtifact = readArtifact(firstSource);
+  const firstIntegrity = readSourceIntegrity(firstSource);
+  const firstDaemonBytes = readFileSync(resolve(packageRoot, '.happier-plugin/daemon.js'), 'utf8');
+  const legacyGenerationId = `bundled-${firstArtifact.record.pluginId}`;
+  const legacySource = firstSource.replace(
+    `"immutableGenerationId": "${firstArtifact.record.immutableGenerationId}"`,
+    `"immutableGenerationId": "${legacyGenerationId}"`,
+  );
+  assert.notEqual(legacySource, firstSource, 'expected a generated predecessor generation record');
+  writeFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
+    legacySource,
+    'utf8',
+  );
+  assert.equal(readArtifact(legacySource).record.immutableGenerationId, legacyGenerationId);
+
+  writeDaemonSource('h');
+  await generate('write');
+  const secondSource = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
+    'utf8',
+  );
+  const secondArtifact = readArtifact(secondSource);
+  const secondIntegrity = readSourceIntegrity(secondSource);
+  const secondDaemonBytes = readFileSync(resolve(packageRoot, '.happier-plugin/daemon.js'), 'utf8');
+
+  assert.notEqual(firstDaemonBytes, secondDaemonBytes);
+  assert.equal(Buffer.byteLength(secondDaemonBytes), Buffer.byteLength(firstDaemonBytes));
+  assert.equal(secondArtifact.packageName, firstArtifact.packageName);
+  assert.equal(secondArtifact.record.pluginId, firstArtifact.record.pluginId);
+  assert.match(
+    firstArtifact.record.immutableGenerationId,
+    /^bundled-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u,
+  );
+  assert.match(
+    secondArtifact.record.immutableGenerationId,
+    /^bundled-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u,
+  );
+  assert.notEqual(
+    secondArtifact.record.immutableGenerationId,
+    legacyGenerationId,
+  );
+  assert.doesNotMatch(secondArtifact.record.immutableGenerationId, /happier|sha256/u);
+  assert.notDeepEqual(secondIntegrity, firstIntegrity);
+
+  await generate('check');
+  await generate('write');
+  const thirdSource = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
+    'utf8',
+  );
+  assert.deepEqual(readArtifact(thirdSource), secondArtifact);
+  assert.deepEqual(readSourceIntegrity(thirdSource), secondIntegrity);
+});
+
+test('emits immutable artifacts for executable and descriptor-only bundled owners', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-bundled-connected-account-artifact-'));
+  const descriptorOwnerRoot = resolve(repoRoot, 'packages/plugins/descriptor-owner');
+  writeJson(resolve(descriptorOwnerRoot, 'package.json'), {
+    name: '@happier-dev/plugins-descriptor-owner',
+    version: '1.2.3',
+    type: 'module',
+    main: './dist/index.js',
+    exports: { '.': { default: './dist/index.js' } },
+    files: ['dist', 'package.json'],
+  });
+  mkdirSync(resolve(descriptorOwnerRoot, 'src'), { recursive: true });
+  writeFileSync(
+    resolve(descriptorOwnerRoot, 'src/manifest.ts'),
+    pluginManifestSource({
+      id: 'happier.fixture.descriptor-owner',
+      daemon: false,
+      contributes: `{
+        connectedAccountDescriptors: [{
+          id: 'fixture-account',
+          title: 'Fixture account',
+          authentication: {
+            defaultModeId: 'manual',
+            modes: [{
+              id: 'manual',
+              kind: 'manual',
+              outcomeReconciliation: 'none',
+              fields: [{
+                id: 'token',
+                title: 'Token',
+                schema: { type: 'string', minLength: 1 },
+                secret: true,
+              }],
+            }],
+          },
+        }],
+      }`,
+    }),
+    'utf8',
+  );
+  writeFileSync(
+    resolve(descriptorOwnerRoot, 'src/index.ts'),
+    [
+      "export { PLUGIN_MANIFEST as manifest } from './manifest.js';",
+      '',
+      'export function activate(api: {',
+      '  connectedAccounts: { register(id: string, runtime: unknown): void };',
+      '}): void {',
+      "  api.connectedAccounts.register('fixture-account', {",
+      '    authentication: {',
+      '      modes: {',
+      "        manual: { kind: 'manual', async complete() { return undefined; } },",
+      '      },',
+      '    },',
+      '    async refresh() { return undefined; },',
+      '    async revoke() { return undefined; },',
+      '    async status() { return undefined; },',
+      '    async materialize() { return undefined; },',
+      '  });',
+      '}',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  mkdirSync(resolve(descriptorOwnerRoot, 'dist'), { recursive: true });
+  writeFileSync(resolve(descriptorOwnerRoot, 'dist/index.js'), 'export function activate() {}\n', 'utf8');
+
+  const daemonScmOwnerRoot = resolve(repoRoot, 'packages/plugins/scm-daemon-owner');
+  writeJson(resolve(daemonScmOwnerRoot, 'package.json'), {
+    name: '@happier-dev/plugins-scm-daemon-owner',
+    version: '1.2.3',
+    type: 'module',
+    main: './dist/index.js',
+    exports: { '.': { default: './dist/index.js' } },
+    files: ['dist', 'package.json'],
+  });
+  mkdirSync(resolve(daemonScmOwnerRoot, 'src'), { recursive: true });
+  writeFileSync(
+    resolve(daemonScmOwnerRoot, 'src/manifest.ts'),
+    pluginManifestSource({
+      id: 'happier.scm.forge.daemon-owner',
+      contributes: '{ scmHostingProviders: [{ id: "fixture", title: "Fixture", kind: "github", capabilities: ["detect"] }] }',
+    }),
+    'utf8',
+  );
+  writeFileSync(
+    resolve(daemonScmOwnerRoot, 'src/index.ts'),
+    [
+      "export { PLUGIN_MANIFEST as manifest } from './manifest.js';",
+      '',
+      'export function activate(api: {',
+      '  scm: { registerHostingProvider(id: string, runtime: unknown): void };',
+      '}): void {',
+      "  api.scm.registerHostingProvider('fixture', { adapter: {} });",
+      '}',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  mkdirSync(resolve(daemonScmOwnerRoot, 'dist'), { recursive: true });
+  writeFileSync(resolve(daemonScmOwnerRoot, 'dist/index.js'), 'export function activate() {}\n', 'utf8');
+
+  const emptyOwnerRoot = resolve(repoRoot, 'packages/plugins/empty-owner');
+  writeJson(resolve(emptyOwnerRoot, 'package.json'), {
+    name: '@happier-dev/plugins-empty-owner',
+    version: '1.2.3',
+  });
+  mkdirSync(resolve(emptyOwnerRoot, 'src'), { recursive: true });
+  writeFileSync(
+    resolve(emptyOwnerRoot, 'src/manifest.ts'),
+    pluginManifestSource({ id: 'happier.fixture.empty-owner', daemon: false }),
+    'utf8',
+  );
+  writeGeneratorOutputScaffold(repoRoot);
+
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+  const artifactSource = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
+    'utf8',
+  );
+  const artifacts = readGeneratedJsonExport<readonly Readonly<{
+    packageName: string;
+    record: Readonly<{ immutableGenerationId: string; pluginId: string }>;
+  }>[]>(artifactSource, 'BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS');
+  assert.deepEqual(artifacts.map(({ packageName, record }) => ({
+    packageName,
+    pluginId: record.pluginId,
+  })), [
+    {
+      packageName: '@happier-dev/plugins-descriptor-owner',
+      pluginId: 'happier.fixture.descriptor-owner',
+    },
+    {
+      packageName: '@happier-dev/plugins-scm-daemon-owner',
+      pluginId: 'happier.scm.forge.daemon-owner',
+    },
+  ]);
+  assert.equal(
+    new Set(artifacts.map(({ record }) => record.immutableGenerationId)).size,
+    artifacts.length,
+  );
+  for (const artifact of artifacts) {
+    assert.match(
+      artifact.record.immutableGenerationId,
+      /^bundled-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u,
+    );
+  }
+  assert.equal(existsSync(resolve(descriptorOwnerRoot, '.happier-plugin/plugin.json')), true);
+  assert.equal(existsSync(resolve(daemonScmOwnerRoot, '.happier-plugin/plugin.json')), true);
+  assert.equal(existsSync(resolve(emptyOwnerRoot, '.happier-plugin/plugin.json')), false);
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']);
+});
+
+test('emits an immutable package and staged runner leaf for an execution-primary bundled Session Agent with stale dist', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ws6-bundled-session-artifact-'));
+  const packageRoot = resolve(repoRoot, 'packages/plugins/session-owner');
+  writeJson(resolve(packageRoot, 'package.json'), {
+    name: '@happier-dev/plugins-session-owner',
+    version: '1.2.3',
+    type: 'module',
+    main: './dist/index.js',
+    exports: { '.': { default: './dist/index.js' } },
+    files: ['dist', 'package.json'],
+  });
+  mkdirSync(resolve(packageRoot, 'src/agent/runtime'), { recursive: true });
+  writeFileSync(
+    resolve(packageRoot, 'src/manifest.ts'),
+    pluginManifestSource({
+      id: 'happier.agent.session-owner',
+      agentId: 'session-owner',
+      capabilities: ['agents'],
+      contributes: [
+        '{',
+        '  agents: [{',
+        '    id: "session-owner",',
+        '    title: "Session owner runtime",',
+        '    runtime: { kind: "custom" },',
+        '    cli: {',
+        '      displayName: "Session owner CLI",',
+        '      executable: { binaryName: "session-owner", sourcePreference: "system-first" },',
+        '      install: { managed: null, manual: { kind: "none" } },',
+        '      auth: {',
+        '        support: "unsupported",',
+        '        probe: { parser: "none", backgroundChecks: "manual_only", statusArgs: null },',
+        '        loginLaunches: [],',
+        '      },',
+        '    },',
+        '    primary: "executionRuns",',
+        '    capabilities: {',
+        '      sessions: { open: ["create", "resume"], delivery: ["newTurn"], cancel: true },',
+        '      executionRuns: { open: ["create"], checkpoint: false, stop: true },',
+        '    },',
+        '  }],',
+        '}',
+      ].join('\n'),
+    }),
+    'utf8',
+  );
+  writeFileSync(
+    resolve(packageRoot, 'src/agent/definition.ts'),
+    'export const AGENT_DEFINITION = Object.freeze({ id: "session-owner" });\n',
+    'utf8',
+  );
+  writeFileSync(
+    resolve(packageRoot, 'src/index.ts'),
+    [
+      "export { PLUGIN_MANIFEST as manifest } from './manifest.js';",
+      "import { createSessionOwnerAgentRuntime } from './agent/runtime/engine.js';",
+      'export function activate(api: { agents: { register: Function } }): void {',
+      "  api.agents.register('session-owner', createSessionOwnerAgentRuntime, {",
+      "    sessionRunnerFactory: { module: './agent/runtime/engine', export: 'createSessionOwnerAgentRuntime', runtimeApiVersion: 1 },",
+      '  });',
+      '}',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  writeFileSync(
+    resolve(packageRoot, 'src/agent/runtime/engine.ts'),
+    [
+      "import { marker } from 'fixture-runtime-dependency';",
+      'export async function createSessionOwnerAgentRuntime() {',
+      '  return { marker, sessions: {} };',
+      '}',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  mkdirSync(resolve(packageRoot, 'node_modules/fixture-runtime-dependency'), { recursive: true });
+  writeJson(resolve(packageRoot, 'node_modules/fixture-runtime-dependency/package.json'), {
+    name: 'fixture-runtime-dependency',
+    version: '1.0.0',
+    type: 'module',
+    exports: './index.js',
+  });
+  writeFileSync(
+    resolve(packageRoot, 'node_modules/fixture-runtime-dependency/index.js'),
+    'export const marker = "isolated-runtime-dependency";\n',
+    'utf8',
+  );
+  mkdirSync(resolve(packageRoot, 'dist/agent/runtime'), { recursive: true });
+  writeFileSync(
+    resolve(packageRoot, 'dist/index.js'),
+    [
+      "import { createSessionOwnerAgentRuntime } from './agent/runtime/factory.js';",
+      'export function activate(api) {',
+      "  api.agents.register('session-owner', createSessionOwnerAgentRuntime, {",
+      "    sessionRunnerFactory: { module: './agent/runtime/factory', export: 'createSessionOwnerAgentRuntime', runtimeApiVersion: 1 },",
+      '  });',
+      '}',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  writeFileSync(
+    resolve(packageRoot, 'dist/agent/runtime/factory.js'),
+    [
+      "import { marker } from 'fixture-runtime-dependency';",
+      'export async function createSessionOwnerAgentRuntime() { return { marker, sessions: {} }; }',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  mkdirSync(resolve(packageRoot, 'dist/assets'), { recursive: true });
+  writeFileSync(resolve(packageRoot, 'dist/assets/keep.txt'), 'keep\n', 'utf8');
+  writeGeneratorOutputScaffold(repoRoot);
+
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+  const artifactSource = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
+    'utf8',
+  );
+  assert.match(artifactSource, /"packageName":\s*"@happier-dev\/plugins-session-owner"/u);
+  assert.match(artifactSource, /"relativePath":\s*"\.happier-plugin\/plugin\.json"/u);
+  assert.match(artifactSource, /"relativePath":\s*"\.happier-plugin\/agent\/runtime\/engine\.js"/u);
+  const [sessionArtifact] = readGeneratedJsonExport<readonly Readonly<{
+    record: Readonly<{ files: readonly Readonly<{ relativePath: string }>[]; manifestRelativePath: string }>;
+  }>[]>(artifactSource, 'BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS');
+  assert.ok(sessionArtifact, 'expected one bundled Session-Agent artifact');
+  assert.equal(sessionArtifact.record.manifestRelativePath, '.happier-plugin/plugin.json');
+  assert.equal(
+    sessionArtifact.record.files.some((file) => file.relativePath === sessionArtifact.record.manifestRelativePath),
+    true,
+  );
+  assert.doesNotMatch(JSON.stringify(sessionArtifact.record), /digest|fingerprint|installedArtifactRecord/u);
+
+  const installedManifestPath = resolve(packageRoot, '.happier-plugin/plugin.json');
+  const installedManifest = JSON.parse(
+    readFileSync(installedManifestPath, 'utf8'),
+  ) as Readonly<{ id?: string; contributes?: Readonly<{ agents?: readonly Readonly<{ id?: string }>[] }> }>;
+  assert.equal(installedManifest.id, 'happier.agent.session-owner');
+  assert.deepEqual(
+    installedManifest.contributes?.agents?.map((agent) => agent.id),
+    ['session-owner'],
+  );
+  const packageJson = JSON.parse(
+    readFileSync(resolve(packageRoot, 'package.json'), 'utf8'),
+  ) as Readonly<{ files?: readonly string[] }>;
+  // The publisher installs its manifest, daemon bundle, chunks and staged runner leaves
+  // into the one reserved directory, so that is the entry it adds to `files`.
+  assert.equal(packageJson.files?.includes('.happier-plugin'), true);
+  // The staged runner leaf is published beside the daemon entry, so the isolated copy
+  // is the publisher-owned tree rather than the compiler's `dist`.
+  const isolatedRoot = resolve(repoRoot, 'isolated-runtime');
+  cpSync(resolve(packageRoot, '.happier-plugin'), resolve(isolatedRoot, '.happier-plugin'), {
+    recursive: true,
+  });
+  const isolatedRunner = await import(pathToFileURL(
+    resolve(isolatedRoot, '.happier-plugin/agent/runtime/engine.js'),
+  ).href);
+  const isolatedRuntime = await isolatedRunner.createSessionOwnerAgentRuntime() as {
+    marker?: unknown;
+  };
+  assert.equal(isolatedRuntime.marker, 'isolated-runtime-dependency');
+
+  assert.equal(existsSync(resolve(packageRoot, 'dist/agent/runtime/factory.js')), true);
+  assert.equal(existsSync(resolve(packageRoot, '.happier-plugin/agent/runtime/engine.js')), true);
+  assert.equal(readFileSync(resolve(packageRoot, 'dist/assets/keep.txt'), 'utf8'), 'keep\n');
+  const renamedArtifactSource = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
+    'utf8',
+  );
+  assert.match(renamedArtifactSource, /"relativePath":\s*"\.happier-plugin\/agent\/runtime\/engine\.js"/u);
+  const renamedActivation = await import(pathToFileURL(
+    resolve(packageRoot, '.happier-plugin/daemon.js'),
+  ).href);
+  const renamedRunner = await import(pathToFileURL(
+    resolve(packageRoot, '.happier-plugin/agent/runtime/engine.js'),
+  ).href);
+  let registeredRunner: unknown;
+  renamedActivation.activate({
+    agents: {
+      register(_id: string, factory: unknown) {
+        registeredRunner = factory;
+      },
+    },
+  });
+  assert.equal(registeredRunner, renamedRunner.createSessionOwnerAgentRuntime);
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']);
+});
+
+test('emits an immutable package for a public managed Provider and retains its declaration', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ws6-bundled-managed-provider-artifact-'));
+  const packageRoot = resolve(repoRoot, 'packages/plugins/gateway');
+  writeProviderContributionPluginFixture(repoRoot, { includeManagedRuntime: true });
+  writeJson(resolve(packageRoot, 'package.json'), {
+    name: '@happier-dev/plugins-gateway',
+    version: '1.2.3',
+    type: 'module',
+    main: './dist/index.js',
+    exports: { '.': { default: './dist/index.js' } },
+    files: ['dist', 'package.json'],
+  });
+  mkdirSync(resolve(packageRoot, 'dist'), { recursive: true });
+  writeFileSync(
+    resolve(packageRoot, 'dist/index.js'),
+    'export function activate() {}\n',
+    'utf8',
+  );
+  writeGeneratorOutputScaffold(repoRoot);
+
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+  const artifactSource = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
+    'utf8',
+  );
+  assert.match(artifactSource, /"packageName":\s*"@happier-dev\/plugins-gateway"/u);
+  const installedManifest = JSON.parse(
+    readFileSync(resolve(packageRoot, '.happier-plugin/plugin.json'), 'utf8'),
+  ) as Readonly<{
+    contributes?: Readonly<{
+      providers?: readonly Readonly<{
+        id?: string;
+        managedRuntime?: Readonly<{ kind?: string; endpointTemplateIds?: readonly string[] }>;
+      }>[];
+    }>;
+  }>;
+  assert.deepEqual(
+    installedManifest.contributes?.providers?.find((provider) => provider.id === 'gateway')?.managedRuntime,
+    { endpointTemplateIds: ['responses'], kind: 'managed' },
+  );
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']);
+});
+
+test('rejects same-id source and static manifests with valid nested-field drift before runtime staging', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-bundled-manifest-drift-'));
+  const packageRoot = resolve(repoRoot, 'packages/plugins/gateway');
+  writeProviderContributionPluginFixture(repoRoot, { includeManagedRuntime: true });
+  writeJson(resolve(packageRoot, 'package.json'), {
+    name: '@happier-dev/plugins-gateway',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    exports: { '.': { default: './dist/index.js' } },
+    files: ['dist', 'package.json'],
+  });
+  writeFileSync(resolve(packageRoot, 'src/index.ts'), [
+    "import { PLUGIN_MANIFEST } from './manifest.js';",
+    'export const manifest = {',
+    '  ...PLUGIN_MANIFEST,',
+    '  engines: { ...PLUGIN_MANIFEST.engines, happier: ">=0.0.0" },',
+    '};',
+    'export function activate(api: { providers: { register(id: string, runtime: object): void } }): void {',
+    "  api.providers.register('gateway', { async start() { throw new Error('fixture managed runtime is not started'); } });",
+    '}',
+    '',
+  ].join('\n'), 'utf8');
+  mkdirSync(resolve(packageRoot, 'dist'), { recursive: true });
+  writeFileSync(resolve(packageRoot, 'dist/index.js'), 'export const packageRootExport = true;\n', 'utf8');
+  mkdirSync(resolve(packageRoot, '.happier-plugin'), { recursive: true });
+  const staleRuntime = 'export const staleRuntimeMustRemainUntouched = true;\n';
+  writeFileSync(resolve(packageRoot, '.happier-plugin/daemon.js'), staleRuntime, 'utf8');
+  writeGeneratorOutputScaffold(repoRoot);
+
+  await assert.rejects(
+    generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']),
+    /source manifest differs.*statically projected canonical manifest/iu,
+  );
+  assert.equal(readFileSync(resolve(packageRoot, '.happier-plugin/daemon.js'), 'utf8'), staleRuntime);
+});
+
+test('ships CLIProxyAPI public managed Provider bytes through the generated immutable artifact owner', () => {
+  const sourceRoot = fileURLToPath(new URL('../../../', import.meta.url));
+  const artifactSource = readFileSync(
+    resolve(sourceRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
+    'utf8',
+  );
+  assert.match(
+    artifactSource,
+    /"packageName":\s*"@happier-dev\/plugins-cliproxyapi"[\s\S]*?"relativePath":\s*"\.happier-plugin\/plugin\.json"/u,
+  );
+
+  const installedManifest = JSON.parse(readFileSync(
+    resolve(sourceRoot, 'packages/plugins/cliproxyapi/.happier-plugin/plugin.json'),
+    'utf8',
+  )) as Readonly<{
+    contributes?: Readonly<{
+      providers?: readonly Readonly<{
+        id?: string;
+        managedRuntime?: Readonly<{ kind?: string; endpointTemplateIds?: readonly string[] }>;
+      }>[];
+    }>;
+  }>;
+  const declaration = installedManifest.contributes?.providers?.find(
+    (provider) => provider.id === 'cliproxyapi',
+  )?.managedRuntime;
+  assert.equal(declaration?.kind, 'managed');
+  assert.deepEqual(declaration?.endpointTemplateIds, [
+    'cliproxyapi-openai-responses',
+    'cliproxyapi-openai-chat',
+    'cliproxyapi-anthropic',
+  ]);
+
+  const bundledProjectionSource = readFileSync(
+    resolve(sourceRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
+    'utf8',
+  );
+  assert.doesNotMatch(
+    bundledProjectionSource,
+    /MANAGED_PROVIDER_IMPLEMENTATION|MANAGED_PROVIDER_RUNTIME_ADAPTER|managedRuntimeAdapter/u,
   );
 });
 
@@ -1301,7 +2309,7 @@ function pluginManifestSource(input: Readonly<{
     '  description: "Test plugin manifest.",',
     '  engines: { happier: "^0.0.0" },',
     '  runtime: { apiVersion: 1 },',
-    ...(input.daemon === false ? [] : ['  entrypoints: { daemon: "./dist/index.js" },']),
+    ...(input.daemon === false ? [] : ['  entrypoints: { daemon: "./.happier-plugin/daemon.js" },']),
     '  hostAccess: { required: [], optional: [] },',
     `  contributes: ${contributes},`,
     '});',
@@ -1322,8 +2330,49 @@ function writeBundledVoicePluginFixture(
   }> = {},
 ): void {
   const packageName = `@happier-dev/plugins-${packageId}`;
+  const phase = options.phase ?? 'initial';
+  const daemonVoiceRuntimeSource = packageId === 'google'
+    ? [
+        'const FIXTURE_GEMINI_STT_RUNTIME = Object.freeze({',
+        '  kind: "speech",',
+        '  catalog: Object.freeze({ async list() { return []; } }),',
+        '  async transcribe(request: { requestId: string }) { return { requestId: request.requestId, text: "" }; },',
+        '});',
+        'const FIXTURE_GOOGLE_TTS_RUNTIME = Object.freeze({',
+        '  kind: "speech",',
+        '  catalog: Object.freeze({ async list() { return []; } }),',
+        '  async synthesize(request: { requestId: string }) { return { requestId: request.requestId, bytes: new Uint8Array(), mimeType: "audio/wav" }; },',
+        '});',
+      ]
+    : packageId === 'openai-compat'
+      ? [
+          'const FIXTURE_STT_RUNTIME = Object.freeze({',
+          '  kind: "speech",',
+          '  async transcribe(request: { requestId: string }) { return { requestId: request.requestId, text: "" }; },',
+          '});',
+          'const FIXTURE_TTS_RUNTIME = Object.freeze({',
+          '  kind: "speech",',
+          '  async synthesize(request: { requestId: string }) { return { requestId: request.requestId, bytes: new Uint8Array(), mimeType: "audio/wav" }; },',
+          '});',
+        ]
+      : [];
+  const daemonVoiceRegistrationLines = packageId === 'google'
+    ? [
+        '  api.voiceProviders.register("gemini-stt", FIXTURE_GEMINI_STT_RUNTIME);',
+        '  api.voiceProviders.register("google-cloud-tts", FIXTURE_GOOGLE_TTS_RUNTIME);',
+      ]
+    : packageId === 'openai-compat'
+      ? [
+          '  api.voiceProviders.register("stt", FIXTURE_STT_RUNTIME);',
+          '  api.voiceProviders.register("tts", FIXTURE_TTS_RUNTIME);',
+        ]
+      : [];
+  const fixturePhaseField = `{ id: "phase", title: "Fixture phase", schema: { type: "string", minLength: 1, maxLength: 256 }, default: ${JSON.stringify(phase)}, presentation: { control: "text" } }`;
   const defaultVoiceContributes = packageId === 'google'
-    ? '{ voiceProviders: [{ id: "speech", title: "Google Voice Speech", kind: "speech", roles: ["dictation_stt", "conversation_stt", "conversation_tts"], platforms: ["web", "ios", "android"], capabilities: { readiness: { requirements: ["credential"] } } }] }'
+    ? `{ voiceProviders: [
+        { id: "gemini-stt", title: "Google Gemini Speech-to-Text", kind: "speech", roles: ["dictation_stt", "conversation_stt"], platforms: ["web", "ios", "android"], settings: { schemaVersion: 2, fields: [${fixturePhaseField}, { id: "model", title: "Model", schema: { type: "string", minLength: 1, maxLength: 256 }, default: "fixture-model", presentation: { control: "select" } }] }, catalogs: [{ kind: "models", settingFieldId: "model", allowCustom: true }] },
+        { id: "google-cloud-tts", title: "Google Cloud Text-to-Speech", kind: "speech", roles: ["conversation_tts"], platforms: ["web", "ios", "android"], settings: { schemaVersion: 2, fields: [${fixturePhaseField}, { id: "voiceName", title: "Voice", schema: { type: "string", minLength: 1, maxLength: 256 }, default: "fixture-voice", presentation: { control: "select" } }] }, catalogs: [{ kind: "voices", settingFieldId: "voiceName", allowCustom: true }] }
+      ] }`
     : packageId === 'elevenlabs' || packageId === 'openai' || packageId === 'xai'
       ? `{ voiceProviders: [{ id: ${JSON.stringify(
           packageId === 'elevenlabs'
@@ -1331,13 +2380,32 @@ function writeBundledVoicePluginFixture(
             : packageId === 'openai'
               ? 'realtime-openai'
               : 'realtime-grok',
-        )}, title: "Fixture Voice", kind: "conversation", roles: ["conversation_stt", "conversation_tts", "realtime_conversation", "turn_control"], platforms: ["web"], capabilities: { readiness: { requirements: [] }, turn: { cancelResponse: false, bargeIn: false } }, client: { artifactId: "voice-ui", modulePath: "./ui/voice", exportName: "activate" } }] }`
+        )}, title: "Fixture Voice", kind: "conversation", roles: ["conversation_stt", "conversation_tts", "realtime_conversation", "turn_control"], platforms: ["web"], capabilities: { turn: { cancelResponse: false, bargeIn: false } }, settings: { schemaVersion: 2, fields: [${fixturePhaseField}] }, client: { artifactId: "voice-ui", modulePath: "./ui/voice", exportName: "activate" } }] }`
       : '{}';
+  // The fixture declares @happier-dev/protocol in the CLI's bundled workspace
+  // closure. Canonical daemon staging validates every declared closure root,
+  // even when this minimal source entry imports none of them.
+  writeJson(resolve(repoRoot, 'packages/protocol/package.json'), {
+    name: '@happier-dev/protocol',
+    version: '0.0.0',
+    type: 'module',
+  });
   writeJson(resolve(repoRoot, `packages/plugins/${packageId}/package.json`), {
     name: packageName,
     version: options.packageVersion ?? '0.0.0',
     type: 'module',
+    // The immutable-artifact owner adds its generated manifest entry during
+    // write mode; the fixture owns the files it creates before that step.
+    files: ['dist', 'package.json'],
     exports: options.exports ?? {
+      '.': {
+        types: './dist/index.d.ts',
+        default: './dist/index.js',
+      },
+      './manifest': {
+        types: './dist/manifest.d.ts',
+        default: './dist/manifest.js',
+      },
       './ui/voice': {
         types: './dist/ui/voice/index.d.ts',
         'react-native': './dist/ui/voice/index.native.js',
@@ -1349,158 +2417,112 @@ function writeBundledVoicePluginFixture(
       : {}),
   });
   mkdirSync(resolve(repoRoot, `packages/plugins/${packageId}/src`), { recursive: true });
+  const manifestSource = pluginManifestSource({
+    id: options.manifestId ?? `happier.voice.${packageId}`,
+    packageVersion: options.packageVersion,
+    contributes: options.manifestContributes ?? defaultVoiceContributes,
+  });
+  writeFileSync(resolve(repoRoot, `packages/plugins/${packageId}/src/manifest.ts`), manifestSource, 'utf8');
   writeFileSync(
-    resolve(repoRoot, `packages/plugins/${packageId}/src/manifest.ts`),
-    pluginManifestSource({
-      id: options.manifestId ?? `happier.voice.${packageId}`,
-      packageVersion: options.packageVersion,
-      contributes: options.manifestContributes ?? defaultVoiceContributes,
-    }),
+    resolve(repoRoot, `packages/plugins/${packageId}/src/index.ts`),
+    [
+      "export { PLUGIN_MANIFEST, PLUGIN_MANIFEST as manifest } from './manifest.js';",
+      '',
+      ...daemonVoiceRuntimeSource,
+      ...(daemonVoiceRuntimeSource.length > 0 ? [''] : []),
+      'export function activate(api: { voiceProviders: { register(id: string, runtime: unknown): void } }): void {',
+      ...daemonVoiceRegistrationLines,
+      '}',
+      '',
+    ].join('\n'),
     'utf8',
   );
+  mkdirSync(resolve(repoRoot, `packages/plugins/${packageId}/dist`), { recursive: true });
+  writeFileSync(resolve(repoRoot, `packages/plugins/${packageId}/dist/manifest.js`), manifestSource, 'utf8');
 
   if (!options.reservationOnly
     && (packageId === 'elevenlabs' || packageId === 'google' || packageId === 'openai' || packageId === 'xai')) {
-    writeLoadableBundledVoiceFixture(repoRoot, packageId, options.phase ?? 'initial');
+    writeLoadableBundledVoiceFixture(repoRoot, packageId, phase);
   }
 }
 
 function writeLoadableBundledVoiceFixture(
   repoRoot: string,
   packageId: 'elevenlabs' | 'google' | 'openai' | 'xai',
-  phase: string,
+  _phase: string,
 ): void {
   const distRoot = resolve(repoRoot, `packages/plugins/${packageId}/dist`);
   mkdirSync(resolve(distRoot, 'ui/voice'), { recursive: true });
-  const nativeProviderId = packageId === 'elevenlabs'
-    ? 'realtime_elevenlabs'
+  const localId = packageId === 'elevenlabs'
+    ? 'realtime-elevenlabs'
     : packageId === 'openai'
-      ? 'realtime_openai'
+      ? 'realtime-openai'
       : packageId === 'xai'
-        ? 'realtime_grok'
+        ? 'realtime-grok'
         : null;
+  const qualifiedProviderId = localId ? `happier.voice.${packageId}/${localId}` : null;
+  const conversationPresentations = localId === null
+    ? []
+    : [
+        'export const VOICE_PROVIDER_PRESENTATIONS = Object.freeze([Object.freeze({',
+        `  providerId: ${JSON.stringify(qualifiedProviderId)},`,
+        `  settingsSectionId: ${JSON.stringify(`voice.provider.${localId}`)},`,
+        '} )]);',
+      ];
+  const googlePresentations = [
+    'const createSettingsSpec = (kind) => Object.freeze({',
+    '  titleKey: "fixture.title", subtitleKey: "fixture.subtitle", detailKey: "fixture.detail", iconName: "key",',
+    '  fields: Object.freeze([',
+    '    Object.freeze({ fieldId: "phase", titleKey: "fixture.phase", subtitleKey: "fixture.phase.detail" }),',
+    '    Object.freeze(kind === "models"',
+    '      ? { fieldId: "model", titleKey: "fixture.model", subtitleKey: "fixture.model.detail", searchPlaceholderKey: "fixture.model.search" }',
+    '      : { fieldId: "voiceName", titleKey: "fixture.voice", subtitleKey: "fixture.voice.detail", searchPlaceholderKey: "fixture.voice.search" }),',
+    '  ]),',
+    '  test: null,',
+    '});',
+    'export const VOICE_PROVIDER_PRESENTATIONS = Object.freeze([',
+    '  Object.freeze({ providerId: "happier.voice.google/gemini-stt", settingsSectionId: "voice.stt.google_gemini", createSettingsSpec: () => createSettingsSpec("models") }),',
+    '  Object.freeze({ providerId: "happier.voice.google/google-cloud-tts", settingsSectionId: "voice.tts.google_cloud", createSettingsSpec: () => createSettingsSpec("voices") }),',
+    ']);',
+  ];
   writeFileSync(
     resolve(distRoot, 'ui/voice/index.native.js'),
-    packageId === 'google'
-      ? [
-          `export const FIXTURE_PHASE = ${JSON.stringify(phase)};`,
-          'const internal = Object.freeze({ createSettingsSpec(providerId) { return Object.freeze({ providerId }); } });',
-          'export const BUNDLED_VOICE_UI_ENTRIES = Object.freeze([',
-          '  { kind: "voice.speech-engine.v1", pluginId: "happier.voice.google", providerId: "google_gemini", role: "stt", settingsSectionId: "voice.stt.google_gemini", roles: ["dictation_stt", "conversation_stt"], requirements: ["execution_machine", "credential", "runtime"], internal },',
-          '  { kind: "voice.speech-engine.v1", pluginId: "happier.voice.google", providerId: "google_cloud", role: "tts", settingsSectionId: "voice.tts.google_cloud", roles: ["conversation_tts"], requirements: ["execution_machine", "credential", "runtime"], internal },',
-          ']);',
-          '',
-        ].join('\n')
-      : [
-          `export const FIXTURE_PHASE = ${JSON.stringify(phase)};`,
-          `const providerId = ${JSON.stringify(nativeProviderId)};`,
-          'const internal = Object.freeze({ fixtureState: () => Object.freeze({ phase: FIXTURE_PHASE }) });',
-          'export const BUNDLED_VOICE_UI_ENTRIES = Object.freeze([{',
-          `  kind: "voice.conversation-provider.v1", pluginId: ${JSON.stringify(`happier.voice.${packageId}`)}, providerId,`,
-          '  settingsSectionId: `voice.provider.${providerId}`, roles: ["conversation_stt", "conversation_tts", "realtime_conversation", "turn_control"],',
-          '  requirements: [], supportedPlatforms: ["web"], internal,',
-          '}]);',
-          '',
-        ].join('\n'),
+    [...(packageId === 'google' ? googlePresentations : conversationPresentations), ''].join('\n'),
     'utf8',
   );
-  const conversationRuntimeLines = (
-    localId: string,
-    requirements: readonly string[],
-  ): readonly string[] => [
-    `const declaration = Object.freeze({ id: ${JSON.stringify(localId)}, title: "Fixture Voice", kind: "conversation", roles: ["conversation_stt", "conversation_tts", "realtime_conversation", "turn_control"], platforms: ["web"], capabilities: { readiness: { requirements: ${JSON.stringify(requirements)} }, turn: { cancelResponse: false, bargeIn: false } }, client: { artifactId: "voice-ui", modulePath: "./ui/voice", exportName: "activate" } });`,
+  const conversationRuntimeLines = (conversationLocalId: string): readonly string[] => [
     'function createRuntimeRegistration() {',
-    '  const fixtureRuntimeId = `${FIXTURE_PHASE}:${++runtimeSequence}`;',
-    '  liveRuntimeIds.add(fixtureRuntimeId);',
-    '  let disposed = false;',
     '  return Object.freeze({',
+    '    kind: "conversation",',
     '    protocol: Object.freeze({ async prepare() { return {}; }, decodeControl() { return null; }, encodeTurnControl() { return []; } }),',
     '    async createConnection() { throw new Error("fixture connection must not be created during composition"); },',
     '    encodeToolResults() { return []; }, encodeToolContinuation() { return {}; },',
     '    encodeContextUpdate() { return []; }, encodeTextTurn() { return []; },',
-    '    async dispose() { if (!disposed) { disposed = true; liveRuntimeIds.delete(fixtureRuntimeId); } },',
+    '    async dispose() {},',
     '  });',
     '}',
-    `export function activate(api) { api.voiceProviders.register(${JSON.stringify(localId)}, createRuntimeRegistration()); }`,
+    `export function activate(api) { api.voiceProviders.register(${JSON.stringify(conversationLocalId)}, createRuntimeRegistration()); }`,
   ];
   if (packageId === 'elevenlabs') {
     writeFileSync(resolve(distRoot, 'ui/voice/index.js'), [
-      `export const FIXTURE_PHASE = ${JSON.stringify(phase)};`,
-      'let runtimeSequence = 0;',
-      'const liveRuntimeIds = new Set();',
-      ...conversationRuntimeLines('realtime-elevenlabs', []),
-      'const providerSettings = Object.freeze({',
-      '  schemaVersion: 1, defaultConfig: {}, defaultLegacyConfig: {}, legacyDefaultSelection: false,',
-      '  parseConfig(value) { return value && typeof value === "object" ? value : null; },',
-      '  migrateLegacy(value) { return value && typeof value === "object" ? { config: value, root: {} } : null; },',
-      '});',
-      'const internal = Object.freeze({',
-      '  providerSettings,',
-      '  fixtureState() { return Object.freeze({ phase: FIXTURE_PHASE, liveRuntimeIds: Object.freeze([...liveRuntimeIds]) }); },',
-      '});',
-      'export const BUNDLED_VOICE_UI_ENTRIES = Object.freeze([{',
-      '  kind: "voice.conversation-provider.v1", pluginId: "happier.voice.elevenlabs", providerId: "realtime_elevenlabs",',
-      '  settingsSectionId: "voice.provider.realtime_elevenlabs", roles: ["conversation_stt", "conversation_tts", "realtime_conversation", "turn_control"],',
-      '  requirements: [], supportedPlatforms: ["web"],',
-      '  projectSettings() { return { status: "ready", modeId: null }; }, declaration, internal,',
-      '}]);',
-      'export const BUNDLED_VOICE_CONVERSATION_RUNTIME_ENTRIES = BUNDLED_VOICE_UI_ENTRIES;',
+      ...conversationRuntimeLines('realtime-elevenlabs'),
+      ...conversationPresentations,
       '',
     ].join('\n'), 'utf8');
     return;
   }
 
   if (packageId === 'openai' || packageId === 'xai') {
-    const providerId = packageId === 'openai' ? 'realtime_openai' : 'realtime_grok';
     writeFileSync(resolve(distRoot, 'ui/voice/index.js'), [
-      `export const FIXTURE_PHASE = ${JSON.stringify(phase)};`,
-      `const providerId = ${JSON.stringify(providerId)};`,
-      'let runtimeSequence = 0;',
-      'const liveRuntimeIds = new Set();',
-      ...conversationRuntimeLines(
-        packageId === 'openai' ? 'realtime-openai' : 'realtime-grok',
-        [],
-      ),
-      'const providerSettings = Object.freeze({',
-      '  schemaVersion: 1, defaultConfig: { phase: FIXTURE_PHASE }, defaultLegacyConfig: { phase: FIXTURE_PHASE }, legacyDefaultSelection: false,',
-      '  parseConfig(value) { return value && typeof value === "object" ? value : null; },',
-      '  migrateLegacy(value) { return value && typeof value === "object" ? { config: value, root: {} } : null; },',
-      '});',
-      'const internal = Object.freeze({',
-      '  providerSettings,',
-      '  fixtureState() { return Object.freeze({ phase: FIXTURE_PHASE, liveRuntimeIds: Object.freeze([...liveRuntimeIds]) }); },',
-      '});',
-      'export const BUNDLED_VOICE_UI_ENTRIES = Object.freeze([{',
-      `  kind: "voice.conversation-provider.v1", pluginId: ${JSON.stringify(`happier.voice.${packageId}`)}, providerId,`,
-      '  settingsSectionId: `voice.provider.${providerId}`, roles: ["conversation_stt", "conversation_tts", "realtime_conversation", "turn_control"],',
-      '  requirements: ["execution_machine", "credential"], supportedPlatforms: ["web"],',
-      '  projectSettings(envelope) { return envelope?.schemaVersion === 1 && envelope.config && typeof envelope.config === "object"',
-      '    ? { status: "ready", modeId: "byo" } : { status: "invalid", modeId: null }; }, declaration, internal,',
-      '}]);',
-      'export const BUNDLED_VOICE_CONVERSATION_RUNTIME_ENTRIES = BUNDLED_VOICE_UI_ENTRIES;',
+      ...conversationRuntimeLines(packageId === 'openai' ? 'realtime-openai' : 'realtime-grok'),
+      ...conversationPresentations,
       '',
     ].join('\n'), 'utf8');
     return;
   }
 
   writeFileSync(resolve(distRoot, 'ui/voice/index.js'), [
-    `export const FIXTURE_PHASE = ${JSON.stringify(phase)};`,
-    'const createSettingsSpec = (providerId) => Object.freeze({',
-    '  kind: "voice.internal.speech-settings.v1", providerId, role: providerId === "google_gemini" ? "stt" : "tts", schemaVersion: 2,',
-    '  titleKey: "fixture.title", subtitleKey: "fixture.subtitle", detailKey: "fixture.detail", iconName: "key",',
-    '  credential: { kind: "api_key", titleKey: "fixture.credential", promptTitleKey: "fixture.prompt", promptBodyKey: "fixture.body", androidRestricted: false, androidRestrictedBodyKey: null },',
-    '  fields: [], runtime: {}, defaultConfig: { phase: FIXTURE_PHASE },',
-    '  parseConfig(value) { return value && typeof value === "object" ? value : null; },',
-    '  parseLegacyConfig(value) { return value && typeof value === "object" ? value : null; },',
-    '  readLegacySecret() { return null; }, migrateLegacy(value) { return value && typeof value === "object" ? value : null; },',
-    '  classifyLegacyCredential() { return "importable"; }, test: null,',
-    '});',
-    'const internal = Object.freeze({ createSettingsSpec, fixtureState: () => Object.freeze({ phase: FIXTURE_PHASE }) });',
-    'export const BUNDLED_VOICE_UI_ENTRIES = Object.freeze([',
-    '  { kind: "voice.speech-engine.v1", pluginId: "happier.voice.google", providerId: "google_gemini", role: "stt", settingsSectionId: "voice.stt.google_gemini", roles: ["dictation_stt", "conversation_stt"], requirements: ["execution_machine", "credential", "runtime"], internal },',
-    '  { kind: "voice.speech-engine.v1", pluginId: "happier.voice.google", providerId: "google_cloud", role: "tts", settingsSectionId: "voice.tts.google_cloud", roles: ["conversation_tts"], requirements: ["execution_machine", "credential", "runtime"], internal },',
-    ']);',
-    'export const BUNDLED_VOICE_CONVERSATION_RUNTIME_ENTRIES = Object.freeze([]);',
+    ...googlePresentations,
     '',
   ].join('\n'), 'utf8');
 }
@@ -1523,8 +2545,12 @@ function runBundledVoiceCompositionProbes(
     openai: string | null;
     xai: string | null;
     disabled: 'elevenlabs' | 'google' | 'openai' | 'xai' | null;
-    selectedProviderId: 'realtime_elevenlabs' | 'google_gemini' | 'realtime_openai' | 'realtime_grok';
-    persistedEnvelope: Readonly<{ schemaVersion: 1; config: Readonly<Record<string, unknown>> }>;
+    selectedProviderId:
+      | 'happier.voice.elevenlabs/realtime-elevenlabs'
+      | 'happier.voice.google/gemini-stt'
+      | 'happier.voice.openai/realtime-openai'
+      | 'happier.voice.xai/realtime-grok';
+    persistedEnvelope: Readonly<{ schemaVersion: 2; config: Readonly<Record<string, unknown>> }>;
   }>,
 ): void {
   const sourceRoot = fileURLToPath(new URL('../../../', import.meta.url));
@@ -1534,6 +2560,7 @@ function runBundledVoiceCompositionProbes(
   const speechPlaybackStubPath = resolve(repoRoot, 'voice-speech-playback-stub.ts');
   const expoUpdatesStubPath = resolve(repoRoot, 'voice-expo-updates-stub.ts');
   const unistylesStubPath = resolve(repoRoot, 'voice-unistyles-stub.ts');
+  const voiceAvailabilityStubPath = resolve(repoRoot, 'voice-provider-availability-stub.ts');
   const generatedUiUrl = pathToFileURL(resolve(repoRoot, 'apps/ui/sources/voice/registry/generatedBundledVoiceEntries.ts')).href;
   const generatedRuntimeUrl = pathToFileURL(resolve(repoRoot, 'apps/ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.ts')).href;
   const moduleUrl = (relativePath: string) => pathToFileURL(resolve(sourceRoot, relativePath)).href;
@@ -1546,20 +2573,34 @@ function runBundledVoiceCompositionProbes(
     ].join('\n'),
     'utf8',
   );
+  writeFileSync(
+    resolve(repoRoot, 'apps/ui/sources/voice/registry/bundledVoiceManifestProjection.ts'),
+    [
+      `export { projectBundledVoiceManifestContributions } from ${JSON.stringify(moduleUrl('apps/ui/sources/voice/registry/bundledVoiceManifestProjection.ts'))};`,
+      `export type { BundledVoiceManifestContribution } from ${JSON.stringify(moduleUrl('apps/ui/sources/voice/registry/bundledVoiceManifestProjection.ts'))};`,
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  writeFileSync(
+    resolve(repoRoot, 'apps/ui/sources/voice/registry/voiceProviderPresentation.ts'),
+    [
+      `export type { VoiceProviderPresentation } from ${JSON.stringify(moduleUrl('apps/ui/sources/voice/registry/voiceProviderPresentation.ts'))};`,
+      '',
+    ].join('\n'),
+    'utf8',
+  );
   writeFileSync(uiProbePath, [
     'import { test } from "vitest";',
     `import * as generatedVoiceUiModule from ${JSON.stringify(generatedUiUrl)};`,
     `import * as generatedVoiceRuntimeModule from ${JSON.stringify(generatedRuntimeUrl)};`,
-    `import * as conversationComposerModule from ${JSON.stringify(moduleUrl('apps/ui/sources/voice/registry/bundledConversationRuntimes.ts'))};`,
-    `import * as conversationRuntimeHostModule from ${JSON.stringify(moduleUrl('apps/ui/sources/voice/registry/bundledConversationRuntimeHost.ts'))};`,
     `import * as providerRegistryModule from ${JSON.stringify(moduleUrl('apps/ui/sources/voice/registry/providerRegistry.ts'))};`,
     `import * as readinessModule from ${JSON.stringify(moduleUrl('apps/ui/sources/voice/registry/readiness.ts'))};`,
     `import * as speechDescriptorModule from ${JSON.stringify(moduleUrl('apps/ui/sources/voice/settings/panels/bundledSpeech/descriptor.ts'))};`,
     `import * as speechRuntimeModule from ${JSON.stringify(moduleUrl('apps/ui/sources/voice/runtime/bundledSpeech/bundledSpeechRuntime.ts'))};`,
-    'const BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES = generatedVoiceUiModule.BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES ?? generatedVoiceUiModule.default?.BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES;',
+    'const BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS = generatedVoiceUiModule.BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS ?? generatedVoiceUiModule.default?.BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS;',
+    'const BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS = generatedVoiceUiModule.BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS ?? generatedVoiceUiModule.default?.BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS;',
     'const BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES = generatedVoiceRuntimeModule.BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES ?? generatedVoiceRuntimeModule.default?.BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES;',
-    'const createBundledConversationRuntimes = conversationComposerModule.createBundledConversationRuntimes ?? conversationComposerModule.default?.createBundledConversationRuntimes;',
-    'const createBundledConversationRuntimeHostLease = conversationRuntimeHostModule.createBundledConversationRuntimeHostLease ?? conversationRuntimeHostModule.default?.createBundledConversationRuntimeHostLease;',
     'const createVoiceProviderRegistry = providerRegistryModule.createVoiceProviderRegistry ?? providerRegistryModule.default?.createVoiceProviderRegistry;',
     'const resolveVoiceRoleReadiness = readinessModule.resolveVoiceRoleReadiness ?? readinessModule.default?.resolveVoiceRoleReadiness;',
     'const projectVoiceProviderSettings = providerRegistryModule.projectVoiceProviderSettings ?? providerRegistryModule.default?.projectVoiceProviderSettings;',
@@ -1567,41 +2608,37 @@ function runBundledVoiceCompositionProbes(
     'const createBundledSpeechRuntime = speechRuntimeModule.createBundledSpeechRuntime ?? speechRuntimeModule.default?.createBundledSpeechRuntime;',
     'test("fresh production UI voice composition", async () => {',
     'const expected = JSON.parse(process.env.HAPPIER_VOICE_FIXTURE_EXPECTED);',
-    'const registry = createVoiceProviderRegistry({ bundled: BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES });',
+    'const registry = createVoiceProviderRegistry({ bundledContributions: BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS, bundledPresentations: BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS });',
     'const ids = registry.list().map((entry) => entry.providerId).sort();',
     'const expectedIds = [',
-    '  ...(expected.elevenlabs ? ["realtime_elevenlabs"] : []),',
-    '  ...(expected.google ? ["google_cloud", "google_gemini"] : []),',
-    '  ...(expected.openai ? ["realtime_openai"] : []),',
-    '  ...(expected.xai ? ["realtime_grok"] : []),',
+    '  ...(expected.elevenlabs ? ["happier.voice.elevenlabs/realtime-elevenlabs"] : []),',
+    '  ...(expected.google ? ["happier.voice.google/gemini-stt", "happier.voice.google/google-cloud-tts"] : []),',
+    '  ...(expected.openai ? ["happier.voice.openai/realtime-openai"] : []),',
+    '  ...(expected.xai ? ["happier.voice.xai/realtime-grok"] : []),',
     '].sort();',
     'if (JSON.stringify(ids) !== JSON.stringify(expectedIds)) throw new Error(`UI registry mismatch: ${JSON.stringify(ids)}`);',
     'const facts = { settings: "ready", executionMachine: "ready", credential: "ready", runtime: "ready", model: "ready", endpoint: "ready", serverFeature: "ready" };',
-    'for (const [providerId, role, phase] of [["realtime_elevenlabs", "realtime_conversation", expected.elevenlabs], ["google_gemini", "dictation_stt", expected.google], ["google_cloud", "conversation_tts", expected.google], ["realtime_openai", "realtime_conversation", expected.openai], ["realtime_grok", "realtime_conversation", expected.xai]]) {',
+    'for (const [providerId, role, phase] of [["happier.voice.elevenlabs/realtime-elevenlabs", "realtime_conversation", expected.elevenlabs], ["happier.voice.google/gemini-stt", "dictation_stt", expected.google], ["happier.voice.google/google-cloud-tts", "conversation_tts", expected.google], ["happier.voice.openai/realtime-openai", "realtime_conversation", expected.openai], ["happier.voice.xai/realtime-grok", "realtime_conversation", expected.xai]]) {',
     '  const shouldExist = Boolean(phase);',
     '  const readiness = resolveVoiceRoleReadiness({ registry, role, providerId, platform: "web", facts });',
     '  if (shouldExist && readiness.status !== "ready") throw new Error(`expected ready ${providerId}: ${JSON.stringify(readiness)}`);',
     '  if (!shouldExist && readiness.code !== "contribution_unavailable") throw new Error(`expected unavailable ${providerId}: ${JSON.stringify(readiness)}`);',
     '}',
-    'for (const [providerId, phase] of [["realtime_elevenlabs", expected.elevenlabs], ["realtime_openai", expected.openai], ["realtime_grok", expected.xai]]) {',
-    '  const settingsEntry = registry.get(providerId);',
-    '  const settingsProjection = settingsEntry ? projectVoiceProviderSettings(settingsEntry, expected.persistedEnvelope) : null;',
-    '  if (Boolean(settingsProjection?.status === "ready") !== Boolean(phase)) throw new Error(`conversation settings composition mismatch: ${providerId}`);',
-    '}',
-    'for (const providerId of ["google_gemini", "google_cloud"]) {',
+    'for (const providerId of ["happier.voice.google/gemini-stt", "happier.voice.google/google-cloud-tts"]) {',
     '  const entry = registry.get(providerId);',
     '  const descriptor = readBundledSpeechSettingsDescriptorFromEntry(providerId, entry);',
     '  if (expected.google) {',
-    '    if (!descriptor || descriptor.defaultConfig.phase !== expected.google || !descriptor.parseConfig({ phase: expected.google })) throw new Error(`Google UI runtime descriptor mismatch: ${providerId}; descriptor=${JSON.stringify(descriptor)}; raw=${JSON.stringify(entry?.internal?.createSettingsSpec?.(providerId))}`);',
+    '    const config = providerId.endsWith("/gemini-stt") ? { phase: expected.google, model: "fixture-model" } : { phase: expected.google, voiceName: "fixture-voice" };',
+    '    if (!descriptor || descriptor.defaultConfig.phase !== expected.google || !descriptor.parseConfig(config)) throw new Error(`Google UI runtime descriptor mismatch: ${providerId}; descriptor=${JSON.stringify(descriptor)}`);',
     '  } else if (descriptor !== null) throw new Error(`disabled Google descriptor survived: ${providerId}`);',
     '}',
     'const persistedBefore = JSON.stringify(expected.persistedEnvelope);',
     'const selectedEntry = registry.get(expected.selectedProviderId);',
     'if (expected.disabled && selectedEntry !== null) throw new Error("disabled selected provider remained executable");',
     'if (!expected.disabled && !selectedEntry) throw new Error("selected provider did not restore");',
-    'if (!expected.disabled && expected.selectedProviderId === "google_gemini") {',
+    'if (!expected.disabled && expected.selectedProviderId === "happier.voice.google/gemini-stt") {',
     '  const descriptor = readBundledSpeechSettingsDescriptorFromEntry(expected.selectedProviderId, selectedEntry);',
-    '  if (!descriptor || JSON.stringify(descriptor.parseConfig(expected.persistedEnvelope.config)) !== JSON.stringify(expected.persistedEnvelope.config)) throw new Error("persisted Google config did not restore");',
+    '  if (!descriptor || descriptor.parseConfig(expected.persistedEnvelope.config)?.phase !== expected.persistedEnvelope.config.phase) throw new Error("persisted Google config did not restore");',
     '} else if (!expected.disabled) {',
     '  const projection = projectVoiceProviderSettings(selectedEntry, expected.persistedEnvelope);',
     '  if (projection?.status !== "ready") throw new Error("persisted conversation settings did not restore");',
@@ -1620,46 +2657,31 @@ function runBundledVoiceCompositionProbes(
     'const firstSpeech = createSpeechHarness(); const secondSpeech = createSpeechHarness();',
     'if (firstSpeech.runtime === secondSpeech.runtime) throw new Error("Google UI speech runtime identity was reused");',
     'if (expected.google) {',
-    '  const firstText = await firstSpeech.runtime.transcribeRecordedAudio("google_gemini", { uri: "file:///fixture.wav", providerConfig: { model: "fixture-model", language: "en" }, fallbackLanguage: null });',
-    '  await firstSpeech.runtime.speak("google_cloud", { text: "fixture", providerConfig: { voiceName: "fixture-voice", format: "wav" }, registerPlaybackStopper: () => () => {} });',
-    '  const secondText = await secondSpeech.runtime.transcribeRecordedAudio("google_gemini", { uri: "file:///fixture.wav", providerConfig: { model: "fixture-model", language: "en" }, fallbackLanguage: null });',
-    '  await secondSpeech.runtime.speak("google_cloud", { text: "fixture", providerConfig: { voiceName: "fixture-voice", format: "wav" }, registerPlaybackStopper: () => () => {} });',
+    '  const firstText = await firstSpeech.runtime.transcribeRecordedAudio("happier.voice.google/gemini-stt", { uri: "file:///fixture.wav", providerConfig: { phase: expected.google, model: "fixture-model" }, fallbackLanguage: null });',
+    '  await firstSpeech.runtime.speak("happier.voice.google/google-cloud-tts", { text: "fixture", providerConfig: { phase: expected.google, voiceName: "fixture-voice" }, registerPlaybackStopper: () => () => {} });',
+    '  const secondText = await secondSpeech.runtime.transcribeRecordedAudio("happier.voice.google/gemini-stt", { uri: "file:///fixture.wav", providerConfig: { phase: expected.google, model: "fixture-model" }, fallbackLanguage: null });',
+    '  await secondSpeech.runtime.speak("happier.voice.google/google-cloud-tts", { text: "fixture", providerConfig: { phase: expected.google, voiceName: "fixture-voice" }, registerPlaybackStopper: () => () => {} });',
     '  if (firstText !== expected.google || secondText !== expected.google) throw new Error("stale Google UI speech runtime identity");',
-    '  if (JSON.stringify(firstSpeech.calls) !== JSON.stringify([{ kind: "transcribe", providerId: "google_gemini" }, { kind: "synthesize", providerId: "google_cloud" }])) throw new Error("first Google UI runtime retained or skipped calls");',
+    '  if (JSON.stringify(firstSpeech.calls) !== JSON.stringify([{ kind: "transcribe", providerId: "happier.voice.google/gemini-stt" }, { kind: "synthesize", providerId: "happier.voice.google/google-cloud-tts" }])) throw new Error("first Google UI runtime retained or skipped calls");',
     '  if (JSON.stringify(secondSpeech.calls) !== JSON.stringify(firstSpeech.calls) || firstSpeech.plays.length !== 1 || secondSpeech.plays.length !== 1) throw new Error("Google UI runtime state leaked across compositions");',
     '} else {',
-    '  const sttError = await firstSpeech.runtime.transcribeRecordedAudio("google_gemini", { uri: "file:///fixture.wav", providerConfig: { model: "fixture-model" }, fallbackLanguage: null }).then(() => null, (error) => error);',
-    '  const ttsError = await firstSpeech.runtime.speak("google_cloud", { text: "fixture", providerConfig: { voiceName: "fixture-voice" }, registerPlaybackStopper: () => () => {} }).then(() => null, (error) => error);',
+    '  const sttError = await firstSpeech.runtime.transcribeRecordedAudio("happier.voice.google/gemini-stt", { uri: "file:///fixture.wav", providerConfig: { model: "fixture-model" }, fallbackLanguage: null }).then(() => null, (error) => error);',
+    '  const ttsError = await firstSpeech.runtime.speak("happier.voice.google/google-cloud-tts", { text: "fixture", providerConfig: { voiceName: "fixture-voice" }, registerPlaybackStopper: () => () => {} }).then(() => null, (error) => error);',
     '  if (sttError?.code !== "provider_unavailable" || ttsError?.code !== "provider_unavailable") throw new Error("disabled Google UI runtime did not fail closed");',
     '  if (firstSpeech.calls.length !== 0 || firstSpeech.plays.length !== 0) throw new Error("disabled Google UI runtime reached a retained client or playback owner");',
     '}',
-    'const expectedConversationProviders = [["realtime_elevenlabs", expected.elevenlabs], ["realtime_openai", expected.openai], ["realtime_grok", expected.xai]].filter(([, phase]) => Boolean(phase));',
-    'const firstHostLease = createBundledConversationRuntimeHostLease();',
-    'const first = createBundledConversationRuntimes({ bundledEntries: BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES, host: firstHostLease.host });',
-    'if (first.length !== expectedConversationProviders.length) throw new Error("first conversation composition mismatch");',
-    'const firstAdapters = new Map();',
-    'for (const [providerId, phase] of expectedConversationProviders) {',
-    '  const firstRuntime = first.find((runtime) => runtime.adapter.id === providerId);',
-    '  if (!firstRuntime) throw new Error(`first runtime missing: ${providerId}`);',
-    '  firstAdapters.set(providerId, firstRuntime.adapter);',
-    '  const internal = registry.get(providerId)?.internal;',
-    '  if (!internal || internal.fixtureState().phase !== phase || internal.fixtureState().liveRuntimeIds.length !== 1) throw new Error(`runtime state did not reflect first composition: ${providerId}`);',
+    'const expectedConversationProviders = [["happier.voice.elevenlabs/realtime-elevenlabs", expected.elevenlabs], ["happier.voice.openai/realtime-openai", expected.openai], ["happier.voice.xai/realtime-grok", expected.xai]].filter(([, phase]) => Boolean(phase));',
+    'if (BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.length !== expectedConversationProviders.length) throw new Error("conversation runtime projection mismatch");',
+    'for (const [providerId] of expectedConversationProviders) {',
+    '  const entry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find((candidate) => candidate.providerId === providerId);',
+    '  if (!entry) throw new Error(`runtime entry missing: ${providerId}`);',
+    '  const registrations = [];',
+    '  const api = { voiceProviders: { register(localId, runtime) { registrations.push({ localId, runtime }); } } };',
+    '  entry.activate(api); entry.activate(api);',
+    '  if (registrations.length !== 2 || registrations.some((registration) => registration.localId !== entry.declaration.id || registration.runtime.kind !== "conversation")) throw new Error(`public activation mismatch: ${providerId}`);',
+    '  if (registrations[0].runtime === registrations[1].runtime) throw new Error(`public activation reused runtime identity: ${providerId}`);',
+    '  await Promise.all(registrations.map(async ({ runtime }) => await runtime.dispose?.()));',
     '}',
-    'const secondHostLease = createBundledConversationRuntimeHostLease();',
-    'const second = createBundledConversationRuntimes({ bundledEntries: BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES, host: secondHostLease.host });',
-    'if (second.length !== expectedConversationProviders.length) throw new Error("second conversation composition mismatch");',
-    'for (const [providerId, phase] of expectedConversationProviders) {',
-    '  const secondRuntime = second.find((runtime) => runtime.adapter.id === providerId);',
-    '  const internal = registry.get(providerId)?.internal;',
-    '  if (!secondRuntime || secondRuntime.adapter === firstAdapters.get(providerId)) throw new Error(`runtime identity was reused or missing: ${providerId}`);',
-    '  if (!internal || internal.fixtureState().phase !== phase || internal.fixtureState().liveRuntimeIds.length !== 2) throw new Error(`runtime state did not reflect live replacement composition: ${providerId}`);',
-    '}',
-    'firstHostLease.revoke();',
-    'await Promise.all(first.map(async (runtime) => await runtime.dispose()));',
-    'for (const [providerId] of expectedConversationProviders) { if (registry.get(providerId)?.internal?.fixtureState().liveRuntimeIds.length !== 1) throw new Error(`late first-generation disposal disturbed replacement: ${providerId}`); }',
-    'secondHostLease.revoke();',
-    'await Promise.all(second.map(async (runtime) => await runtime.dispose()));',
-    'for (const [providerId] of expectedConversationProviders) { if (registry.get(providerId)?.internal?.fixtureState().liveRuntimeIds.length !== 0) throw new Error(`second runtime state leaked after disposal: ${providerId}`); }',
     '});',
     '',
   ].join('\n'), 'utf8');
@@ -1687,6 +2709,10 @@ function runBundledVoiceCompositionProbes(
     'export const useUnistyles = runtime.useUnistyles;',
     '',
   ].join('\n'), 'utf8');
+  writeFileSync(voiceAvailabilityStubPath, [
+    'export const resolveVoiceDeviceSpeechRolePath = () => null;',
+    '',
+  ].join('\n'), 'utf8');
   writeFileSync(uiProbeConfigPath, [
     `const uiSources = ${JSON.stringify(resolve(sourceRoot, 'apps/ui/sources'))};`,
     `const reactNativeStub = ${JSON.stringify(resolve(sourceRoot, 'apps/ui/sources/dev/reactNativeStub.ts'))};`,
@@ -1707,12 +2733,18 @@ function runBundledVoiceCompositionProbes(
     `const speechPlaybackStub = ${JSON.stringify(speechPlaybackStubPath)};`,
     `const expoUpdatesStub = ${JSON.stringify(expoUpdatesStubPath)};`,
     `const unistylesStub = ${JSON.stringify(unistylesStubPath)};`,
+    `const voiceAvailabilityStub = ${JSON.stringify(voiceAvailabilityStubPath)};`,
+    `const generatedVoiceEntries = ${JSON.stringify(resolve(repoRoot, 'apps/ui/sources/voice/registry/generatedBundledVoiceEntries.ts'))};`,
+    `const generatedVoiceRuntimeEntries = ${JSON.stringify(resolve(repoRoot, 'apps/ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.ts'))};`,
     'export default {',
     `  root: ${JSON.stringify(repoRoot)},`,
     '  define: { __DEV__: true },',
     '  resolve: { alias: [',
     '    { find: /^@\\/voice\\/credentials\\/bundledSpeechClient$/, replacement: speechClientStub },',
     '    { find: /^@\\/voice\\/output\\/playAudioBytesWithStopper$/, replacement: speechPlaybackStub },',
+    '    { find: /^@\\/voice\\/settings\\/resolveVoiceProviderAvailability$/, replacement: voiceAvailabilityStub },',
+    '    { find: /^@\\/voice\\/registry\\/generatedBundledVoiceEntries$/, replacement: generatedVoiceEntries },',
+    '    { find: /^@\\/voice\\/registry\\/generatedBundledVoiceRuntimeEntries$/, replacement: generatedVoiceRuntimeEntries },',
     '    { find: /^react-native$/, replacement: reactNativeStub },',
     '    { find: /^react-native\\//, replacement: reactNativeInternalStub },',
     '    { find: /^@react-native\\/virtualized-lists(?:\\/.*)?$/, replacement: reactNativeVirtualizedListsStub },',
@@ -1774,8 +2806,9 @@ function runBundledVoiceCompositionProbes(
         'const packages = JSON.parse(process.env.HAPPIER_VOICE_NATIVE_PACKAGES);',
         'for (const packageId of packages) {',
         '  const module = await import(`@happier-dev/plugins-${packageId}/ui/voice`);',
-        '  if (!Array.isArray(module.BUNDLED_VOICE_UI_ENTRIES) || module.BUNDLED_VOICE_UI_ENTRIES.length === 0) throw new Error(`missing native metadata: ${packageId}`);',
+        '  if (!Array.isArray(module.VOICE_PROVIDER_PRESENTATIONS) || module.VOICE_PROVIDER_PRESENTATIONS.length === 0) throw new Error(`missing native presentation: ${packageId}`);',
         '  if ("activate" in module) throw new Error(`native executable activation leaked: ${packageId}`);',
+        '  if ("BUNDLED_VOICE_UI_ENTRIES" in module || "BUNDLED_VOICE_CONVERSATION_RUNTIME_ENTRIES" in module) throw new Error(`retired native Voice export survived: ${packageId}`);',
         '}',
       ].join('\n'),
     ],
@@ -1851,10 +2884,27 @@ function requiredVoiceExportsForFixture(pluginPackageId: string): Record<string,
     : {};
 }
 
-function writeAgentPluginFixture(repoRoot: string, pluginPackageId: string, agentId = pluginPackageId): void {
+const IMMUTABLE_BUNDLED_PLUGIN_FIXTURE_FILES = Object.freeze([
+  'dist',
+  '.happier-plugin/plugin.json',
+  'package.json',
+] as const);
+
+function writeAgentPluginFixture(
+  repoRoot: string,
+  pluginPackageId: string,
+  agentId = pluginPackageId,
+  options: Readonly<{
+    daemon?: boolean;
+    agentUi?: string;
+    mcpDiscoverySourceAgentId?: string;
+  }> = {},
+): void {
   writeJson(resolve(repoRoot, `packages/plugins/${pluginPackageId}/package.json`), {
     name: `@happier-dev/plugins-${pluginPackageId}`,
     version: '0.0.0',
+    type: 'module',
+    files: IMMUTABLE_BUNDLED_PLUGIN_FIXTURE_FILES,
     ...requiredVoiceExportsForFixture(pluginPackageId),
   });
   mkdirSync(resolve(repoRoot, `packages/plugins/${pluginPackageId}/src`), { recursive: true });
@@ -1864,10 +2914,20 @@ function writeAgentPluginFixture(repoRoot: string, pluginPackageId: string, agen
       id: `happier.agent.${pluginPackageId}`,
       agentId,
       capabilities: ['agents'],
-      contributes: `{
+      ...(options.daemon === undefined ? {} : { daemon: options.daemon }),
+      contributes: `{${options.mcpDiscoverySourceAgentId === undefined ? '' : `
+        mcp: {
+          servers: [],
+          discoverySources: [{
+            id: "config",
+            title: ${JSON.stringify(`${options.mcpDiscoverySourceAgentId} MCP configuration`)},
+            metadata: { agentId: ${JSON.stringify(options.mcpDiscoverySourceAgentId)} },
+          }],
+        },`}
         agents: [{
           id: ${JSON.stringify(agentId)},
-          title: ${JSON.stringify(`${agentId} runtime`)},
+          title: ${JSON.stringify(`${agentId} runtime`)},${options.agentUi === undefined ? '' : `
+          ui: ${options.agentUi},`}
           runtime: { kind: "custom" },
           cli: {
             displayName: ${JSON.stringify(`${agentId} CLI`)},
@@ -1888,6 +2948,35 @@ function writeAgentPluginFixture(repoRoot: string, pluginPackageId: string, agen
     }),
     'utf8',
   );
+  if (options.mcpDiscoverySourceAgentId !== undefined) {
+    // An MCP discovery source makes the package an executable daemon owner, so
+    // canonical runtime staging requires its entrypoint.
+    mkdirSync(resolve(repoRoot, `packages/plugins/${pluginPackageId}/src/agent/runtime`), { recursive: true });
+    writeFileSync(
+      resolve(repoRoot, `packages/plugins/${pluginPackageId}/src/agent/runtime/factory.ts`),
+      'export async function createFixtureAgentRuntime() { return { sessions: {} }; }\n',
+      'utf8',
+    );
+    writeFileSync(
+      resolve(repoRoot, `packages/plugins/${pluginPackageId}/src/index.ts`),
+      [
+        "export { PLUGIN_MANIFEST as manifest } from './manifest.js';",
+        "import { createFixtureAgentRuntime } from './agent/runtime/factory.js';",
+        '',
+        'export function activate(api: {',
+        '  agents: { register: Function };',
+        '  mcp: { registerDiscoverySource(localId: string, discover: unknown): void };',
+        '}): void {',
+        `  api.agents.register(${JSON.stringify(agentId)}, createFixtureAgentRuntime, {`,
+        "    sessionRunnerFactory: { module: './agent/runtime/factory', export: 'createFixtureAgentRuntime', runtimeApiVersion: 1 },",
+        '  });',
+        "  api.mcp.registerDiscoverySource('config', async () => ({ endpoints: [] }));",
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+  }
   mkdirSync(resolve(repoRoot, `packages/plugins/${pluginPackageId}/src/agent`), { recursive: true });
   writeFileSync(
     resolve(repoRoot, `packages/plugins/${pluginPackageId}/src/agent/definition.ts`),
@@ -1900,6 +2989,20 @@ function writeAgentPluginFixture(repoRoot: string, pluginPackageId: string, agen
     'utf8',
   );
 }
+
+test('agent fixture package manifests satisfy the immutable artifact files invariant', () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-immutable-agent-fixture-files-'));
+  try {
+    writeAgentPluginFixture(repoRoot, 'fixture-agent');
+    const packageJson = JSON.parse(readFileSync(
+      resolve(repoRoot, 'packages/plugins/fixture-agent/package.json'),
+      'utf8',
+    )) as Readonly<{ files?: unknown }>;
+    assert.deepEqual(packageJson.files, IMMUTABLE_BUNDLED_PLUGIN_FIXTURE_FILES);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
 
 function writeInstallablePluginFixture(
   repoRoot: string,
@@ -1960,7 +3063,10 @@ function writeOpenCodeAgentPluginFixture(repoRoot: string): void {
 
 function writeProviderContributionPluginFixture(
   repoRoot: string,
-  options: Readonly<{ includeVerification?: boolean }> = {},
+  options: Readonly<{
+    includeVerification?: boolean;
+    includeManagedRuntime?: boolean;
+  }> = {},
 ): void {
   writeJson(resolve(repoRoot, 'packages/plugins/gateway/package.json'), {
     name: '@happier-dev/plugins-gateway',
@@ -1984,6 +3090,9 @@ function writeProviderContributionPluginFixture(
             capabilities: { streaming: "unknown", toolRoundTrips: "unknown", statefulResponses: "unknown", reasoningControls: "unknown" },
           }],
           catalog: { source: "manual", manualModelPolicy: "allowed" },
+          ${options.includeManagedRuntime === true
+            ? 'managedRuntime: { kind: "managed", endpointTemplateIds: ["responses"] },'
+            : ''}
         }, {
           v: 1,
           id: "gateway-secondary",
@@ -1999,6 +3108,17 @@ function writeProviderContributionPluginFixture(
         }],
       }`,
     }),
+    'utf8',
+  );
+  writeFileSync(
+    resolve(repoRoot, 'packages/plugins/gateway/src/index.ts'),
+    [
+      "export { PLUGIN_MANIFEST as manifest } from './manifest.js';",
+      'export function activate(api: { providers: { register(id: string, runtime: object): void } }): void {',
+      "  api.providers.register('gateway', { async start() { throw new Error('fixture managed runtime is not started'); } });",
+      '}',
+      '',
+    ].join('\n'),
     'utf8',
   );
   if (options.includeVerification === false) return;
@@ -2024,10 +3144,73 @@ function writeProviderContributionPluginFixture(
         { path: `endpointTemplates.${contribution.endpointId}.baseUrl`, sourceIds: ['fixture-contract'], status: 'verified' },
         { path: `endpointTemplates.${contribution.endpointId}.protocol`, sourceIds: ['fixture-contract'], status: 'verified' },
         { path: 'kind', sourceIds: ['fixture-contract'], status: 'verified' },
+        ...(options.includeManagedRuntime === true && contribution.id === 'gateway'
+          ? [
+              { path: 'managedRuntime.endpointTemplateIds.responses', sourceIds: ['fixture-contract'], status: 'verified' },
+              { path: 'managedRuntime.kind', sourceIds: ['fixture-contract'], status: 'verified' },
+            ]
+          : []),
       ],
     });
   }
 }
+
+test('emits pack-time source integrity for a bundled package without an immutable runtime generation', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-bundled-non-immutable-integrity-'));
+  const packageRoot = resolve(repoRoot, 'packages/plugins/metadata-only');
+  writeJson(resolve(packageRoot, 'package.json'), {
+    name: '@happier-dev/plugins-metadata-only',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    exports: { '.': { default: './dist/index.js' } },
+    files: ['dist', '.happier-plugin/plugin.json', 'package.json'],
+  });
+  mkdirSync(resolve(packageRoot, 'src'), { recursive: true });
+  writeFileSync(
+    resolve(packageRoot, 'src/manifest.ts'),
+    pluginManifestSource({ id: 'happier.fixture.metadata-only', daemon: false }),
+    'utf8',
+  );
+  writeFileSync(
+    resolve(packageRoot, 'src/index.ts'),
+    [
+      "export { PLUGIN_MANIFEST, PLUGIN_MANIFEST as manifest } from './manifest.js';",
+      'export function activate(): void {}',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  mkdirSync(resolve(packageRoot, 'dist'), { recursive: true });
+  writeFileSync(resolve(packageRoot, 'dist/index.js'), 'export function activate() {}\n', 'utf8');
+  writeGeneratorOutputScaffold(repoRoot);
+
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+  const artifactSource = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
+    'utf8',
+  );
+  const immutableArtifacts = readGeneratedJsonExport<readonly Readonly<{
+    packageName: string;
+  }>[]>(artifactSource, 'BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS');
+  const sourceIntegrities = readGeneratedJsonExport<readonly Readonly<{
+    packageName: string;
+    files: readonly Readonly<{ relativePath: string }>[];
+  }>[]>(artifactSource, 'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES');
+
+  // Provider-only and Voice packages have this same shape: no immutable runtime
+  // generation, yet packed files that require source-integrity admission.
+  assert.deepEqual(immutableArtifacts, []);
+  assert.deepEqual(sourceIntegrities.map((entry) => entry.packageName), [
+    '@happier-dev/plugins-metadata-only',
+  ]);
+  assert.deepEqual(sourceIntegrities[0]?.files.map((file) => file.relativePath), [
+    '.happier-plugin/plugin.json',
+    'dist/index.js',
+    'package.json',
+  ]);
+});
 
 test('generateBundledPluginEntries rejects a bundled Provider without field-path verification', async () => {
   const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-provider-verification-missing-'));
@@ -2213,7 +3396,6 @@ function writeCursorUiDescriptorFixture(repoRoot: string): void {
     settings: {},
     behavior: {
       guidance: { includeInSessionGettingStartedCliExamples: true },
-      mcpServers: { supportsDetectedConfigScan: true },
       permissions: {
         footer: {
           usePermissionUpdates: false,
@@ -2511,9 +3693,7 @@ function writeOpenCodeUiDescriptorFixture(repoRoot: string): void {
     behavior: {
       descriptorId: 'opencode.uiBehavior.v1',
       guidance: { includeInSessionGettingStartedCliExamples: true },
-      mcpServers: { supportsDetectedConfigScan: true },
       externalSessions: {
-        supportsBackgroundFollow: false,
         browse: {
           order: 30,
           sourceOptions: [
@@ -2551,7 +3731,6 @@ function writeOpenCodeUiDescriptorFixture(repoRoot: string): void {
             runtimeDescriptorExplicitField: 'serverBaseUrlExplicit',
             allowedProtocols: ['http:', 'https:'],
             rejectCredentials: true,
-            httpLoopbackOnly: true,
             originOnly: true,
           },
         },
@@ -2949,6 +4128,7 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   writeJson(resolve(repoRoot, 'packages/plugins/claude/package.json'), {
     name: '@happier-dev/plugins-claude',
     version: '0.0.0',
+    files: IMMUTABLE_BUNDLED_PLUGIN_FIXTURE_FILES,
   });
   writeJson(resolve(repoRoot, 'packages/plugins/codex/package.json'), {
     name: '@happier-dev/plugins-codex',
@@ -3142,11 +4322,11 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   assert.match(uiBehaviorOverridesOut, /@happier-dev\/plugins-auggie\/ui/);
   assert.match(uiBehaviorOverridesOut, /@happier-dev\/plugins-claude\/ui/);
   assert.match(uiBehaviorOverridesOut, /@happier-dev\/plugins-codex\/ui/);
-  assert.match(uiBehaviorOverridesOut, /@happier-dev\/plugins-pi\/ui/);
+  assert.doesNotMatch(uiBehaviorOverridesOut, /@happier-dev\/plugins-pi\/ui\/behavior/);
   assert.match(uiBehaviorOverridesOut, /auggie:\s*AUGGIE_UI_BEHAVIOR_OVERRIDE/);
   assert.match(uiBehaviorOverridesOut, /claude:\s*CLAUDE_UI_BEHAVIOR_OVERRIDE/);
   assert.match(uiBehaviorOverridesOut, /codex:\s*CODEX_UI_BEHAVIOR_OVERRIDE/);
-  assert.match(uiBehaviorOverridesOut, /pi:\s*PI_UI_BEHAVIOR_OVERRIDE/);
+  assert.doesNotMatch(uiBehaviorOverridesOut, /PI_UI_BEHAVIOR_OVERRIDE/);
   assert.match(uiBehaviorOverridesOut, /claude\.uiBehavior\.v1/);
   assert.match(uiBehaviorOverridesOut, /auggie\.uiBehavior\.v1/);
   assert.match(uiBehaviorOverridesOut, /firstParty\.auggie\.allowIndexingChip/);
@@ -3211,8 +4391,9 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
 
   const agentIdsOut = readGeneratedAgentIdsOutput(repoRoot);
   assert.match(agentIdsOut, /export const AGENT_IDS/);
-  assert.match(agentIdsOut, /export type AgentId/);
-  assert.match(agentIdsOut, /export function isAgentId/);
+  assert.match(agentIdsOut, /export type BundledAgentId = \(typeof AGENT_IDS\)\[number\];/);
+  assert.match(agentIdsOut, /export type AgentId = BundledAgentId \| \(string & \{\}\);/);
+  assert.match(agentIdsOut, /export function isBundledAgentId/);
   const agentIds = readGeneratedStringArray(agentIdsOut, 'AGENT_IDS');
   assert.ok(agentIds.includes('gemini'));
   assert.ok(agentIds.includes('auggie'));
@@ -3420,11 +4601,17 @@ test('generateBundledPluginEntries emits protocol provider defaults and external
     'protocolBuiltInBackendProfiles: { kind: "providerBuiltInBackendProfilesV1", providerId: "codex", source: "./protocol/profiles", exportName: "CODEX_BUILT_IN_BACKEND_PROFILES" },',
   ]);
   writeRuntimeContributionPluginFixture(repoRoot, 'ohmypi', 'ohMyPi', []);
+  const externalSessionOutPath = resolve(repoRoot, 'packages/protocol/src/agents/generated/externalSession/sources.ts');
+  writeFileSync(externalSessionOutPath, 'export const stale = true;\n', 'utf8');
+  await assert.rejects(
+    generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']),
+    /generated output differs: .*generated\/externalSession\/sources\.ts/,
+  );
+
   writeManifestOwnedExternalSessionSourceFixture(repoRoot, 'claude', 'claude', [
     '{',
     '  sourceKind: "claudeConfig",',
     '  schema: {',
-    '    passthrough: true,',
     '    fields: [',
     '      { name: "kind", kind: "literal", value: "claudeConfig" },',
     '      { name: "configDir", kind: "string", min: 1, max: 10000, nullish: true },',
@@ -3444,7 +4631,6 @@ test('generateBundledPluginEntries emits protocol provider defaults and external
     '{',
     '  sourceKind: "codexHome",',
     '  schema: {',
-    '    passthrough: true,',
     '    fields: [',
     '      { name: "kind", kind: "literal", value: "codexHome" },',
     '      { name: "home", kind: "enum", values: ["user", "connectedService"] },',
@@ -3558,14 +4744,23 @@ test('generateBundledPluginEntries emits protocol provider defaults and external
   assert.doesNotMatch(externalSessionOut, /sourceSchema:/);
   assert.doesNotMatch(externalSessionOut, /@happier-dev\/plugins-/);
   assert.doesNotMatch(externalSessionOut, /providers\/(?:claude|codex)\/externalSessions/);
+  assert.doesNotMatch(externalSessionOut, /"passthrough"/);
 
   await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']);
 
-  const externalSessionOutPath = resolve(repoRoot, 'packages/protocol/src/agents/generated/externalSession/sources.ts');
-  writeFileSync(externalSessionOutPath, 'export const stale = true;\n', 'utf8');
+  writeManifestOwnedExternalSessionSourceFixture(repoRoot, 'claude', 'claude', [
+    '{',
+    '  sourceKind: "claudeConfig",',
+    '  schema: {',
+    '    passthrough: true,',
+    '    fields: [{ name: "kind", kind: "literal", value: "claudeConfig" }],',
+    '  },',
+    '  key: { segments: [{ kind: "literal", value: "claudeConfig" }] },',
+    '}',
+  ].join('\n'));
   await assert.rejects(
     generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']),
-    /generated output differs: .*generated\/externalSession\/sources\.ts/,
+    /schema\.passthrough: no longer supported/,
   );
 });
 
@@ -3695,7 +4890,22 @@ test('generateBundledPluginEntries derives bundled CLI runtime facts from native
               sourcePreference: "system-first",
             },
             install: {
-              managed: null,
+              managed: {
+                kind: "github_release_binary",
+                githubRepo: "example/nativefixture",
+                binaryName: "nativefixture",
+                assetNameByPlatform: {
+                  darwin: { arm64: "nativefixture-darwin-arm64.tar.gz", x64: "nativefixture-darwin-x64.tar.gz" },
+                  linux: { arm64: "nativefixture-linux-arm64.tar.gz", x64: "nativefixture-linux-x64.tar.gz" },
+                  win32: { arm64: "nativefixture-windows-arm64.tar.gz", x64: "nativefixture-windows-x64.tar.gz" },
+                },
+                archiveEntriesByPlatform: {
+                  darwin: [{ archivePath: "bin/nativefixture", destinationPath: "bin/nativefixture" }],
+                  linux: [{ archivePath: "bin/nativefixture", destinationPath: "bin/nativefixture" }],
+                  win32: [{ archivePath: "bin/nativefixture.exe", destinationPath: "bin/nativefixture.exe" }],
+                },
+                archiveExtractionLimits: { maxFileBytes: 1024, maxExpandedBytes: 2048 },
+              },
               manual: { kind: "vendor_recipe", recipes: { linux: [{ cmd: "sh", args: ["install-nativefixture"] }] } },
               recommendationOrder: 7,
               guideUrl: "https://example.test/nativefixture/install",
@@ -3733,6 +4943,11 @@ test('generateBundledPluginEntries derives bundled CLI runtime facts from native
   assert.match(agentsOut, /"binaryName":\s*"nativefixture"/);
   assert.match(agentsOut, /"alternativeBinaryNames":\s*\[\s*"nativefixture-cli"\s*\]/);
   assert.match(agentsOut, /"alternativeBinaryFallbackEnabledEnvVar":\s*"NATIVEFIXTURE_CLI_FALLBACK"/);
+  assert.match(agentsOut, /"assetNameByPlatform":\s*\{/);
+  assert.match(agentsOut, /"nativefixture-windows-x64\.tar\.gz"/);
+  assert.match(agentsOut, /"archiveEntriesByPlatform":\s*\{/);
+  assert.match(agentsOut, /"bin\/nativefixture\.exe"/);
+  assert.match(agentsOut, /"archiveExtractionLimits":\s*\{[\s\S]*"maxExpandedBytes":\s*2048/);
   assert.match(agentsOut, /"manual":\s*\{\s*"kind":\s*"vendor_recipe"/);
   assert.match(agentsOut, /"recommendationOrder":\s*7/);
   assert.match(agentsOut, /"guideUrl":\s*"https:\/\/example\.test\/nativefixture\/install"/);
@@ -4024,6 +5239,61 @@ test('generateBundledPluginEntries check mode rejects visible message resolver d
   await assert.rejects(
     generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']),
     /generated output differs: .*generatedBundledPluginEntries\.visibleMessageResolvers\.ts/,
+  );
+});
+
+test('generateBundledPluginEntries derives detected MCP config scan support from the Agent-owned discovery source', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-mcp-scan-derived-'));
+  writeAgentPluginFixture(repoRoot, 'opencode', 'opencode', { mcpDiscoverySourceAgentId: 'opencode' });
+  writeOpenCodeUiDescriptorFixture(repoRoot);
+  writeGeneratorOutputScaffold(repoRoot);
+
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+  const overridesOut = readFileSync(
+    resolve(repoRoot, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides.ts'),
+    'utf8',
+  );
+  assert.match(overridesOut, /"mcpServers": \{\s*"supportsDetectedConfigScan": true\s*\}/);
+});
+
+test('generateBundledPluginEntries omits detected MCP config scan support for an Agent that owns no discovery source', async () => {
+  // A discovery source owned by another Agent must not leak the scan offer onto
+  // this one: ownership is the declaration's metadata.agentId, exactly as the
+  // daemon's detection resolves it.
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-mcp-scan-unowned-'));
+  writeAgentPluginFixture(repoRoot, 'opencode', 'opencode', { mcpDiscoverySourceAgentId: 'someOtherAgent' });
+  writeOpenCodeUiDescriptorFixture(repoRoot);
+  writeGeneratorOutputScaffold(repoRoot);
+
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+  const overridesOut = readFileSync(
+    resolve(repoRoot, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides.ts'),
+    'utf8',
+  );
+  assert.doesNotMatch(overridesOut, /supportsDetectedConfigScan/);
+});
+
+test('generateBundledPluginEntries rejects a UI descriptor that restates derived MCP scan support', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-mcp-scan-restated-'));
+  writeAgentPluginFixture(repoRoot, 'opencode', 'opencode', { mcpDiscoverySourceAgentId: 'opencode' });
+  writeOpenCodeUiDescriptorFixture(repoRoot);
+  writeGeneratorOutputScaffold(repoRoot);
+
+  const descriptorPath = resolve(repoRoot, 'packages/plugins/opencode/src/ui/descriptor.ts');
+  writeFileSync(
+    descriptorPath,
+    readFileSync(descriptorPath, 'utf8').replace(
+      '"behavior": {',
+      '"behavior": {\n    "mcpServers": { "supportsDetectedConfigScan": true },',
+    ),
+    'utf8',
+  );
+
+  await assert.rejects(
+    generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']),
+    /behavior\.mcpServers.*contributes\.mcp\.discoverySources/s,
   );
 });
 
@@ -4331,6 +5601,7 @@ test('generateBundledPluginEntries skips reservation-only plugin packages', asyn
   writeJson(resolve(repoRoot, 'packages/plugins/claude/package.json'), {
     name: '@happier-dev/plugins-claude',
     version: '0.0.0',
+    files: IMMUTABLE_BUNDLED_PLUGIN_FIXTURE_FILES,
   });
   writeJson(resolve(repoRoot, 'packages/plugins/placeholder/package.json'), {
     name: '@happier-dev/plugins-placeholder',
@@ -4397,7 +5668,7 @@ test('generateBundledPluginEntries projects non-agent plugin packages without ag
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/scm-github/src/manifest.ts'),
     pluginManifestSource({
-      id: 'happier.scm.hosting.github',
+      id: 'happier.scm.forge.github',
       capabilities: ['scmHostingProviders'],
       contributes: '{ scmHostingProviders: [{ id: "github", title: "GitHub", kind: "github", capabilities: ["detect"] }] }',
     }),
@@ -4443,7 +5714,7 @@ test('generateBundledPluginEntries projects non-agent plugin packages without ag
   assert.doesNotMatch(agentIdsOut, /scm-github/);
 });
 
-test('generateBundledPluginEntries emits host-private managed Provider facets through implementation bindings', async () => {
+test('generateBundledPluginEntries ignores private managed Provider bindings', async () => {
   const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-managed-provider-overlay-'));
   writeProviderContributionPluginFixture(repoRoot);
   writeFileSync(
@@ -4495,16 +5766,12 @@ test('generateBundledPluginEntries emits host-private managed Provider facets th
     resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
     'utf8',
   );
-  assert.match(cliOut, /registrationFamily:\s*'providers'/);
-  assert.match(cliOut, /pluginId:\s*"happier\.provider\.gateway"[\s\S]*localId:\s*"gateway"/u);
-  assert.match(cliOut, /implementationOwnerId:\s*"happier\.provider\.gateway\/gateway"/);
-  assert.match(
+  assert.doesNotMatch(
     cliOut,
-    /import \{ MANAGED_PROVIDER_RUNTIME_ADAPTER as GATEWAY_MANAGED_PROVIDER_RUNTIME_ADAPTER \} from '@happier-dev\/plugins-gateway';/,
+    /MANAGED_PROVIDER_IMPLEMENTATION|MANAGED_PROVIDER_RUNTIME_ADAPTER|managedRuntimeAdapter/u,
   );
-  assert.match(cliOut, /runtimeAdapter:\s*GATEWAY_MANAGED_PROVIDER_RUNTIME_ADAPTER/);
-  assert.match(cliOut, /"executableBaseName":\s*"gateway-managed"/);
-  assert.match(cliOut, /"purpose":\s*"upstream"/);
+  assert.doesNotMatch(cliOut, /implementationOwnerId:\s*"happier\.provider\.gateway\/gateway"/u);
+  assert.doesNotMatch(cliOut, /"executableBaseName":\s*"gateway-managed"/u);
   assert.doesNotMatch(cliOut, /from ['"]@happier-dev\/plugins-gateway\/managed['"]/);
 });
 
@@ -4519,7 +5786,7 @@ test('generateBundledPluginEntries write mode syncs both CLI plugin shipping dec
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/scm-github/src/manifest.ts'),
     pluginManifestSource({
-      id: 'happier.scm.hosting.github',
+      id: 'happier.scm.forge.github',
       capabilities: ['scmHostingProviders'],
       contributes: '{ scmHostingProviders: [{ id: "github", title: "GitHub", kind: "github", capabilities: ["detect"] }] }',
     }),
@@ -4835,6 +6102,46 @@ test('generateBundledPluginEntries rejects duplicate AGENT_DEFINITION ids', asyn
   );
 });
 
+test('generateBundledPluginEntries rejects a bundled Agent that declares manifest ui behavior', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-generate-agent-manifest-ui-'));
+  writeAgentPluginFixture(repoRoot, 'ui-declaring', 'ui-declaring', {
+    agentUi: '{ behavior: { footer: { usePermissionUpdates: false } } }',
+  });
+  // The fixture declares a daemon entrypoint, so canonical runtime staging needs
+  // a real package entry and agent registration before manifest-level
+  // validation is reached.
+  mkdirSync(resolve(repoRoot, 'packages/plugins/ui-declaring/src/agent/runtime'), { recursive: true });
+  writeFileSync(
+    resolve(repoRoot, 'packages/plugins/ui-declaring/src/agent/runtime/factory.ts'),
+    'export async function createFixtureAgentRuntime() { return { sessions: {} }; }\n',
+    'utf8',
+  );
+  writeFileSync(
+    resolve(repoRoot, 'packages/plugins/ui-declaring/src/index.ts'),
+    [
+      "export { PLUGIN_MANIFEST as manifest } from './manifest.js';",
+      "import { createFixtureAgentRuntime } from './agent/runtime/factory.js';",
+      '',
+      'export function activate(api: { agents: { register: Function } }): void {',
+      "  api.agents.register('ui-declaring', createFixtureAgentRuntime, {",
+      "    sessionRunnerFactory: { module: './agent/runtime/factory', export: 'createFixtureAgentRuntime', runtimeApiVersion: 1 },",
+      '  });',
+      '}',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  writeGeneratorOutputScaffold(repoRoot);
+
+  // The client short-circuits every bundled Agent id onto its build-time
+  // descriptor, so a manifest ui block on a bundled Agent is silently dropped.
+  // The generator is the authoring gate that must refuse it instead.
+  await assert.rejects(
+    generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']),
+    /contributes\.agents\.ui-declaring\.ui[\s\S]*src\/ui\/descriptor\.ts/,
+  );
+});
+
 test('generateBundledPluginEntries scopes managed-dependency local ids to their plugin owners', async () => {
   const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-generate-installable-id-duplicate-'));
   writeInstallablePluginFixture(repoRoot, 'left-installable', 'shared-tool');
@@ -4926,7 +6233,7 @@ test('generateBundledPluginEntries rejects malformed bundled SCM provider contri
     [
       'export const PLUGIN_MANIFEST = Object.freeze({',
       '  schemaVersion: 2,',
-      '  id: "happier.scm.hosting.github",',
+      '  id: "happier.scm.forge.github",',
       '  version: "0.0.0",',
       '  displayName: "GitHub SCM hosting provider",',
       '  description: "Detects GitHub remotes.",',
@@ -5063,12 +6370,11 @@ test('generateBundledPluginEntries projects only reserved first-party voice pack
   for (const packageId of ['elevenlabs', 'google', 'openai', 'xai']) {
     writeBundledVoicePluginFixture(repoRoot, packageId, packageId === 'xai'
       ? {
-          manifestContributes: '{ voiceProviders: [{ id: "realtime-grok", title: "xAI Grok Voice", kind: "conversation", roles: ["conversation_stt", "conversation_tts", "realtime_conversation", "turn_control"], platforms: ["web"], capabilities: { readiness: { requirements: ["credential"] }, turn: { cancelResponse: true, bargeIn: true } }, client: { artifactId: "voice-runtime-web", modulePath: "./voiceRuntime", exportName: "activate" } }] }',
+          manifestContributes: '{ voiceProviders: [{ id: "realtime-grok", title: "xAI Grok Voice", kind: "conversation", roles: ["conversation_stt", "conversation_tts", "realtime_conversation", "turn_control"], platforms: ["web"], capabilities: { turn: { cancelResponse: true, bargeIn: true } }, client: { artifactId: "voice-runtime-web", modulePath: "./voiceRuntime", exportName: "activate" } }] }',
         }
       : packageId === 'google'
         ? {
             packageVersion: '1.2.3',
-            manifestContributes: '{ voiceProviders: [{ id: "speech", title: "Google Voice Speech", kind: "speech", roles: ["dictation_stt", "conversation_stt", "conversation_tts"], platforms: ["web", "ios", "android"], capabilities: { readiness: { requirements: ["credential"] } } }] }',
           }
         : {});
   }
@@ -5096,13 +6402,23 @@ test('generateBundledPluginEntries projects only reserved first-party voice pack
   const iosRuntimeOut = readGeneratedUiVoiceRuntimeEntriesOutput(repoRoot, 'ios');
   const androidRuntimeOut = readGeneratedUiVoiceRuntimeEntriesOutput(repoRoot, 'android');
   assert.match(uiOut, /GENERATED FILE CONTRACT \(VOICE-FIRST-PARTY-PROJECTION\)/);
-  assert.match(uiOut, /BUNDLED_VOICE_UI_ENTRIES as ELEVENLABS_BUNDLED_VOICE_UI_ENTRIES/);
+  for (const voicePackagePrefix of ['ELEVENLABS', 'GOOGLE', 'OPENAI', 'XAI']) {
+    assert.match(
+      uiOut,
+      new RegExp(`const ${voicePackagePrefix}_BUNDLED_PLUGIN_MANIFEST = Object\\.freeze\\(`),
+    );
+  }
+  assert.doesNotMatch(
+    uiOut,
+    /@happier-dev\/plugins-(?:elevenlabs|google|openai|xai)\/manifest/,
+  );
+  assert.match(uiOut, /VOICE_PROVIDER_PRESENTATIONS as ELEVENLABS_VOICE_PROVIDER_PRESENTATIONS/);
   assert.match(uiOut, /@happier-dev\/plugins-elevenlabs\/ui\/voice/);
-  assert.match(uiOut, /BUNDLED_VOICE_UI_ENTRIES as GOOGLE_BUNDLED_VOICE_UI_ENTRIES/);
+  assert.match(uiOut, /VOICE_PROVIDER_PRESENTATIONS as GOOGLE_VOICE_PROVIDER_PRESENTATIONS/);
   assert.match(uiOut, /@happier-dev\/plugins-google\/ui\/voice/);
-  assert.match(uiOut, /BUNDLED_VOICE_UI_ENTRIES as OPENAI_BUNDLED_VOICE_UI_ENTRIES/);
+  assert.match(uiOut, /VOICE_PROVIDER_PRESENTATIONS as OPENAI_VOICE_PROVIDER_PRESENTATIONS/);
   assert.match(uiOut, /@happier-dev\/plugins-openai\/ui\/voice/);
-  assert.match(uiOut, /BUNDLED_VOICE_UI_ENTRIES as XAI_BUNDLED_VOICE_UI_ENTRIES/);
+  assert.match(uiOut, /VOICE_PROVIDER_PRESENTATIONS as XAI_VOICE_PROVIDER_PRESENTATIONS/);
   assert.doesNotMatch(uiOut, /activate as/);
   assert.doesNotMatch(uiOut, /BUNDLED_VOICE_PROVIDER_ACTIVATION_ENTRIES/);
   assert.doesNotMatch(uiOut, /BUNDLED_VOICE_CONVERSATION_RUNTIME_ENTRIES as XAI_BUNDLED_VOICE_CONVERSATION_RUNTIME_ENTRIES/);
@@ -5112,13 +6428,13 @@ test('generateBundledPluginEntries projects only reserved first-party voice pack
     assert.match(
       webRuntimeOut,
       new RegExp(
-        `BUNDLED_VOICE_UI_ENTRIES as ${executablePackagePrefix}_BUNDLED_VOICE_UI_ENTRIES, activate as ${executablePackagePrefix}_BUNDLED_VOICE_ACTIVATE`,
+        `const ${executablePackagePrefix}_BUNDLED_PLUGIN_MANIFEST = Object\\.freeze\\(`,
       ),
     );
     assert.match(
       webRuntimeOut,
       new RegExp(
-        `const ${executablePackagePrefix}_BUNDLED_PUBLIC_VOICE_ACTIVATIONS = createBundledConversationRuntimeEntries\\(\\s*${executablePackagePrefix}_BUNDLED_VOICE_UI_ENTRIES,\\s*${executablePackagePrefix}_BUNDLED_VOICE_ACTIVATE,\\s*\\);`,
+        `const ${executablePackagePrefix}_BUNDLED_PUBLIC_VOICE_ACTIVATIONS = createBundledConversationRuntimeEntries\\(\\s*${executablePackagePrefix}_BUNDLED_PLUGIN_MANIFEST,\\s*${executablePackagePrefix}_BUNDLED_VOICE_ACTIVATE,\\s*\\);`,
       ),
     );
     assert.match(
@@ -5126,6 +6442,10 @@ test('generateBundledPluginEntries projects only reserved first-party voice pack
       new RegExp(`\\.\\.\\.${executablePackagePrefix}_BUNDLED_PUBLIC_VOICE_ACTIVATIONS,`),
     );
   }
+  assert.doesNotMatch(
+    webRuntimeOut,
+    /@happier-dev\/plugins-(?:elevenlabs|google|openai|xai)\/manifest/,
+  );
   assert.doesNotMatch(webRuntimeOut, /activate as GOOGLE_BUNDLED_VOICE_ACTIVATE/);
   assert.doesNotMatch(webRuntimeOut, /CODEX_BUNDLED_VOICE_ACTIVATE/);
   assert.match(webRuntimeOut, /BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES/);
@@ -5139,7 +6459,9 @@ test('generateBundledPluginEntries projects only reserved first-party voice pack
   }
   assert.match(uiOut, /@happier-dev\/plugins-xai\/ui\/voice/);
   assert.doesNotMatch(uiOut, /\/agent\/voice/);
-  assert.match(uiOut, /BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES/);
+  assert.match(uiOut, /BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS/);
+  assert.match(uiOut, /BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS/);
+  assert.doesNotMatch(uiOut, /BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES/);
   assert.deepEqual(
     ['elevenlabs', 'google', 'openai', 'xai'].map((packageId) => uiOut.indexOf(`plugins-${packageId}/ui/voice`)),
     [...['elevenlabs', 'google', 'openai', 'xai'].map((packageId) => uiOut.indexOf(`plugins-${packageId}/ui/voice`))]
@@ -5184,18 +6506,16 @@ test('generateBundledPluginEntries independently disables, removes, and re-enabl
   const packageIds = ['elevenlabs', 'google', 'openai', 'xai'] as const;
   type VoicePackageId = typeof packageIds[number];
   const providerIdByPackage = Object.freeze({
-    elevenlabs: 'realtime_elevenlabs',
-    google: 'google_gemini',
-    openai: 'realtime_openai',
-    xai: 'realtime_grok',
+    elevenlabs: 'happier.voice.elevenlabs/realtime-elevenlabs',
+    google: 'happier.voice.google/gemini-stt',
+    openai: 'happier.voice.openai/realtime-openai',
+    xai: 'happier.voice.xai/realtime-grok',
   } as const);
   const persistedEnvelopeFor = (packageId: VoicePackageId) => Object.freeze({
-    schemaVersion: 1 as const,
-    config: Object.freeze({
-      owner: packageId,
-      selection: `persisted-${providerIdByPackage[packageId]}`,
-      nested: Object.freeze({ preserved: true, ordinal: packageIds.indexOf(packageId) }),
-    }),
+    schemaVersion: 2 as const,
+    config: Object.freeze(packageId === 'google'
+      ? { phase: `persisted-${packageId}`, model: 'fixture-model' }
+      : { phase: `persisted-${packageId}` }),
   });
   const expectedFor = (
     phases: Readonly<Record<VoicePackageId, string | null>>,
@@ -5314,7 +6634,16 @@ test('generateBundledPluginEntries independently disables, removes, and re-enabl
   });
   writeGeneratorOutputScaffold(removedRoot);
   await generateBundledPluginEntries(['--root', removedRoot, '--mode', 'write']);
-  assert.match(readGeneratedUiVoiceEntriesOutput(removedRoot), /Object\.freeze\(\[\]\)/);
+  const removedUiOut = readGeneratedUiVoiceEntriesOutput(removedRoot);
+  assert.match(
+    removedUiOut,
+    /BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS = Object\.freeze\(\[\s*\]\)/,
+  );
+  assert.match(
+    removedUiOut,
+    /BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS = Object\.freeze\(\[\s*\]\)/,
+  );
+  assert.doesNotMatch(removedUiOut, /BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES/);
   for (const app of ['ui', 'cli']) {
     const pkg = JSON.parse(readFileSync(resolve(removedRoot, `apps/${app}/package.json`), 'utf8')) as {
       dependencies?: Record<string, string>;
@@ -5347,6 +6676,33 @@ test('generateBundledPluginEntries rejects unreserved or mismatched first-party 
     generateBundledPluginEntries(['--root', mismatchedRoot, '--mode', 'write']),
     /Bundled first-party voice package 'google' must use plugin identity 'happier\.voice\.google', got 'happier\.voice\.xai'/,
   );
+});
+
+test('generateBundledPluginEntries reserves the approved OpenAI-compatible first-party voice identity', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-voice-projection-openai-compat-'));
+  writeBundledVoicePluginFixture(repoRoot, 'openai-compat', {
+    manifestId: 'happier.voice.openai-compat',
+    manifestContributes: '{ voiceProviders: [{ id: "stt", title: "OpenAI-compatible STT", kind: "speech", roles: ["dictation_stt", "conversation_stt"], platforms: ["web", "ios", "android"], settings: { schemaVersion: 2, fields: [{ id: "model", title: "Model", schema: { type: "string", minLength: 1, maxLength: 256 }, default: "fixture-model", presentation: { control: "text" } }] } }, { id: "tts", title: "OpenAI-compatible TTS", kind: "speech", roles: ["conversation_tts"], platforms: ["web", "ios", "android"], settings: { schemaVersion: 2, fields: [{ id: "voiceName", title: "Voice", schema: { type: "string", minLength: 1, maxLength: 256 }, default: "fixture-voice", presentation: { control: "text" } }] } }] }',
+  });
+  writeJson(resolve(repoRoot, 'apps/ui/package.json'), {
+    name: '@happier-dev/ui',
+    dependencies: {},
+  });
+  writeJson(resolve(repoRoot, 'apps/cli/package.json'), {
+    name: '@happier-dev/cli',
+    dependencies: {},
+    bundledDependencies: [],
+  });
+  writeGeneratorOutputScaffold(repoRoot);
+
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+  const cliPackage = JSON.parse(readFileSync(resolve(repoRoot, 'apps/cli/package.json'), 'utf8')) as {
+    dependencies?: Record<string, string>;
+    bundledDependencies?: string[];
+  };
+  assert.equal(cliPackage.dependencies?.['@happier-dev/plugins-openai-compat'], '0.0.0');
+  assert.equal(cliPackage.bundledDependencies?.includes('@happier-dev/plugins-openai-compat'), true);
 });
 
 test('generateBundledPluginEntries validates voice trust before mutating host package membership', async () => {
@@ -5392,12 +6748,63 @@ test('generateBundledPluginEntries validates voice trust before mutating host pa
   );
 });
 
-test('generateBundledPluginEntries statically rejects executable first-party voice manifests without running them', () => {
-  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-voice-projection-executable-manifest-'));
+test('generateBundledPluginEntries accepts computed first-party voice manifests authored through the plugin authoring API', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-voice-projection-computed-manifest-'));
+  writeBundledVoicePluginFixture(repoRoot, 'google');
+  const staticManifestSource = readFileSync(
+    resolve(repoRoot, 'packages/plugins/google/src/manifest.ts'),
+    'utf8',
+  );
+  const authoredManifestSource = staticManifestSource.replace(
+    'export const PLUGIN_MANIFEST = ',
+    'export const AUTHORED_MANIFEST = ',
+  );
+  assert.notEqual(authoredManifestSource, staticManifestSource);
+  writeFileSync(
+    resolve(repoRoot, 'packages/plugins/google/src/manifestSource.ts'),
+    authoredManifestSource,
+    'utf8',
+  );
+  // Mirrors the repository's canonical definePlugin authoring form: an imported
+  // value, a call-expression initializer, and a destructured export. None of that
+  // is statically readable source text, and every first-party plugin uses it.
+  writeFileSync(
+    resolve(repoRoot, 'packages/plugins/google/src/manifest.ts'),
+    [
+      "import { AUTHORED_MANIFEST } from './manifestSource.js';",
+      '',
+      'const definePlugin = (input: { manifest: unknown }) => Object.freeze(input);',
+      '',
+      'export const { manifest: PLUGIN_MANIFEST } = definePlugin({ manifest: AUTHORED_MANIFEST });',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  writeJson(resolve(repoRoot, 'apps/ui/package.json'), { name: '@happier-dev/ui', dependencies: {} });
+  writeJson(resolve(repoRoot, 'apps/cli/package.json'), {
+    name: '@happier-dev/cli',
+    dependencies: {},
+    bundledDependencies: [],
+  });
+  writeGeneratorOutputScaffold(repoRoot);
+
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+  const uiOut = readGeneratedUiVoiceEntriesOutput(repoRoot);
+  assert.match(uiOut, /const GOOGLE_BUNDLED_PLUGIN_MANIFEST = Object\.freeze\(/);
+  assert.match(uiOut, /"id": "happier\.voice\.google"/);
+  // Evaluating the authoring source is a build-time step only: the generated
+  // projection still inlines the manifest instead of importing the plugin module.
+  assert.doesNotMatch(uiOut, /@happier-dev\/plugins-google\/manifest/);
+});
+
+test('generateBundledPluginEntries isolates first-party voice manifest module exits from the generator', () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-voice-projection-isolated-voice-manifest-exit-'));
   writeBundledVoicePluginFixture(repoRoot, 'google');
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/google/src/manifest.ts'),
     [
+      "process.stderr.write('isolated voice manifest stderr sentinel\\n');",
       'process.exit(73);',
       pluginManifestSource({ id: 'happier.voice.google' }),
     ].join('\n'),
@@ -5424,11 +6831,46 @@ test('generateBundledPluginEntries statically rejects executable first-party voi
     { encoding: 'utf8' },
   );
 
-  assert.notEqual(result.status, 73, 'voice manifest code must never execute during discovery');
+  assert.notEqual(result.status, 73, 'inspected voice manifest exits must not terminate the generator process directly');
+  assert.equal(result.status, 1);
   assert.match(
     `${result.stdout}\n${result.stderr}`,
-    /first-party voice manifest must contain only the static PLUGIN_MANIFEST export/,
+    /Failed to inspect TypeScript module .*packages\/plugins\/google\/src\/manifest\.ts: isolated voice manifest stderr sentinel/,
   );
+});
+
+test('bundled first-party voice source manifests load through the canonical isolated module reader', () => {
+  const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
+  const loaderPath = fileURLToPath(new URL('./readTypescriptModule.mjs', import.meta.url));
+  const outputMarker = '__HAPPIER_GENERATOR_MODULE_JSON__';
+
+  for (const packageId of ['elevenlabs', 'google', 'openai', 'openai-compat', 'xai'] as const) {
+    const manifestPath = resolve(repoRoot, `packages/plugins/${packageId}/src/manifest.ts`);
+    const result = spawnSync(process.execPath, [loaderPath, manifestPath], {
+      encoding: 'utf8',
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    assert.equal(
+      result.status,
+      0,
+      `${packageId} must load through the canonical bundled-plugin manifest reader: ${result.stderr}`,
+    );
+    const markerIndex = result.stdout.lastIndexOf(outputMarker);
+    assert.notEqual(markerIndex, -1, `${packageId} must emit an isolated module result`);
+    const payload = JSON.parse(result.stdout.slice(markerIndex + outputMarker.length)) as Readonly<{
+      values: Readonly<Record<string, Readonly<{
+        id?: string;
+        contributes?: Readonly<{ voiceProviders?: readonly unknown[] }>;
+      }>>>;
+    }>;
+    const manifest = payload.values.PLUGIN_MANIFEST;
+    assert.equal(manifest?.id, `happier.voice.${packageId}`);
+    assert.equal(
+      (manifest?.contributes?.voiceProviders ?? []).length > 0,
+      true,
+      `${packageId} must project its voice provider contributions`,
+    );
+  }
 });
 
 test('generateBundledPluginEntries isolates executable non-voice manifest exits from voice projection generation', () => {
@@ -5585,3 +7027,822 @@ test('generateBundledPluginEntries check mode rejects voice projection and depen
     /apps\/ui voice plugin dependencies are out of sync/,
   );
 });
+
+test('generates app-bundled Plugin UI assets only from a verified immutable UI artifact graph', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-bundled-plugin-ui-artifacts-'));
+  const packageId = 'inspector';
+  const packageName = '@happier-dev/plugins-inspector';
+  const packageRoot = resolve(repoRoot, `packages/plugins/${packageId}`);
+  const artifactRoot = resolve(packageRoot, 'dist/happier-plugin-ui');
+  const hostedEntryPath = 'hosted-web/review/index.html';
+  const nativeWebEntryPath = 'react-native-web/inspector/entry.mjs.bundle';
+  const hostedBytes = new TextEncoder().encode('<!doctype html><script src="./assets/review.js"></script>');
+  const nativeWebBytes = new TextEncoder().encode('export const renderSurface = true;');
+  const fileEntry = (relativePath: string, bytes: Uint8Array) => Object.freeze({
+    relativePath,
+    digest: computePluginUiArtifactSha256DigestV1(bytes),
+    byteSize: bytes.byteLength,
+  });
+  const hostedFiles = Object.freeze([fileEntry(hostedEntryPath, hostedBytes)]);
+  const nativeWebFiles = Object.freeze([fileEntry(nativeWebEntryPath, nativeWebBytes)]);
+
+  writeJson(resolve(packageRoot, 'package.json'), {
+    name: packageName,
+    version: '1.2.3',
+    files: ['dist', 'package.json'],
+  });
+  mkdirSync(resolve(packageRoot, 'src'), { recursive: true });
+  writeFileSync(
+    resolve(packageRoot, 'src/manifest.ts'),
+    pluginManifestSource({ id: 'happier.fixture.inspector', packageVersion: '1.2.3', daemon: false }),
+    'utf8',
+  );
+  mkdirSync(resolve(artifactRoot, 'hosted-web/review'), { recursive: true });
+  mkdirSync(resolve(artifactRoot, 'react-native-web/inspector'), { recursive: true });
+  writeFileSync(resolve(artifactRoot, hostedEntryPath), hostedBytes);
+  writeFileSync(resolve(artifactRoot, nativeWebEntryPath), nativeWebBytes);
+  writeJson(resolve(artifactRoot, 'ui-artifacts.json'), {
+    version: 1,
+    entries: [
+      {
+        contributionId: 'review-web',
+        tier: 'hostedWeb',
+        platform: 'web',
+        entry: hostedEntryPath,
+        files: hostedFiles,
+        digest: computePluginUiArtifactFileSetSha256DigestV1([
+          { relativePath: hostedEntryPath, bytes: hostedBytes },
+        ]),
+        builtWith: { bundler: 'vite', version: '7.3.1' },
+        hostUiApiVersion: '1.0.0',
+        compat: { react: '19.2.0' },
+      },
+      {
+        contributionId: 'inspector-native',
+        tier: 'reactNative',
+        platform: 'web',
+        entry: nativeWebEntryPath,
+        files: nativeWebFiles,
+        digest: computePluginUiArtifactFileSetSha256DigestV1([
+          { relativePath: nativeWebEntryPath, bytes: nativeWebBytes },
+        ]),
+        builtWith: { bundler: 'vite', version: '7.3.1' },
+        hostUiApiVersion: '1.0.0',
+        compat: { react: '19.2.0', reactNative: '0.83.5' },
+      },
+    ],
+  });
+  writeJson(resolve(repoRoot, 'apps/ui/package.json'), {
+    name: '@happier-dev/app',
+    dependencies: {},
+  });
+  writeGeneratorOutputScaffold(repoRoot);
+
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+  const generatedRoot = resolve(repoRoot, 'apps/ui/sources/sync/domains/plugins/availability');
+  const webOutput = readFileSync(resolve(generatedRoot, 'generatedBundledPluginUiArtifacts.web.ts'), 'utf8');
+  const iosOutput = readFileSync(resolve(generatedRoot, 'generatedBundledPluginUiArtifacts.ios.ts'), 'utf8');
+  const androidOutput = readFileSync(resolve(generatedRoot, 'generatedBundledPluginUiArtifacts.android.ts'), 'utf8');
+  const hostedSpecifier = `${packageName}/happier-plugin-ui/${hostedEntryPath}`;
+  const nativeWebSpecifier = `${packageName}/happier-plugin-ui/${nativeWebEntryPath}`;
+
+  expectGeneratedBundledPluginUiAsset(webOutput, hostedSpecifier);
+  expectGeneratedBundledPluginUiAsset(webOutput, nativeWebSpecifier);
+  expectGeneratedBundledPluginUiAsset(iosOutput, hostedSpecifier);
+  expectGeneratedBundledPluginUiAsset(androidOutput, hostedSpecifier);
+  assert.doesNotMatch(iosOutput, new RegExp(nativeWebEntryPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(androidOutput, new RegExp(nativeWebEntryPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+
+  const uiPackageJson = JSON.parse(readFileSync(resolve(repoRoot, 'apps/ui/package.json'), 'utf8')) as {
+    dependencies?: Record<string, string>;
+  };
+  assert.equal(uiPackageJson.dependencies?.[packageName], '1.2.3');
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']);
+
+  writeFileSync(resolve(artifactRoot, hostedEntryPath), '<!doctype html>stale', 'utf8');
+  await assert.rejects(
+    generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']),
+    /bundled Plugin UI artifact file digest mismatch/i,
+  );
+});
+
+test('aggregate plugin UI publication reads final artifacts without source evaluation and preserves last-green on invalid graphs', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-bundled-plugin-ui-aggregate-'));
+  const packageId = 'inspector';
+  const packageName = '@happier-dev/plugins-inspector';
+  const packageRoot = resolve(repoRoot, `packages/plugins/${packageId}`);
+  const artifactRoot = resolve(packageRoot, 'dist/happier-plugin-ui');
+  const entryPath = 'hosted-web/review/chunk.js';
+  const outputs = (platform: 'web' | 'ios' | 'android') => resolve(
+    repoRoot,
+    `apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.${platform}.ts`,
+  );
+  const writeArtifactManifest = (bytes: Uint8Array): void => {
+    writeJson(resolve(artifactRoot, 'ui-artifacts.json'), {
+      version: 1,
+      entries: [{
+        contributionId: 'review-web',
+        tier: 'hostedWeb',
+        platform: 'web',
+        entry: entryPath,
+        files: [{
+          relativePath: entryPath,
+          digest: computePluginUiArtifactSha256DigestV1(bytes),
+          byteSize: bytes.byteLength,
+        }],
+        digest: computePluginUiArtifactFileSetSha256DigestV1([
+          { relativePath: entryPath, bytes },
+        ]),
+        builtWith: { bundler: 'vite', version: '7.3.1' },
+        hostUiApiVersion: '1.0.0',
+        compat: {},
+      }],
+    });
+  };
+
+  const originalSpawnSync = childProcess.spawnSync;
+  let compilerSubprocessCount = 0;
+  childProcess.spawnSync = (...args: Parameters<typeof spawnSync>) => {
+    if (args[0] === 'ps') return originalSpawnSync(...args);
+    compilerSubprocessCount += 1;
+    throw new Error(`aggregate publication must not spawn a compiler subprocess: ${args[0]}`);
+  };
+  syncBuiltinESMExports();
+
+  try {
+    writeJson(resolve(packageRoot, 'package.json'), {
+      name: packageName,
+      version: '1.2.3',
+      files: ['dist', 'package.json'],
+    });
+    mkdirSync(resolve(packageRoot, 'src'), { recursive: true });
+    writeFileSync(
+      resolve(packageRoot, 'src/manifest.ts'),
+      'throw new Error("must not evaluate source");\n',
+      'utf8',
+    );
+    mkdirSync(resolve(packageRoot, '.happier-plugin'), { recursive: true });
+    writeFileSync(
+      resolve(packageRoot, '.happier-plugin/plugin.json'),
+      readFileSync(
+        resolve(CANONICAL_GENERATOR_REPO_ROOT, 'packages/plugins/inspector/.happier-plugin/plugin.json'),
+        'utf8',
+      ),
+      'utf8',
+    );
+    mkdirSync(resolve(artifactRoot, 'hosted-web/review'), { recursive: true });
+    const firstBytes = new TextEncoder().encode('export const chunk = "first";');
+    writeFileSync(resolve(artifactRoot, entryPath), firstBytes);
+    writeArtifactManifest(firstBytes);
+    writeJson(resolve(repoRoot, 'apps/ui/package.json'), {
+      name: '@happier-dev/ui',
+      dependencies: {},
+    });
+    writeGeneratorOutputScaffold(repoRoot);
+
+    await generateBundledPluginEntries([
+      '--root', repoRoot,
+      '--mode', 'write',
+      '--workspace', 'plugins-inspector',
+    ]);
+    const firstOutputs = Object.fromEntries(
+      (['web', 'ios', 'android'] as const).map((platform) => [
+        platform,
+        readFileSync(outputs(platform), 'utf8'),
+      ]),
+    ) as Record<'web' | 'ios' | 'android', string>;
+
+    // The aggregate path must keep using the manifest artifact rather than
+    // this intentionally invalid source module or its isolated evaluator.
+    const secondBytes = new TextEncoder().encode('export const chunk = "second";');
+    writeFileSync(resolve(artifactRoot, entryPath), secondBytes);
+    writeArtifactManifest(secondBytes);
+
+    await generateBundledPluginEntries([
+      '--root', repoRoot,
+      '--mode', 'write',
+      '--workspace', 'plugins-inspector',
+    ]);
+    for (const platform of ['web', 'ios', 'android'] as const) {
+      const output = readFileSync(outputs(platform), 'utf8');
+      assert.notEqual(output, firstOutputs[platform]);
+      assert.match(output, new RegExp(computePluginUiArtifactFileSetSha256DigestV1([
+        { relativePath: entryPath, bytes: secondBytes },
+      ]).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+
+    const secondOutputIdentity = Object.fromEntries(
+      (['web', 'ios', 'android'] as const).map((platform) => [
+        platform,
+        statSync(outputs(platform)).ino,
+      ]),
+    ) as Record<'web' | 'ios' | 'android', number>;
+    await generateBundledPluginEntries([
+      '--root', repoRoot,
+      '--mode', 'write',
+      '--workspace', 'plugins-inspector',
+    ]);
+    for (const platform of ['web', 'ios', 'android'] as const) {
+      assert.equal(statSync(outputs(platform)).ino, secondOutputIdentity[platform]);
+    }
+
+    const lastGreen = Object.fromEntries(
+      (['web', 'ios', 'android'] as const).map((platform) => [
+        platform,
+        readFileSync(outputs(platform), 'utf8'),
+      ]),
+    ) as Record<'web' | 'ios' | 'android', string>;
+    rmSync(resolve(artifactRoot, entryPath));
+    await assert.rejects(
+      generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check', '--aggregate']),
+      /Missing bundled Plugin UI artifact file/i,
+    );
+    for (const platform of ['web', 'ios', 'android'] as const) {
+      assert.equal(readFileSync(outputs(platform), 'utf8'), lastGreen[platform]);
+    }
+
+    writeFileSync(resolve(artifactRoot, entryPath), 'stale bytes', 'utf8');
+    await assert.rejects(
+      generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check', '--aggregate']),
+      /bundled Plugin UI artifact file digest mismatch/i,
+    );
+    for (const platform of ['web', 'ios', 'android'] as const) {
+      assert.equal(readFileSync(outputs(platform), 'utf8'), lastGreen[platform]);
+    }
+
+    const duplicatePackageRoot = resolve(repoRoot, 'packages/plugins/duplicate');
+    writeJson(resolve(duplicatePackageRoot, 'package.json'), {
+      name: '@happier-dev/plugins-duplicate',
+      version: '1.2.3',
+    });
+    mkdirSync(resolve(duplicatePackageRoot, 'src'), { recursive: true });
+    writeFileSync(resolve(duplicatePackageRoot, 'src/manifest.ts'), 'export {};\n', 'utf8');
+    mkdirSync(resolve(duplicatePackageRoot, '.happier-plugin'), { recursive: true });
+    writeFileSync(
+      resolve(duplicatePackageRoot, '.happier-plugin/plugin.json'),
+      readFileSync(resolve(packageRoot, '.happier-plugin/plugin.json'), 'utf8'),
+      'utf8',
+    );
+    await assert.rejects(
+      generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check', '--aggregate']),
+      /Duplicate bundled plugin id/i,
+    );
+    for (const platform of ['web', 'ios', 'android'] as const) {
+      assert.equal(readFileSync(outputs(platform), 'utf8'), lastGreen[platform]);
+    }
+    assert.equal(compilerSubprocessCount, 0);
+  } finally {
+    childProcess.spawnSync = originalSpawnSync;
+    syncBuiltinESMExports();
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('targeted protocol projection retains unrelated facts and rolls back the coherent UI/Protocol projection on replacement failure', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-bundled-plugin-protocol-targeted-'));
+  const leftProjectionPath = resolve(
+    repoRoot,
+    'packages/plugins/left/src/agent/protocolProjection.ts',
+  );
+  const rightProjectionPath = resolve(
+    repoRoot,
+    'packages/plugins/right/src/agent/protocolProjection.ts',
+  );
+  const profilesOutPath = resolve(
+    repoRoot,
+    'packages/protocol/src/agents/generated/profiles/builtInBackendProfiles.ts',
+  );
+  const memoryOutPath = resolve(
+    repoRoot,
+    'packages/protocol/src/agents/generated/memory/defaults.ts',
+  );
+  const protocolProjectionFactsOutPath = resolve(
+    repoRoot,
+    'packages/protocol/src/agents/generated/bundledPluginProtocolProjectionFacts.ts',
+  );
+  const uiArtifactRoot = resolve(repoRoot, 'packages/plugins/left/dist/happier-plugin-ui');
+  const uiArtifactEntryPath = 'hosted-web/review/chunk.js';
+  const uiProjectionOutPaths = [
+    resolve(
+      repoRoot,
+      'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.ts',
+    ),
+    resolve(
+      repoRoot,
+      'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.web.ts',
+    ),
+    resolve(
+      repoRoot,
+      'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.ios.ts',
+    ),
+    resolve(
+      repoRoot,
+      'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.android.ts',
+    ),
+  ] as const;
+  const writeUiArtifact = (bytes: Uint8Array): void => {
+    mkdirSync(resolve(uiArtifactRoot, 'hosted-web/review'), { recursive: true });
+    writeFileSync(resolve(uiArtifactRoot, uiArtifactEntryPath), bytes);
+    writeJson(resolve(uiArtifactRoot, 'ui-artifacts.json'), {
+      version: 1,
+      entries: [{
+        contributionId: 'review-web',
+        tier: 'hostedWeb',
+        platform: 'web',
+        entry: uiArtifactEntryPath,
+        files: [{
+          relativePath: uiArtifactEntryPath,
+          digest: computePluginUiArtifactSha256DigestV1(bytes),
+          byteSize: bytes.byteLength,
+        }],
+        digest: computePluginUiArtifactFileSetSha256DigestV1([
+          { relativePath: uiArtifactEntryPath, bytes },
+        ]),
+        builtWith: { bundler: 'vite', version: '7.3.1' },
+        hostUiApiVersion: '1.0.0',
+        compat: {},
+      }],
+    });
+  };
+  const writeProtocolProjection = (
+    packageId: string,
+    profileId: string,
+    { memoryBackendId }: Readonly<{ memoryBackendId?: string }> = {},
+  ): void => {
+    const constPrefix = packageId.toUpperCase();
+    writeFileSync(
+      resolve(repoRoot, `packages/plugins/${packageId}/src/agent/definition.ts`),
+      [
+        'export const AGENT_DEFINITION = Object.freeze({',
+        `  id: ${JSON.stringify(packageId)},`,
+        '  runtimeContributions: {',
+        '    protocolBuiltInBackendProfiles: {',
+        '      kind: "providerBuiltInBackendProfilesV1",',
+        `      providerId: ${JSON.stringify(packageId)},`,
+        '      source: "./agent/protocolProjection",',
+        `      exportName: ${JSON.stringify(`${constPrefix}_PROFILES`)},`,
+        '    },',
+        ...(memoryBackendId === undefined
+          ? []
+          : [
+            '    protocolMemoryDefaults: {',
+            '      kind: "providerMemoryDefaultsV1",',
+            `      providerId: ${JSON.stringify(packageId)},`,
+            '      source: "./agent/protocolProjection",',
+            `      exportName: ${JSON.stringify(`${constPrefix}_MEMORY_DEFAULTS`)},`,
+            '    },',
+          ]),
+        '  },',
+        '});',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeFileSync(
+      resolve(repoRoot, `packages/plugins/${packageId}/src/agent/protocolProjection.ts`),
+      [
+        `export const ${constPrefix}_PROFILES = [{ id: ${JSON.stringify(profileId)} }];`,
+        ...(memoryBackendId === undefined
+          ? []
+          : [`export const ${constPrefix}_MEMORY_DEFAULTS = { summarizerBackendId: ${JSON.stringify(memoryBackendId)} };`]),
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+  };
+  try {
+    writeAgentPluginFixture(repoRoot, 'left', 'left', { daemon: false });
+    writeAgentPluginFixture(repoRoot, 'right', 'right', { daemon: false });
+    for (const packageId of ['left', 'right']) {
+      mkdirSync(resolve(repoRoot, `packages/plugins/${packageId}/dist`), { recursive: true });
+      writeFileSync(
+        resolve(repoRoot, `packages/plugins/${packageId}/dist/index.js`),
+        'export {}\n',
+        'utf8',
+      );
+    }
+    writeProtocolProjection('left', 'left-v1', { memoryBackendId: 'left-v1' });
+    writeProtocolProjection('right', 'right-v1');
+    writeUiArtifact(new TextEncoder().encode('export const review = "v1";'));
+    writeJson(resolve(repoRoot, 'apps/ui/package.json'), {
+      name: '@happier-dev/ui',
+      dependencies: {},
+    });
+    writeGeneratorOutputScaffold(repoRoot);
+
+    // Bootstrap the existing full source publisher once. The targeted publish
+    // below must then reuse right's already-published facts instead of
+    // evaluating right source again.
+    await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+    writeProtocolProjection('left', 'left-v2', { memoryBackendId: 'left-v2' });
+    writeFileSync(
+      rightProjectionPath,
+      'throw new Error("unrelated protocol projection must not be evaluated");\n',
+      'utf8',
+    );
+    await generateBundledPluginEntries([
+      '--root', repoRoot,
+      '--mode', 'write',
+      '--workspace', 'plugins-left',
+    ]);
+
+    const profiles = readFileSync(profilesOutPath, 'utf8');
+    const defaults = readFileSync(memoryOutPath, 'utf8');
+    assert.match(profiles, /left-v2/u);
+    assert.match(profiles, /right-v1/u);
+    assert.match(defaults, /left-v2/u);
+
+    const outputIdentities = {
+      profiles: statSync(profilesOutPath).ino,
+      memory: statSync(memoryOutPath).ino,
+    };
+    await generateBundledPluginEntries([
+      '--root', repoRoot,
+      '--mode', 'write',
+      '--workspace', 'plugins-left',
+    ]);
+    assert.equal(statSync(profilesOutPath).ino, outputIdentities.profiles);
+    assert.equal(statSync(memoryOutPath).ino, outputIdentities.memory);
+
+    const projectionOutPaths = [
+      ...uiProjectionOutPaths,
+      protocolProjectionFactsOutPath,
+      profilesOutPath,
+      memoryOutPath,
+    ];
+    const lastGreenProjection = new Map(
+      projectionOutPaths.map((path) => [path, readFileSync(path, 'utf8')]),
+    );
+    writeProtocolProjection('left', 'left-v3', { memoryBackendId: 'left-v3' });
+    writeUiArtifact(new TextEncoder().encode('export const review = "v3";'));
+    const originalRenameSync = fs.renameSync;
+    let injectedRenameFailure = false;
+    fs.renameSync = function injectedProjectionRenameFailure(
+      sourcePath: Parameters<typeof fs.renameSync>[0],
+      targetPath: Parameters<typeof fs.renameSync>[1],
+    ): void {
+      if (!injectedRenameFailure && resolve(String(targetPath)) === profilesOutPath) {
+        injectedRenameFailure = true;
+        const error = new Error('injected coherent projection rename failure') as NodeJS.ErrnoException;
+        error.code = 'EIO';
+        throw error;
+      }
+      return originalRenameSync(sourcePath, targetPath);
+    };
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(
+        generateBundledPluginEntries([
+          '--root', repoRoot,
+          '--mode', 'write',
+          '--workspace', 'plugins-left',
+        ]),
+        /injected coherent projection rename failure/u,
+      );
+    } finally {
+      fs.renameSync = originalRenameSync;
+      syncBuiltinESMExports();
+    }
+    assert.equal(injectedRenameFailure, true);
+    for (const path of projectionOutPaths) {
+      assert.equal(readFileSync(path, 'utf8'), lastGreenProjection.get(path));
+    }
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('targeted protocol projection refuses to replace a missing private sidecar', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-bundled-plugin-protocol-sidecar-required-'));
+  const profilesOutPath = resolve(
+    repoRoot,
+    'packages/protocol/src/agents/generated/profiles/builtInBackendProfiles.ts',
+  );
+  const protocolProjectionFactsOutPath = resolve(
+    repoRoot,
+    'packages/protocol/src/agents/generated/bundledPluginProtocolProjectionFacts.ts',
+  );
+  const writeProtocolProjection = (packageId: string, profileId: string): void => {
+    const constPrefix = packageId.toUpperCase();
+    writeFileSync(
+      resolve(repoRoot, `packages/plugins/${packageId}/src/agent/definition.ts`),
+      [
+        'export const AGENT_DEFINITION = Object.freeze({',
+        `  id: ${JSON.stringify(packageId)},`,
+        '  runtimeContributions: {',
+        '    protocolBuiltInBackendProfiles: {',
+        '      kind: "providerBuiltInBackendProfilesV1",',
+        `      providerId: ${JSON.stringify(packageId)},`,
+        '      source: "./agent/protocolProjection",',
+        `      exportName: ${JSON.stringify(`${constPrefix}_PROFILES`)},`,
+        '    },',
+        '  },',
+        '});',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeFileSync(
+      resolve(repoRoot, `packages/plugins/${packageId}/src/agent/protocolProjection.ts`),
+      `export const ${constPrefix}_PROFILES = [{ id: ${JSON.stringify(profileId)} }];\n`,
+      'utf8',
+    );
+  };
+
+  try {
+    for (const packageId of ['left', 'right']) {
+      writeAgentPluginFixture(repoRoot, packageId, packageId, { daemon: false });
+      mkdirSync(resolve(repoRoot, `packages/plugins/${packageId}/dist`), { recursive: true });
+      writeFileSync(resolve(repoRoot, `packages/plugins/${packageId}/dist/index.js`), 'export {};\n', 'utf8');
+    }
+    writeProtocolProjection('left', 'left-v1');
+    writeProtocolProjection('right', 'right-v1');
+    writeGeneratorOutputScaffold(repoRoot);
+    await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+    writeFileSync(
+      resolve(repoRoot, 'packages/plugins/right/src/agent/protocolProjection.ts'),
+      'throw new Error("aggregate publication must not evaluate unrelated source");\n',
+      'utf8',
+    );
+    await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check', '--aggregate']);
+
+    const lastGreenProfiles = readFileSync(profilesOutPath, 'utf8');
+    assert.match(lastGreenProfiles, /right-v1/u);
+    const savedProtocolProjectionFacts = readFileSync(protocolProjectionFactsOutPath, 'utf8');
+    const protocolProjectionFacts = readGeneratedJsonExport<unknown[]>(
+      savedProtocolProjectionFacts,
+      'BUNDLED_PLUGIN_PROTOCOL_PROJECTION_FACTS',
+    );
+    writeFileSync(
+      protocolProjectionFactsOutPath,
+      [
+        'export const BUNDLED_PLUGIN_PROTOCOL_PROJECTION_FACTS = Object.freeze(',
+        `${JSON.stringify([...protocolProjectionFacts, protocolProjectionFacts[0]], null, 2)} satisfies readonly unknown[]);`,
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await assert.rejects(
+      generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check', '--aggregate']),
+      /Duplicate bundled protocol projection facts owner/i,
+    );
+    assert.equal(readFileSync(profilesOutPath, 'utf8'), lastGreenProfiles);
+    writeFileSync(protocolProjectionFactsOutPath, savedProtocolProjectionFacts, 'utf8');
+    rmSync(protocolProjectionFactsOutPath);
+    writeProtocolProjection('left', 'left-v2');
+
+    await assert.rejects(
+      generateBundledPluginEntries([
+        '--root', repoRoot,
+        '--mode', 'write',
+        '--workspace', 'plugins-left',
+      ]),
+      /Missing bundled protocol projection facts/i,
+    );
+    assert.equal(readFileSync(profilesOutPath, 'utf8'), lastGreenProfiles);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('scoped workspace publication validates only the requested plugin runtime', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-bundled-plugin-scoped-runtime-'));
+  const writeExecutablePlugin = (packageId: string): void => {
+    writeAgentPluginFixture(repoRoot, packageId, packageId, { daemon: true });
+    mkdirSync(resolve(repoRoot, `packages/plugins/${packageId}/src/agent/runtime`), { recursive: true });
+    writeFileSync(
+      resolve(repoRoot, `packages/plugins/${packageId}/src/agent/runtime/factory.ts`),
+      'export async function createFixtureAgentRuntime() { return { sessions: {} }; }\n',
+      'utf8',
+    );
+    writeFileSync(
+      resolve(repoRoot, `packages/plugins/${packageId}/src/index.ts`),
+      [
+        "export { PLUGIN_MANIFEST as manifest } from './manifest.js';",
+        "import { createFixtureAgentRuntime } from './agent/runtime/factory.js';",
+        '',
+        'export function activate(api: { agents: { register: Function } }): void {',
+        `  api.agents.register(${JSON.stringify(packageId)}, createFixtureAgentRuntime, {`,
+        "    sessionRunnerFactory: { module: './agent/runtime/factory', export: 'createFixtureAgentRuntime', runtimeApiVersion: 1 },",
+        '  });',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+  };
+
+  try {
+    writeGeneratorOutputScaffold(repoRoot);
+    writeExecutablePlugin('selected');
+    await generateBundledPluginEntries([
+      '--root', repoRoot,
+      '--mode', 'write',
+      '--workspace', 'plugins-selected',
+    ]);
+
+    writeExecutablePlugin('unrelated');
+    await generateBundledPluginEntries([
+      '--root', repoRoot,
+      '--mode', 'write',
+      '--workspace', 'plugins-unrelated',
+    ]);
+
+    const selectedRuntimePath = resolve(repoRoot, 'packages/plugins/selected/dist/index.js');
+    const unrelatedRuntimePath = resolve(repoRoot, 'packages/plugins/unrelated/dist/index.js');
+    const selectedRuntimeBytes = readFileSync(selectedRuntimePath);
+    writeFileSync(unrelatedRuntimePath, 'export const stale = true;\n', 'utf8');
+
+    await generateBundledPluginEntries([
+      '--root', repoRoot,
+      '--mode', 'check',
+      '--workspace', 'plugins-selected',
+    ]);
+
+    writeFileSync(selectedRuntimePath, 'export const stale = true;\n', 'utf8');
+    await assert.rejects(
+      generateBundledPluginEntries([
+        '--root', repoRoot,
+        '--mode', 'check',
+        '--workspace', 'plugins-selected',
+      ]),
+      /Bundled plugin runtime artifact differs/u,
+    );
+    writeFileSync(selectedRuntimePath, selectedRuntimeBytes);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('scoped workspace publication reports every requested plugin failure', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-bundled-plugin-scoped-failures-'));
+  const artifactsOutPath = resolve(
+    repoRoot,
+    'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
+  );
+  try {
+    writeGeneratorOutputScaffold(repoRoot);
+    for (const packageId of ['left', 'right', 'healthy']) {
+      writeAgentPluginFixture(repoRoot, packageId, packageId, { daemon: true });
+      mkdirSync(resolve(repoRoot, `packages/plugins/${packageId}/src/agent/runtime`), { recursive: true });
+      writeFileSync(
+        resolve(repoRoot, `packages/plugins/${packageId}/src/agent/runtime/factory.ts`),
+        'export async function createFixtureAgentRuntime() { return { sessions: {} }; }\n',
+        'utf8',
+      );
+      writeFileSync(
+        resolve(repoRoot, `packages/plugins/${packageId}/src/index.ts`),
+        [
+          "export { PLUGIN_MANIFEST as manifest } from './manifest.js';",
+          "import { createFixtureAgentRuntime } from './agent/runtime/factory.js';",
+          'export function activate(api: { agents: { register: Function } }): void {',
+          `  api.agents.register(${JSON.stringify(packageId)}, createFixtureAgentRuntime, {`,
+          "    sessionRunnerFactory: { module: './agent/runtime/factory', export: 'createFixtureAgentRuntime', runtimeApiVersion: 1 },",
+          '  });',
+          '}',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+    }
+    await generateBundledPluginEntries([
+      '--root', repoRoot,
+      '--mode', 'write',
+      '--workspace', 'plugins-left',
+      '--workspace', 'plugins-right',
+      '--workspace', 'plugins-healthy',
+    ]);
+
+    writeFileSync(
+      artifactsOutPath,
+      [
+        'export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze([] satisfies readonly unknown[]);',
+        'export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze([] satisfies readonly unknown[]);',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    for (const packageId of ['left', 'right']) {
+      writeFileSync(
+        resolve(repoRoot, `packages/plugins/${packageId}/src/manifest.ts`),
+        `throw new Error(${JSON.stringify(`${packageId} fixture failure`)});\n`,
+        'utf8',
+      );
+    }
+
+    await assert.rejects(
+      generateBundledPluginEntries([
+        '--root', repoRoot,
+        '--mode', 'write',
+        '--workspace', 'plugins-left',
+        '--workspace', 'plugins-right',
+        '--workspace', 'plugins-healthy',
+      ]),
+      (error: unknown) => {
+        assert.match(String(error), /plugins-left.*left fixture failure/su);
+        assert.match(String(error), /plugins-right.*right fixture failure/su);
+        return true;
+      },
+    );
+    assert.match(
+      readFileSync(artifactsOutPath, 'utf8'),
+      /"packageName":\s*"@happier-dev\/plugins-healthy"/u,
+      'a failing requested plugin must not prevent a healthy requested plugin from publishing',
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('fresh generator child resolves the canonical Plugin UI artifact schema before projecting UI assets', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-bundled-plugin-ui-artifacts-child-'));
+  const packageId = 'inspector';
+  const packageName = '@happier-dev/plugins-inspector';
+  const packageRoot = resolve(repoRoot, `packages/plugins/${packageId}`);
+  const artifactRoot = resolve(packageRoot, 'dist/happier-plugin-ui');
+  const entryPath = 'hosted-web/review/index.html';
+  const entryBytes = new TextEncoder().encode('<!doctype html><main>fixture</main>');
+  const loaderPath = resolve(repoRoot, 'generator-import-probe-loader.mjs');
+  const markerPath = resolve(repoRoot, 'generator-import-probe.log');
+  const generatorPath = fileURLToPath(new URL('./generateBundledPluginEntries.ts', import.meta.url));
+  const generatorUrl = pathToFileURL(generatorPath).href;
+
+  try {
+    writeJson(resolve(packageRoot, 'package.json'), {
+      name: packageName,
+      version: '1.2.3',
+      files: ['dist', 'package.json'],
+    });
+    mkdirSync(resolve(packageRoot, 'src'), { recursive: true });
+    writeFileSync(
+      resolve(packageRoot, 'src/manifest.ts'),
+      pluginManifestSource({ id: 'happier.fixture.inspector', packageVersion: '1.2.3', daemon: false }),
+      'utf8',
+    );
+    mkdirSync(resolve(artifactRoot, 'hosted-web/review'), { recursive: true });
+    writeFileSync(resolve(artifactRoot, entryPath), entryBytes);
+    writeJson(resolve(artifactRoot, 'ui-artifacts.json'), {
+      version: 1,
+      entries: [{
+        contributionId: 'review-web',
+        tier: 'hostedWeb',
+        platform: 'web',
+        entry: entryPath,
+        files: [{
+          relativePath: entryPath,
+          digest: computePluginUiArtifactSha256DigestV1(entryBytes),
+          byteSize: entryBytes.byteLength,
+        }],
+        digest: computePluginUiArtifactFileSetSha256DigestV1([
+          { relativePath: entryPath, bytes: entryBytes },
+        ]),
+        builtWith: { bundler: 'vite', version: '7.3.1' },
+        hostUiApiVersion: '1.0.0',
+        compat: { react: '19.2.0' },
+      }],
+    });
+    writeJson(resolve(repoRoot, 'apps/ui/package.json'), {
+      name: '@happier-dev/app',
+      dependencies: {},
+    });
+    writeGeneratorOutputScaffold(repoRoot);
+    createGeneratorImportProbeLoader(loaderPath);
+
+    await runGeneratorCliWithEnv(repoRoot, 'write', {
+      ...process.env,
+      HAPPIER_GENERATOR_IMPORT_PROBE_ENTRY_URL: generatorUrl,
+      HAPPIER_GENERATOR_IMPORT_PROBE_MARKER: markerPath,
+      HAPPIER_GENERATOR_IMPORT_PROBE_ROOT: repoRoot,
+      HAPPIER_GENERATOR_IMPORT_PROBE_SPECIFIERS: JSON.stringify([
+        ...MUTABLE_GENERATOR_WORKSPACE_IMPORTS,
+        ...CANONICAL_GENERATOR_WORKSPACE_IMPORT_URLS,
+      ]),
+      HAPPIER_GENERATOR_IMPORT_PROBE_CANONICAL_WORKSPACE_MAP: JSON.stringify(Object.fromEntries(
+        CANONICAL_GENERATOR_WORKSPACE_IMPORT_URLS.map((url, index) => [url, MUTABLE_GENERATOR_WORKSPACE_IMPORTS[index]]),
+      )),
+      HAPPIER_GENERATOR_IMPORT_PROBE_TARGET_URL: generatorUrl,
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --experimental-loader=${loaderPath}`.trim(),
+    });
+
+    const probeLine = readFileSync(markerPath, 'utf8')
+      .split('\n')
+      .find((line) => line.startsWith('workspace-ui-probe:'));
+    assert.ok(probeLine, 'fresh generator child must record the Plugin UI subpath probe');
+    const probe = JSON.parse(probeLine.slice('workspace-ui-probe:'.length)) as {
+      resolvedUrl?: unknown;
+      schemaType?: unknown;
+      digestType?: unknown;
+    };
+    assert.match(String(probe.resolvedUrl), /packages\/protocol\/dist\/plugins\/ui\/index\.js$/u);
+    assert.equal(probe.schemaType, 'object');
+    assert.equal(probe.digestType, 'function');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+function expectGeneratedBundledPluginUiAsset(output: string, specifier: string): void {
+  assert.match(output, new RegExp(specifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+}

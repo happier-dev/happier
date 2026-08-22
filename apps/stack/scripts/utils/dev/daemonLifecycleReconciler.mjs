@@ -6,12 +6,10 @@ export function startOwnerDaemonLifecycleReconciler(
     isShuttingDown = () => false,
     intervalMs = 1_000,
     absenceConfirmations = 2,
-    recoveryBackoffMs = 30_000,
   } = {},
   {
     setIntervalImpl = setInterval,
     clearIntervalImpl = clearInterval,
-    nowImpl = Date.now,
     logger = console,
   } = {},
 ) {
@@ -20,21 +18,21 @@ export function startOwnerDaemonLifecycleReconciler(
   let closed = false;
   let inFlight = null;
   let consecutiveAbsences = 0;
-  let recoveryRetryAt = 0;
+  let recoveryAttempted = false;
   const requiredAbsences = Math.max(2, Number(absenceConfirmations) || 2);
-  const retryBackoffMs = Math.max(1_000, Number(recoveryBackoffMs) || 30_000);
 
   const runReconciliation = async () => {
     const observation = await observe();
     const status = String(observation?.status ?? '').trim();
     if (status === 'running' || status === 'starting' || status === 'unreachable') {
       consecutiveAbsences = 0;
-      recoveryRetryAt = 0;
+      recoveryAttempted = false;
       return { skipped: true, reason: 'daemon-present', status };
     }
 
     if (!['stopped', 'stale_state', 'stale_lock'].includes(status)) {
       consecutiveAbsences = 0;
+      recoveryAttempted = false;
       return { skipped: true, reason: 'daemon-state-inconclusive', status: status || 'unknown' };
     }
 
@@ -43,16 +41,10 @@ export function startOwnerDaemonLifecycleReconciler(
       return { skipped: true, reason: 'daemon-absence-unconfirmed', consecutiveAbsences };
     }
 
-    const now = Number(nowImpl()) || 0;
-    if (now < recoveryRetryAt) {
-      return {
-        skipped: true,
-        reason: 'daemon-recovery-backoff',
-        retryAfterMs: recoveryRetryAt - now,
-      };
+    if (recoveryAttempted) {
+      return { skipped: true, reason: 'daemon-recovery-already-attempted' };
     }
-
-    recoveryRetryAt = now + retryBackoffMs;
+    recoveryAttempted = true;
     return await recover({ observation, consecutiveAbsences });
   };
 

@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runCliUpdateValidation } from '../pipeline/release-validation/executors/cli-update.mjs';
+import { resolveCliPublicationBuildSteps } from '../../apps/cli/scripts/buildPublication.mjs';
 import {
   runBinarySmokeValidation,
   runCandidateBinarySmoke,
@@ -15,6 +16,58 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const scriptPath = resolve(repoRoot, 'scripts', 'pipeline', 'release-validation', 'validate-release.mjs');
+
+test('release-validate plans a named release profile without inventing profile execution', async () => {
+  const raw = execFileSync(
+    process.execPath,
+    [scriptPath, '--profile', 'integrated', '--dry-run'],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.deepEqual(JSON.parse(raw), {
+    ok: true,
+    dryRun: true,
+    profile: 'integrated',
+    dispatch: 'suite-specific',
+    automaticSuiteIds: [
+      'artifact-verify',
+      'binary-smoke',
+      'session-continuity',
+      'cli-update',
+      'docker-release-assets',
+    ],
+  });
+});
+
+test('release-validate rejects suite-specific inputs when planning a profile', async () => {
+  assert.throws(
+    () => execFileSync(
+      process.execPath,
+      [
+        scriptPath,
+        '--profile',
+        'integrated',
+        '--source',
+        'local-build',
+        '--ref',
+        '.',
+        '--dry-run',
+      ],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 30_000,
+      },
+    ),
+    /--profile does not accept suite-specific inputs/,
+  );
+});
 
 test('release-validate resolves a published-channel dry-run request', async () => {
   const raw = execFileSync(
@@ -169,7 +222,7 @@ test('release-validate resolves an exact candidate installers-smoke dry-run requ
   });
 });
 
-test('release-validate plans released-dev to exact-candidate installer update and rollback', async () => {
+test('release-validate plans released-dev to exact-candidate pre-activation payload reversion', async () => {
   const raw = execFileSync(
     process.execPath,
     [
@@ -188,6 +241,8 @@ test('release-validate plans released-dev to exact-candidate installer update an
       'candidate/r447/candidate.json',
       '--release-channel',
       'dev',
+      '--payload-publication-admission',
+      'pre-activation',
       '--dry-run',
     ],
     {
@@ -204,14 +259,14 @@ test('release-validate plans released-dev to exact-candidate installer update an
     to: { kind: 'local-build', ref: 'candidate/r447/candidate.json' },
   });
   assert.equal(parsed.execution.type, 'installers-smoke');
-  assert.equal(parsed.execution.plan.mode, 'update-rollback');
+  assert.equal(parsed.execution.plan.mode, 'update-payload-reversion');
   assert.deepEqual(parsed.execution.plan.lifecycleSteps, [
     'predecessor-install',
     'predecessor-version',
     'candidate-update',
     'candidate-version',
-    'rollback',
-    'rollback-version',
+    'previous-payload-reversion',
+    'previous-payload-version',
     'candidate-reinstall',
     'candidate-version',
   ]);
@@ -369,16 +424,12 @@ test('release-validate plans cli-update continuity against the core e2e lane', a
 
 test('release-validate materializes cli-update local-build targets before running the continuity lane', async () => {
   const calls = [];
-  const windowsComspec = 'C:\\Windows\\System32\\cmd.exe';
   runCliUpdateValidation({
     repoRoot,
     update: {
       from: { kind: 'published-channel', ref: 'preview' },
       to: { kind: 'local-build', ref: 'HEAD' },
     },
-    platform: 'win32',
-    npmExecPath: 'C:\\npm\\node_modules\\npm\\bin\\npm-cli.js',
-    comspec: windowsComspec,
     exec(command, args, options = {}) {
       calls.push({ command, args, options });
       if (args[0]?.endsWith('/apps/cli/scripts/packTarball.mjs')) {
@@ -400,31 +451,36 @@ test('release-validate materializes cli-update local-build targets before runnin
     },
   });
 
-  assert.equal(calls.length, 4);
-  assert.equal(calls[0].command, windowsComspec);
-  assert.equal(calls[0].options.windowsVerbatimArguments, true);
-  assert.match(calls[0].args.join(' '), /yarn\.cmd/);
-  assert.match(calls[0].args.join(' '), /workspace/);
-  assert.match(calls[0].args.join(' '), /@happier-dev\/cli/);
-  assert.match(calls[0].args.join(' '), /build/);
-  assert.doesNotMatch(calls[0].args.join(' '), /npm-cli\.js/);
-  assert.equal(calls[0].options.cwd, repoRoot);
-  assert.equal(calls[1].command, process.execPath);
-  assert.equal(calls[1].args[0], resolve(repoRoot, 'apps', 'cli', 'scripts', 'packTarball.mjs'));
-  assert.equal(calls[1].options.cwd, resolve(repoRoot, 'apps', 'cli'));
-  assert.equal(calls[2].command, 'tar');
-  assert.equal(calls[2].args[0], '-tzf');
-  assert.equal(calls[3].command, process.execPath);
+  // The tarball may only carry bytes the canonical CLI publication build produced: the
+  // artifact-mode shared build compiles every included generator-owned plugin from current
+  // source (a live build retains a failing plugin's last-green package instead), and the
+  // dist build runs after it so the packed dist fingerprint covers the regenerated bundled
+  // plugin inventory.
+  assert.equal(calls.length, 5);
+  const publicationSteps = resolveCliPublicationBuildSteps({ repoRoot });
+  assert.equal(calls[0].command, publicationSteps[0].command);
+  assert.deepEqual(calls[0].args, publicationSteps[0].args);
+  assert.equal(calls[0].options.cwd, publicationSteps[0].cwd);
+  assert.match(calls[0].args.join(' '), /buildSharedDeps\.mjs --artifact$/);
+  assert.equal(calls[1].command, publicationSteps[1].command);
+  assert.deepEqual(calls[1].args, publicationSteps[1].args);
+  assert.equal(calls[1].options.cwd, publicationSteps[1].cwd);
+  assert.equal(calls[2].command, process.execPath);
+  assert.equal(calls[2].args[0], resolve(repoRoot, 'apps', 'cli', 'scripts', 'packTarball.mjs'));
+  assert.equal(calls[2].options.cwd, resolve(repoRoot, 'apps', 'cli'));
+  assert.equal(calls[3].command, 'tar');
+  assert.equal(calls[3].args[0], '-tzf');
+  assert.equal(calls[4].command, process.execPath);
 
-  const packDestinationFlagIndex = calls[1].args.indexOf('--dest-dir');
+  const packDestinationFlagIndex = calls[2].args.indexOf('--dest-dir');
   assert.notEqual(packDestinationFlagIndex, -1);
-  assert.deepEqual(calls[3].options.env, {
+  assert.deepEqual(calls[4].options.env, {
     ...process.env,
     HAPPIER_RELEASE_VALIDATION_CLI_UPDATE_FROM_SOURCE_KIND: 'published-channel',
     HAPPIER_RELEASE_VALIDATION_CLI_UPDATE_FROM_SOURCE_REF: 'preview',
     HAPPIER_RELEASE_VALIDATION_CLI_UPDATE_TO_SOURCE_KIND: 'local-pack',
     HAPPIER_RELEASE_VALIDATION_CLI_UPDATE_TO_SOURCE_REF: resolve(
-      calls[1].args[packDestinationFlagIndex + 1],
+      calls[2].args[packDestinationFlagIndex + 1],
       'happier-dev-cli-0.0.0.tgz',
     ),
   });
@@ -460,8 +516,8 @@ test('release-validate rejects malformed cli-update local-build packs before run
     /missing required runtime entries/i,
   );
 
-  assert.equal(calls.length, 3);
-  assert.equal(calls[2].command, 'tar');
+  assert.equal(calls.length, 4);
+  assert.equal(calls[3].command, 'tar');
 });
 
 test('release-validate plans artifact verification against a local build source', async () => {
@@ -713,6 +769,44 @@ test('release-validate plans binary smoke against the exact supplied candidate o
   }
 });
 
+test('release-validate plans binary smoke from an exact checked-out git candidate without treating its directory as an artifact manifest', () => {
+  const raw = execFileSync(
+    process.execPath,
+    [
+      scriptPath,
+      '--suite',
+      'binary-smoke',
+      '--platform',
+      'linux',
+      '--source',
+      'git-ref-build',
+      '--ref',
+      '0123456789abcdef0123456789abcdef01234567',
+      '--dry-run',
+    ],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  const parsed = JSON.parse(raw);
+  assert.deepEqual(parsed.source, {
+    kind: 'git-ref-build',
+    ref: '0123456789abcdef0123456789abcdef01234567',
+  });
+  assert.deepEqual(parsed.execution, {
+    type: 'command',
+    command: process.execPath,
+    args: [
+      resolve(repoRoot, 'apps', 'stack', 'scripts', 'release_binary_smoke.integration.test.mjs'),
+    ],
+    cwd: repoRoot,
+  });
+});
+
 test('binary smoke rejects a requested platform that differs from its native host', () => {
   const mismatchedPlatform = process.platform === 'linux' ? 'darwin' : 'linux';
   assert.throws(
@@ -733,37 +827,71 @@ test('binary smoke uses shared minisign and runs exact-candidate Voice/notarizat
   const hostOs = process.platform === 'win32' ? 'windows' : process.platform;
   const hostArchivePath =
     `/candidate/native/happier-v1.2.3-${hostOs}-${process.arch}.tar.gz`;
+  const privateHostArchivePath =
+    `/private/native/happier-v1.2.3-${hostOs}-${process.arch}.tar.gz`;
+  const sourceCandidate = {
+    standaloneCli: {
+      archives: [
+        {
+          os: hostOs,
+          arch: process.arch,
+          archivePath: hostArchivePath,
+        },
+      ],
+      checksums: {
+        filePath: '/candidate/native/checksums-happier-v1.2.3.txt',
+      },
+      signature: {
+        filePath: '/candidate/native/checksums-happier-v1.2.3.txt.minisig',
+      },
+      notarization: hostOs === 'darwin'
+        ? [{
+            target: `${hostOs}-${process.arch}`,
+            evidence: {
+              filePath: `/candidate/native/${hostOs}-${process.arch}.cli.json`,
+            },
+          }]
+        : [],
+    },
+    installers: {
+      publicKey: {
+        filePath: '/candidate/installers/happier-release.pub',
+      },
+    },
+  };
+  const privateCandidate = {
+    ...sourceCandidate,
+    standaloneCli: {
+      ...sourceCandidate.standaloneCli,
+      archives: sourceCandidate.standaloneCli.archives.map((artifact) => ({
+        ...artifact,
+        archivePath: privateHostArchivePath,
+      })),
+      checksums: { filePath: '/private/native/checksums-happier-v1.2.3.txt' },
+      signature: { filePath: '/private/native/checksums-happier-v1.2.3.txt.minisig' },
+      notarization: sourceCandidate.standaloneCli.notarization.map((record) => ({
+        ...record,
+        evidence: { filePath: `/private/native/${record.target}.cli.json` },
+      })),
+    },
+    installers: {
+      publicKey: { filePath: '/private/installers/happier-release.pub' },
+    },
+  };
   await runCandidateBinarySmoke('/candidate/candidate.json', {
-    loadCandidateImpl: async () => ({
-      standaloneCli: {
-        archives: [
-          {
-            os: hostOs,
-            arch: process.arch,
-            archivePath: hostArchivePath,
-          },
-        ],
-        checksums: {
-          filePath: '/candidate/native/checksums-happier-v1.2.3.txt',
-        },
-        signature: {
-          filePath: '/candidate/native/checksums-happier-v1.2.3.txt.minisig',
-        },
-        notarization: hostOs === 'darwin'
-          ? [{
-              target: `${hostOs}-${process.arch}`,
-              evidence: {
-                filePath: `/candidate/native/${hostOs}-${process.arch}.cli.json`,
-              },
-            }]
-          : [],
-      },
-      installers: {
-        publicKey: {
-          filePath: '/candidate/installers/happier-release.pub',
-        },
-      },
-    }),
+    loadCandidateImpl: async () => sourceCandidate,
+    captureCandidateImpl: async (_candidate, options) => {
+      calls.push('captured-private-inputs');
+      return {
+        candidate: privateCandidate,
+        cleanup: async () => await options.rmImpl('/private'),
+        root: '/private',
+        manifestPath: null,
+      };
+    },
+    removeCapturedRootImpl: async () => {
+      calls.push('capture-cleanup');
+    },
     prepareMinisignEnvImpl: async () => ({
       env: {
         PATH: '/tmp/repository-minisign:/usr/bin',
@@ -784,15 +912,24 @@ test('binary smoke uses shared minisign and runs exact-candidate Voice/notarizat
       });
     },
   });
-  assert.equal(calls[0].options.env.PATH, '/tmp/repository-minisign:/usr/bin');
-  assert.deepEqual(calls[1], {
+  assert.equal(calls[0], 'captured-private-inputs');
+  assert.equal(calls[1].options.env.PATH, '/tmp/repository-minisign:/usr/bin');
+  assert.deepEqual(calls[1].args.slice(-6), [
+    '--artifacts-dir',
+    '/private/native',
+    '--checksums',
+    '/private/native/checksums-happier-v1.2.3.txt',
+    '--public-key',
+    '/private/installers/happier-release.pub',
+  ]);
+  assert.deepEqual(calls[2], {
     kind: 'host-payload-smoke',
-    archivePath: hostArchivePath,
+    archivePath: privateHostArchivePath,
     notarizationEvidencePath: hostOs === 'darwin'
-      ? `/candidate/native/${hostOs}-${process.arch}.cli.json`
+      ? `/private/native/${hostOs}-${process.arch}.cli.json`
       : null,
   });
-  assert.deepEqual(calls.at(-1), 'cleanup');
+  assert.deepEqual(calls.slice(-2), ['cleanup', 'capture-cleanup']);
 });
 
 test('candidate host payload smoke loads deferred Voice and verifies exact Darwin evidence', async () => {

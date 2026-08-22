@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   parseMutagenSyncList,
+  resolveRecoverableReplicaArtifactConflictRoots,
   resolveDevTargetMutagenRuntime,
 } from './mutagen_runtime.mjs';
 
@@ -138,4 +139,104 @@ test('Mutagen list parsing rejects a connected session with unresolved conflicts
 
   assert.equal(result.state, 'unhealthy');
   assert.equal(result.lastError, '1 unresolved synchronization conflict: packages/channels-contract');
+});
+
+test('Mutagen conflict recovery recognizes deleted alpha roots blocked only by disposable replica artifacts', () => {
+  const recoverable = {
+    mode: 'one-way-replica',
+    conflicts: [{
+      root: 'packages/plugins/retired-plugin',
+      alphaChanges: [{
+        path: 'packages/plugins/retired-plugin',
+        old: { kind: 'directory' },
+        new: null,
+      }],
+      betaChanges: [
+        {
+          path: 'packages/plugins/retired-plugin/node_modules',
+          old: null,
+          new: { kind: 'untracked' },
+        },
+        {
+          path: 'packages/plugins/retired-plugin/dist/runtime.js',
+          old: null,
+          new: { kind: 'untracked' },
+        },
+        {
+          path: 'packages/plugins/retired-plugin/.happier',
+          old: null,
+          new: { kind: 'untracked' },
+        },
+        {
+          path: 'packages/plugins/retired-plugin/.tsbuildinfo',
+          old: null,
+          new: { kind: 'untracked' },
+        },
+      ],
+    }],
+  };
+  assert.deepEqual(
+    resolveRecoverableReplicaArtifactConflictRoots(recoverable),
+    ['packages/plugins/retired-plugin'],
+  );
+
+  assert.deepEqual(resolveRecoverableReplicaArtifactConflictRoots({
+    ...recoverable,
+    conflicts: [{
+      ...recoverable.conflicts[0],
+      alphaChanges: [{
+        path: 'packages/plugins/retired-plugin',
+        old: null,
+        new: null,
+      }],
+    }],
+  }), ['packages/plugins/retired-plugin']);
+
+  assert.deepEqual(resolveRecoverableReplicaArtifactConflictRoots({
+    ...recoverable,
+    conflicts: [
+      ...recoverable.conflicts,
+      {
+        root: 'packages/plugins/unsafe-plugin',
+        alphaChanges: [{
+          path: 'packages/plugins/unsafe-plugin',
+          old: { kind: 'directory' },
+          new: null,
+        }],
+        betaChanges: [{
+          path: 'packages/plugins/unsafe-plugin/package.json',
+          old: null,
+          new: { kind: 'untracked' },
+        }],
+      },
+    ],
+  }), ['packages/plugins/retired-plugin']);
+
+  for (const session of [
+    { ...recoverable, mode: 'two-way-safe' },
+    {
+      ...recoverable,
+      conflicts: [{
+        ...recoverable.conflicts[0],
+        alphaChanges: [{ path: 'packages/plugins/retired-plugin/src/index.ts' }],
+      }],
+    },
+    {
+      ...recoverable,
+      conflicts: [{
+        ...recoverable.conflicts[0],
+        betaChanges: [{
+          path: 'packages/plugins/retired-plugin/package.json',
+          old: null,
+          new: { kind: 'untracked' },
+        }],
+      }],
+    },
+    {
+      ...recoverable,
+      conflicts: [{ ...recoverable.conflicts[0], root: '../outside' }],
+    },
+  ]) {
+    assert.deepEqual(resolveRecoverableReplicaArtifactConflictRoots(session), []);
+  }
 });

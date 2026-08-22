@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { stopStackWithEnv } from './utils/stack/stop.mjs';
-import { observePsEnvLine } from './utils/proc/ownership.mjs';
+import { listPsPidsForEnvQueries, observePsEnvLine } from './utils/proc/ownership.mjs';
 import { isAlive, spawnOwnedSleep, waitForProcessAlive, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
 
 test('stopStackWithEnv repo-local fallback sweeps legacy infra without stopping session processes', async (t) => {
@@ -208,7 +208,20 @@ test('stopStackWithEnv repo-local fallback sweeps legacy infra without stopping 
     }
     return await observePsEnvLine(pid);
   };
-  const actions = await stopStackWithEnv(stopInput, { observePsEnvLineImpl: observeMixedIdentity });
+  let processInventoryCalls = 0;
+  const actions = await stopStackWithEnv(stopInput, {
+    observePsEnvLineImpl: observeMixedIdentity,
+    listPsPidsForEnvQueriesImpl: async (...args) => {
+      processInventoryCalls += 1;
+      return await listPsPidsForEnvQueries(...args);
+    },
+  });
+
+  assert.equal(
+    processInventoryCalls,
+    1,
+    'repo-local fallback must reuse the primary ownership inventory instead of rescanning every process',
+  );
 
   await waitForProcessExit({ pid: legacyInfra.pid, timeoutMs: 20_000, intervalMs: 50, label: 'repo-local sweep child (post-stop)' });
   assert.ok(!isAlive(legacyInfra.pid), `expected legacy infra pid ${legacyInfra.pid} to be swept by repo-local infra signature`);

@@ -28,6 +28,7 @@ import { resolveServerPortFromEnv, resolveServerUrls } from './utils/server/urls
 import {
   createHappyCliReloadDescriptors,
   createHappyCliReloadExecutor,
+  createHappyCliWorkspacePreparationExecutor,
   prepareDaemonAuthSeed,
   startDevDaemon,
 } from './utils/dev/daemon.mjs';
@@ -96,6 +97,7 @@ import { isBorrowedExpoConsumer } from './runtime/shared/borrowed_expo.mjs';
 import {
   createRepositoryRuntimePublicationController,
   isRepositoryRuntimePublicationOwner,
+  publishRepositoryRuntimeSnapshotInChildProcess,
   wrapReloadExecutorWithRuntimeSnapshotPublication,
 } from './utils/dev/runtimeSnapshotPublisher.mjs';
 
@@ -804,7 +806,7 @@ async function main() {
         });
       },
       recover: async () => {
-        await startDevDaemon({
+        return await startDevDaemon({
           startDaemon: true,
           cliDir,
           buildCli,
@@ -820,7 +822,6 @@ async function main() {
           env: baseEnv,
           stackName,
         });
-        return { started: true };
       },
     });
     if (daemonLifecycleReconciler) watchers.push(daemonLifecycleReconciler);
@@ -832,7 +833,6 @@ async function main() {
   if (repositoryRuntimePublicationOwner) {
     try {
       const {
-        publishRepositoryRuntimeSnapshot,
         resolveRepositoryRuntimePublicationComponents,
       } = await import('./build/build_stack_artifacts.mjs');
       runtimePublicationController = createRepositoryRuntimePublicationController({
@@ -841,7 +841,10 @@ async function main() {
         env: baseEnv,
         runtimeStatePath,
         resolveRepositoryRuntimePublicationComponents,
-        publishRepositoryRuntimeSnapshot,
+        publishRepositoryRuntimeSnapshot: (input) => publishRepositoryRuntimeSnapshotInChildProcess({
+          ...input,
+          children,
+        }),
         recordStackRuntimeUpdate,
         isShuttingDown: () => shuttingDown,
         logger: console,
@@ -856,27 +859,40 @@ async function main() {
   const reloadDescriptors = [];
   const reloadExecutors = [];
   const daemonReloadEnabled = startDaemon && daemonStartGate({ env: baseEnv, cliHomeDir, serverUrl: internalServerUrl }).ok;
-  if (daemonReloadEnabled) {
+  const remoteCliWorkspacePreparationEnabled = servicePlans.targets.some(
+    (plan) => plan.services.daemon || plan.services.expo,
+  );
+  const remoteWorkspacePreparationExecutor = remoteCliWorkspacePreparationEnabled
+    ? createHappyCliWorkspacePreparationExecutor({
+        repoRoot: resolve(cliDir, '..', '..'),
+        cliDir,
+        env: baseEnv,
+      })
+    : null;
+  const daemonRefreshEnabled = daemonReloadEnabled || remoteCliWorkspacePreparationEnabled;
+  if (daemonRefreshEnabled) {
     reloadDescriptors.push(...createHappyCliReloadDescriptors({ cliDir }));
-    const daemonReloadExecutor = createHappyCliReloadExecutor({
-      startDaemon: daemonReloadEnabled,
-      buildCli,
-      cliDir,
-      cliBin,
-      cliHomeDir,
-      internalServerUrl,
-      publicServerUrl,
-      runtimeStatePath,
-      isShuttingDown: () => shuttingDown,
-      env: baseEnv,
-      stackName,
-    });
+    const daemonRefreshExecutor = daemonReloadEnabled
+      ? createHappyCliReloadExecutor({
+        startDaemon: daemonReloadEnabled,
+        buildCli,
+        cliDir,
+        cliBin,
+        cliHomeDir,
+        internalServerUrl,
+        publicServerUrl,
+        runtimeStatePath,
+        isShuttingDown: () => shuttingDown,
+        env: baseEnv,
+        stackName,
+      })
+      : remoteWorkspacePreparationExecutor;
     reloadExecutors.push(runtimePublicationController
       ? wrapReloadExecutorWithRuntimeSnapshotPublication({
-          executor: daemonReloadExecutor,
+          executor: daemonRefreshExecutor,
           publisher: runtimePublicationController,
         })
-      : daemonReloadExecutor);
+      : daemonRefreshExecutor);
   }
 
   const serverProcRef = { current: serverProc };
@@ -1051,6 +1067,16 @@ async function main() {
     target: remoteExpoPlan?.target.name ?? null,
   };
   if (devTargetsStartOptions) {
+    if (remoteWorkspacePreparationExecutor) {
+      try {
+        await remoteWorkspacePreparationExecutor.build();
+      } catch (error) {
+        console.error(
+          '[local] remote workspace preparation failed; remote targets will retry while local last-green services remain available. '
+            + (error instanceof Error ? error.message : String(error)),
+        );
+      }
+    }
     devTargetsController = startStackDevTargetsInBackground(devTargetsStartOptions);
   }
   if (startUi) {
@@ -1107,7 +1133,7 @@ async function main() {
   for (const refresh of requestInitialDevRefreshes({
     reloadWatcher,
     serverReloadEnabled,
-    daemonReloadEnabled,
+    daemonReloadEnabled: daemonRefreshEnabled,
   })) void refresh;
 
   if (startTauri) {

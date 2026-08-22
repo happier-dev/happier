@@ -3,15 +3,21 @@
 // @ts-check
 
 import { execFileSync, spawnSync } from 'node:child_process';
+import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   PACKED_AUTHOR_NATIVE_TARGETS,
+  capturePackedAuthorCandidateArtifacts,
   cleanupPackedNovelConnectedAccountQaHandoff,
   loadPackedAuthorCandidateManifest,
 } from '../../../packages/tests/scripts/plugin-platform/run-packed-author-ui-compat.mjs';
+import {
+  cleanupPackedTriageGithubVoiceQaHandoff,
+} from '../../../packages/tests/scripts/plugin-platform/triage-github-voice-qa-handoff.mjs';
 import {
   resolveYarnCommandInvocation,
 } from '../../workspaces/execYarnCommand.mjs';
@@ -71,13 +77,17 @@ export const CANDIDATE_COMPILE_ONLY_TARGETS = Object.freeze([
 export const CANDIDATE_PLATFORM_NATIVE_STAGE_IDS = Object.freeze([
   'candidate-integrity-native-binary-voice-notary',
   'candidate-direct-install-reinstall',
-  'released-dev-candidate-rollback-candidate',
+  'released-dev-candidate-previous-payload-candidate',
   'packed-managed-provider',
+  'packed-plugins-dev',
 ]);
 
 export const CANDIDATE_PRODUCT_STAGE_IDS = Object.freeze([
   'packed-novel-browser-oauth',
-  'packed-novel-device-manual-device',
+  'packed-resources-browser',
+  'packed-voice',
+  'packed-novel-device-manual-device-ios',
+  'packed-novel-device-manual-device-android',
 ]);
 
 function fail(message) {
@@ -158,7 +168,7 @@ export function buildCandidatePlatformQaRecipe({
     schemaVersion: 1,
     kind: 'exact_candidate_platform_qa_recipe',
     command:
-      'node scripts/pipeline/release-validation/candidate-platform-qa.mjs --candidate <transferred-run-root>/candidate.json --expected-target <native-target> [--packed-novel-handoff <retained-handoff-root>/packed-novel-connected-account-qa.json]',
+      'node scripts/pipeline/release-validation/candidate-platform-qa.mjs --candidate <transferred-run-root>/candidate.json --expected-target <native-target> --payload-publication-admission pre-activation [--packed-novel-handoff <retained-handoff-root>/packed-novel-connected-account-qa.json --triage-github-voice-handoff <retained-handoff-root>/triage-github-voice-qa.json]',
     repoRoot: resolve(repoRoot),
     candidateTransfer: Object.freeze({
       unit: 'whole-run-root',
@@ -170,6 +180,13 @@ export function buildCandidatePlatformQaRecipe({
       firstConsumer:
         'canonical candidate loader followed by complete checksum/minisign matrix verification',
     }),
+    payloadPublicationAdmission: Object.freeze({
+      owner:
+        'scripts/release/qualified-connected-accounts-v4-activation-admission.mjs',
+      requiredStatus: 'pre-activation',
+      localInstallStateIsAuthority: false,
+      postActivationAction: 'forward-fix',
+    }),
     nativeTargets: CANDIDATE_NATIVE_TARGETS,
     compileOnlyTargets: CANDIDATE_COMPILE_ONLY_TARGETS,
     nativeStageIds: CANDIDATE_PLATFORM_NATIVE_STAGE_IDS,
@@ -177,10 +194,11 @@ export function buildCandidatePlatformQaRecipe({
       requiredTarget: 'darwin-arm64',
       stageIds: CANDIDATE_PRODUCT_STAGE_IDS,
       browserScope: 'real Chromium OAuth popup and callback',
-      deviceScope: 'one isolated iOS simulator manual plus device-code acceptance',
+      deviceScope:
+        'one isolated iOS simulator and one isolated Android emulator manual plus device-code acceptance',
       oauthOnDevice: false,
       sameHandoffManifestRequired: true,
-      bothConsumersReachTerminalBeforeCleanup: true,
+      allProductConsumersReachTerminalBeforeCleanup: true,
     }),
     runnerPrerequisites: Object.freeze({
       nodeMajor: 22,
@@ -189,7 +207,7 @@ export function buildCandidatePlatformQaRecipe({
       posix: Object.freeze(['bash', 'curl', 'tar', 'unzip']),
       windows: Object.freeze(['powershell.exe', 'tar.exe']),
       network:
-        'required for the released-dev predecessor and installer/update/rollback lane',
+        'required for the released-dev predecessor and installer/update/payload-reversion lane',
       signingSecrets:
         'not consumed by candidate runners; all signatures/notary evidence are immutable candidate inputs',
     }),
@@ -200,7 +218,9 @@ export function buildCandidatePlatformQaRecipe({
       candidateRunRootRemovalOwner:
         'the outer fanout/operator after every native and interactive lane reaches a terminal result',
       packedNovelHandoffRemovalOwner:
-        'candidate-platform-qa marker-authorized cleanup in an outer finally after native failure or both product consumer terminal results',
+        'candidate-platform-qa marker-authorized cleanup in an outer finally after native failure or every product consumer reaches a terminal result',
+      triageGithubVoiceHandoffRemovalOwner:
+        'candidate-platform-qa marker-authorized cleanup in the same outer finally after native failure or every product consumer reaches a terminal result',
       windowsTerminalCleanup:
         'exact Agent PID/start-time/command-hash only; never wt.exe, WindowsTerminal.exe, a shared window, or an ambiguous candidate',
     }),
@@ -292,12 +312,20 @@ function buildNodeValidationStep({
 export function resolveCandidatePlatformQaPlan({
   candidateManifestPath,
   expectedTarget,
+  payloadPublicationAdmission,
   packedNovelHandoffManifestPath,
+  triageGithubVoiceHandoffManifestPath,
   platform = process.platform,
   arch = process.arch,
   hostFacts,
   repoRoot = REPO_ROOT,
 }) {
+  if (payloadPublicationAdmission !== 'pre-activation') {
+    fail(
+      'exact previous-payload reversion QA requires canonical pre-activation payload-publication admission; ' +
+      'post-activation old-server, old-daemon, and loaded-runtime rollback are unsupported',
+    );
+  }
   const target = resolveCandidatePlatformTarget(expectedTarget);
   if (target.kind === 'compile-only') {
     fail(
@@ -324,6 +352,24 @@ export function resolveCandidatePlatformQaPlan({
     packedNovelHandoffValue
       ? resolve(resolvedRepoRoot, packedNovelHandoffValue)
       : null;
+  const triageGithubVoiceHandoffValue =
+    String(triageGithubVoiceHandoffManifestPath ?? '').trim();
+  const resolvedTriageGithubVoiceHandoffManifestPath =
+    triageGithubVoiceHandoffValue
+      ? resolve(resolvedRepoRoot, triageGithubVoiceHandoffValue)
+      : null;
+  if (
+    resolvedPackedNovelHandoffManifestPath
+    && !resolvedTriageGithubVoiceHandoffManifestPath
+  ) {
+    fail('Triage/GitHub/Voice handoff is required for packed novel product QA');
+  }
+  if (
+    resolvedTriageGithubVoiceHandoffManifestPath
+    && !resolvedPackedNovelHandoffManifestPath
+  ) {
+    fail('Triage/GitHub/Voice handoff requires packed novel product QA');
+  }
   if (
     resolvedPackedNovelHandoffManifestPath
     && target.id !== 'darwin-arm64'
@@ -355,7 +401,53 @@ export function resolveCandidatePlatformQaPlan({
       processExecPath: process.execPath,
     },
   );
-  const packedNovelDeviceInvocation =
+  const packedPluginsDevInvocation = resolveYarnCommandInvocation(
+    [
+      'workspace',
+      '@happier-dev/tests',
+      'test:plugin-platform:plugins-dev',
+      '--candidate',
+      resolvedCandidateManifestPath,
+    ],
+    {
+      platform,
+      npmExecPath: '',
+      processExecPath: process.execPath,
+    },
+  );
+  const packedResourcesBrowserInvocation =
+    resolvedPackedNovelHandoffManifestPath
+      ? resolveYarnCommandInvocation(
+        [
+          'workspace',
+          '@happier-dev/tests',
+          'test:plugin-platform:candidate-resources-browser',
+          '--candidate',
+          resolvedCandidateManifestPath,
+        ],
+        {
+          platform,
+          npmExecPath: '',
+          processExecPath: process.execPath,
+        },
+      )
+      : null;
+  const packedVoiceInvocation =
+    resolvedPackedNovelHandoffManifestPath
+      ? resolveYarnCommandInvocation(
+        [
+          'workspace',
+          '@happier-dev/tests',
+          'test:plugin-platform:packed-voice',
+        ],
+        {
+          platform,
+          npmExecPath: '',
+          processExecPath: process.execPath,
+        },
+      )
+      : null;
+  const packedNovelIosDeviceInvocation =
     resolvedPackedNovelHandoffManifestPath
       ? resolveYarnCommandInvocation(
         [
@@ -370,6 +462,34 @@ export function resolveCandidatePlatformQaPlan({
         },
       )
       : null;
+  const packedNovelAndroidDeviceInvocation =
+    resolvedPackedNovelHandoffManifestPath
+      ? resolveYarnCommandInvocation(
+        [
+          'workspace',
+          '@happier-dev/tests',
+          'test:mobile:e2e:android:plugin-platform-candidate',
+        ],
+        {
+          platform,
+          npmExecPath: '',
+          processExecPath: process.execPath,
+        },
+      )
+      : null;
+  const packedNovelDeviceEnvPatch =
+    resolvedPackedNovelHandoffManifestPath
+      ? Object.freeze({
+        HAPPIER_E2E_PLUGIN_PLATFORM_CANDIDATE:
+          resolvedCandidateManifestPath,
+        HAPPIER_E2E_PLUGIN_PLATFORM_G5_AUTHORIZATION:
+          'G5_GENERATED_INPUTS_GREEN',
+        HAPPIER_E2E_PACKED_NOVEL_QA_HANDOFF_MANIFEST:
+          resolvedPackedNovelHandoffManifestPath,
+        HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_HANDOFF_MANIFEST:
+          resolvedTriageGithubVoiceHandoffManifestPath,
+      })
+      : null;
 
   return Object.freeze({
     schemaVersion: 1,
@@ -379,6 +499,8 @@ export function resolveCandidatePlatformQaPlan({
     candidateRunRoot: dirname(resolvedCandidateManifestPath),
     packedNovelHandoffManifestPath:
       resolvedPackedNovelHandoffManifestPath,
+    triageGithubVoiceHandoffManifestPath:
+      resolvedTriageGithubVoiceHandoffManifestPath,
     steps: Object.freeze([
       buildNodeValidationStep({
         id: CANDIDATE_PLATFORM_NATIVE_STAGE_IDS[0],
@@ -418,6 +540,8 @@ export function resolveCandidatePlatformQaPlan({
           resolvedCandidateManifestPath,
           '--release-channel',
           'dev',
+          '--payload-publication-admission',
+          payloadPublicationAdmission,
         ],
       }),
       Object.freeze({
@@ -429,6 +553,18 @@ export function resolveCandidatePlatformQaPlan({
           ? {
               windowsVerbatimArguments:
                 packedManagedInvocation.windowsVerbatimArguments,
+            }
+          : {}),
+      }),
+      Object.freeze({
+        id: CANDIDATE_PLATFORM_NATIVE_STAGE_IDS[4],
+        command: packedPluginsDevInvocation.command,
+        args: Object.freeze(packedPluginsDevInvocation.args),
+        cwd: resolvedRepoRoot,
+        ...(packedPluginsDevInvocation.windowsVerbatimArguments
+          ? {
+              windowsVerbatimArguments:
+                packedPluginsDevInvocation.windowsVerbatimArguments,
             }
           : {}),
       }),
@@ -452,26 +588,62 @@ export function resolveCandidatePlatformQaPlan({
                 resolvedCandidateManifestPath,
                 '--novel-handoff',
                 resolvedPackedNovelHandoffManifestPath,
+                '--triage-github-voice-handoff',
+                resolvedTriageGithubVoiceHandoffManifestPath,
               ]),
               cwd: resolvedRepoRoot,
             }),
             Object.freeze({
               id: CANDIDATE_PRODUCT_STAGE_IDS[1],
-              command: packedNovelDeviceInvocation.command,
-              args: Object.freeze(packedNovelDeviceInvocation.args),
+              command: packedResourcesBrowserInvocation.command,
+              args: Object.freeze(packedResourcesBrowserInvocation.args),
+              cwd: resolvedRepoRoot,
+              ...(packedResourcesBrowserInvocation.windowsVerbatimArguments
+                ? {
+                    windowsVerbatimArguments:
+                      packedResourcesBrowserInvocation.windowsVerbatimArguments,
+                  }
+                : {}),
+            }),
+            Object.freeze({
+              id: CANDIDATE_PRODUCT_STAGE_IDS[2],
+              command: packedVoiceInvocation.command,
+              args: Object.freeze(packedVoiceInvocation.args),
               cwd: resolvedRepoRoot,
               envPatch: Object.freeze({
-                HAPPIER_E2E_PLUGIN_PLATFORM_CANDIDATE:
-                  resolvedCandidateManifestPath,
-                HAPPIER_E2E_PLUGIN_PLATFORM_G5_AUTHORIZATION:
-                  'G5_GENERATED_INPUTS_GREEN',
                 HAPPIER_E2E_PACKED_NOVEL_QA_HANDOFF_MANIFEST:
                   resolvedPackedNovelHandoffManifestPath,
               }),
-              ...(packedNovelDeviceInvocation.windowsVerbatimArguments
+              ...(packedVoiceInvocation.windowsVerbatimArguments
                 ? {
                     windowsVerbatimArguments:
-                      packedNovelDeviceInvocation.windowsVerbatimArguments,
+                      packedVoiceInvocation.windowsVerbatimArguments,
+                  }
+                : {}),
+            }),
+            Object.freeze({
+              id: CANDIDATE_PRODUCT_STAGE_IDS[3],
+              command: packedNovelIosDeviceInvocation.command,
+              args: Object.freeze(packedNovelIosDeviceInvocation.args),
+              cwd: resolvedRepoRoot,
+              envPatch: packedNovelDeviceEnvPatch,
+              ...(packedNovelIosDeviceInvocation.windowsVerbatimArguments
+                ? {
+                    windowsVerbatimArguments:
+                      packedNovelIosDeviceInvocation.windowsVerbatimArguments,
+                  }
+                : {}),
+            }),
+            Object.freeze({
+              id: CANDIDATE_PRODUCT_STAGE_IDS[4],
+              command: packedNovelAndroidDeviceInvocation.command,
+              args: Object.freeze(packedNovelAndroidDeviceInvocation.args),
+              cwd: resolvedRepoRoot,
+              envPatch: packedNovelDeviceEnvPatch,
+              ...(packedNovelAndroidDeviceInvocation.windowsVerbatimArguments
+                ? {
+                    windowsVerbatimArguments:
+                      packedNovelAndroidDeviceInvocation.windowsVerbatimArguments,
                   }
                 : {}),
             }),
@@ -483,27 +655,65 @@ export function resolveCandidatePlatformQaPlan({
 
 export async function prepareCandidatePlatformQa(input, {
   loadCandidateImpl = loadPackedAuthorCandidateManifest,
+  captureCandidateImpl = capturePackedAuthorCandidateArtifacts,
+  removeCapturedRootImpl = async (root) => await rm(root, { recursive: true, force: true }),
 } = {}) {
-  const plan = resolveCandidatePlatformQaPlan(input);
-  const candidate = await loadCandidateImpl(
-    ['--candidate', plan.candidateManifestPath],
-    { cwd: plan.steps[0].cwd },
-  );
-  const nativeArchive = candidate?.standaloneCli?.archives?.find(
-    (artifact) => (
-      artifact.os === plan.target.os
-      && artifact.arch === plan.target.arch
-    ),
-  );
-  if (!nativeArchive) {
-    fail(`candidate does not contain native target ${plan.target.id}`);
+  let captured = null;
+  try {
+    const sourcePlan = resolveCandidatePlatformQaPlan(input);
+    const sourceCandidate = await loadCandidateImpl(
+      ['--candidate', sourcePlan.candidateManifestPath],
+      { cwd: sourcePlan.steps[0].cwd },
+    );
+    captured = await captureCandidateImpl(sourceCandidate, {
+      manifestPath: sourcePlan.candidateManifestPath,
+      destinationParent: tmpdir(),
+      selection: 'all',
+      writeManifest: true,
+      rmImpl: removeCapturedRootImpl,
+    });
+    if (!captured.manifestPath) {
+      fail('complete candidate capture did not produce a private manifest');
+    }
+    const privatePlan = resolveCandidatePlatformQaPlan({
+      ...input,
+      candidateManifestPath: captured.manifestPath,
+    });
+    const plan = Object.freeze({
+      ...privatePlan,
+      candidateRunRoot: sourcePlan.candidateRunRoot,
+    });
+    const candidate = captured.candidate;
+    const nativeArchive = candidate?.standaloneCli?.archives?.find(
+      (artifact) => (
+        artifact.os === plan.target.os
+        && artifact.arch === plan.target.arch
+      ),
+    );
+    if (!nativeArchive) {
+      fail(`candidate does not contain native target ${plan.target.id}`);
+    }
+    return Object.freeze({
+      candidate,
+      cleanup: captured.cleanup,
+      captureRoot: captured.root,
+      nativeArchive,
+      plan,
+      target: plan.target,
+    });
+  } catch (error) {
+    if (captured) {
+      try {
+        await captured.cleanup();
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          'Candidate platform QA preparation and private capture cleanup failed',
+        );
+      }
+    }
+    throw error;
   }
-  return Object.freeze({
-    candidate,
-    nativeArchive,
-    plan,
-    target: plan.target,
-  });
 }
 
 function defaultRunStep(step) {
@@ -522,21 +732,34 @@ function defaultRunStep(step) {
 
 export async function runCandidatePlatformQa(input, {
   loadCandidateImpl = loadPackedAuthorCandidateManifest,
+  captureCandidateImpl = capturePackedAuthorCandidateArtifacts,
   runStepImpl = defaultRunStep,
+  removeCapturedRootImpl = async (root) => await rm(root, { recursive: true, force: true }),
   cleanupPackedNovelHandoffImpl =
     cleanupPackedNovelConnectedAccountQaHandoff,
+  cleanupPackedTriageGithubVoiceHandoffImpl =
+    cleanupPackedTriageGithubVoiceQaHandoff,
 } = {}) {
   const packedNovelHandoffValue =
     String(input.packedNovelHandoffManifestPath ?? '').trim();
   const cleanupManifestPath = packedNovelHandoffValue
     ? resolve(input.repoRoot ?? REPO_ROOT, packedNovelHandoffValue)
     : null;
+  const triageGithubVoiceHandoffValue =
+    String(input.triageGithubVoiceHandoffManifestPath ?? '').trim();
+  const triageGithubVoiceCleanupManifestPath = triageGithubVoiceHandoffValue
+    ? resolve(input.repoRoot ?? REPO_ROOT, triageGithubVoiceHandoffValue)
+    : null;
   let prepared = null;
   const failures = [];
   let packedNovelHandoffRemoved = false;
+  let triageGithubVoiceHandoffRemoved = false;
+  let consumerRootRemoved = false;
   try {
     prepared = await prepareCandidatePlatformQa(input, {
       loadCandidateImpl,
+      captureCandidateImpl,
+      removeCapturedRootImpl,
     });
     for (const step of prepared.plan.steps) {
       await runStepImpl(step);
@@ -551,6 +774,24 @@ export async function runCandidatePlatformQa(input, {
   } catch (error) {
     failures.push(error);
   } finally {
+    if (prepared) {
+      try {
+        await prepared.cleanup();
+        consumerRootRemoved = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (triageGithubVoiceCleanupManifestPath) {
+      try {
+        await cleanupPackedTriageGithubVoiceHandoffImpl({
+          manifestPath: triageGithubVoiceCleanupManifestPath,
+        });
+        triageGithubVoiceHandoffRemoved = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
     if (cleanupManifestPath) {
       try {
         await cleanupPackedNovelHandoffImpl({
@@ -581,11 +822,13 @@ export async function runCandidatePlatformQa(input, {
     target: prepared.target.id,
     candidateRunRoot: prepared.plan.candidateRunRoot,
     candidateRunRootRemoved: false,
+    consumerRootRemoved,
     completedStageIds: CANDIDATE_PLATFORM_NATIVE_STAGE_IDS,
     completedProductStageIds: prepared.plan.productSteps.map(
       (step) => step.id,
     ),
     packedNovelHandoffRemoved,
+    triageGithubVoiceHandoffRemoved,
   });
 }
 
@@ -597,6 +840,8 @@ function parseCandidatePlatformQaArgs(argv) {
       candidate: { type: 'string', default: '' },
       'expected-target': { type: 'string', default: '' },
       'packed-novel-handoff': { type: 'string', default: '' },
+      'triage-github-voice-handoff': { type: 'string', default: '' },
+      'payload-publication-admission': { type: 'string', default: '' },
     },
     allowPositionals: false,
   });
@@ -605,8 +850,18 @@ function parseCandidatePlatformQaArgs(argv) {
     String(values['expected-target'] ?? '').trim();
   const packedNovelHandoff =
     String(values['packed-novel-handoff'] ?? '').trim();
+  const triageGithubVoiceHandoff =
+    String(values['triage-github-voice-handoff'] ?? '').trim();
+  const payloadPublicationAdmission =
+    String(values['payload-publication-admission'] ?? '').trim();
   if (values.recipe === true) {
-    if (candidate || expectedTarget || packedNovelHandoff) {
+    if (
+      candidate
+      || expectedTarget
+      || packedNovelHandoff
+      || triageGithubVoiceHandoff
+      || payloadPublicationAdmission
+    ) {
       fail('--recipe is candidate-free and cannot be combined with execution arguments');
     }
     return { mode: 'recipe' };
@@ -614,12 +869,25 @@ function parseCandidatePlatformQaArgs(argv) {
   if (!candidate || !expectedTarget) {
     fail('--candidate and --expected-target are required');
   }
+  if (!payloadPublicationAdmission) {
+    fail('--payload-publication-admission is required');
+  }
+  if (packedNovelHandoff && !triageGithubVoiceHandoff) {
+    fail('--triage-github-voice-handoff is required with --packed-novel-handoff');
+  }
+  if (triageGithubVoiceHandoff && !packedNovelHandoff) {
+    fail('--triage-github-voice-handoff requires --packed-novel-handoff');
+  }
   return {
     mode: 'run',
     candidateManifestPath: candidate,
     expectedTarget,
+    payloadPublicationAdmission,
     ...(packedNovelHandoff
       ? { packedNovelHandoffManifestPath: packedNovelHandoff }
+      : {}),
+    ...(triageGithubVoiceHandoff
+      ? { triageGithubVoiceHandoffManifestPath: triageGithubVoiceHandoff }
       : {}),
   };
 }
@@ -637,10 +905,17 @@ async function main() {
   const result = await runCandidatePlatformQa({
     candidateManifestPath: parsed.candidateManifestPath,
     expectedTarget: parsed.expectedTarget,
+    payloadPublicationAdmission: parsed.payloadPublicationAdmission,
     ...(parsed.packedNovelHandoffManifestPath
       ? {
           packedNovelHandoffManifestPath:
             parsed.packedNovelHandoffManifestPath,
+        }
+      : {}),
+    ...(parsed.triageGithubVoiceHandoffManifestPath
+      ? {
+          triageGithubVoiceHandoffManifestPath:
+            parsed.triageGithubVoiceHandoffManifestPath,
         }
       : {}),
   });

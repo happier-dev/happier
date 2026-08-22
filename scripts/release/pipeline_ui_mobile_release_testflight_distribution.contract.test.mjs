@@ -55,3 +55,41 @@ test('ui-mobile-release native_submit triggers TestFlight distribution in dry-ru
   assert.match(out, /--processing-timeout-seconds"?\s+"?123/);
   assert.match(out, /--build-json"?\s+"?\/tmp\/eas_build\.json/);
 });
+
+test('ui-mobile-release validates TestFlight groups without starting a native build', () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'ui-mobile-release',
+      '--environment',
+      'dev',
+      '--action',
+      'native_submit',
+      '--platform',
+      'ios',
+      '--profile',
+      'dev',
+      '--preflight-only',
+      '--dry-run',
+      '--secrets-source',
+      'env',
+    ],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        APPLE_API_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----',
+        APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS: 'Happier (dev)',
+      },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.match(out, /scripts\/pipeline\/expo\/testflight-distribute\.mjs/);
+  assert.match(out, /--validate-groups-only/);
+  assert.doesNotMatch(out, /scripts\/pipeline\/expo\/native-build\.mjs/);
+  assert.doesNotMatch(out, /scripts\/pipeline\/expo\/submit\.mjs/);
+});

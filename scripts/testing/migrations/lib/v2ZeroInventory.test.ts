@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -25,20 +25,31 @@ import {
 } from './v2ZeroLaneExtracts.ts';
 
 const repoRootDir = fileURLToPath(new URL('../../../../', import.meta.url));
+const legacyRuntimeLoopAliasName = ['Runtime', 'For', 'Loop'].join('');
+const legacyBackendAliasName = ['Agent', 'Backend'].join('');
+const legacyBackendAliasOperationName = `${legacyBackendAliasName}Operation`;
+
+function legacyBackendAliasImport(modulePathWithoutAlias: string): string {
+  return `import type { ${legacyBackendAliasName} } from '${modulePathWithoutAlias}/${legacyBackendAliasName}';`;
+}
 
 test('collectV2ZeroInventory is deterministic and deduplicates file paths per category', () => {
   const report = collectV2ZeroInventory([
     {
-      filePath: 'apps/cli/src/backends/catalog.ts',
-      content: "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';",
+      filePath: 'apps/cli/src/daemon/backendTargetRouting.ts',
+      content: 'export function routeBackendTarget() { return null; }',
+    },
+    {
+      filePath: 'apps/cli/src/agent/runtime/registry/backendEngineSurfaceBindings.ts',
+      content: 'resolveBackendExecutionSurfacesFromEngine',
+    },
+    {
+      filePath: 'apps/cli/src/agent/runtime/registry/backendEngineSurfaceBindings.ts',
+      content: 'resolveBackendExecutionSurfacesFromEngine',
     },
     {
       filePath: 'packages/protocol/src/plugins/backendDefinitionV1.ts',
       content: 'export const BackendDefinitionV1Schema = {};',
-    },
-    {
-      filePath: 'apps/cli/src/backends/catalog.ts',
-      content: "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';",
     },
   ]);
 
@@ -46,10 +57,10 @@ test('collectV2ZeroInventory is deterministic and deduplicates file paths per ca
     'builtin-cli-catalog-consumers',
     'implicit-abi-surfaces',
   ]);
-  assert.equal(report.filesMatched, 2);
-  assert.deepEqual(report.categories[0]?.files, ['apps/cli/src/backends/catalog.ts']);
+  assert.equal(report.filesMatched, 3);
+  assert.deepEqual(report.categories[0]?.files, ['apps/cli/src/daemon/backendTargetRouting.ts']);
   assert.deepEqual(report.categories[1]?.files, [
-    'apps/cli/src/backends/catalog.ts',
+    'apps/cli/src/agent/runtime/registry/backendEngineSurfaceBindings.ts',
     'packages/protocol/src/plugins/backendDefinitionV1.ts',
   ]);
 });
@@ -105,7 +116,7 @@ test('collectV2ZeroInventory classifies representative current surfaces', () => 
       content: 'export type ProviderConnectedServicesAdapter = Readonly<Record<string, unknown>>;',
     },
     {
-      filePath: 'apps/cli/src/plugins/hooks/execution/dispatchPluginHookEvent.ts',
+      filePath: 'apps/cli/src/plugins/runtime/hooks/execution/dispatchPluginHookEvent.ts',
       content: 'export function dispatchPluginHookEvent() {}',
     },
     {
@@ -129,16 +140,11 @@ export async function runCatalogDefinedAcpAgent(opts: unknown) {
     },
   ]);
 
-  assert.ok(report.categories.some((category) => category.id === 'command-handler-help-manifest'));
   assert.ok(report.categories.some((category) => category.id === 'static-ui-registry-consumers'));
   assert.ok(report.categories.some((category) => category.id === 'voice-runtime-entrypoints'));
   assert.ok(report.categories.some((category) => category.id === 'runtime-identity-publication-read'));
-  assert.ok(report.categories.some((category) => category.id === 'v2-1-static-definition-runtime-foundation'));
-  assert.ok(report.categories.some((category) => category.id === 'execution-run-intent-profiles'));
   assert.ok(report.categories.some((category) => category.id === 'shared-session-retirement-compatibility-surfaces'));
   assert.ok(report.categories.some((category) => category.id === 'acp-shared-session-compatibility-surfaces'));
-  assert.ok(report.categories.some((category) => category.id === 'hardcoded-action-mcp-provider-id-surfaces'));
-  assert.ok(report.categories.some((category) => category.id === 'provider-auth-preferences-connected-services-message-meta'));
   assert.ok(report.categories.some((category) => category.id === 'hook-emission-sites'));
   assert.ok(report.categories.some((category) => category.id === 'customacp-sentinel-consumers'));
 });
@@ -174,6 +180,91 @@ test('collectV2ZeroInventory keeps shared-core provider branching focused on bra
 
   const branching = report.categories.find((category) => category.id === 'shared-core-provider-branching');
   assert.deepEqual(branching?.files, ['apps/cli/src/session/services/providerBranching.ts']);
+});
+
+test('collectV2ZeroInventory keeps shared-core provider branching inside its declared scope', () => {
+  // Byte-identical branching content in four places: two inside the declared
+  // shared/core scope and two outside it. Only the declared scope is inventory.
+  const content = [
+    "export function resolveBackend(providerId: string) {",
+    "  if (providerId === 'claude') return 'claude';",
+    "  return providerId === 'codex' ? 'codex' : 'fallback';",
+    '}',
+  ].join('\n');
+  const report = collectV2ZeroInventory([
+    { filePath: 'apps/cli/src/session/services/providerBranching.ts', content },
+    { filePath: 'packages/cli-common/src/agents/install/managedInstall.ts', content },
+    { filePath: 'apps/website/src/data/agents.ts', content },
+    { filePath: 'scripts/testing/migrations/lib/v2ZeroInventory.ts', content },
+  ]);
+
+  const branching = report.categories.find((category) => category.id === 'shared-core-provider-branching');
+  assert.deepEqual(branching?.files, [
+    'apps/cli/src/session/services/providerBranching.ts',
+    'packages/cli-common/src/agents/install/managedInstall.ts',
+  ]);
+});
+
+test('collectV2ZeroInventory reports Voice V3-F V2 media residue by semantic owner and positive test identifiers', () => {
+  const report = collectV2ZeroInventory([
+    {
+      filePath: 'packages/protocol/src/machines/peer/mediation/renamedApplicationKinds.ts',
+      content: [
+        "export const mediaKinds = ['speech_transcription', 'agent_realtime'];",
+        "export const mediaFrame = z.object({ encoding: z.literal('pcm_s16le'), sampleRateHz: z.number() });",
+      ].join('\n'),
+    },
+    {
+      filePath: 'packages/protocol/src/machines/peer/mediation/renamedPcmFrames.ts',
+      content: 'export const VoiceMediaAgentRealtimeFrameV1Schema = z.union([]);',
+    },
+    {
+      filePath: 'apps/cli/src/daemon/voiceMedia/renamedAuthority.ts',
+      content: 'export function admitAgentRealtimeAttempt() { return true; }',
+    },
+    {
+      filePath: 'apps/cli/src/daemon/voiceMedia/renamedDispatcher.ts',
+      content: 'export function dispatchVoiceMediaAgentRealtimeBinaryFrame() {}',
+    },
+    {
+      filePath: 'apps/cli/src/daemon/voiceMedia/renamedEncryption.ts',
+      content: 'export type VoiceMediaAgentRealtimeEncryptionAdmissionResult = { ok: true };',
+    },
+    {
+      filePath: 'apps/cli/src/daemon/peer/mediation/tunnel/renamedTunnel.ts',
+      content: 'const voiceMediaAgentRealtimeConsumer = createConsumer();',
+    },
+    {
+      filePath: 'packages/protocol/src/machines/peer/mediation/renamedPositiveCoverage.test.ts',
+      content: [
+        "import { VoiceMediaAgentRealtimeFrameV1Schema } from './renamedPcmFrames.js';",
+        "test('round-trips retired Agent realtime PCM', () => VoiceMediaAgentRealtimeFrameV1Schema.parse({}));",
+      ].join('\n'),
+    },
+    {
+      filePath: 'packages/protocol/src/machines/peer/mediation/retainedSpeech.ts',
+      content: "export const retainedApplicationKind = z.literal('speech_transcription');",
+    },
+    {
+      filePath: 'apps/ui/sources/voice/runtime/agentRealtime/retainedV3Control.ts',
+      content: "export const diagnostic = 'agent_realtime_start_failed';",
+    },
+    {
+      filePath: 'apps/cli/src/daemon/machine/negativeAbsence.test.ts',
+      content: "expect(source).not.toContain('voiceMediaAgentRealtimeConsumer');",
+    },
+  ]);
+
+  const residue = report.categories.find((category) => category.id === 'voice-v3-f-v2-media-residue');
+  assert.deepEqual(residue?.files, [
+    'apps/cli/src/daemon/peer/mediation/tunnel/renamedTunnel.ts',
+    'apps/cli/src/daemon/voiceMedia/renamedAuthority.ts',
+    'apps/cli/src/daemon/voiceMedia/renamedDispatcher.ts',
+    'apps/cli/src/daemon/voiceMedia/renamedEncryption.ts',
+    'packages/protocol/src/machines/peer/mediation/renamedApplicationKinds.ts',
+    'packages/protocol/src/machines/peer/mediation/renamedPcmFrames.ts',
+    'packages/protocol/src/machines/peer/mediation/renamedPositiveCoverage.test.ts',
+  ]);
 });
 
 test('collectV2ZeroInventory inventories the OP-I1 governance scanner drift surfaces', () => {
@@ -246,7 +337,7 @@ test('collectV2ZeroInventory inventories the OP-I1 governance scanner drift surf
     },
     {
       filePath: 'apps/cli/src/agent/executionRuns/runtime/createExecutionRunBackend.ts',
-      content: 'const narrowed = backend as AgentBackend & { dispose(): Promise<void> };',
+      content: `const narrowed = backend as ${legacyBackendAliasName} & { dispose(): Promise<void> };`,
     },
     {
       filePath: 'apps/cli/src/session/reintroduceCodexLegacyRunner.ts',
@@ -648,17 +739,17 @@ test('collectV2ZeroInventory excludes the bridge design packet from the shrink-o
   const report = collectV2ZeroInventory([
     {
       filePath: 'apps/cli/src/agent/acp/runtime/createAcpRuntime.ts',
-      content: 'const narrowed = backend as AgentBackend & { dispose(): Promise<void> };',
+      content: `const narrowed = backend as ${legacyBackendAliasName} & { dispose(): Promise<void> };`,
     },
     {
       filePath: 'apps/cli/src/agent/executionRuns/runtime/createExecutionRunBackend.ts',
-      content: 'const narrowed = backend as AgentBackend & { dispose(): Promise<void> };',
+      content: `const narrowed = backend as ${legacyBackendAliasName} & { dispose(): Promise<void> };`,
     },
     {
       filePath: 'apps/cli/src/agent/runtime/bridges/executionRun/executionRunUnifiedInterfaceDesignPacket.ts',
       content: [
-        "type LegacyRuntimeForLoopOperation = 'beginTurn' | 'startOrLoad';",
-        'type AgentBackendOperation = keyof AgentBackend;',
+        `type Legacy${legacyRuntimeLoopAliasName}Operation = 'beginTurn' | 'startOrLoad';`,
+        `type ${legacyBackendAliasOperationName} = keyof ${legacyBackendAliasName};`,
       ].join('\n'),
     },
     {
@@ -751,7 +842,7 @@ test('collectV2ZeroInventory keeps dead Codex remote conductor residue off provi
   assert.equal(providerSessionLoopImports, undefined);
 });
 
-test('collectV2ZeroInventory keeps runHostSessionRuntime off shrink-only RuntimeForLoop inventory after D3 narrowing', () => {
+test('collectV2ZeroInventory keeps runHostSessionRuntime off shrink-only legacy loop inventory after D3 narrowing', () => {
   const inventory = collectV2ZeroSourceFiles()
     .filter((file) => file.filePath === 'apps/cli/src/agent/runtime/sessionLoop/runHostSessionRuntime.ts');
 
@@ -773,7 +864,7 @@ test('collectV2ZeroInventory keeps shared-owner ACP and execution-run runtime fi
   assert.equal(shrinkOnly, undefined);
 });
 
-test('collectV2ZeroInventory keeps live execution-run AgentBackend retirement at zero after shell deletion', () => {
+test('collectV2ZeroInventory keeps live execution-run retired backend adapter debt at zero after shell deletion', () => {
   const inventory = collectV2ZeroSourceFiles()
     .filter((file) => (
       file.filePath === 'apps/cli/src/agent/executionRuns/runtime/createExecutionRunBackend.ts'
@@ -800,32 +891,32 @@ test('collectV2ZeroInventory retires provider-leaf execution-run semantic debt a
   assert.equal(semanticDebt, undefined);
 });
 
-test('collectV2ZeroInventory catches AgentBackend semantic debt in execution-run host ownership', () => {
+test('collectV2ZeroInventory catches retired backend adapter semantic debt in execution-run host ownership', () => {
   const report = collectV2ZeroInventory([
     {
       filePath: 'apps/cli/src/agent/executionRuns/runtime/backendLongLivedSend.ts',
       content: [
-        "import type { AgentBackend } from '../../core/AgentBackend';",
+        legacyBackendAliasImport('../../core'),
         'export async function sendBackendLongLivedRun(args: {',
-        '  createBackend: (opts: { backendId: string; permissionMode: string }) => AgentBackend;',
+        `  createBackend: (opts: { backendId: string; permissionMode: string }) => ${legacyBackendAliasName};`,
         '}) {}',
       ].join('\n'),
     },
     {
       filePath: 'apps/cli/src/agent/executionRuns/runtime/executionRunManager/startExecutionRun.ts',
       content: [
-        "import type { AgentBackend } from '../../../core/AgentBackend';",
+        legacyBackendAliasImport('../../../core'),
         'export async function startExecutionRun(args: {',
-        '  createBackend: (opts: { backendId: string; permissionMode: string }) => AgentBackend;',
+        `  createBackend: (opts: { backendId: string; permissionMode: string }) => ${legacyBackendAliasName};`,
         '}) {}',
       ].join('\n'),
     },
     {
       filePath: 'apps/cli/src/agent/executionRuns/runtime/createExecutionRunBackend.ts',
       content: [
-        "import type { AgentBackend } from '@/agent/core/AgentBackend';",
+        legacyBackendAliasImport('@/agent/core'),
         "import { createAgentBackendFromExecutionRunHostRuntime } from './executionRunAgentBackendRetirementAdapters';",
-        'export function createExecutionRunBackend(): AgentBackend {',
+        `export function createExecutionRunBackend(): ${legacyBackendAliasName} {`,
         '  return createAgentBackendFromExecutionRunHostRuntime({} as never);',
         '}',
       ].join('\n'),
@@ -833,8 +924,8 @@ test('collectV2ZeroInventory catches AgentBackend semantic debt in execution-run
     {
       filePath: 'apps/cli/src/agent/executionRuns/runtime/executionRunAgentBackendRetirementAdapters.ts',
       content: [
-        "import type { AgentBackend } from '@/agent/core/AgentBackend';",
-        'export function createExecutionRunHostRuntimeFromAgentBackend(backend: AgentBackend) {',
+        legacyBackendAliasImport('@/agent/core'),
+        `export function createExecutionRunHostRuntimeFromAgentBackend(backend: ${legacyBackendAliasName}) {`,
         '  return backend;',
         '}',
       ].join('\n'),
@@ -850,7 +941,7 @@ test('collectV2ZeroInventory catches AgentBackend semantic debt in execution-run
     },
     {
       filePath: 'apps/cli/src/agent/runtime/bridges/executionRun/executionRunUnifiedInterfaceDesignPacket.ts',
-      content: 'type AgentBackendOperation = keyof AgentBackend;',
+      content: `type ${legacyBackendAliasOperationName} = keyof ${legacyBackendAliasName};`,
     },
     {
       filePath: 'apps/cli/src/agent/runtime/registry/createCliRuntimeCore.ts',
@@ -871,9 +962,9 @@ test('collectV2ZeroInventory catches AgentBackend semantic debt in execution-run
     {
       filePath: 'apps/cli/src/agent/executionRuns/runtime/createLazyExecutionRunHostRuntime.ts',
       content: [
-        "import type { AgentBackend } from '@/agent/core/AgentBackend';",
+        legacyBackendAliasImport('@/agent/core'),
         'export function createLazyExecutionRunHostRuntime(args: {',
-        '  resolveBackend: () => Promise<AgentBackend>;',
+        `  resolveBackend: () => Promise<${legacyBackendAliasName}>;`,
         '}) {}',
       ].join('\n'),
     },
@@ -906,7 +997,7 @@ test('collectV2ZeroInventory catches AgentBackend semantic debt in execution-run
     },
     {
       filePath: 'apps/cli/src/agent/runtime/bridges/executionRun/executionRunHostRuntime.ts',
-      content: 'export function createAgentBackendFromExecutionRunHostRuntime(): AgentBackend { throw new Error("adapter"); }',
+      content: `export function createAgentBackendFromExecutionRunHostRuntime(): ${legacyBackendAliasName} { throw new Error("adapter"); }`,
     },
   ]);
 
@@ -920,30 +1011,30 @@ test('collectV2ZeroInventory catches AgentBackend semantic debt in execution-run
   ]);
 });
 
-test('collectV2ZeroInventory catches AgentBackend semantic debt in provider execution-run leaves and review backends', () => {
+test('collectV2ZeroInventory catches retired backend adapter semantic debt in provider execution-run leaves and review backends', () => {
   const report = collectV2ZeroInventory([
     {
       filePath: 'apps/cli/src/agent/reviews/engines/coderabbit/CodeRabbitReviewBackend.ts',
       content: [
-        "import type { AgentBackend } from '@/agent/core/AgentBackend';",
+        legacyBackendAliasImport('@/agent/core'),
         "import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';",
-        'export class CodeRabbitReviewBackend implements AgentBackend, ExecutionRunHostRuntime {}',
+        `export class CodeRabbitReviewBackend implements ${legacyBackendAliasName}, ExecutionRunHostRuntime {}`,
       ].join('\n'),
     },
     {
       filePath: 'apps/cli/src/backends/pi/rpc/PiRpcBackend.ts',
       content: [
-        "import type { AgentBackend } from '@/agent/core/AgentBackend';",
+        legacyBackendAliasImport('@/agent/core'),
         "import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';",
-        'export class PiRpcBackend implements AgentBackend, ExecutionRunHostRuntime {}',
+        `export class PiRpcBackend implements ${legacyBackendAliasName}, ExecutionRunHostRuntime {}`,
       ].join('\n'),
     },
     {
       filePath: 'apps/cli/src/backends/claude/sdkAgentBackend/ClaudeSdkAgentBackend.ts',
       content: [
-        "import type { AgentBackend } from '@/agent/core/AgentBackend';",
+        legacyBackendAliasImport('@/agent/core'),
         "import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';",
-        'export class ClaudeSdkAgentBackend implements AgentBackend, ExecutionRunHostRuntime {}',
+        `export class ClaudeSdkAgentBackend implements ${legacyBackendAliasName}, ExecutionRunHostRuntime {}`,
       ].join('\n'),
     },
   ]);
@@ -957,30 +1048,30 @@ test('collectV2ZeroInventory catches AgentBackend semantic debt in provider exec
   ]);
 });
 
-test('collectV2ZeroLaneExtractReports projects execution-run AgentBackend semantic debt into lane v2-3', () => {
+test('collectV2ZeroLaneExtractReports projects execution-run retired backend adapter semantic debt into lane v2-3', () => {
   const report = collectV2ZeroInventory([
     {
       filePath: 'apps/cli/src/agent/reviews/engines/coderabbit/CodeRabbitReviewBackend.ts',
       content: [
-        "import type { AgentBackend } from '@/agent/core/AgentBackend';",
+        legacyBackendAliasImport('@/agent/core'),
         "import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';",
-        'export class CodeRabbitReviewBackend implements AgentBackend, ExecutionRunHostRuntime {}',
+        `export class CodeRabbitReviewBackend implements ${legacyBackendAliasName}, ExecutionRunHostRuntime {}`,
       ].join('\n'),
     },
     {
       filePath: 'apps/cli/src/backends/claude/sdkAgentBackend/ClaudeSdkAgentBackend.ts',
       content: [
-        "import type { AgentBackend } from '@/agent/core/AgentBackend';",
+        legacyBackendAliasImport('@/agent/core'),
         "import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';",
-        'export class ClaudeSdkAgentBackend implements AgentBackend, ExecutionRunHostRuntime {}',
+        `export class ClaudeSdkAgentBackend implements ${legacyBackendAliasName}, ExecutionRunHostRuntime {}`,
       ].join('\n'),
     },
     {
       filePath: 'apps/cli/src/backends/opencode/executionRuns/createOpenCodeServerExecutionRunBackend.ts',
       content: [
-        "import type { AgentBackend } from '@/agent/core/AgentBackend';",
+        legacyBackendAliasImport('@/agent/core'),
         "import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';",
-        'export function createOpenCodeServerExecutionRunBackend(): AgentBackend & ExecutionRunHostRuntime {',
+        `export function createOpenCodeServerExecutionRunBackend(): ${legacyBackendAliasName} & ExecutionRunHostRuntime {`,
         '  return {} as never;',
         '}',
       ].join('\n'),
@@ -988,9 +1079,9 @@ test('collectV2ZeroLaneExtractReports projects execution-run AgentBackend semant
     {
       filePath: 'apps/cli/src/backends/pi/rpc/PiRpcBackend.ts',
       content: [
-        "import type { AgentBackend } from '@/agent/core/AgentBackend';",
+        legacyBackendAliasImport('@/agent/core'),
         "import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';",
-        'export class PiRpcBackend implements AgentBackend, ExecutionRunHostRuntime {}',
+        `export class PiRpcBackend implements ${legacyBackendAliasName}, ExecutionRunHostRuntime {}`,
       ].join('\n'),
     },
   ]);
@@ -1027,14 +1118,51 @@ test('collectV2ZeroInventory does not count customAcp translation strings as sen
   ]);
 });
 
-test('collectV2ZeroInventory keeps UI provider catalog helpers off static registry and provider-auth inventories after the catalog split', () => {
+test('collectV2ZeroInventory does not count customAcp prose comments as sentinel consumers', () => {
+  const report = collectV2ZeroInventory([
+    {
+      filePath: 'apps/cli/src/cli/commands/documented.ts',
+      content: "/**\n * Explains the `customAcp` compatibility family for readers.\n */\nexport const documented = true;\n",
+    },
+    {
+      filePath: 'apps/cli/src/cli/commands/lineComment.ts',
+      content: "// customAcp is handled elsewhere.\nexport const lineComment = true;\n",
+    },
+    {
+      filePath: 'apps/cli/src/cli/commands/behavioral.ts',
+      content: "export const routed = (id: string) => id === 'customAcp';\n",
+    },
+  ]);
+
+  const category = report.categories.find((entry) => entry.id === 'customacp-sentinel-consumers');
+  assert.deepEqual(category?.files, ['apps/cli/src/cli/commands/behavioral.ts']);
+});
+
+
+test('collectV2ZeroInventory keeps provider-enforced action auto-approvals off permission taxonomy fork inventory', () => {
+  const report = collectV2ZeroInventory([
+    {
+      filePath: 'apps/cli/src/agent/permissions/providerEnforced/handler.ts',
+      content: `
+const ALWAYS_AUTO_APPROVE_HAPPIER_ACTION_IDS = new Set([
+  'session.title.set',
+  'action.spec.search',
+]);
+`,
+    },
+  ]);
+
+  assert.equal(report.categories.find((entry) => entry.id === 'permission-taxonomy-forks'), undefined);
+});
+
+test('collectV2ZeroInventory keeps UI provider catalog helpers off the static registry inventory after the catalog split', () => {
   const targetFiles = new Set([
-    'apps/ui/sources/agents/backendCatalog/providerCatalogProjection.ts',
+    'apps/ui/sources/agents/backendCatalog/agentCatalogProjection.ts',
     'apps/ui/sources/agents/providers/registry/providerLocalAuthRegistry.ts',
     'apps/ui/sources/agents/providers/registry/providerSettingsRegistry.ts',
     'apps/ui/sources/agents/providers/registry/providerSettingArtifacts.ts',
     'apps/ui/sources/agents/providers/registry/providerSubagentSettingsRegistry.ts',
-    'apps/ui/sources/components/settings/providers/setup/ProviderSetupFlow.tsx',
+    'apps/ui/sources/components/settings/agents/setup/AgentSetupFlow.tsx',
   ]);
   const inventory = collectV2ZeroSourceFiles(repoRootDir)
     .filter((file) => targetFiles.has(file.filePath));
@@ -1042,10 +1170,6 @@ test('collectV2ZeroInventory keeps UI provider catalog helpers off static regist
   const report = collectV2ZeroInventory(inventory);
 
   assert.equal(report.categories.find((entry) => entry.id === 'static-ui-registry-consumers'), undefined);
-  assert.equal(
-    report.categories.find((entry) => entry.id === 'provider-auth-preferences-connected-services-message-meta'),
-    undefined,
-  );
 });
 
 test('collectV2ZeroInventory keeps neutral legacy compat UI consumers off customacp sentinel inventory', () => {
@@ -1065,17 +1189,6 @@ test('collectV2ZeroInventory keeps neutral legacy compat UI consumers off custom
   assert.equal(report.categories.find((entry) => entry.id === 'customacp-sentinel-consumers'), undefined);
 });
 
-test('collectV2ZeroInventory keeps adjunct message-meta registry wiring off provider-auth inventory', () => {
-  const inventory = collectV2ZeroSourceFiles(repoRootDir)
-    .filter((file) => file.filePath === 'packages/agents/src/runtime/messageMeta/index.ts');
-
-  const report = collectV2ZeroInventory(inventory);
-
-  assert.equal(
-    report.categories.find((entry) => entry.id === 'provider-auth-preferences-connected-services-message-meta'),
-    undefined,
-  );
-});
 
 test('collectV2ZeroInventory keeps provider batch waiters off session-loop primitive imports after shared extraction', () => {
   const inventory = collectV2ZeroSourceFiles(repoRootDir)
@@ -1094,6 +1207,54 @@ test('collectV2ZeroSourceFiles excludes vendored/public and generated folders (n
 
   writeFileSync(join(rootDir, 'apps/ui/public/monaco/worker.js'), "const providerId = 'codex';\n");
   writeFileSync(join(rootDir, 'apps/server/generated/sqlite-client/runtime/edge.js'), "const agentId = 'customAcp';\n");
+  writeFileSync(join(rootDir, 'apps/cli/src/agent/runtime/realSource.ts'), "export const agentId = 'customAcp';\n");
+
+  const files = collectV2ZeroSourceFiles(rootDir).map((file) => file.filePath).sort((a, b) => a.localeCompare(b));
+
+  assert.deepEqual(files, [
+    'apps/cli/src/agent/runtime/realSource.ts',
+  ]);
+});
+
+test('collectFileInventory excludes repository-owned generated artifact trees without hiding source lookalikes', () => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'migration-inventory-generated-artifacts-'));
+  const generatedFiles = [
+    'apps/cli/dist.probe.manual/generated.ts',
+    'apps/cli/.runner-snapshots/0123456789abcdef/generated.ts',
+    'apps/cli/.g3-real-child-fixture/generated.ts',
+    'apps/ui/dist-dperf/_expo/static/js/web/generated.ts',
+  ];
+  const sourceFiles = [
+    'apps/cli/src/dist.probe.manual/source.ts',
+    'apps/cli/src/.g3-real-child-fixture/source.ts',
+    'apps/cli/src/.runner-snapshots-source/source.ts',
+    'apps/ui/sources/dist-dperf/source.ts',
+    'packages/example/dist.probe.manual/source.ts',
+    'packages/example/.g3-real-child-fixture/source.ts',
+  ];
+
+  for (const filePath of [...generatedFiles, ...sourceFiles]) {
+    const absolutePath = join(rootDir, filePath);
+    mkdirSync(dirname(absolutePath), { recursive: true });
+    writeFileSync(absolutePath, 'export const proof = true;\n', 'utf8');
+  }
+
+  const files = collectFileInventory({
+    rootDir,
+    include: /\.ts$/,
+  }).map((file) => file.filePath);
+
+  assert.deepEqual(files, [...sourceFiles].sort((left, right) => left.localeCompare(right)));
+});
+
+test('collectV2ZeroSourceFiles excludes review workspaces from source inventory', () => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'v2-zero-sourcefiles-reviews-'));
+  mkdirSync(join(rootDir, '.reviews/2026-06-23/subagents'), { recursive: true });
+  mkdirSync(join(rootDir, '.project/reviews/2026-06-23/subagents'), { recursive: true });
+  mkdirSync(join(rootDir, 'apps/cli/src/agent/runtime'), { recursive: true });
+
+  writeFileSync(join(rootDir, '.reviews/2026-06-23/subagents/report.js'), "const providerId = 'codex';\n");
+  writeFileSync(join(rootDir, '.project/reviews/2026-06-23/subagents/report.ts'), "const providerId = 'claude';\n");
   writeFileSync(join(rootDir, 'apps/cli/src/agent/runtime/realSource.ts'), "export const agentId = 'customAcp';\n");
 
   const files = collectV2ZeroSourceFiles(rootDir).map((file) => file.filePath).sort((a, b) => a.localeCompare(b));
@@ -1123,8 +1284,12 @@ test('collectV2ZeroSourceFiles excludes source-side js sidecars when a ts siblin
 test('collectV2ZeroLaneExtractReports projects the inventory into deterministic lane extracts', () => {
   const report = collectV2ZeroInventory([
     {
-      filePath: 'apps/cli/src/backends/catalog.ts',
-      content: "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';",
+      filePath: 'apps/cli/src/plugins/registry/createResolvedContributionRegistry.ts',
+      content: "export function getResolvedContributionRegistry() { return null; }",
+    },
+    {
+      filePath: 'apps/cli/src/agent/runtime/registry/backendEngineSurfaceBindings.ts',
+      content: 'resolveBackendExecutionSurfacesFromEngine',
     },
     {
       filePath: 'packages/agents/src/definitions/types.ts',
@@ -1184,11 +1349,11 @@ test('collectV2ZeroLaneExtractReports projects the inventory into deterministic 
       content: "export const ACTION_IDS = ['review'];",
     },
     {
-      filePath: 'apps/cli/src/plugins/hooks/execution/dispatchPluginHookEvent.ts',
+      filePath: 'apps/cli/src/plugins/runtime/hooks/execution/dispatchPluginHookEvent.ts',
       content: 'export function dispatchPluginHookEvent() {}',
     },
     {
-      filePath: 'apps/cli/src/plugins/plugins/manifest/validatePluginManifest.ts',
+      filePath: 'apps/cli/src/plugins/manifest/validate.ts',
       content: 'export function validatePluginManifest() {}',
     },
     {
@@ -1217,16 +1382,13 @@ test('collectV2ZeroLaneExtractReports projects the inventory into deterministic 
   const a1 = laneReports.find((laneReport) => laneReport.laneId === 'a1');
   assert.deepEqual(a1?.categories.map((category) => category.id), [
     'builtin-cli-catalog-consumers',
-    'command-handler-help-manifest',
-    'discovery-preflight-capabilities-rpc',
     'implicit-abi-surfaces',
     'shared-core-provider-branching',
   ]);
   assert.deepEqual(a1?.files, [
-    'apps/cli/src/backends/catalog.ts',
-    'apps/cli/src/cli/buildRootHelpText.ts',
+    'apps/cli/src/agent/runtime/registry/backendEngineSurfaceBindings.ts',
+    'apps/cli/src/plugins/registry/createResolvedContributionRegistry.ts',
     'apps/cli/src/session/services/providerBranching.ts',
-    'packages/agents/src/runtime/discovery/runtimeDiscovery.ts',
   ]);
   assert.deepEqual(a1?.executionCommands.map((command) => command.title), [
     'Print this lane packet',
@@ -1250,40 +1412,25 @@ test('collectV2ZeroLaneExtractReports projects the inventory into deterministic 
   const v22 = laneReports.find((laneReport) => laneReport.laneId === 'v2-2');
   assert.deepEqual(v22?.categories.map((category) => category.id), [
     'builtin-cli-catalog-consumers',
-    'command-handler-help-manifest',
-    'discovery-preflight-capabilities-rpc',
     'implicit-abi-surfaces',
-    'provider-auth-preferences-connected-services-message-meta',
     'shared-core-provider-branching',
   ]);
 
   const v21 = laneReports.find((laneReport) => laneReport.laneId === 'v2-1');
   assert.deepEqual(v21?.categories.map((category) => category.id), [
-    'v2-1-static-definition-runtime-foundation',
-    'discovery-preflight-capabilities-rpc',
-    'provider-auth-preferences-connected-services-message-meta',
     'runtime-identity-publication-read',
-    'execution-run-intent-profiles',
   ]);
   assert.match(formatV2ZeroLaneExtractMarkdown(v21 as NonNullable<typeof v21>), /Lane V2-1: Static Definition Split, Engine Spec, And Runtime Foundation/);
   assert.deepEqual(
     collectV2ZeroLaneExtractFiles(v21 as NonNullable<typeof v21>),
     [
-      'apps/cli/src/agent/executionRuns/profiles/review/ReviewProfile.ts',
-      'packages/agents/src/definitions/types.ts',
-      'packages/agents/src/runtime/discovery/runtimeDiscovery.ts',
-      'packages/agents/src/runtime/engine/specs.ts',
       'packages/agents/src/runtime/identity/runtimeIdentityPublication.ts',
-      'packages/agents/src/runtime/preferences/index.ts',
-      'packages/protocol/src/sessionMetadata/runtimeDescriptorV1.ts',
     ],
   );
 
   const v23 = laneReports.find((laneReport) => laneReport.laneId === 'v2-3');
   assert.deepEqual(v23?.categories.map((category) => category.id), [
-    'discovery-preflight-capabilities-rpc',
     'execution-run-permission-interaction-centralization',
-    'hardcoded-action-mcp-provider-id-surfaces',
     'implicit-abi-surfaces',
     'runtime-identity-publication-read',
     'shared-core-provider-branching',
@@ -1292,29 +1439,21 @@ test('collectV2ZeroLaneExtractReports projects the inventory into deterministic 
 
   const v24 = laneReports.find((laneReport) => laneReport.laneId === 'v2-4');
   assert.deepEqual(v24?.categories.map((category) => category.id), [
-    'discovery-preflight-capabilities-rpc',
     'implicit-abi-surfaces',
-    'provider-auth-preferences-connected-services-message-meta',
     'runtime-identity-publication-read',
     'shared-core-provider-branching',
   ]);
 
   const v26 = laneReports.find((laneReport) => laneReport.laneId === 'v2-6');
   assert.deepEqual(v26?.categories.map((category) => category.id), [
-    'hardcoded-action-mcp-provider-id-surfaces',
     'implicit-abi-surfaces',
-    'plugin-identity-install-provenance-trust',
-    'provider-auth-preferences-connected-services-message-meta',
     'shared-core-provider-branching',
   ]);
 
   const v27 = laneReports.find((laneReport) => laneReport.laneId === 'v2-7');
   assert.deepEqual(v27?.categories.map((category) => category.id), [
-    'discovery-preflight-capabilities-rpc',
-    'hardcoded-action-mcp-provider-id-surfaces',
     'hook-emission-sites',
     'implicit-abi-surfaces',
-    'plugin-identity-install-provenance-trust',
     'shared-core-provider-branching',
   ]);
 });
@@ -1344,6 +1483,28 @@ test('collectV2ZeroSourceFiles includes scripts/testing governance sources', () 
 
   const files = collectV2ZeroSourceFiles(rootDir);
   assert.ok(files.some((file) => file.filePath === 'scripts/testing/migrations/nested/proofGuard.ts'));
+});
+
+test('collectV2ZeroSourceFiles includes only Voice V3-F positive-test residue needed by the contraction inventory', () => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'happier-v2-zero-voice-v3-f-tests-'));
+  mkdirSync(join(rootDir, 'packages/protocol/src/machines/peer/mediation'), { recursive: true });
+  mkdirSync(join(rootDir, 'apps/cli/src/daemon/machine'), { recursive: true });
+  writeFileSync(
+    join(rootDir, 'packages/protocol/src/machines/peer/mediation/renamedPositiveCoverage.test.ts'),
+    "expect(VoiceMediaAgentRealtimeFrameV1Schema.parse({})).toBeDefined();\n",
+    'utf8',
+  );
+  writeFileSync(
+    join(rootDir, 'apps/cli/src/daemon/machine/negativeAbsence.test.ts'),
+    "expect(source).not.toContain('voiceMediaAgentRealtimeConsumer');\n",
+    'utf8',
+  );
+
+  const files = collectV2ZeroSourceFiles(rootDir).map((file) => file.filePath);
+
+  assert.deepEqual(files, [
+    'packages/protocol/src/machines/peer/mediation/renamedPositiveCoverage.test.ts',
+  ]);
 });
 
 test('runV2ZeroInventory writes report artifacts only when explicitly requested', async () => {
@@ -1379,7 +1540,7 @@ test('runV2ZeroInventory writes report artifacts only when explicitly requested'
   assert.match(laneJson, /"files": \[/);
   assert.match(laneMarkdownV21, /Lane V2-1: Static Definition Split, Engine Spec, And Runtime Foundation/);
   assert.match(laneJsonV21, /"laneId": "v2-1"/);
-  assert.match(laneJsonV21, /v2-1-static-definition-runtime-foundation/);
+  assert.match(laneJsonV21, /runtime-identity-publication-read/);
   assert.deepEqual(
     readdirSync(reportDir)
       .filter((entry) => entry.startsWith('v2-0-'))

@@ -36,8 +36,7 @@ test('owner daemon reconciliation requires corroborated absence and preserves pr
   reconciler.close();
 });
 
-test('owner daemon reconciliation is single-flight and backs off repeated recovery', async () => {
-  let now = 10_000;
+test('owner daemon reconciliation is single-flight and recovers only once per confirmed absence episode', async () => {
   let releaseObservation;
   let observations = 0;
   let recoveries = 0;
@@ -57,12 +56,10 @@ test('owner daemon reconciliation is single-flight and backs off repeated recove
         recoveries += 1;
         return { started: true };
       },
-      recoveryBackoffMs: 30_000,
     },
     {
       setIntervalImpl: () => ({ unref() {} }),
       clearIntervalImpl: () => {},
-      nowImpl: () => now,
     },
   );
 
@@ -75,9 +72,52 @@ test('owner daemon reconciliation is single-flight and backs off repeated recove
   assert.equal((await reconciler.reconcileNow()).started, true);
   assert.equal(recoveries, 1);
 
-  now += 1_000;
-  assert.equal((await reconciler.reconcileNow()).reason, 'daemon-recovery-backoff');
+  assert.equal((await reconciler.reconcileNow()).reason, 'daemon-recovery-already-attempted');
   assert.equal(recoveries, 1);
+
+  assert.equal((await reconciler.reconcileNow()).reason, 'daemon-recovery-already-attempted');
+  assert.equal(recoveries, 1);
+  reconciler.close();
+});
+
+test('owner daemon reconciliation re-arms recovery after present or inconclusive state', async () => {
+  const observations = [
+    { status: 'stopped' },
+    { status: 'stopped' },
+    { status: 'stopped' },
+    { status: 'running', pid: 101 },
+    { status: 'stopped' },
+    { status: 'stopped' },
+    { status: 'malformed' },
+    { status: 'stopped' },
+    { status: 'stopped' },
+  ];
+  let recoveries = 0;
+  const reconciler = startOwnerDaemonLifecycleReconciler(
+    {
+      enabled: true,
+      observe: async () => observations.shift(),
+      recover: async () => {
+        recoveries += 1;
+        return { started: false };
+      },
+    },
+    {
+      setIntervalImpl: () => ({ unref() {} }),
+      clearIntervalImpl: () => {},
+    },
+  );
+
+  assert.equal((await reconciler.reconcileNow()).reason, 'daemon-absence-unconfirmed');
+  assert.deepEqual(await reconciler.reconcileNow(), { started: false });
+  assert.equal((await reconciler.reconcileNow()).reason, 'daemon-recovery-already-attempted');
+  assert.equal((await reconciler.reconcileNow()).reason, 'daemon-present');
+  assert.equal((await reconciler.reconcileNow()).reason, 'daemon-absence-unconfirmed');
+  assert.deepEqual(await reconciler.reconcileNow(), { started: false });
+  assert.equal((await reconciler.reconcileNow()).reason, 'daemon-state-inconclusive');
+  assert.equal((await reconciler.reconcileNow()).reason, 'daemon-absence-unconfirmed');
+  assert.deepEqual(await reconciler.reconcileNow(), { started: false });
+  assert.equal(recoveries, 3);
   reconciler.close();
 });
 

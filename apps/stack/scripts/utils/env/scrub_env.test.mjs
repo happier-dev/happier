@@ -88,6 +88,7 @@ test('scrubHappierStackEnv preserves HAPPIER_STACK_TUI in stack wrapper mode', (
   const env = {
     PATH: '/bin',
     HAPPIER_STACK_TUI: '1',
+    HAPPIER_STACK_RESCUE: '1',
     HAPPIER_STACK_VERBOSE: '1',
     HAPPIER_STACK_SECRET: 'drop-me',
   };
@@ -98,6 +99,7 @@ test('scrubHappierStackEnv preserves HAPPIER_STACK_TUI in stack wrapper mode', (
 
   assert.equal(scrubbed.PATH, '/bin');
   assert.equal(scrubbed.HAPPIER_STACK_TUI, '1');
+  assert.equal(scrubbed.HAPPIER_STACK_RESCUE, '1');
   assert.equal(scrubbed.HAPPIER_STACK_VERBOSE, '1');
   assert.equal(scrubbed.HAPPIER_STACK_SECRET, undefined);
 });

@@ -160,6 +160,42 @@ export function parsePsPidCommandOutputForNeedlesAndEnvBindingNames(output, need
   return Array.from(new Set(pids));
 }
 
+export async function listPsPidsForEnvQueries(
+  queries,
+  {
+    platform = process.platform,
+    runCaptureImpl = runCapture,
+    timeoutMs,
+    signal,
+  } = {},
+) {
+  const normalizedQueries = (Array.isArray(queries) ? queries : []).map((query) => ({
+    needles: normalizeNeedles(query?.needles),
+    bindingNames: normalizeNeedles(query?.bindingNames),
+  }));
+  if (normalizedQueries.length === 0) return [];
+  if (platform === 'win32') return normalizedQueries.map(() => []);
+  if (platform === 'linux') {
+    const results = [];
+    for (const query of normalizedQueries) {
+      // Linux reads /proc directly and does not incur the system-wide macOS ps snapshot cost.
+      // eslint-disable-next-line no-await-in-loop
+      const pids = query.bindingNames.length > 0
+        ? await listLinuxProcPidsWithEnvNeedlesAndEnvBindingNames(query.needles, query.bindingNames)
+        : await listLinuxProcPidsWithEnvNeedles(query.needles);
+      results.push(Array.isArray(pids) ? pids : []);
+    }
+    return results;
+  }
+
+  // macOS process/environment enumeration is expensive under load. Capture it exactly once and
+  // answer every ownership query from the same snapshot rather than serially running full scans.
+  const output = await runCaptureImpl('ps', ['eww', '-ax', '-o', 'pid=,command='], { timeoutMs, signal });
+  return normalizedQueries.map((query) => query.bindingNames.length > 0
+    ? parsePsPidCommandOutputForNeedlesAndEnvBindingNames(output, query.needles, query.bindingNames)
+    : parsePsPidCommandOutputForNeedles(output, query.needles));
+}
+
 function parsePsEnvLine(output) {
   const lines = String(output ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
   if (lines.length >= 2) return lines[1];

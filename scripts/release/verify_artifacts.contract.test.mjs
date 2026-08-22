@@ -812,7 +812,7 @@ test('verify-artifacts smoke-runs packaged server binaries with isolated startup
         '[[ "${METRICS_PORT-}" == "0" ]] || { echo "expected METRICS_PORT=0 but got ${METRICS_PORT-}"; exit 1; }',
         '[[ -n "${HAPPIER_SERVER_LIGHT_DATA_DIR-}" ]] || { echo "missing HAPPIER_SERVER_LIGHT_DATA_DIR"; exit 1; }',
         `printf 'PORT=%s\\nMETRICS_PORT=%s\\nDATA=%s\\n' "$PORT" "$METRICS_PORT" "$HAPPIER_SERVER_LIGHT_DATA_DIR" > "${markerPath}"`,
-        'exit 0',
+        'exec sleep 30',
         '',
       ].join('\n'),
       { encoding: 'utf-8', mode: 0o755 },
@@ -839,6 +839,7 @@ test('verify-artifacts smoke-runs packaged server binaries with isolated startup
         env: {
           ...process.env,
           HAPPIER_SERVER_LIGHT_DATA_DIR: '',
+          HAPPIER_RELEASE_SERVER_SMOKE_TIMEOUT_MS: '1000',
           PORT: '',
           METRICS_PORT: '',
         },
@@ -850,6 +851,64 @@ test('verify-artifacts smoke-runs packaged server binaries with isolated startup
     assert.match(marker, /^PORT=0$/m);
     assert.match(marker, /^METRICS_PORT=0$/m);
     assert.match(marker, /^DATA=.+$/m);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('verify-artifacts rejects a packaged server binary that exits before the smoke window', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'happier-verify-artifacts-server-early-exit-'));
+  try {
+    const artifactsDir = join(workspace, 'artifacts');
+    const stageRoot = join(workspace, 'stage');
+    const archivePlatform = normalizeArchivePlatform(process.platform);
+    const archiveArch = normalizeArchiveArch(process.arch);
+    const archiveStem = `happier-server-v0.0.0-early-exit-${archivePlatform}-${archiveArch}`;
+    const stageDir = join(stageRoot, archiveStem);
+    const archivePath = join(artifactsDir, `${archiveStem}.tar.gz`);
+    const checksumsPath = join(artifactsDir, 'checksums-happier-server-v0.0.0-early-exit.txt');
+
+    await mkdir(stageDir, { recursive: true });
+    await mkdir(artifactsDir, { recursive: true });
+    await writeFile(
+      join(stageDir, 'happier-server'),
+      '#!/usr/bin/env bash\nexit 0\n',
+      { encoding: 'utf-8', mode: 0o755 },
+    );
+
+    createCanonicalTarArchive({ archivePath, sourcePath: stageRoot, sourceName: archiveStem });
+    await writeFile(
+      checksumsPath,
+      `${await sha256(archivePath)}  ${archiveStem}.tar.gz\n`,
+      'utf-8',
+    );
+
+    assert.throws(
+      () =>
+        execFileSync(
+          process.execPath,
+          [
+            verifyArtifactsPath,
+            '--artifacts-dir',
+            artifactsDir,
+            '--checksums',
+            checksumsPath,
+          ],
+          {
+            cwd: repoRoot,
+            env: {
+              ...process.env,
+              // The contract is an early clean exit, not a scheduler race.
+              // Keep enough headroom for this file's parallel archive tests to
+              // observe the child close event on a loaded CI worker.
+              HAPPIER_RELEASE_SERVER_SMOKE_TIMEOUT_MS: '2000',
+            },
+            encoding: 'utf-8',
+            stdio: 'pipe',
+          },
+        ),
+      /server binary exited before the smoke window/i,
+    );
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -877,7 +936,7 @@ test('verify-artifacts selects the packaged binary instead of a sibling sidecar 
         '#!/usr/bin/env bash',
         'set -euo pipefail',
         `printf 'selected-binary\\n' > "${markerPath}"`,
-        'exit 0',
+        'exec sleep 30',
         '',
       ].join('\n'),
       { encoding: 'utf-8', mode: 0o755 },
@@ -899,7 +958,14 @@ test('verify-artifacts selects the packaged binary instead of a sibling sidecar 
         '--checksums',
         checksumsPath,
       ],
-      { cwd: repoRoot, stdio: 'pipe' },
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HAPPIER_RELEASE_SERVER_SMOKE_TIMEOUT_MS: '1000',
+        },
+        stdio: 'pipe',
+      },
     );
 
     assert.equal(await readFile(markerPath, 'utf-8'), 'selected-binary\n');

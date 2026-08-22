@@ -5,6 +5,7 @@ import { type InventoryFile } from './migrationTypes.ts';
 
 const DEFAULT_IGNORED_DIRS = new Set([
   '.git',
+  '.expo',
   '.next',
   '.project',
   '.turbo',
@@ -12,10 +13,21 @@ const DEFAULT_IGNORED_DIRS = new Set([
   'build',
   'coverage',
   'dist',
+  'generated',
   'ios',
   'node_modules',
   'out',
+  'package-dist',
+  'temp',
+  'tmp',
 ]);
+const TEMPORARY_ARTIFACT_DIRECTORY_PATTERN = /^\.(?:backup|dist|restore|tmp)(?:[.-].*)?$/;
+const REPOSITORY_GENERATED_ARTIFACT_DIRECTORY_PATTERNS = [
+  /(?:^|\/)\.runner-snapshots$/,
+  /^apps\/cli\/dist\.probe\.manual$/,
+  /^apps\/cli\/\.g3-real-child-[^/]*$/,
+  /^apps\/ui\/dist-dperf$/,
+];
 
 export interface CollectFileInventoryOptions {
   rootDir?: string;
@@ -30,8 +42,9 @@ function normalizePath(filePath: string): string {
 function walk(rootDir: string, absoluteDir: string, include: RegExp, output: InventoryFile[]): void {
   for (const entry of readdirSync(absoluteDir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
-      if (!DEFAULT_IGNORED_DIRS.has(entry.name)) {
-        walk(rootDir, join(absoluteDir, entry.name), include, output);
+      const absoluteEntryPath = join(absoluteDir, entry.name);
+      if (!shouldIgnoreDirectory(rootDir, absoluteEntryPath, entry.name)) {
+        walk(rootDir, absoluteEntryPath, include, output);
       }
       continue;
     }
@@ -46,6 +59,24 @@ function walk(rootDir: string, absoluteDir: string, include: RegExp, output: Inv
       content: readFileSync(absolutePath, 'utf8'),
     });
   }
+}
+
+function shouldIgnoreDirectory(
+  rootDir: string,
+  absoluteDirectoryPath: string,
+  directoryName: string,
+): boolean {
+  if (
+    DEFAULT_IGNORED_DIRS.has(directoryName)
+    || TEMPORARY_ARTIFACT_DIRECTORY_PATTERN.test(directoryName)
+  ) {
+    return true;
+  }
+
+  const repositoryRelativePath = normalizePath(relative(rootDir, absoluteDirectoryPath));
+  return REPOSITORY_GENERATED_ARTIFACT_DIRECTORY_PATTERNS.some((pattern) => (
+    pattern.test(repositoryRelativePath)
+  ));
 }
 
 export function collectFileInventory(options: CollectFileInventoryOptions): InventoryFile[] {

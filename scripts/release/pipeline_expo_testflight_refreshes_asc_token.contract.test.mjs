@@ -29,6 +29,15 @@ globalThis.fetch = async (url, init = {}) => {
   requestTime += 60_000;
 
   const pathname = new URL(url).pathname;
+  if (pathname === '/v1/apps/6761304097/betaGroups') {
+    return Response.json({
+      data: [{
+        type: 'betaGroups',
+        id: '78315e16-c539-43ae-a65e-4f465dccaf68',
+        attributes: { name: 'Happier (dev)', isInternalGroup: false },
+      }],
+    });
+  }
   if (pathname === '/v1/builds') {
     return Response.json({
       data: [{
@@ -78,7 +87,7 @@ globalThis.fetch = async (url, init = {}) => {
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line));
-    assert.equal(tokens.length, 3);
+    assert.equal(tokens.length, 4);
     assert.equal(new Set(tokens).size, tokens.length, 'each App Store Connect request must use a newly minted JWT');
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });

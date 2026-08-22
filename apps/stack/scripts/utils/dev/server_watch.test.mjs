@@ -35,7 +35,7 @@ test('server restart preflight delegates runtime validation to the package-manag
   });
 });
 
-test('server restart preflight generates provider clients before runtime validation only when reload migration evidence requires it', async (t) => {
+test('server restart preflight refreshes provider clients before runtime validation without coupling it to migration application', async (t) => {
   await withTempServerDir(t, async (serverDir) => {
     await writeFile(join(serverDir, 'package.json'), JSON.stringify({
       private: true,
@@ -58,7 +58,11 @@ test('server restart preflight generates provider clients before runtime validat
       },
       boundary,
     );
-    assert.deepEqual(calls, ['typecheck:runtime'], 'app-only reloads must not regenerate provider clients');
+    assert.deepEqual(
+      calls,
+      ['generate:providers', 'typecheck:runtime'],
+      'the component owner must make generated provider inputs current before its check-only typecheck',
+    );
 
     calls.length = 0;
     await preflightDevServerRestart(
