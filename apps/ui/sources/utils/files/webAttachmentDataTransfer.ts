@@ -42,8 +42,10 @@ export function extractWebAttachmentFilesFromDataTransfer(dataTransfer: DataTran
         pushFile(typeof item.getAsFile === 'function' ? item.getAsFile() : null);
     }
 
-    for (const file of arrayFromMaybeArrayLike(dataTransfer.files)) {
-        pushFile(file);
+    if (files.length === 0) {
+        for (const file of arrayFromMaybeArrayLike(dataTransfer.files)) {
+            pushFile(file);
+        }
     }
 
     return files;

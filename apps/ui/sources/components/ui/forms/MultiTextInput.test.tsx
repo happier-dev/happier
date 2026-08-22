@@ -1620,6 +1620,43 @@ describe('MultiTextInput', () => {
         expect(onFilesPasted).toHaveBeenCalledWith([file]);
     });
 
+    it('attaches a clipboard file once when items and files expose different objects for the same image', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const onFilesPasted = vi.fn();
+
+        const tree = (await renderScreen(React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, {
+            testID: 'composer-input',
+            value: 'Inspect this image',
+            onChangeText: () => {},
+            onFilesPasted,
+        }))).tree;
+
+        const input = tree.findByType('textarea' as any);
+        const preventDefault = vi.fn();
+        const itemFile = new File([new Uint8Array([1, 2, 3])], 'image.png', {
+            type: 'image/png',
+            lastModified: 2,
+        });
+        const fileListFile = new File([new Uint8Array([1, 2, 3])], 'image.png', {
+            type: 'image/png',
+            lastModified: 1,
+        });
+
+        input.props.onPaste({
+            preventDefault,
+            clipboardData: {
+                items: [{
+                    kind: 'file',
+                    getAsFile: () => itemFile,
+                }],
+                files: [fileListFile],
+            },
+        });
+
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(onFilesPasted).toHaveBeenCalledWith([itemFile]);
+    });
+
     it('falls back to clipboardData.files when pasted file items cannot be materialized', async () => {
         const { MultiTextInput } = await import('./MultiTextInput.web');
         const onFilesPasted = vi.fn();
