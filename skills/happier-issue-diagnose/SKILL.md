@@ -15,7 +15,8 @@ This skill owns the GitHub-issue diagnosis contract. It composes existing engine
 - use `skills/happier-testing` for controlled reproduction and deciding validation;
 - use `skills/happier-review` in advisory/report mode to assess a linked pull request against the independently verified issue contract and affected corridor;
 - use `skills/happier-release*` for packaging, signing, publication, promotion, or released-artifact defects;
-- use `skills/happier-implement` only after the user authorizes source changes.
+- use `skills/happier-implement` only after the user authorizes source changes;
+- when diagnosing from the 0.2 line, assess whether the same contract or defect mechanism is reachable in 0.3 and pass that evidence to `skills/happier-port-0-2-to-0-3` after the 0.2 correction is validated.
 
 ## Working stance
 
@@ -92,6 +93,8 @@ Apply the diagnosis and bug-fix method owned by `skills/happier-diagnose`, `skil
 5. test the conclusion against current source and, where material, the actual installed or released artifact;
 6. separate verified cause from the proposed response.
 
+When the diagnosis runs from the 0.2 line, also inspect 0.3 by the observable contract and defect mechanism rather than by matching files. Determine whether 0.3 already satisfies the intent, exposes the same gap through an evolved owner, expands the gap across sibling paths, or makes the issue unreachable. This is a preliminary applicability and owner assessment, not a destination implementation or a reason to delay the source correction. Reuse this current-basis evidence during the later port; do not repeat the whole analysis unless the source correction or destination architecture materially changes.
+
 Prefer a real local stack reproduction when safe and useful. Pin the checkout, loaded runtime/build, provider/account mode, component versions, inputs, expected outcome, actual outcome, and cleanup. A current-source reproduction cannot by itself prove behavior in an older user release.
 
 Stop searching when the decision-material cause, impact, and response basis are established. If they are not, report the exact evidence that would decide them.
@@ -144,7 +147,7 @@ Follow [report-contract.md](references/report-contract.md). Read [report-example
 
 Treat the report contract as a content-completeness guard, not a mandatory outline. Organize several issues by maintainer decision: one shared correction or release operation may have one explanation with issue-specific closure conditions, while different evidence requests, owners, or product choices require separate briefs. The opening must answer naturally; later detail should deepen rather than repeat it.
 
-Recommend concrete changes at the canonical owner, including reuse, extraction, consolidation, migration, or removal needed to eliminate active split-brains. Do not implement them unless the user authorizes implementation; then hand the established evidence to `skills/happier-implement`.
+Recommend concrete changes at the canonical owner, including reuse, extraction, consolidation, migration, or removal needed to eliminate active split-brains. Do not implement them unless the user authorizes implementation; then hand the established evidence to `skills/happier-implement`. For a 0.2 correction, include the preliminary 0.3 applicability, likely destination owner, and any expanded sibling paths in that handoff. The implementation works on and validates 0.2 first, then invokes `skills/happier-port-0-2-to-0-3` once for the coherent correction.
 
 GitHub comments, labels, assignments, edits, closure, reopening, and locking require separate explicit authority and the write-back safeguards in `skills/happier-github-ops`.
 

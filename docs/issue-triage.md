@@ -38,6 +38,16 @@ Deep diagnosis records linked work during intake, establishes the issue contract
 
 Diagnosis and triage are read-only by default. Implementation and GitHub write-back require separate explicit authority.
 
+## 0.2 correction and 0.3 continuation
+
+Every issue correction implemented on the 0.2 source line must receive an evidence-backed disposition on the evolved 0.3 line. During diagnosis, inspect whether the same user-visible contract or defect mechanism is reachable in 0.3 and identify its likely current owner and any expanded sibling paths. Search by behavior and domain identifiers rather than assuming the same files or architecture still own the decision.
+
+After implementation is authorized, work on and validate 0.2 first. Once the source correction forms one coherent validated batch, invoke `skills/happier-port-0-2-to-0-3` once for that batch. Reuse valid diagnosis evidence, re-discover the current 0.3 owner, and classify every source intent as already satisfied, adapted, broadened, or not applicable. Apply every applicable correction through 0.3's current canonical owner without restoring superseded 0.2 logic, overwriting unrelated destination work, or propagating 0.3 changes backward.
+
+Do not port or fully reanalyze 0.3 during every source edit. If a later source refinement changes an intent, reassess that intent and its destination disposition; repeat the broader destination analysis only when scope, ownership, or architecture materially changed. The port skill does not stage or commit. If no verified 0.3 checkout is available, complete the source-side evidence and report the port as blocked with the missing location or authority.
+
+An issue-linked 0.2 implementation is not `VERIFIED_COMPLETE` until every source intent has a 0.3 disposition and every applicable destination change has its deciding validation. This completion rule is separate from release availability: `stage:source` still requires the complete correction to be integrated and verified on canonical `dev`.
+
 ## Correction lifecycle and release channels
 
 Use exactly one optional `stage:*` label on an open issue when a verified correction exists:
@@ -47,7 +57,7 @@ Use exactly one optional `stage:*` label on an open issue when a verified correc
 - `stage:preview`: the correction is available on the preview channel;
 - `stage:stable`: the correction is available on the stable channel.
 
-No stage label means no correction has been proven at any of those boundaries. A local worktree, `remote-dev`, unmerged branch, open pull request, or commit not integrated into canonical `dev` never qualifies for `stage:source`. Stage labels describe the highest verified availability boundary reached by the correction, not where investigation or implementation happens, and they are mutually exclusive. If the correction is reverted or its deciding validation is invalidated, remove or move the stage label immediately; release automation assumes the label is truthful when it snapshots the queue.
+No stage label means no correction has been proven at any of those boundaries. A local 0.2 worktree, unmerged branch, open pull request, or commit not integrated into canonical `dev` never qualifies for `stage:source`. Stage labels describe the highest verified availability boundary reached by the correction, not where investigation or implementation happens, and they are mutually exclusive. If the correction is reverted or its deciding validation is invalidated, remove or move the stage label immediately; release automation assumes the label is truthful when it snapshots the queue.
 
 For an open issue whose complete correction becomes integrated and verified on canonical `dev`, the handling agent must include `stage:source` in its next exact GitHub mutation preview. Do not silently leave a proven correction outside the release queue. Omit that proposal only when the issue is already at the same or a higher verified stage, or when the evidence-backed disposition establishes that no correction exists to release. If GitHub mutation authority has not been granted, report the pending label proposal rather than applying it or treating the lifecycle as complete.
 

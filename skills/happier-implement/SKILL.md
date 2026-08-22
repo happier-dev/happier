@@ -16,6 +16,7 @@ Classify the requested work as a feature/change, bug fix, refactor/migration, me
 - For a runtime/session/provider/auth investigation without source changes, use `skills/happier-diagnose`.
 - For read-only GitHub issue grouping or diagnosis, use `skills/happier-issue-triage` and `skills/happier-issue-diagnose`. Enter this implementation workflow only after the user authorizes source changes, carrying forward the established issue evidence and version basis.
 - For a reported defect or regression, read [bug-fix-loop.md](references/bug-fix-loop.md) before editing production behavior.
+- When the repository constitution defines a successor-line obligation, include a destination disposition in the complete outcome. Work on and validate one coherent source batch first, then invoke the owning port workflow once at that boundary. Reuse current-basis diagnosis and port evidence, and revisit only changed intents unless scope, ownership, or architecture materially changed; do not port or reanalyze the destination during every source edit.
 
 Do not create a repository plan on agent initiative. Use an internal checklist when useful, but keep it ephemeral unless an approved program already designates durable tracking.
 
@@ -100,6 +101,8 @@ For user-visible or environment-dependent changes, run the composed live browser
 
 Do not guess an expected result that cannot be derived from the user request, approved plan when applicable, current external contract, or observed canonical behavior. Distinguish implementation missing/wrong, implementation present but behavior unverified, evidence unavailable, and expected behavior materially ambiguous.
 
+If a successor-line port is required, source validation alone is not completion. Before closeout, require an evidence-backed destination disposition for every source intent and deciding destination validation for every applicable change. An unavailable destination blocks only the port portion and must be reported explicitly; it does not invalidate completed source analysis or source validation.
+
 ## 9. Review and correct at useful boundaries
 
 Continuously perform compact author self-review without creating a separate review program. Inspect bypasses, split-brains, neighboring cases, environment gaps, and complexity introduced by the change; run `skills/attack-conclusion` before a non-trivial handoff.
@@ -121,7 +124,7 @@ For work linked to a GitHub issue, keep the source correction, commit relationsh
 - after implementation, propose a Conventional Commit message and a detailed GitHub response grounded in the verified cause, owner-level correction, choices, tests, public provenance, current stage, and reporter-channel follow-up;
 - do not apply labels, post comments, or close the issue without the separate exact mutation preview and approval required by `skills/happier-github-ops`.
 
-When the complete correction is integrated and verified on canonical `dev`, include `stage:source` for every affected open issue in the next exact GitHub mutation preview. Omit it only when the issue already has the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state that reason explicitly. If mutation authority is absent, report the pending proposal instead of applying it or silently leaving the issue outside the release queue. Local work, `remote-dev`, an open pull request, or an unmerged commit does not qualify. Normal release workflows advance later labels; implementation agents do not predict or pre-advance channels.
+When the complete correction is integrated and verified on canonical `dev`, include `stage:source` for every affected open issue in the next exact GitHub mutation preview. Omit it only when the issue already has the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state that reason explicitly. If mutation authority is absent, report the pending proposal instead of applying it or silently leaving the issue outside the release queue. Local 0.2 work, an open pull request, or an unmerged commit does not qualify. Normal release workflows advance later labels; implementation agents do not predict or pre-advance channels.
 
 Keep human handoff separate from availability. After a source correction, choose among three states: retain `needs:maintainer` only when a named project-side review, diagnosis, implementation, or engineering correction remains; use `needs:reporter` when an approved public request makes external confirmation or diagnostics the next decision-material human input, even if the reporter must first wait for a named release stage; or clear both when only merge/release progression, promotion, publication, release-owned certification, backlog scheduling, or eventual closure remains. `stage:*` records the release prerequisite. Do not use `needs:maintainer` as a generic release-queue marker, and do not use hidden saved-reply directives in an agent-authored comment to bypass the exact mutation preview.
 

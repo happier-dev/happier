@@ -41,7 +41,7 @@ Development builds can explain a report but are not permanent compatibility obli
 
 Map a verified correction to the issue lifecycle without overstating it:
 
-- `stage:source` requires integration and verification on canonical `dev`, not a local checkout, `remote-dev`, branch, open pull request, or unmerged commit;
+- `stage:source` requires integration and verification on canonical `dev`, not a local 0.2 checkout, branch, open pull request, or unmerged commit;
 - `stage:dev`, `stage:preview`, and `stage:stable` require the corresponding release workflow to verify the promoted candidate;
 - no stage label means no correction boundary has been proven;
 - a stage label is the highest verified channel containing the correction, not proof that the reporter uses that channel or that the issue can close.

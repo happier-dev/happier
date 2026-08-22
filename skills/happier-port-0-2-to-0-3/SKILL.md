@@ -29,9 +29,9 @@ Prefer an explicit destination supplied by the user or calling workflow. Otherwi
 
 Verify repository identity, branch/commit basis, dirty state, and current bytes. Do not infer a release line from a directory name, assume a sibling path exists, create or clone a checkout without authorization, or switch a primary checkout. If the destination is unavailable, continue source-side analysis and report only the port as blocked with the exact missing location or authority.
 
-## 3. Freeze the source intent after source validation
+## 3. Establish the validated source basis
 
-Port only after the source change is coherent and has passed its required validation. Record the source basis and express every change independently of filenames:
+Port after the source change forms a coherent batch and passes its required validation. Read the current in-scope source bytes, record their basis for this port pass, and express every change independently of filenames:
 
 - user-visible or operational outcome;
 - defect mechanism or invariant;
@@ -39,7 +39,7 @@ Port only after the source change is coherent and has passed its required valida
 - tests and compatibility behavior that prove it;
 - exclusions and intentionally unchanged behavior.
 
-Include the whole current source change: committed, staged, and unstaged bytes in scope. Refresh this intent set after every later source refinement or correction.
+Include the whole current source change: committed, staged, and unstaged bytes in scope. Do not snapshot, lock, stash, hash, clean, or require a stationary source worktree. If source bytes later change, inspect the changed intent and update its destination disposition; repeat the full destination analysis only when the source scope, owner, or architecture changed materially.
 
 ## 4. Re-discover the 0.3 owner
 
@@ -68,6 +68,6 @@ Do not stage or commit. Report the exact changed paths or hunks and validation t
 
 ## 7. Verify completeness after every follow-up
 
-After each later source refinement, repeat the intent classification and destination audit. A test-only source follow-up may require no destination code when 0.3 already proves the contract; record that evidence instead of making a ceremonial edit.
+After each later source refinement, reassess the changed intent and its destination disposition. Broaden the audit only when the refinement changes scope, ownership, architecture, or the affected corridor. A test-only source follow-up may require no destination code when 0.3 already proves the contract; record that evidence instead of making a ceremonial edit.
 
 Finish only when every source intent has an evidence-backed destination disposition, all applicable changes are present in the destination worktree without overwriting unrelated bytes, deciding checks have run, and remaining gaps or unavailable validation are explicit.

@@ -22,13 +22,13 @@ Group several files under one intent when they form one vertical. Split one file
 
 ## Port order
 
-1. Validate and freeze the complete current source change.
+1. Validate a coherent source batch and record its current basis and intent for this port pass.
 2. Re-discover the destination architecture and same-concept paths.
 3. Decide every intent before editing.
 4. Implement applicable changes through destination owners and tests.
 5. Run focused and risk-appropriate broader destination checks.
 6. Inspect the exact destination diff and leave commit authority to the caller.
-7. Re-read source and destination after any later follow-up.
+7. After a later source follow-up, re-read its changed intent and destination disposition; repeat the full analysis only when scope, ownership, or architecture materially changed.
 
 ## Exit audit
 
