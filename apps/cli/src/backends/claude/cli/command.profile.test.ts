@@ -101,7 +101,7 @@ describe('handleClaudeCliCommand --profile', () => {
       whenRefreshed: null,
     } as any);
     vi.spyOn(runClaudeModule, 'runClaude').mockRejectedValue(fatalError);
-    const loggerSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const loggerSpy = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
     const stderrSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('exit:1');
@@ -114,10 +114,7 @@ describe('handleClaudeCliCommand --profile', () => {
         terminalRuntime: null,
       } as any)).rejects.toThrow('exit:1');
 
-      expect(loggerSpy).toHaveBeenCalledWith(
-        '[claude] Fatal command error',
-        expect.objectContaining({ message: 'startup side effect failed' }),
-      );
+      expect(loggerSpy).toHaveBeenCalledWith(fatalError);
     } finally {
       stderrSpy.mockRestore();
       exitSpy.mockRestore();
