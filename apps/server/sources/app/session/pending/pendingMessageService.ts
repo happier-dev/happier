@@ -14,6 +14,7 @@ import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv"
 import {
     isStoredContentKindAllowedForSessionByStoragePolicy,
     isPendingDeliveryProviderEffectPossibleV1,
+    isConditionalPendingSteerClaim,
     isPendingDeliveryStatusTransitionAllowedV1,
     isSessionAgentTransitionDividerLocalId,
     PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1,
@@ -55,6 +56,19 @@ type PendingActivationTarget = Readonly<{
     accountId: string;
     requestId: string;
 }>;
+
+function pendingRequestedActionReplacementData(
+    requestedAction: PendingRequestedActionV1,
+    updatedAt: Date,
+) {
+    return {
+        requestedAction,
+        providerAction: null,
+        deliveryState: null,
+        deliveryBlockedReason: null,
+        updatedAt,
+    } as const;
+}
 
 function isOrdinaryPendingMutationFenced(fields: Readonly<{
     status: unknown;
@@ -738,11 +752,7 @@ export async function updatePendingRequestedAction(params: {
                         updatedAt: existing.updatedAt,
                     },
                     data: {
-                        requestedAction: requestedActionResult.data,
-                        deliveryState: null,
-                        deliveryBlockedReason: null,
-                        providerAction: null,
-                        updatedAt: nextUpdatedAt,
+                        ...pendingRequestedActionReplacementData(requestedActionResult.data, nextUpdatedAt),
                     },
                 });
                 if (updated.count === 0) {
@@ -800,9 +810,7 @@ export async function updatePendingRequestedAction(params: {
                     updatedAt: existing.updatedAt,
                 },
                 data: {
-                    requestedAction: requestedActionResult.data,
-                    providerAction: null,
-                    updatedAt: nextUpdatedAt,
+                    ...pendingRequestedActionReplacementData(requestedActionResult.data, nextUpdatedAt),
                 },
             });
             if (updated.count === 0) {
@@ -1296,7 +1304,7 @@ async function readCurrentPendingMutationState(tx: PendingServiceTx, sessionId: 
 
 export type BlockPendingDeliveryResult =
     | { ok: true; pendingVersion: number; pendingCount: number; pendingBlockedCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean; didUpdate: boolean }
-    | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "not-found" | "internal" };
+    | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "not-found" | "delivery-settlement-conflict" | "internal" };
 
 export async function blockPendingDelivery(params: {
     actorUserId: string;
@@ -1318,9 +1326,67 @@ export async function blockPendingDelivery(params: {
         return await inTx(async (tx) => {
             const existing = await tx.sessionPendingMessage.findUnique({
                 where: { sessionId_localId: { sessionId, localId } },
-                select: { status: true, deliveryState: true, deliveryBlockedReason: true, discardedReason: true },
+                select: {
+                    status: true,
+                    deliveryState: true,
+                    deliveryBlockedReason: true,
+                    discardedReason: true,
+                    requestedAction: true,
+                    providerAction: true,
+                    updatedAt: true,
+                },
             });
             if (!existing) return { ok: false, error: "not-found" } as const;
+
+            if (reason === "conditional_steer_unavailable") {
+                const requestedAction = PendingRequestedActionV1Schema.safeParse(existing.requestedAction);
+                if (
+                    existing.status === "queued"
+                    && existing.deliveryState === null
+                    && existing.deliveryBlockedReason === null
+                    && existing.providerAction === null
+                    && requestedAction.success
+                    && requestedAction.data.kind === "enqueue"
+                ) {
+                    return {
+                        ok: true,
+                        ...(await readCurrentPendingMutationState(tx, sessionId)),
+                        didUpdate: false,
+                    } as const;
+                }
+                if (
+                    existing.status !== "queued"
+                    || existing.deliveryState !== "delivering"
+                    || !requestedAction.success
+                    || !isConditionalPendingSteerClaim({
+                        requestedAction: requestedAction.data,
+                        providerAction: existing.providerAction,
+                    })
+                ) {
+                    return { ok: false, error: "delivery-settlement-conflict" } as const;
+                }
+                const nextUpdatedAt = new Date(Math.max(Date.now(), existing.updatedAt.getTime() + 1));
+                const updated = await tx.sessionPendingMessage.updateMany({
+                    where: {
+                        sessionId,
+                        localId,
+                        status: "queued",
+                        deliveryState: "delivering",
+                        deliveryBlockedReason: existing.deliveryBlockedReason,
+                        providerAction: "steer",
+                        updatedAt: existing.updatedAt,
+                    },
+                    data: pendingRequestedActionReplacementData(
+                        { v: 1, kind: "enqueue" },
+                        nextUpdatedAt,
+                    ),
+                });
+                if (updated.count === 0) {
+                    return { ok: false, error: "delivery-settlement-conflict" } as const;
+                }
+                const state = await applyPendingSessionStateChange({ tx, sessionId });
+                return { ok: true, ...state, didUpdate: true } as const;
+            }
             if (existing.status !== "queued") {
                 return { ok: true, ...(await readCurrentPendingMutationState(tx, sessionId)), didUpdate: false };
             }

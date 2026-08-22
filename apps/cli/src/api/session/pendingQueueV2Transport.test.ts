@@ -27,7 +27,9 @@ vi.mock('axios', () => ({
     default: {
         get: mockGet,
         post: mockPost,
-        isAxiosError: () => false,
+        isAxiosError: (error: unknown) => Boolean(
+            error && typeof error === 'object' && (error as { isAxiosError?: unknown }).isAxiosError === true,
+        ),
     },
 }));
 
@@ -168,6 +170,37 @@ describe('pendingQueueV2Transport', () => {
         expect(socket.emitWithAck).not.toHaveBeenCalled();
         expect(mockGet).not.toHaveBeenCalled();
         expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it('degrades a new conditional-steer settlement to a strict block on an older server', async () => {
+        mockPost
+            .mockRejectedValueOnce({
+                isAxiosError: true,
+                response: { status: 400, data: { error: 'Bad Request' } },
+            })
+            .mockResolvedValueOnce({
+                data: { ok: true, pendingCount: 1, pendingBlockedCount: 1, pendingVersion: 3 },
+            });
+
+        await expect(blockPendingQueueV2Delivery({
+            token: 'token',
+            sessionId: 'session-1',
+            localId: 'conditional-steer-1',
+            reason: 'conditional_steer_unavailable',
+        })).resolves.toMatchObject({ usedLegacySteeringUnavailableFallback: true });
+
+        expect(mockPost).toHaveBeenNthCalledWith(
+            1,
+            expect.stringContaining('/delivery/block'),
+            { reason: 'conditional_steer_unavailable' },
+            expect.any(Object),
+        );
+        expect(mockPost).toHaveBeenNthCalledWith(
+            2,
+            expect.stringContaining('/delivery/block'),
+            { reason: 'steering_unavailable' },
+            expect.any(Object),
+        );
     });
 
     it('emits only the immutable released materialize payload and accepts its exact positive ACK', async () => {

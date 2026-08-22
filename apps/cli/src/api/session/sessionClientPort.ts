@@ -138,6 +138,7 @@ export interface SessionClientPort {
   blockPendingMessageDelivery?(params: Readonly<{
     localIds: readonly string[] | null | undefined;
     reason: PendingQueueDeliveryBlockedReason;
+    providerEffect?: 'none';
   }>): Promise<boolean>;
   getLastObservedMessageSeq?(): number;
   getCommittedUserMessageSeq?(localId: string): number | null;

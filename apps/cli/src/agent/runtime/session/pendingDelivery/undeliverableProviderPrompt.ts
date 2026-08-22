@@ -5,6 +5,7 @@ import { readPendingLocalId } from '@happier-dev/protocol';
 export type PendingDeliveryBlocker = (params: Readonly<{
   localIds: readonly string[] | null | undefined;
   reason: PendingQueueDeliveryBlockedReason;
+  providerEffect?: 'none';
 }>) => Promise<boolean>;
 
 export function normalizePendingDeliveryLocalIds(
