@@ -11,6 +11,7 @@ import {
 export type ClaudeUnifiedPendingDeliveryBlock = Readonly<{
   localIds: readonly string[];
   reason: PendingQueueDeliveryBlockedReason;
+  providerEffect?: 'none';
 }>;
 
 export type ClaudeUnifiedProviderUnavailablePromptDeliveryWindow = Readonly<{
@@ -187,6 +188,7 @@ export function resolveClaudeUnifiedPendingDeliveryBlock(
     return {
       localIds,
       reason: 'steering_unavailable',
+      providerEffect: 'none',
     };
   }
 

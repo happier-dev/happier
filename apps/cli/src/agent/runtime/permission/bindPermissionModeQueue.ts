@@ -146,11 +146,15 @@ export function registerPermissionModeMessageQueueBinding(opts: {
         // Best-effort fallback: queueing should not be able to crash the process if a steer fails.
       }
     };
-    const blockPendingDelivery = async (reason: PendingQueueDeliveryBlockedReason) => {
+    const blockPendingDelivery = async (
+      reason: PendingQueueDeliveryBlockedReason,
+      providerEffect?: 'none',
+    ) => {
       if (!isCurrentBinding(session, messageBindingGeneration)) return;
       await session.blockPendingMessageDelivery?.({
         localIds: deliveryIdentity.queueOptions.userMessageLocalIds,
         reason,
+        ...(providerEffect ? { providerEffect } : {}),
       });
     };
     const claimedProviderAction = deliveryInfo?.pendingProviderAction;
@@ -189,7 +193,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
 
     if (isClaimedSteer && !canSteerNow) {
       steerSequence = steerSequence.then(async () => {
-        await blockPendingDelivery('steering_unavailable');
+        await blockPendingDelivery('steering_unavailable', 'none');
       });
       return steerSequence;
     }
@@ -210,7 +214,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           if (!isCurrentBinding(session, messageBindingGeneration)) return;
           if (configOutcome.status !== 'applied' && configOutcome.status !== 'scheduled_in_turn') {
             if (isClaimedSteer) {
-              await blockPendingDelivery('steering_unavailable');
+              await blockPendingDelivery('steering_unavailable', 'none');
               return;
             }
             // The backend cannot own the config mid-turn: legacy queue path (the mode applies when
@@ -356,6 +360,7 @@ type PermissionModeQueueSessionBinding = {
   blockPendingMessageDelivery?: (params: Readonly<{
     localIds: readonly string[] | null | undefined;
     reason: PendingQueueDeliveryBlockedReason;
+    providerEffect?: 'none';
   }>) => Promise<boolean>;
 };
 

@@ -448,6 +448,7 @@ export async function runCodex(opts: {
         localIds: readonly string[];
         reason: PendingQueueDeliveryBlockedReason;
         userMessageSeq: number | null;
+        providerEffect?: 'none';
     }>): Promise<void> => {
         const localIds = normalizeProviderPromptLocalIds(input.localIds);
         if (localIds.length === 0 || typeof session.blockPendingMessageDelivery !== 'function') {
@@ -457,6 +458,7 @@ export async function runCodex(opts: {
         await session.blockPendingMessageDelivery({
             localIds,
             reason: input.reason,
+            ...(input.providerEffect ? { providerEffect: input.providerEffect } : {}),
         });
     };
     const messageBuffer = new MessageBuffer();
@@ -1170,6 +1172,7 @@ export async function runCodex(opts: {
                             localIds,
                             reason: 'steering_unavailable',
                             userMessageSeq,
+                            providerEffect: 'none',
                         });
                         return;
                     }
@@ -1195,6 +1198,7 @@ export async function runCodex(opts: {
                 localIds,
                 reason: 'steering_unavailable',
                 userMessageSeq,
+                providerEffect: 'none',
             });
             return;
         }
@@ -2439,6 +2443,7 @@ export async function runCodex(opts: {
                                 localIds,
                                 reason: 'steering_unavailable',
                                 userMessageSeq: message.maxUserMessageSeq ?? null,
+                                providerEffect: 'none',
                             });
                             continue;
                         }

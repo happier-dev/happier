@@ -8,7 +8,7 @@ import { backoff, delayUnrefAbortable } from '@/utils/time';
 import { LruSet } from '@/utils/collections/lru';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import { createSerializedWorkQueueDiagnostics, type SerializedWorkDiagnosticContext } from '@/utils/serializedWorkQueueDiagnostics';
-import { readPendingLocalId } from '@happier-dev/protocol';
+import { isConditionalPendingSteerClaim, readPendingLocalId } from '@happier-dev/protocol';
 import { inferAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { configuration } from '@/configuration';
 import type { RawJSONLines } from '@/backends/claude/types';
@@ -578,7 +578,11 @@ export class ApiSessionClient extends EventEmitter {
     private readonly pendingMaterializedLocalIds = new Set<string>();
     private readonly committedLocalIdsAwaitingEcho = new Set<string>();
     private readonly pendingQueueMaterializedLocalIds = new Set<string>();
-    private readonly canonicalPendingDeliveryByLocalId = new Map<string, PendingMaterializationDeliveryState>();
+    private readonly canonicalPendingDeliveryByLocalId = new Map<string, Readonly<{
+        state: PendingMaterializationDeliveryState;
+        requestedAction?: PendingRequestedActionV1;
+        providerAction?: import('@happier-dev/protocol').PendingProviderAction;
+    }>>();
     // Generic reversible provider-path blocks retain identity so exact late provider evidence can
     // still settle the row. A proven pre-provider lifecycle failure retires it after durable block.
     private readonly serverBlockedCanonicalPendingDeliveryLocalIds = new Set<string>();
@@ -1665,13 +1669,19 @@ export class ApiSessionClient extends EventEmitter {
     async blockPendingMessageDelivery(params: Readonly<{
         localIds: readonly string[] | null | undefined;
         reason: PendingQueueDeliveryBlockedReason;
+        providerEffect?: 'none';
     }>): Promise<boolean> {
-        return await this.blockCanonicalPendingDeliveries(params.localIds, params.reason);
+        return await this.blockCanonicalPendingDeliveries(
+            params.localIds,
+            params.reason,
+            params.providerEffect,
+        );
     }
 
     private async blockCanonicalPendingDeliveries(
         localIds: readonly string[] | null | undefined,
         reason: PendingQueueDeliveryBlockedReason,
+        providerEffect?: 'none',
     ): Promise<boolean> {
         if (this.closed) return false;
         const pendingLocalIds = this.normalizeProviderAcceptedUserMessageLocalIds(localIds)
@@ -1682,6 +1692,7 @@ export class ApiSessionClient extends EventEmitter {
         for (const localId of pendingLocalIds) {
             didBlock = await this.blockPendingQueueDeliveryLocalId(localId, reason, {
                 canonicalOnly: true,
+                ...(providerEffect ? { providerEffect } : {}),
             }) || didBlock;
         }
         return didBlock;
@@ -1690,11 +1701,23 @@ export class ApiSessionClient extends EventEmitter {
     private async blockPendingQueueDeliveryLocalId(
         localId: string,
         reason: PendingQueueDeliveryBlockedReason,
-        opts: Readonly<{ canonicalOnly: boolean }>,
+        opts: Readonly<{ canonicalOnly: boolean; providerEffect?: 'none' }>,
     ): Promise<boolean> {
         if (this.closed) return false;
-        const wasCanonical = this.canonicalPendingDeliveryByLocalId.has(localId);
+        const canonicalClaim = this.canonicalPendingDeliveryByLocalId.get(localId);
+        const wasCanonical = canonicalClaim !== undefined;
         if (opts.canonicalOnly && !wasCanonical) return false;
+
+        const settlementReason =
+            reason === 'steering_unavailable'
+            && opts.providerEffect === 'none'
+            && canonicalClaim
+            && isConditionalPendingSteerClaim({
+                requestedAction: canonicalClaim.requestedAction,
+                providerAction: canonicalClaim.providerAction,
+            })
+                ? 'conditional_steer_unavailable'
+                : reason;
 
         const supervisor = this.sessionConnectionSupervisor;
         try {
@@ -1702,7 +1725,7 @@ export class ApiSessionClient extends EventEmitter {
                 token: this.token,
                 sessionId: this.sessionId,
                 localId,
-                reason,
+                reason: settlementReason,
             });
             const result = supervisor
                 ? await runSupervisedRequest({
@@ -1714,11 +1737,17 @@ export class ApiSessionClient extends EventEmitter {
                 })
                 : await request();
 
-            if (wasCanonical && this.canonicalPendingDeliveryByLocalId.has(localId)) {
+            const didRequeueConditionalSteer =
+                settlementReason === 'conditional_steer_unavailable'
+                && result.usedLegacySteeringUnavailableFallback !== true;
+            if (didRequeueConditionalSteer) {
+                this.clearCanonicalPendingDeliveryLocalState(localId);
+                this.clearAgentQueueDeliveryAttempt(localId);
+            } else if (wasCanonical && this.canonicalPendingDeliveryByLocalId.has(localId)) {
                 if (
-                    reason !== 'ambiguous_terminal_delivery'
-                    && reason !== 'delivery_outcome_uncertain'
-                    && !isReversibleProviderInputBlockReason(reason)
+                    settlementReason !== 'ambiguous_terminal_delivery'
+                    && settlementReason !== 'delivery_outcome_uncertain'
+                    && !isReversibleProviderInputBlockReason(settlementReason)
                 ) {
                     this.clearCanonicalPendingDeliveryLocalState(localId);
                 } else {
@@ -1735,8 +1764,9 @@ export class ApiSessionClient extends EventEmitter {
             logger.debug('[pendingQueue] provider delivery block succeeded', {
                 sessionId: this.sessionId,
                 localId,
-                reason,
+                reason: settlementReason,
                 canonical: wasCanonical,
+                conditionalSteerRequeued: didRequeueConditionalSteer,
                 ...(result.pendingQueueState
                     ? {
                         pendingCount: result.pendingQueueState.pendingCount,
@@ -1750,7 +1780,7 @@ export class ApiSessionClient extends EventEmitter {
             logger.debug('[pendingQueue] provider delivery block failed', {
                 sessionId: this.sessionId,
                 localId,
-                reason,
+                reason: settlementReason,
                     error: serializeAxiosErrorForLog(error),
                 });
             if (await this.retireStaleCanonicalPendingDeliveryAfterTerminalMiss(localId, 'block', error)) {
@@ -2237,6 +2267,18 @@ export class ApiSessionClient extends EventEmitter {
         }, configuration.transcriptRecoveryMaxWaitMs);
         timer.unref?.();
         this.agentQueueDeliveredLocalIdCleanupTimers.set(localId, timer);
+    }
+
+    private clearAgentQueueDeliveryAttempt(localId: string): void {
+        this.pendingQueueMaterializedLocalIds.delete(localId);
+        this.agentQueueEchoSuppressedLocalIds.delete(localId);
+        this.agentQueueDeliveredLocalIds.delete(localId);
+        const echoTimer = this.agentQueueEchoSuppressedLocalIdCleanupTimers.get(localId);
+        if (echoTimer) clearTimeout(echoTimer);
+        this.agentQueueEchoSuppressedLocalIdCleanupTimers.delete(localId);
+        const deliveryTimer = this.agentQueueDeliveredLocalIdCleanupTimers.get(localId);
+        if (deliveryTimer) clearTimeout(deliveryTimer);
+        this.agentQueueDeliveredLocalIdCleanupTimers.delete(localId);
     }
 
     private retainExplicitUserRecoveryDecision(localId: string, decision: Promise<ExplicitUserRecoveryDecision>): void {
@@ -5253,6 +5295,7 @@ export class ApiSessionClient extends EventEmitter {
         void this.blockPendingMessageDelivery({
             localIds: [localId],
             reason: outcome.reason,
+            providerEffect: 'none',
         });
     }
 
@@ -6178,7 +6221,15 @@ export class ApiSessionClient extends EventEmitter {
             }
             this.canonicalPendingDeliveryByLocalId.set(
                 materializedMessage.localId,
-                unresolvedProviderDeliveryState,
+                {
+                    state: unresolvedProviderDeliveryState,
+                    ...(materializedMessage.requestedAction
+                        ? { requestedAction: materializedMessage.requestedAction }
+                        : {}),
+                    ...(materializedMessage.providerAction
+                        ? { providerAction: materializedMessage.providerAction }
+                        : {}),
+                },
             );
         }
 

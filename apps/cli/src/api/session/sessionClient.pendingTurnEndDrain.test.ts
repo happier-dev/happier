@@ -1671,6 +1671,83 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
     }
   });
 
+  it('releases canonical local custody after a current server requeues a conditional steer', async () => {
+    const client = await createClient({
+      latestTurnStatus: 'in_progress',
+      pendingCount: 1,
+      pendingVersion: 1,
+    });
+    const localId = 'conditional-steer-current-server';
+    const materialized = createProviderDeliveryMaterializeResult(localId);
+    materializeNextMock.mockResolvedValueOnce({
+      ...materialized,
+      message: {
+        ...materialized.message,
+        requestedAction: { v: 1 as const, kind: 'steer_if_active' as const },
+        providerAction: 'steer' as const,
+      },
+    });
+    blockPendingDeliveryMock.mockResolvedValueOnce({
+      pendingQueueState: { known: true, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 3 },
+    });
+
+    await expect(client.materializeNextPendingMessageSafely({
+      reconcileWhenEmpty: 'force',
+      activeTurnSteerability: 'steerable',
+    })).resolves.toMatchObject({ type: 'materialized', localId });
+    await expect(client.blockPendingMessageDelivery({
+      localIds: [localId],
+      reason: 'steering_unavailable',
+      providerEffect: 'none',
+    })).resolves.toBe(true);
+
+    expect(blockPendingDeliveryMock).toHaveBeenCalledWith({
+      token: 'tok',
+      sessionId: 's1',
+      localId,
+      reason: 'conditional_steer_unavailable',
+    });
+    expect((client as any).canonicalPendingDeliveryByLocalId.has(localId)).toBe(false);
+    expect((client as any).pendingQueueMaterializedLocalIds.has(localId)).toBe(false);
+    expect((client as any).agentQueueEchoSuppressedLocalIds.has(localId)).toBe(false);
+  });
+
+  it('does not reopen local delivery when an older server degrades the settlement to a strict block', async () => {
+    const client = await createClient({
+      latestTurnStatus: 'in_progress',
+      pendingCount: 1,
+      pendingVersion: 1,
+    });
+    const localId = 'conditional-steer-legacy-server';
+    const materialized = createProviderDeliveryMaterializeResult(localId);
+    materializeNextMock.mockResolvedValueOnce({
+      ...materialized,
+      message: {
+        ...materialized.message,
+        requestedAction: { v: 1 as const, kind: 'steer_if_active' as const },
+        providerAction: 'steer' as const,
+      },
+    });
+    blockPendingDeliveryMock.mockResolvedValueOnce({
+      pendingQueueState: { known: true, pendingCount: 1, pendingBlockedCount: 1, pendingVersion: 3 },
+      usedLegacySteeringUnavailableFallback: true,
+    });
+
+    await client.materializeNextPendingMessageSafely({
+      reconcileWhenEmpty: 'force',
+      activeTurnSteerability: 'steerable',
+    });
+    await expect(client.blockPendingMessageDelivery({
+      localIds: [localId],
+      reason: 'steering_unavailable',
+      providerEffect: 'none',
+    })).resolves.toBe(true);
+
+    expect((client as any).canonicalPendingDeliveryByLocalId.has(localId)).toBe(false);
+    expect((client as any).pendingQueueMaterializedLocalIds.has(localId)).toBe(false);
+    expect((client as any).agentQueueEchoSuppressedLocalIds.has(localId)).toBe(true);
+  });
+
   it('preserves unresolved-head backpressure instead of reporting no pending work', async () => {
     const client = await createClient({
       latestTurnStatus: 'completed',

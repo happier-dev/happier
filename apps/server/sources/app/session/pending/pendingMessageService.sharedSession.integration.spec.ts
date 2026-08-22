@@ -2211,6 +2211,128 @@ describe("pendingMessageService (shared sessions)", () => {
         })).resolves.toEqual({ ok: false, error: "action-conflict" });
     });
 
+    it("atomically requeues a conditional steer rejected before provider effect", async () => {
+        const owner = await createAccount("conditional-steer-fallback-owner");
+        const session = await createSession(owner.id);
+        const localId = `conditional-steer-fallback-${randomUUID()}`;
+
+        await enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            ciphertext: "cipher-conditional-steer-fallback",
+            requestedAction: { v: 1, kind: "steer_if_active" },
+        });
+        const claim = await materializeNextPendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            deliveryState: "provider",
+            foregroundState: "active_steerable",
+        });
+        expect(claim).toMatchObject({
+            ok: true,
+            didMaterialize: true,
+            message: {
+                localId,
+                requestedAction: { v: 1, kind: "steer_if_active" },
+                providerAction: "steer",
+            },
+        });
+
+        await expect(blockPendingDelivery({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            reason: "conditional_steer_unavailable",
+        })).resolves.toMatchObject({
+            ok: true,
+            didUpdate: true,
+            pendingCount: 1,
+            pendingBlockedCount: 0,
+        });
+        await expect(db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: {
+                requestedAction: true,
+                providerAction: true,
+                deliveryState: true,
+                deliveryBlockedReason: true,
+            },
+        })).resolves.toEqual({
+            requestedAction: { v: 1, kind: "enqueue" },
+            providerAction: null,
+            deliveryState: null,
+            deliveryBlockedReason: null,
+        });
+
+        await expect(blockPendingDelivery({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            reason: "conditional_steer_unavailable",
+        })).resolves.toMatchObject({
+            ok: true,
+            didUpdate: false,
+            pendingCount: 1,
+            pendingBlockedCount: 0,
+        });
+
+        await expect(materializeNextPendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            deliveryState: "provider",
+            foregroundState: "ready",
+        })).resolves.toMatchObject({
+            ok: true,
+            didMaterialize: true,
+            message: {
+                localId,
+                requestedAction: { v: 1, kind: "enqueue" },
+                providerAction: "send",
+            },
+        });
+    });
+
+    it("keeps an explicit steer strict when steering is unavailable before provider effect", async () => {
+        const owner = await createAccount("explicit-steer-unavailable-owner");
+        const session = await createSession(owner.id);
+        const localId = `explicit-steer-unavailable-${randomUUID()}`;
+
+        await enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            ciphertext: "cipher-explicit-steer-unavailable",
+            requestedAction: { v: 1, kind: "steer_now" },
+        });
+        await materializeNextPendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            deliveryState: "provider",
+            foregroundState: "active_steerable",
+        });
+
+        await expect(blockPendingDelivery({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            reason: "conditional_steer_unavailable",
+        })).resolves.toEqual({
+            ok: false,
+            error: "delivery-settlement-conflict",
+        });
+        await expect(blockPendingDelivery({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            reason: "steering_unavailable",
+        })).resolves.toMatchObject({
+            ok: true,
+            didUpdate: true,
+            pendingBlockedCount: 1,
+        });
+    });
+
     it.each([
         "provider_rejected_before_acceptance",
         "provider_unavailable_before_acceptance",

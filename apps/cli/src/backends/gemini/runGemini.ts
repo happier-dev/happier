@@ -417,6 +417,7 @@ export async function runGemini(opts: {
         await session.blockPendingMessageDelivery?.({
           localIds,
           reason: 'steering_unavailable',
+          providerEffect: 'none',
         });
       }
       return;

@@ -155,6 +155,38 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     });
   });
 
+  it('proves no provider effect when a claimed steer is unavailable before invocation', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush } = createQueue();
+    const steerText = vi.fn(async () => {});
+
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => false,
+        steerText,
+      },
+    });
+
+    emitUserMessage(
+      { content: { text: 'conditional steer' }, localId: 'pending-conditional-steer', meta: {} },
+      { seq: 12, providerAcceptancePending: true, pendingProviderAction: 'steer' },
+    );
+    await waitForSteerWork();
+
+    expect(steerText).not.toHaveBeenCalled();
+    expect(spyPush).not.toHaveBeenCalled();
+    expect(session.blockPendingMessageDelivery).toHaveBeenCalledWith({
+      localIds: ['pending-conditional-steer'],
+      reason: 'steering_unavailable',
+      providerEffect: 'none',
+    });
+  });
+
   it('executes a claimed interrupt_and_send action by cancelling before queueing the send', async () => {
     const { session, emitUserMessage } = createSessionHarness();
     const { queue, spyPush } = createQueue();
