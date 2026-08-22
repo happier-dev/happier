@@ -18,8 +18,14 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
+import {
+    triagePagedPanelInitialState,
+    triagePagedPanelReducer,
+} from '@happier-dev/triage-protocol/v1';
 import type {
     TriageDetailSurfaceInputV1,
+    TriagePagedPanelEventV1,
+    TriagePagedPanelStateV1,
     TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -36,25 +42,21 @@ import {
 /** The page size one mounted Activity panel asks for. */
 export const POSTHOG_ACTIVITY_PAGE_SIZE = POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT;
 
-export type PosthogActivityStateV1 = Readonly<{
-    kind: 'idle' | 'loading' | 'ready' | 'unavailable';
-    records: readonly PosthogProjectedActivityRecord[];
-    omittedRowCount: number;
-    /** The provider's stated total, or `null` when it stated none. */
-    totalCount: number | null;
-    /** A request is in flight for this panel interval. */
-    pending: boolean;
-    /** The source-minted position of the next page, or `null` when the walk ended. */
-    continuation: string | null;
-    canLoadMore: boolean;
-    /**
-     * The last failure, kept visible beside whatever rows survived it. A permission or
-     * authentication failure is a fact this plane states, never a reason to look empty.
-     */
-    failure: TriageSourceFailureV1 | null;
-    /** Identifies the request whose result this state will accept. */
-    token: number;
-}>;
+/**
+ * The Activity plane's state.
+ *
+ * The four-outcome paged rule is one product contract for every Triage source and
+ * lives at `@happier-dev/triage-protocol` (`REQ-04`); this plane holds a copy of
+ * it until now, and the copy had already drifted on a user-visible rule. What is
+ * genuinely PostHog's own is the provider's stated total, which is carried beside
+ * the reduced state rather than inside it.
+ */
+export type PosthogActivityStateV1 =
+    TriagePagedPanelStateV1<PosthogProjectedActivityRecord, TriageSourceFailureV1>
+    & Readonly<{
+        /** The provider's stated total, or `null` when it stated none. */
+        totalCount: number | null;
+    }>;
 
 export type PosthogActivityEventV1 =
     | Readonly<{ kind: 'requestStarted'; token: number }>
@@ -71,73 +73,51 @@ export type PosthogActivityEventV1 =
     | Readonly<{ kind: 'panelLeft' }>;
 
 const INITIAL: PosthogActivityStateV1 = Object.freeze({
-    kind: 'idle' as const,
-    records: Object.freeze([]),
-    omittedRowCount: 0,
+    ...triagePagedPanelInitialState<PosthogProjectedActivityRecord, TriageSourceFailureV1>(),
     totalCount: null,
-    pending: false,
-    continuation: null,
-    canLoadMore: false,
-    failure: null,
-    token: 0,
 });
 
 export function posthogActivityInitialState(): PosthogActivityStateV1 {
     return INITIAL;
 }
 
+/** Translates this plane's flat event into the shared reducer's page envelope. */
+function toPagedEvent(
+    event: PosthogActivityEventV1,
+): TriagePagedPanelEventV1<PosthogProjectedActivityRecord, TriageSourceFailureV1> {
+    return event.kind === 'pageSettled'
+        ? {
+            kind: 'pageSettled',
+            token: event.token,
+            page: {
+                rows: event.records,
+                omittedRowCount: event.omittedRowCount,
+                // This plane shortens no content of its own; the source states it.
+                projectionTruncated: false,
+                continuation: event.continuation,
+                incomplete: null,
+            },
+        }
+        : event;
+}
+
 export function posthogActivityReducer(
     state: PosthogActivityStateV1,
     event: PosthogActivityEventV1,
 ): PosthogActivityStateV1 {
-    switch (event.kind) {
-        case 'panelLeft':
-            return INITIAL;
-        case 'requestStarted':
-            return {
-                ...state,
-                kind: state.records.length === 0 ? 'loading' : state.kind,
-                pending: true,
-                canLoadMore: false,
-                failure: null,
-                token: event.token,
-            };
-        case 'pageSettled': {
-            if (event.token !== state.token) {
-                // The result belongs to a request this panel already replaced.
-                return state;
-            }
-            return {
-                kind: 'ready',
-                records: [...state.records, ...event.records],
-                omittedRowCount: state.omittedRowCount + event.omittedRowCount,
-                totalCount: event.totalCount ?? state.totalCount,
-                pending: false,
-                continuation: event.continuation,
-                canLoadMore: event.continuation !== null,
-                failure: null,
-                token: state.token,
-            };
-        }
-        case 'pageFailed': {
-            if (event.token !== state.token) {
-                return state;
-            }
-            // Rows a reader already had survive a later failure — including the
-            // authentication failure a mid-panel reconnect produces. Only a first page
-            // that never arrived leaves the panel with nothing to show, and it says so
-            // rather than showing an empty list.
-            return {
-                ...state,
-                kind: state.records.length === 0 ? 'unavailable' : 'ready',
-                pending: false,
-                canLoadMore: state.continuation !== null,
-                failure: event.failure,
-            };
-        }
-        default:
-            return state;
-    }
+    const paged = triagePagedPanelReducer<
+        PosthogProjectedActivityRecord,
+        TriageSourceFailureV1
+    >(state, toPagedEvent(event));
+    if (event.kind === 'panelLeft') return INITIAL;
+    // A stated total survives a later page that states none, and a rejected
+    // stale result changes nothing at all.
+    const totalCount = event.kind === 'pageSettled' && event.token === state.token
+        ? event.totalCount ?? state.totalCount
+        : state.totalCount;
+    return paged === state && totalCount === state.totalCount
+        ? state
+        : { ...paged, totalCount };
 }
 
 export type PosthogActivityControllerV1 = Readonly<{

@@ -3,6 +3,7 @@ import type {
   ConversationResolvedEndpointV1,
 } from '@happier-dev/channels-protocol/v1';
 
+import { createDiscordChannelEndpointId } from './discordPluginConstants.js';
 import type { DiscordPermissionOverwriteEvidence } from './discordSetup.js';
 
 export type DiscordKnownChannel = Readonly<{
@@ -33,7 +34,7 @@ function endpointFromKnownChannel(channel: DiscordKnownChannel): ConversationRes
     return {
       kind: 'direct',
       audience: 'direct',
-      id: `discord:channel:${channelId}`,
+      id: createDiscordChannelEndpointId(channelId),
       ...(label ? { label } : {}),
     };
   }
@@ -41,7 +42,7 @@ function endpointFromKnownChannel(channel: DiscordKnownChannel): ConversationRes
     return {
       kind: 'shared',
       audience: 'shared',
-      id: `discord:channel:${channelId}`,
+      id: createDiscordChannelEndpointId(channelId),
       ...(label ? { label } : {}),
     };
   }
@@ -50,8 +51,8 @@ function endpointFromKnownChannel(channel: DiscordKnownChannel): ConversationRes
   return {
     kind: 'thread',
     audience: 'shared',
-    id: `discord:channel:${channelId}`,
-    parentId: `discord:channel:${parentChannelId}`,
+    id: createDiscordChannelEndpointId(channelId),
+    parentId: createDiscordChannelEndpointId(parentChannelId),
     ...(label ? { label } : {}),
     ...(parentLabel ? { parentLabel } : {}),
   };

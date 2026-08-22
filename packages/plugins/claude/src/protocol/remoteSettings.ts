@@ -2,6 +2,7 @@ import {
   CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS,
   CLAUDE_UNIFIED_TERMINAL_HOSTS,
   CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES,
+  CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES,
   MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS,
 } from '../agentSettings/definition.js';
 import type {
@@ -9,10 +10,6 @@ import type {
   ClaudeUnifiedTerminalResumeChoice,
   ClaudeUnifiedTerminalWorkspaceTrustPolicy,
 } from '../agentSettings/definition.js';
-import {
-  normalizeClaudeUnifiedTerminalResumeChoice as normalizeCanonicalClaudeUnifiedTerminalResumeChoice,
-} from '@happier-dev/agents';
-
 export {
   CLAUDE_REMOTE_DEBUG_CATEGORIES,
   CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS,
@@ -28,17 +25,31 @@ export type {
   ClaudeUnifiedTerminalResumeChoice,
   ClaudeUnifiedTerminalWorkspaceTrustPolicy,
 } from '../agentSettings/definition.js';
-export { normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy } from '@happier-dev/agents';
 
 export function normalizeClaudeUnifiedTerminalHost(raw: unknown): ClaudeUnifiedTerminalHost | null {
   if (typeof raw !== 'string') return null;
   return (CLAUDE_UNIFIED_TERMINAL_HOSTS as readonly string[]).includes(raw) ? (raw as ClaudeUnifiedTerminalHost) : null;
 }
 
+function normalizeEnum<TValue extends string>(
+  raw: unknown,
+  values: readonly TValue[],
+): TValue | null {
+  return typeof raw === 'string' && (values as readonly string[]).includes(raw)
+    ? raw as TValue
+    : null;
+}
+
 export function normalizeClaudeUnifiedTerminalResumeChoice(
   raw: unknown,
 ): ClaudeUnifiedTerminalResumeChoice | null {
-  return normalizeCanonicalClaudeUnifiedTerminalResumeChoice(raw);
+  return normalizeEnum(raw, CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES);
+}
+
+export function normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy(
+  raw: unknown,
+): ClaudeUnifiedTerminalWorkspaceTrustPolicy | null {
+  return normalizeEnum(raw, CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES);
 }
 
 export function isValidClaudeRemoteAdvancedOptionsJson(raw: string): boolean {

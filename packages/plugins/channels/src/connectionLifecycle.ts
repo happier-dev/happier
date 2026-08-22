@@ -10,10 +10,31 @@ import {
   type ConversationProviderReadinessAttentionCodeV1,
   type ConversationTransportFactReportInputV1,
 } from '@happier-dev/channels-protocol/v1';
-import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/plugin-sdk';
+import {
+  arePluginMachineExecutionOriginsEqual,
+  type PluginMachineMaterializationRefV1,
+} from '@happier-dev/plugin-sdk';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
 
 import type { PersistedConversationProviderContributionSelection } from './collections.js';
+
+/**
+ * Exact identity of one host-stamped plugin materialization.
+ *
+ * The SDK publishes the same rule one level up, for a whole execution origin;
+ * Channels compares bare refs in three places (transport-origin currentness,
+ * pairing challenge custody, and reconciliation caller provenance) and this is
+ * the single owner for that comparison. A ref that gains a field must not be
+ * silently ignored by copies that never learned about it.
+ */
+export function areConversationMaterializationRefsEqual(
+  left: PluginMachineMaterializationRefV1,
+  right: PluginMachineMaterializationRefV1,
+): boolean {
+  return left.pluginId === right.pluginId
+    && left.machineId === right.machineId
+    && left.materializationId === right.materializationId;
+}
 
 /**
  * Canonical pure connection-lifecycle transitions shared by online management

@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { activate } from './index.js';
+import { activate } from './manifest.js';
 import {
   GOOGLE_CLOUD_TTS_RUNTIME,
   GOOGLE_GEMINI_STT_RUNTIME,
 } from './voice/speech.js';
 
 describe('Google plugin daemon activation', () => {
-  it('registers the two declared speech leaves through the one public activation API', () => {
+  it('registers the two declared speech leaves through the generated manifest activation', () => {
     const register = vi.fn();
     activate({ voiceProviders: { register } } as never);
     expect(register.mock.calls).toEqual([

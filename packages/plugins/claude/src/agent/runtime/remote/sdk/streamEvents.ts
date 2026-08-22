@@ -1,6 +1,9 @@
 import type { SDKMessage } from '../../../sdk/types.js';
-import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/plugin-sdk/experimental/diagnostics';
-import { createClaudeConnectedServiceRuntimeAuthAdapter } from '../../../auth/services/runtime/index.js';
+import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/plugin-sdk';
+import {
+    containsDefinitiveClaudeOAuthRevocationEvidence,
+    createClaudeConnectedServiceRuntimeAuthAdapter,
+} from '../../../auth/services/runtime/index.js';
 import { resolveClaudeAgentSdkRuntimeAuthRetryDecision } from './runtimeAuthRetryDecision.js';
 
 function collectAgentSdkResultErrorText(value: unknown, output: string[]): void {
@@ -56,12 +59,28 @@ function isSubagentScopedClaudeMessage(message: unknown): boolean {
     return typeof parentToolUseId === 'string' && parentToolUseId.trim().length > 0;
 }
 
-export function hasClaudeAgentSdkRuntimeAuthFailureEvidence(message: unknown): boolean {
-    // Sidechain/subagent-scoped failures are never PARENT auth evidence: a transient 401
-    // inside a Task-tool subagent must not fail the parent turn nor trigger reactive auth
+export function shouldSurfaceClaudeAgentSdkRuntimeFailure(message: unknown): boolean {
+    // Sidechain/subagent-scoped failures are never parent runtime-failure evidence: a transient
+    // 401 inside a Task-tool subagent must not fail the parent turn nor trigger reactive auth
     // recovery/restart of a healthy parent session (incident 2026-06-12, cmq8y3nlx).
     if (isSubagentScopedClaudeMessage(message)) return false;
     if (resolveClaudeAgentSdkRuntimeAuthRetryDecision(message).action === 'await_provider_retry') return false;
+    return true;
+}
+
+export function hasClaudeAgentSdkDefinitiveSubagentRuntimeAuthFailureEvidence(message: unknown): boolean {
+    if (!isSubagentScopedClaudeMessage(message)) return false;
+    if (!containsDefinitiveClaudeOAuthRevocationEvidence(message)) return false;
+    const classification = claudeRuntimeAuthAdapter.classifyRuntimeAuthFailure({
+        target: { agentId: 'claude' },
+        selection: { serviceId: 'claude-subscription' },
+        error: message,
+    });
+    return classification?.limitCategory === 'auth_invalid' || classification?.kind === 'auth_expired';
+}
+
+export function hasClaudeAgentSdkRuntimeAuthFailureEvidence(message: unknown): boolean {
+    if (!shouldSurfaceClaudeAgentSdkRuntimeFailure(message)) return false;
     const classification = claudeRuntimeAuthAdapter.classifyRuntimeAuthFailure({
         target: { agentId: 'claude' },
         selection: { serviceId: 'claude-subscription' },

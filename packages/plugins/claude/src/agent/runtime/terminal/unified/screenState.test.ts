@@ -14,11 +14,77 @@ import {
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), '__fixtures__');
 
+const CLAUDE_2_1_228_USAGE_LIMIT_DIALOG = [
+  "You've hit your session limit · resets 2:40am (Europe/Zurich)",
+  '',
+  'What do you want to do?',
+  '❯ 1. Stop and wait for limit to reset',
+  '  2. Switch to usage credits',
+  '  3. Switch to Team plan',
+  '',
+  'Enter to confirm · Esc to cancel',
+].join('\n');
+
+const CROPPED_SINGLE_OPTION_USAGE_LIMIT_DIALOG = [
+  'What do you want to do?',
+  '❯ 1. Stop and wait for limit to reset',
+].join('\n');
+
 function ready(screen: string): boolean {
   return isClaudeScreenReadyForInput(parseClaudeScreenState(screen));
 }
 
 describe('parseClaudeScreenState readiness', () => {
+  it('recognizes the current usage-limit chooser without pinning its paid alternatives', () => {
+    const state = parseClaudeScreenState(CLAUDE_2_1_228_USAGE_LIMIT_DIALOG);
+
+    expect(state.usageLimitDialogVisible).toBe(true);
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('usage_limit_dialog');
+
+    const changedAlternatives = parseClaudeScreenState(
+      CLAUDE_2_1_228_USAGE_LIMIT_DIALOG
+        .replace('Switch to usage credits', 'Use another billing source')
+        .replace('Switch to Team plan', 'Choose an organization plan'),
+    );
+    expect(changedAlternatives.usageLimitDialogVisible).toBe(true);
+
+    const changedWaitLabel = parseClaudeScreenState(
+      CLAUDE_2_1_228_USAGE_LIMIT_DIALOG.replace(
+        'Stop and wait for limit to reset',
+        'Wait until your session limit resets',
+      ),
+    );
+    expect(changedWaitLabel.usageLimitDialogVisible).toBe(true);
+
+    const changedHeading = parseClaudeScreenState(
+      CLAUDE_2_1_228_USAGE_LIMIT_DIALOG.replace(
+        "You've hit your session limit",
+        'You have reached your usage limit',
+      ),
+    );
+    expect(changedHeading.usageLimitDialogVisible).toBe(true);
+  });
+
+  it('recognizes a cropped usage-limit chooser when only its first option remains visible', () => {
+    const state = parseClaudeScreenState(CROPPED_SINGLE_OPTION_USAGE_LIMIT_DIALOG);
+
+    expect(state.usageLimitDialogVisible).toBe(true);
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('usage_limit_dialog');
+  });
+
+  it('does not mistake an unrelated numbered chooser for a usage-limit dialog', () => {
+    const state = parseClaudeScreenState([
+      'What do you want to do?',
+      '> 1. Stop and wait for the build to finish',
+      '  2. Cancel the build',
+    ].join('\n'));
+
+    expect(state.usageLimitDialogVisible).toBe(false);
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(true);
+  });
+
   it('recognizes the provenance-pinned Claude 2.1.205 Fable safeguard chooser', () => {
     const capture = readFileSync(join(fixturesDir, 'claude-2.1.205-safeguard-pause.ansi'), 'utf8');
     const state = parseClaudeScreenState(capture);
@@ -61,12 +127,12 @@ describe('parseClaudeScreenState readiness', () => {
     expect(parseClaudeScreenState('no composer here').composerContent).toBeNull();
   });
 
-  it('recognizes the fresh-session work prompt', () => {
-    expect(ready('What would you like to work on?')).toBe(true);
+  it('does not infer readiness from the fresh-session prompt without a captured composer', () => {
+    expect(ready('What would you like to work on?')).toBe(false);
   });
 
-  it('recognizes a mode-marked composer screen', () => {
-    expect(ready('accept edits on (shift+tab to cycle)')).toBe(true);
+  it('does not infer readiness from a mode footer without a captured composer', () => {
+    expect(ready('accept edits on (shift+tab to cycle)')).toBe(false);
   });
 
   it('stays not-ready while generating', () => {
@@ -122,6 +188,19 @@ describe('parseClaudeScreenState readiness', () => {
     expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('resume_choice_dialog');
   });
 
+  it('recognizes the same resume choice when the terminal renders an ASCII focus marker', () => {
+    const state = parseClaudeScreenState([
+      'This session is 18h 2m old and 560.4k tokens.',
+      '',
+      '> 1. Resume from summary',
+      '  2. Resume full session',
+    ].join('\n'));
+
+    expect(state.resumeChoiceDialogVisible).toBe(true);
+    expect(state.resumeChoiceDialogOptions).toEqual(['resume_from_summary', 'resume_full_session']);
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+  });
+
   it('recognizes the Fable safeguard pause chooser as a known blocking dialog', () => {
     const screen = [
       'Session paused',
@@ -173,12 +252,26 @@ describe('parseClaudeScreenState readiness', () => {
     expect(resolveClaudeScreenInFlightSteerVeto(state)).toBeNull();
   });
 
-  it('treats Claude resume prefill text as an empty non-draft composer', () => {
+  it('does not infer readiness from a mode footer while the composer is absent', () => {
+    const state = parseClaudeScreenState([
+      'Applied runtime control; transcript is redrawing',
+      '  ⏵⏵ accept edits on (shift+tab to cycle)',
+    ].join('\n'));
+
+    expect(state.composerContent).toBeNull();
+    expect(state.inputBoxInteractive).toBe(true);
+    expect(isClaudeScreenReadyForInput(state)).toBe(false);
+    expect(isSafeWindowForSlashControl(state)).toBe(false);
+    expect(isSafeWindowForModeCycle(state)).toBe(false);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('no_interactive_composer');
+  });
+
+  it('preserves unproven resume-prefill text for controller-owned residue matching', () => {
     const state = parseClaudeScreenState('❯ Continue where you left off');
 
-    expect(state.composerContent).toBe('');
-    expect(state.userDraftPresent).toBe(false);
-    expect(isClaudeScreenReadyForInput(state)).toBe(true);
+    expect(state.composerContent).toBe('Continue where you left off');
+    expect(state.userDraftPresent).toBe(true);
+    expect(isClaudeScreenReadyForInput(state)).toBe(false);
   });
 
   it('keeps similar unknown numbered startup dialogs fail-closed', () => {
@@ -443,6 +536,25 @@ describe('parseClaudeScreenState — unrecognized confirmation dialogs (P-B fail
     expect(isClaudeScreenReadyForInput(state)).toBe(false);
   });
 
+  it('detects an ASCII-focused numbered dialog without treating it as a composer', () => {
+    const state = parseClaudeScreenState([
+      'WARNING: Claude Code running in Bypass Permissions mode',
+      'By proceeding, you accept all responsibility for actions taken while this mode is enabled.',
+      '',
+      '> 1. No, exit',
+      '  2. Yes, I accept',
+      'Enter to confirm � Esc to cancel',
+    ].join('\n'), { cursor: { x: 0, y: 3 } });
+
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(true);
+    expect(state.unrecognizedConfirmationDialog?.options).toEqual([
+      { choice: '1', label: 'No, exit' },
+      { choice: '2', label: 'Yes, I accept' },
+    ]);
+    expect(state.composerContent).toBeNull();
+    expect(isClaudeScreenReadyForInput(state)).toBe(false);
+  });
+
   it('blocks the safe window even when a footer mode marker is visible (marker must not imply a composer)', () => {
     const state = parseClaudeScreenState([unrecognizedDialog, '', '  ⏵⏵ accept edits on'].join('\n'));
     expect(state.unrecognizedConfirmationDialogVisible).toBe(true);
@@ -602,6 +714,17 @@ describe('parseClaudeScreenState — agents selection panel (ported S-4+S-5, ref
     expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('selection_list');
   });
 
+  it('recognizes an ASCII-focused selector row without relying on the hint footer', () => {
+    const state = parseClaudeScreenState([
+      '> ◯ general-purpose  QA lane resume          51m 0s · ↓ 154.0k tokens',
+      '  ◯ general-purpose  Second lane             3m 4s · ↓ 12.0k tokens',
+    ].join('\n'));
+
+    expect(state.selectionListVisible).toBe(true);
+    expect(state.composerContent).toBeNull();
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('selection_list');
+  });
+
   it('does not flag a normal composer screen as a selection list', () => {
     const state = parseClaudeScreenState([
       '──────────────',
@@ -649,6 +772,37 @@ describe('parseClaudeScreenState — soft-wrapped composer draft (ported S-2)', 
       '╰──────────────────────────────╯',
     ].join('\n'));
     expect(state.composerContent).toBe('first wrapped segment\nsecond wrapped segment');
+  });
+
+  it('captures direct-rendered multi-paragraph drafts across blank composer rows', () => {
+    const state = parseClaudeScreenState([
+      '────────────────────────────────────────────────',
+      '❯ great, awesome! great work',
+      '',
+      '  but seems like a lot of texts are still not translated?',
+      '  http://localhost:5173/zh-Hant',
+      '────────────────────────────────────────────────',
+      '  ⏵⏵ auto mode on (shift+tab to cycle)',
+    ].join('\n'));
+
+    expect(state.composerContent).toBe([
+      'great, awesome! great work',
+      '',
+      'but seems like a lot of texts are still not translated?',
+      'http://localhost:5173/zh-Hant',
+    ].join('\n'));
+  });
+
+  it('keeps blank paragraph rows inside a box-bordered composer', () => {
+    const state = parseClaudeScreenState([
+      '╭──────────────────────────────╮',
+      '│ ❯ first paragraph            │',
+      '│                              │',
+      '│   second paragraph           │',
+      '╰──────────────────────────────╯',
+    ].join('\n'));
+
+    expect(state.composerContent).toBe('first paragraph\n\nsecond paragraph');
   });
 
   it('keeps single-line drafts and empty composers unchanged', () => {

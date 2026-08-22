@@ -25,7 +25,10 @@ import {
   CHANNEL_STATE_INDEX_ID,
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
-import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
+import {
+  MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
+  requireChannelsAccountStorage,
+} from './requiredAccountStorage.js';
 import { hasUnsettledDestructiveOldTransportStop } from './connectionLifecycle.js';
 
 /*
@@ -41,9 +44,6 @@ type ReconciliationCollectionRead = Readonly<{
 }>;
 
 type PluginCaller = Extract<PluginInvocationCaller, Readonly<{ kind: 'plugin' }>>;
-
-/** Account Collection queries accept at most 200 rows per protocol page. */
-const MAX_RECONCILIATION_COLLECTION_QUERY_PAGE_SIZE = 200;
 
 type WithoutConnectionIdentity<T> = T extends unknown
   ? Omit<T, 'connectionId' | 'v'>
@@ -252,11 +252,6 @@ function connectionStateFromCollectionValue(
     || value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.connection
   ) return undefined;
   const row = value as unknown as ChannelStateConnectionRecordV1;
-  if (row.payload.deletionState === 'none') return {
-    ...row.payload,
-    connectionId: row['connection-id'],
-    v: row.v,
-  };
   return {
     ...row.payload,
     connectionId: row['connection-id'],
@@ -299,7 +294,7 @@ async function readCollectionValuesByKind(input: Readonly<{
       index: CHANNEL_STATE_INDEX_ID.byKind,
       prefix: [input.kind],
       order: 'asc',
-      limit: Math.min(remaining, MAX_RECONCILIATION_COLLECTION_QUERY_PAGE_SIZE),
+      limit: Math.min(remaining, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE),
       ...(cursor === undefined ? {} : { cursor }),
     }, { signal: input.context.signal });
     if (changeCursor !== undefined && page.changeCursor !== changeCursor) {

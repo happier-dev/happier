@@ -42,6 +42,15 @@ describe('readSentryRateLimitSnapshot', () => {
     expect(snapshot.limit).toBeNull();
   });
 
+  it('reads a present-but-empty limiter header as absent evidence, not as a reading', () => {
+    // `X-Sentry-Rate-Limit-Remaining: ` states no budget. Counting it as present makes the
+    // snapshot claim the limiter answered when it supplied nothing to read.
+    const snapshot = readSentryRateLimitSnapshot({ 'X-Sentry-Rate-Limit-Remaining': '  ' });
+
+    expect(snapshot.headersAbsent).toBe(true);
+    expect(snapshot.remaining).toBeNull();
+  });
+
   it('rejects a malformed, past or non-future Reset instead of synthesizing a deadline', () => {
     const nowMs = 1_786_000_000_000;
 

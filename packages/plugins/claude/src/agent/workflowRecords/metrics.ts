@@ -1,7 +1,7 @@
 import {
   SESSION_WORKFLOW_RUN_SNAPSHOT_RESULT_PREVIEW_MAX,
   SESSION_WORKFLOW_RUN_SNAPSHOT_SUMMARY_MAX,
-} from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+} from '@happier-dev/plugin-sdk/sessions/work-state';
 
 /**
  * The ONE metrics/result-preview mapper for Claude workflow normalization (CWF2).

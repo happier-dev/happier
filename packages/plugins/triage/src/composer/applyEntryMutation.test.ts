@@ -58,18 +58,24 @@ function snapshot(input: Readonly<{
  * the plan, the revision check and the replay decision are the real ones.
  */
 function createHandle(script: Readonly<{
-    reads: readonly ComposerReadResultV1[];
-    applies: readonly ComposerTransactionResultV1[];
+    reads: readonly (ComposerReadResultV1 | Error)[];
+    applies: readonly (ComposerTransactionResultV1 | Error)[];
 }>) {
     const applied: ComposerTransactionV1[] = [];
     let readIndex = 0;
     let applyIndex = 0;
+    // A scripted `Error` is the transport rejecting, which is how this boundary
+    // reports a closed daemon connection or an un-negotiated host method.
+    const settle = <T>(step: T | Error): T => {
+        if (step instanceof Error) throw step;
+        return step;
+    };
     const handle = {
         ref: { kind: 'session', sessionId: 'session-1' },
-        read: async () => script.reads[Math.min(readIndex++, script.reads.length - 1)],
+        read: async () => settle(script.reads[Math.min(readIndex++, script.reads.length - 1)]!),
         apply: async (transaction: ComposerTransactionV1) => {
             applied.push(transaction);
-            return script.applies[Math.min(applyIndex++, script.applies.length - 1)];
+            return settle(script.applies[Math.min(applyIndex++, script.applies.length - 1)]!);
         },
     } as unknown as ComposerHandle;
     return { handle, applied };
@@ -187,5 +193,100 @@ describe('applyTriageEntryMutation', () => {
 
         expect(outcome).toEqual({ kind: 'refused', reason: 'The composer is no longer open.' });
         expect(applied).toHaveLength(0);
+    });
+
+    it('settles a rejected read instead of leaving the control pending', async () => {
+        // The host API throws rather than answering when the mounted scope's
+        // method is not currently negotiated -- a daemon reconnect is enough.
+        // An escaping rejection never reaches the caller's outcome branch, so
+        // the invoked control stays pending with no error and no way out.
+        const { handle, applied } = createHandle({
+            reads: [new Error('host_api_method_unavailable:readComposer')],
+            applies: [{ status: 'applied', revision: 1 }],
+        });
+
+        const outcome = await applyTriageEntryMutation({
+            handle,
+            intent: 'remove',
+            entryRef: entryRef('42'),
+        });
+
+        expect(outcome).toEqual({
+            kind: 'refused',
+            reason: 'The composer could not be reached. Try again.',
+        });
+        expect(applied).toHaveLength(0);
+    });
+
+    it('rethrows a cancellation instead of inventing a settled refusal', async () => {
+        // `hostCancellation.ts` states the rule the blanket catch must not
+        // break: "Reporting a cancelled call as a settled outcome invents an
+        // answer nobody received." A caller that aborted learned nothing about
+        // the composer, so telling it the composer "could not be reached" is a
+        // fact nobody established — and it is indistinguishable from the real
+        // transport failure the sibling tests above cover.
+        const controller = new AbortController();
+        controller.abort();
+        const { handle, applied } = createHandle({
+            reads: [new DOMException('Aborted', 'AbortError')],
+            applies: [{ status: 'applied', revision: 1 }],
+        });
+
+        await expect(applyTriageEntryMutation({
+            handle,
+            intent: 'remove',
+            entryRef: entryRef('42'),
+            options: { signal: controller.signal },
+        })).rejects.toThrow();
+        expect(applied).toHaveLength(0);
+    });
+
+    it('settles a rejected apply instead of leaving the control pending', async () => {
+        const { handle, applied } = createHandle({
+            reads: [{
+                status: 'ready',
+                snapshot: snapshot({ revision: 12, attachments: [triageAttachment('42', 'triage-0')] }),
+            }],
+            applies: [new Error('transport closed')],
+        });
+
+        const outcome = await applyTriageEntryMutation({
+            handle,
+            intent: 'remove',
+            entryRef: entryRef('42'),
+        });
+
+        expect(outcome).toEqual({
+            kind: 'refused',
+            reason: 'The composer could not be reached. Try again.',
+        });
+        expect(applied).toHaveLength(1);
+    });
+
+    it('settles a rejection raised by the conflict replay', async () => {
+        // The replay reaches the same boundary a second time, so its rejection
+        // has to settle through the same answer rather than escaping the
+        // outcome the first attempt was already committed to producing.
+        const { handle } = createHandle({
+            reads: [
+                {
+                    status: 'ready',
+                    snapshot: snapshot({ revision: 12, attachments: [triageAttachment('42', 'triage-0')] }),
+                },
+                new Error('transport closed'),
+            ],
+            applies: [{ status: 'conflict', currentRevision: 13 }],
+        });
+
+        const outcome = await applyTriageEntryMutation({
+            handle,
+            intent: 'remove',
+            entryRef: entryRef('42'),
+        });
+
+        expect(outcome).toEqual({
+            kind: 'refused',
+            reason: 'The composer could not be reached. Try again.',
+        });
     });
 });

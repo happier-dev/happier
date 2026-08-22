@@ -8,7 +8,7 @@ import {
   testkitSnapshot,
   testkitViewer,
 } from '../../corpus/testkit/observations.test-support.js';
-import { projectTriageEntryDisplay, triageEntryRowKey } from './entryDisplay.js';
+import { projectTriageEntryDisplay } from './entryDisplay.js';
 
 const SOURCE = { pluginId: 'happier.forge', localId: 'items' } as const;
 const INSTANCE_A = '11111111-1111-4111-8111-111111111111';
@@ -44,30 +44,55 @@ function present(input: Readonly<{
   };
 }
 
+/**
+ * The row's `content` is the fold's own decision, so a fixture that carried
+ * observations without one would be a row no fold can produce. It defaults to
+ * the first present observation this row carries.
+ */
+function contentOf(observations: readonly ProjectedObservationV1[]): TriageListRowV1['content'] {
+  for (const observation of observations) {
+    if (observation.outcome.kind !== 'present') continue;
+    return {
+      sourceInstanceId: observation.sourceInstanceId,
+      observedAtMs: observation.observedAtMs,
+      outcome: observation.outcome,
+    };
+  }
+  return null;
+}
+
 function row(input: Partial<TriageListRowV1> = {}): TriageListRowV1 {
+  const observations = input.observations
+    ?? [present({ sourceInstanceId: INSTANCE_A, title: 'A title', observedAtMs: 1_000 })];
   return {
     entryRef: entryRef(),
+    content: contentOf(observations),
     lane: CORPUS_LANE.open,
     sortAtMs: 1_000,
     presence: { kind: 'present', observedAtMs: 1_000 },
     attention: null,
     selected: { kind: 'selected', sourceInstanceId: INSTANCE_A, reason: 'onlyPresent' },
-    observations: [present({ sourceInstanceId: INSTANCE_A, title: 'A title', observedAtMs: 1_000 })],
     ...input,
+    observations,
   };
 }
 
 describe('projectTriageEntryDisplay', () => {
-  it('shows the connection the window selected, not whichever answered last', () => {
-    // Two connections observe the same entry with different titles. The row's
-    // own selection decides which one the reader sees, so the list and the
-    // picker cannot disagree about what this entry is called.
+  it('shows the content observation the fold chose, never a winner of its own', () => {
+    // Two connections observe the same entry with different titles, and the
+    // mirror answered last. The fold decided once which observation speaks for
+    // the row (`core/CORPUS.md` §3.2); re-deciding here is how a row's title
+    // came to disagree with the lane the same row was filed under. The selected
+    // connection is deliberately the other one: selection routes detail and
+    // Actions (§3.6) and never re-decides content.
+    const canonical = present({ sourceInstanceId: INSTANCE_A, title: 'Canonical copy', observedAtMs: 1_000 });
     const display = projectTriageEntryDisplay(row({
-      selected: { kind: 'selected', sourceInstanceId: INSTANCE_A, reason: 'attention' },
+      selected: { kind: 'selected', sourceInstanceId: INSTANCE_B, reason: 'attention' },
       observations: [
         present({ sourceInstanceId: INSTANCE_B, title: 'Mirror copy', observedAtMs: 9_000 }),
-        present({ sourceInstanceId: INSTANCE_A, title: 'Canonical copy', observedAtMs: 1_000 }),
+        canonical,
       ],
+      content: contentOf([canonical]),
     }));
 
     expect(display.title).toBe('Canonical copy');
@@ -120,6 +145,11 @@ describe('projectTriageEntryDisplay', () => {
 
   it('shows the attention reason on a present row', () => {
     const display = projectTriageEntryDisplay(row({
+      observations: [present({
+        sourceInstanceId: INSTANCE_A,
+        title: 'A title',
+        observedAtMs: 1_000,
+      })],
       attention: {
         level: 'required',
         fromSourceInstanceId: INSTANCE_A,
@@ -129,18 +159,7 @@ describe('projectTriageEntryDisplay', () => {
     }));
 
     expect(display.detail).toBe('Your review was requested');
+    expect(display.summary).toBeNull();
     expect(display.tone).toBe('neutral');
-  });
-});
-
-describe('triageEntryRowKey', () => {
-  it('separates two contract-valid entries a delimiter join would merge', () => {
-    // `U+001F` is representable inside `collisionScope`, so a joined key would
-    // give these two distinct entries one row — and put focus and selection on
-    // an entry the reader never chose.
-    const left = triageEntryRowKey(entryRef({ collisionScope: 'originregion', entryId: '42' }));
-    const right = triageEntryRowKey(entryRef({ collisionScope: 'origin', entryId: '42' }));
-
-    expect(left).not.toBe(right);
   });
 });

@@ -38,7 +38,9 @@ import {
   readSentryIssueEventsPage,
   readSentryIssueProjection,
   readSentryTagValuesPage,
+  type SentryNextPageV1,
 } from '../detail/detailReads.js';
+import type { SentryDetailIncompleteReasonV1 } from '../ui/detail/panelState.js';
 
 import { toTriageFailure } from './observation.js';
 import { admitSentryEntryInvocation } from './operations.js';
@@ -64,8 +66,30 @@ function resolveCursor(
   return Object.freeze({ ok: true as const, cursor: frontier.cursor });
 }
 
-function mintContinuation(cursor: string | null, limit: number): string | null {
-  return cursor === null ? null : encodeSentryDetailContinuation({ v: 1, cursor, limit });
+/**
+ * Projects one walk position into the two published members the panel reads.
+ *
+ * They are deliberately separate: a continuation says "there is more, ask for
+ * it", while `incomplete` says "this walk stopped without reaching the end". A
+ * page that ends the walk carries neither. Folding the second into the absence
+ * of the first is what let a truncated list render as a complete one.
+ */
+function projectWalkPosition(
+  nextPage: SentryNextPageV1,
+  limit: number,
+): Readonly<{ continuation?: string; incomplete?: SentryDetailIncompleteReasonV1 }> {
+  if (nextPage.kind === 'stoppedShort') return { incomplete: nextPage.reason };
+  if (nextPage.kind === 'end') return {};
+  const continuation = encodeSentryDetailContinuation({
+    v: 1,
+    cursor: nextPage.cursor,
+    limit,
+  });
+  // A position this source cannot mint within its own bound is a walk that
+  // stopped short, not a finished one.
+  return continuation === null
+    ? { incomplete: 'paginationCursorMalformed' as const }
+    : { continuation };
 }
 
 /**
@@ -153,13 +177,12 @@ export async function listSentryIssueEvents(
     });
   }
 
-  const continuation = mintContinuation(page.value.nextCursor, parsed.limit);
   return Object.freeze({
     kind: 'events' as const,
     rows: page.value.rows,
     omittedRowCount: page.value.omittedRowCount,
     projectionTruncated: page.value.projectionTruncated,
-    ...(continuation === null ? {} : { continuation }),
+    ...projectWalkPosition(page.value.nextPage, parsed.limit),
   });
 }
 
@@ -207,14 +230,13 @@ export async function listSentryTagValues(
     });
   }
 
-  const continuation = mintContinuation(page.value.nextCursor, parsed.limit);
   return Object.freeze({
     kind: 'tagValues' as const,
     tagKey: parsed.tagKey,
     rows: page.value.rows,
     omittedRowCount: page.value.omittedRowCount,
     projectionTruncated: page.value.projectionTruncated,
-    ...(continuation === null ? {} : { continuation }),
+    ...projectWalkPosition(page.value.nextPage, parsed.limit),
   });
 }
 

@@ -8,14 +8,6 @@ import type {
   ElevenLabsConversationHandle,
   ElevenLabsConversationHandleEvent,
 } from './conversationHandle.js';
-type ElevenLabsLiveness = Readonly<{
-  connected(): void;
-  disconnected(): void;
-  noteInboundEvent(): void;
-  userTurnCommitted(): void;
-  modeChanged(mode: string): void;
-}>;
-
 function readRecord(value: VoiceRealtimeJsonValue): Readonly<Record<string, VoiceRealtimeJsonValue>> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, VoiceRealtimeJsonValue>>
@@ -44,14 +36,12 @@ export function createElevenLabsSdkConnection(input: Readonly<{
   initialMuted?: boolean;
   onSessionIdentity?(conversationId: string): void;
   onSessionEnded?(): Promise<void> | void;
-  createLiveness?(onFailure: (reason: string) => void): ElevenLabsLiveness;
 }>): VoiceRealtimeConnection {
   let unsubscribe: (() => void) | null = null;
   let activeHandle: ElevenLabsConversationHandle | null = null;
   let endSessionPromise: Promise<void> | null = null;
   let endLifecyclePromise: Promise<void> | null = null;
   let closed = false;
-  let liveness: ElevenLabsLiveness | null = null;
   const lifecycleController = new AbortController();
 
   const endActiveSession = async (): Promise<void> => {
@@ -71,44 +61,30 @@ export function createElevenLabsSdkConnection(input: Readonly<{
   return input.createSdkHandleConnection({
     driver: {
       async open({ signal, onControl, onTransport, onRemoteClose }): Promise<void> {
-        const stopLiveness = (): void => {
-          const active = liveness;
-          liveness = null;
-          active?.disconnected();
-        };
         let remoteCloseSignalled = false;
         const signalRemoteClose = (reason: string): void => {
           if (remoteCloseSignalled) return;
           remoteCloseSignalled = true;
-          stopLiveness();
           onRemoteClose(reason);
         };
-        liveness = input.createLiveness?.(signalRemoteClose) ?? null;
         const onEvent = (event: ElevenLabsConversationHandleEvent): void => {
           switch (event.type) {
             case 'connect':
-              liveness?.noteInboundEvent();
               onControl({ type: 'elevenlabs.connect' });
               return;
             case 'disconnect':
               signalRemoteClose(event.reason ?? 'sdk_disconnected');
               return;
             case 'message':
-              liveness?.noteInboundEvent();
-              if (event.data.role === 'user' || event.data.source === 'user') {
-                liveness?.userTurnCommitted();
-              }
               onControl(event.data);
               return;
             case 'error':
               signalRemoteClose('sdk_error');
               return;
             case 'status':
-              liveness?.noteInboundEvent();
               onControl({ type: 'elevenlabs.status', status: event.data.status });
               return;
             case 'mode':
-              liveness?.modeChanged(event.data.mode);
               onControl({ type: 'elevenlabs.mode', mode: event.data.mode });
               return;
             case 'debug':
@@ -148,7 +124,6 @@ export function createElevenLabsSdkConnection(input: Readonly<{
         if (!textOnly) handle.setMicMuted(input.initialMuted === true);
         input.onSessionIdentity?.(normalizedSessionId);
         onTransport({ type: 'session_identity', sessionId: normalizedSessionId });
-        liveness?.connected();
       },
       async sendControl(event): Promise<void> {
         const handle = activeHandle;
@@ -174,9 +149,6 @@ export function createElevenLabsSdkConnection(input: Readonly<{
       async close(): Promise<void> {
         closed = true;
         lifecycleController.abort();
-        const activeLiveness = liveness;
-        liveness = null;
-        activeLiveness?.disconnected();
         const dispose = unsubscribe;
         unsubscribe = null;
         dispose?.();

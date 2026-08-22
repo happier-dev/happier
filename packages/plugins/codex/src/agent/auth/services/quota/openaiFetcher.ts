@@ -44,7 +44,8 @@ function normalizeResetAtMs(value: unknown): number | null {
   }
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return null;
-  return num > 1_000_000_000_000 ? Math.trunc(num) : Math.trunc(num * 1000);
+  const parsed = parseTimestampMs(num);
+  return parsed !== null && parsed > 0 ? parsed : null;
 }
 
 export function parseOpenAiCodexConnectedAccountQuotaLimits(

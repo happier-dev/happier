@@ -2,21 +2,19 @@ import {
   AgentRuntimeJsonValueSchema,
   type AgentSessionOpenRequest,
   type AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import type { TerminalHostPreference } from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { TerminalHostPreference } from '@happier-dev/plugin-sdk/agents/runtime';
 import { join } from 'node:path';
 import {
   DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY,
-  normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy,
-} from '@happier-dev/agents';
+} from '../../../../agentSettings/definition.js';
+import { normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy } from '../../../../protocol/remoteSettings.js';
 
 import { isolateClaudeRuntimeAuthEnv } from '../../../auth/services/runtime/env.js';
 import { createClaudeNativePermissionEngine } from '../../../permissions/nativePermissionEngine.js';
 import type { ClaudePermissionDecision } from '../../../permissions/createClaudePermissionEngine.js';
-import {
-  getClaudeProjectPath,
-  resolveClaudeConfigDirOverride,
-} from '../../../surfaces/sessions/handoff/path.js';
+import { resolveClaudeConfigDirOverride } from '../../../environment.js';
+import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js';
 import {
   createClaudeNativeAgentSdkContext,
   createClaudeNativeGoalWorkStatePublisher,
@@ -45,7 +43,7 @@ const CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_SETTING_KEY = 'claudeUnifiedTermin
 
 async function readSetting(context: AgentSessionRuntimeContext, key: string): Promise<unknown> {
   try {
-    return await context.services.settings.get(key);
+    return await context.services.settings.forScope({ kind: 'account' }).get(key);
   } catch {
     return null;
   }
@@ -104,17 +102,20 @@ function createClaudeNativeUnifiedTerminalContext(
   if (!terminalHost) {
     throw new Error('Claude Unified Terminal requires the host terminal service.');
   }
-  const sdkContext = createClaudeNativeAgentSdkContext(context, context);
+  const sdkContext = createClaudeNativeAgentSdkContext(
+    context,
+    context,
+  );
   return {
     logger: sdkContext.logger,
     features: context.session.services.features,
     storage: {
-      session: {
+      daemonSession: {
         async get<T = unknown>(key: string): Promise<T | null> {
-          return await context.services.storage.session.get(key) as T | null;
+          return await context.services.storage.daemonSession.get(key) as T | null;
         },
         async set(key, value) {
-          await context.services.storage.session.set(key, AgentRuntimeJsonValueSchema.parse(value));
+          await context.services.storage.daemonSession.set(key, AgentRuntimeJsonValueSchema.parse(value));
         },
       },
     },
@@ -123,6 +124,7 @@ function createClaudeNativeUnifiedTerminalContext(
       sessionHooks: sdkContext.agentRuntime.sessionHooks,
       transcripts: sdkContext.agentRuntime.transcripts,
       accountUsage: sdkContext.agentRuntime.accountUsage,
+      toolExecution: sdkContext.agentRuntime.toolExecution,
     },
     sessions: {
       current: {
@@ -198,7 +200,7 @@ export async function openClaudeNativeUnifiedTerminalSession(
     readSetting(input.context, CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_SETTING_KEY),
   ]);
   const launchSettings = await resolveClaudeNativeLaunchSettings({
-    settings: input.context.services.settings,
+    settings: input.context.services.settings.forScope({ kind: 'account' }),
     launchEnv: isolateClaudeRuntimeAuthEnv(resolveClaudeNativeBaseLaunchEnvironment({
       launchEnvironment: input.request.launchEnvironment,
       processEnv: process.env,
@@ -225,7 +227,9 @@ export async function openClaudeNativeUnifiedTerminalSession(
     launchEnv,
   });
   return createClaudeUnifiedTerminalTurnOperations({
-    ctx: createClaudeNativeUnifiedTerminalContext(input.context),
+    ctx: createClaudeNativeUnifiedTerminalContext(
+      input.context,
+    ),
     activeInput: input.context.session.services.activeInput,
     directory: input.request.cwd,
     happierSessionId: input.request.sessionId,

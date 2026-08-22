@@ -1,25 +1,55 @@
 import { realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { expandHomePath } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
-import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
+import {
+    expandHomePath,
+    resolveHomeDirFromEnvironment,
+} from '@happier-dev/plugin-sdk/fs';
+import type { AgentExternalSessionSource } from '@happier-dev/plugin-sdk/sessions/external';
+
+import { resolveClaudeConfigDir as resolveEffectiveClaudeConfigDir } from '../../../environment.js';
+
+export type ClaudeExternalSessionSource = Readonly<{
+    kind: 'claudeConfig';
+    configDir?: string | null;
+    projectId?: string | null;
+}>;
+
+function readOptionalSourceString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+export function projectClaudeExternalSessionSource(
+    source: AgentExternalSessionSource,
+): ClaudeExternalSessionSource | null {
+    if (source.kind !== 'claudeConfig') return null;
+    const configDir = readOptionalSourceString(source.configDir);
+    const projectId = readOptionalSourceString(source.projectId);
+    return {
+        kind: 'claudeConfig',
+        ...(configDir ? { configDir } : {}),
+        ...(projectId ? { projectId } : {}),
+    };
+}
 
 export type ClaudeExternalSessionSourceValidationResult =
-    | Readonly<{ ok: true; source: ExternalSessionsSource }>
+    | Readonly<{ ok: true; source: ClaudeExternalSessionSource }>
     | Readonly<{ ok: false; error: string }>;
 
 function sourceValidationError(error: string): ClaudeExternalSessionSourceValidationResult {
     return { ok: false, error };
 }
 
-export function expandClaudeConfigDirHome(raw: string): string {
-    return expandHomePath(raw);
+function resolveDefaultClaudeConfigDir(env: NodeJS.ProcessEnv): string {
+    return join(resolveHomeDirFromEnvironment(env), '.claude');
 }
 
-export function canonicalizeClaudeConfigDir(raw: string): string {
-    const resolved = resolve(expandClaudeConfigDirHome(raw));
+export function expandClaudeConfigDirHome(raw: string, env: NodeJS.ProcessEnv = process.env): string {
+    return expandHomePath(raw, resolveHomeDirFromEnvironment(env));
+}
+
+export function canonicalizeClaudeConfigDir(raw: string, env: NodeJS.ProcessEnv = process.env): string {
+    const resolved = resolve(expandClaudeConfigDirHome(raw, env));
     try {
         return realpathSync(resolved);
     } catch {
@@ -28,35 +58,36 @@ export function canonicalizeClaudeConfigDir(raw: string): string {
 }
 
 export function resolveConfiguredClaudeConfigDir(params: Readonly<{ env: NodeJS.ProcessEnv }>): string {
-    const fromEnv =
-        typeof params.env[HAPPIER_CLAUDE_CONFIG_DIR_ENV] === 'string' && params.env[HAPPIER_CLAUDE_CONFIG_DIR_ENV].trim().length > 0
-            ? params.env[HAPPIER_CLAUDE_CONFIG_DIR_ENV].trim()
-            : typeof params.env.CLAUDE_CONFIG_DIR === 'string'
-                ? params.env.CLAUDE_CONFIG_DIR.trim()
-                : '';
-
-    const resolved = fromEnv || join(homedir(), '.claude');
-    return expandClaudeConfigDirHome(resolved) || join(homedir(), '.claude');
+    const defaultConfigDir = resolveDefaultClaudeConfigDir(params.env);
+    const resolved = resolveEffectiveClaudeConfigDir(params.env);
+    return expandClaudeConfigDirHome(resolved, params.env) || defaultConfigDir;
 }
 
 export function resolveCanonicalConfiguredClaudeConfigDir(params: Readonly<{ env: NodeJS.ProcessEnv }>): string {
-    return canonicalizeClaudeConfigDir(resolveConfiguredClaudeConfigDir(params));
+    return canonicalizeClaudeConfigDir(resolveConfiguredClaudeConfigDir(params), params.env);
 }
 
 export function resolveClaudeConfigDir(params: Readonly<{
-    source: ExternalSessionsSource;
+    source: ClaudeExternalSessionSource;
     env: NodeJS.ProcessEnv;
 }>): string {
     if (params.source.kind !== 'claudeConfig') {
-        return join(homedir(), '.claude');
+        return resolveDefaultClaudeConfigDir(params.env);
     }
     const fromSource = typeof params.source.configDir === 'string' ? params.source.configDir.trim() : '';
     const resolved = fromSource || resolveConfiguredClaudeConfigDir({ env: params.env });
-    return expandClaudeConfigDirHome(resolved) || join(homedir(), '.claude');
+    return expandClaudeConfigDirHome(resolved, params.env) || resolveDefaultClaudeConfigDir(params.env);
 }
 
+/**
+ * Canonicalizes a Claude source; it decides nothing about whether the caller
+ * may name that config directory. Whether a requested value is one the machine
+ * environment or the account's settings authorized is decided once, by the host
+ * admission boundary, for every Agent — this leaf only produces the canonical
+ * form both sides of that comparison use.
+ */
 export function validateClaudeExternalSessionSource(params: Readonly<{
-    source: ExternalSessionsSource;
+    source: ClaudeExternalSessionSource;
     env: NodeJS.ProcessEnv;
 }>): ClaudeExternalSessionSourceValidationResult {
     const { source, env } = params;
@@ -64,18 +95,14 @@ export function validateClaudeExternalSessionSource(params: Readonly<{
 
     const requestedConfigDir =
         typeof source.configDir === 'string' && source.configDir.trim().length > 0
-            ? canonicalizeClaudeConfigDir(source.configDir)
+            ? canonicalizeClaudeConfigDir(source.configDir, env)
             : null;
-    const configuredConfigDir = resolveCanonicalConfiguredClaudeConfigDir({ env });
-    if (requestedConfigDir && requestedConfigDir !== configuredConfigDir) {
-        return sourceValidationError('source configDir override is not allowed');
-    }
 
     return {
         ok: true,
         source: {
             ...source,
-            configDir: configuredConfigDir,
+            configDir: requestedConfigDir ?? resolveCanonicalConfiguredClaudeConfigDir({ env }),
         },
     };
 }

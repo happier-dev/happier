@@ -2,7 +2,7 @@ import type {
     SessionContextUsageSnapshotV1,
     UsageObservationCost,
     UsageObservationTokens,
-} from '@happier-dev/plugin-sdk/experimental/usage';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 export type ClaudeTokenUsage = Readonly<{
     input_tokens?: number;

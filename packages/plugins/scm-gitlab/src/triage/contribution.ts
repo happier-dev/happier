@@ -14,9 +14,8 @@
  */
 
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import type { PluginActionInvocationSurfaceV2 } from '@happier-dev/plugin-sdk/actions';
 import {
-  TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-  TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
   TriageSourceDescriptorV1Schema,
   TriageSourcesContributionProtocolV1,
   type TriageSourceDescriptorV1,
@@ -173,7 +172,8 @@ type TriageActionDeclaration = Readonly<{
   title: string;
   description: string;
   scopes: readonly ['settings'] | readonly ['global'];
-  surfaces: readonly string[];
+  surfaces: readonly PluginActionInvocationSurfaceV2[];
+  execution: Readonly<{ target: 'daemon' }>;
   dangerLevel: 'safe';
   inputSchema: PluginJsonSchema;
   resultSchema: PluginJsonSchema;
@@ -201,6 +201,7 @@ function declareOperationAction(input: Readonly<{
     description: input.description,
     scopes: input.scopes,
     surfaces: [...declaration.surfaces],
+    execution: { target: 'daemon' },
     dangerLevel: declaration.dangerLevel as 'safe',
     inputSchema: declaration.input.schema.jsonSchema,
     resultSchema: declaration.resultSchema.jsonSchema,
@@ -299,6 +300,7 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDecl
     ...declaration,
     scopes: ['global'] as const,
     surfaces: ['plugin'] as const,
+    execution: { target: 'daemon' as const },
     dangerLevel: 'safe' as const,
     hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
     connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
@@ -309,23 +311,14 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDecl
  * unbound: it is an optional role, and binding it would claim a worktree
  * materialization contract this provider has not implemented.
  */
-export const GITLAB_TRIAGE_CONTRIBUTION_DECLARATION = Object.freeze({
-  id: GITLAB_TRIAGE_CONTRIBUTION_LOCAL_ID,
-  target: Object.freeze({
-    pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-    pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-  }),
-  protocol: Object.freeze({
-    id: TriageSourcesContributionProtocolV1.id,
-    version: TriageSourcesContributionProtocolV1.version,
-  }),
+export const GITLAB_TRIAGE_CONTRIBUTION_DECLARATION = TriageSourcesContributionProtocolV1.contribute({
   descriptor: GITLAB_TRIAGE_SOURCE_DESCRIPTOR_V1,
-  operations: Object.freeze({
+  operations: {
     listInstances: sourceOperations.listInstances.bind(GITLAB_TRIAGE_ACTION_IDS.listInstances),
     scan: sourceOperations.scan.bind(GITLAB_TRIAGE_ACTION_IDS.scan),
     get: sourceOperations.get.bind(GITLAB_TRIAGE_ACTION_IDS.get),
-  }),
-  surfaces: Object.freeze({
-    detail: Object.freeze({ renderer: GITLAB_TRIAGE_DETAIL_RENDERER_ID }),
-  }),
+  },
+  surfaces: {
+    detail: { renderer: GITLAB_TRIAGE_DETAIL_RENDERER_ID },
+  },
 });

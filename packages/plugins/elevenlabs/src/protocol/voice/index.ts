@@ -15,7 +15,7 @@ import { PLUGIN_MANIFEST } from '../../manifest.js';
 export const ELEVENLABS_VOICE_CREDENTIAL_KIND = 'api_key' as const;
 const ELEVENLABS_VOICE_PROVIDER_CONTRIBUTION =
   VoiceProviderContributionSchema.parse(
-    PLUGIN_MANIFEST.contributes.voiceProviders[0],
+    (PLUGIN_MANIFEST.contributes.voiceProviders ?? [])[0],
   );
 if (
   ELEVENLABS_VOICE_PROVIDER_CONTRIBUTION.kind !== 'conversation'
@@ -42,7 +42,13 @@ function readDefaultElevenLabsVoiceId(): string {
 
 export const DEFAULT_ELEVENLABS_VOICE_ID = readDefaultElevenLabsVoiceId();
 
-export const ElevenLabsAgentIdSchema = z.string().trim().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/u);
+/**
+ * An ElevenLabs Agent id is opaque to Happier: trimmed, non-empty and bounded, exactly as this
+ * plugin's own `update-agent` operation declares it. URL safety belongs to the request boundary,
+ * which encodes the path placeholder — a character rule here would only refuse ids ElevenLabs
+ * itself issues and fail the whole provider response as `provider_response_invalid`.
+ */
+export const ElevenLabsAgentIdSchema = z.string().trim().min(1).max(256);
 export const ElevenLabsVoiceIdSchema = z.string().trim().min(1).max(256);
 export const ElevenLabsModelIdSchema = z.string().trim().min(1).max(256);
 

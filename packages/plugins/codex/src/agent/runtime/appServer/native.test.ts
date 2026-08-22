@@ -614,6 +614,47 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
     expect(setDisplayTitle).toHaveBeenCalledWith('Review', { signal: controller.signal });
   });
 
+  it('requests reset-credit inventory through the supported non-following HTTP policy', async () => {
+    const request = vi.fn(async () => ({
+      status: 200,
+      finalUrl: 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits',
+      headers: {},
+      body: new TextEncoder().encode('{"credits":[]}'),
+    }));
+    const controller = new AbortController();
+    const context = {
+      signal: controller.signal,
+      services: {
+        logger: { debug: vi.fn() },
+        http: { request },
+        sessions: { current: { media: { registerSourceRoot: vi.fn() } } },
+        connectedAccounts: createConnectedAccountsFixture(),
+      },
+      session: { id: 'session-1', services: {} },
+    } as unknown as AgentSessionRuntimeContext;
+    const host = createCodexNativeAppServerRuntimeHost({
+      request: { sessionId: 'session-1' } as AgentSessionOpenRequest,
+      context,
+      processEnv: {},
+    });
+
+    await expect(host.fetchRateLimitResetCredits?.({
+      accessToken: 'access-token',
+      accountId: 'account-1',
+    })).resolves.toEqual({ credits: [] });
+
+    expect(request).toHaveBeenCalledWith({
+      url: 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits',
+      method: 'GET',
+      headers: {
+        Authorization: 'Bearer access-token',
+        'ChatGPT-Account-Id': 'account-1',
+        Accept: 'application/json',
+      },
+      redirect: 'error',
+    }, { signal: controller.signal });
+  });
+
   it('refreshes runtime auth through the common Session handle without forwarding Agent identity', async () => {
     const refreshRuntimeAuth = vi.fn(async () => ({ status: 'refreshed' as const }));
     const controller = new AbortController();

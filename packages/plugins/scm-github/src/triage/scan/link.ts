@@ -1,4 +1,4 @@
-import { parseForgeLinkHeader, readForgeLinkHeaderValue } from '@happier-dev/scm-forge-adapter';
+import { parseForgeLinkHeader, readForgeLinkHeaderValue } from '@happier-dev/triage-sources/runtime';
 
 import { GITHUB_API_ORIGIN } from '../../observations/githubProviderContracts.js';
 
@@ -15,7 +15,7 @@ import { GITHUB_SEARCH_ISSUES_PATH } from './query.js';
  * There is no `limit + 1` sentinel row here; that mechanism does not exist on this API.
  *
  * The RFC 8288 grammar is shared with the other forges that paginate that way and comes
- * from `@happier-dev/scm-forge-adapter`. What stays here is GitHub's own validation: a
+ * from `@happier-dev/triage-sources`. What stays here is GitHub's own validation: a
  * next URL is followed only when it is the SAME request with only `page` advanced.
  */
 

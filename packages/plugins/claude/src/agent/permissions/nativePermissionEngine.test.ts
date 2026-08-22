@@ -1,28 +1,30 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createClaudeNativePermissionEngine } from './nativePermissionEngine.js';
 
 describe('createClaudeNativePermissionEngine', () => {
-  it('routes AskUserQuestion through context.ui and preserves every provider-native answer', async () => {
+  it('routes AskUserQuestion through the canonical interactions service and preserves every provider-native answer', async () => {
     const askQuestions = vi.fn(async () => ({
+      requestId: 'questions-1',
+      kind: 'questions' as const,
       status: 'answered' as const,
       answers: {
         framework: {
-          type: 'single' as const,
-          answer: { type: 'choice' as const, choiceId: 'react' },
+          kind: 'singleChoice' as const,
+          answer: { kind: 'choice' as const, choiceId: 'react' },
         },
         deployment: {
-          type: 'multiple' as const,
+          kind: 'multipleChoice' as const,
           answers: [
-            { type: 'choice' as const, choiceId: 'vercel' },
-            { type: 'custom' as const, value: 'Fly.io' },
+            { kind: 'choice' as const, choiceId: 'vercel' },
+            { kind: 'custom' as const, value: 'Fly.io' },
           ],
         },
       },
     }));
     const context = {
-      ui: { askQuestions },
+      services: { interactions: { askQuestions } },
     } as unknown as AgentSessionRuntimeContext;
     const engine = createClaudeNativePermissionEngine(context);
 
@@ -58,8 +60,14 @@ describe('createClaudeNativePermissionEngine', () => {
   });
 
   it('uses the same current-session interaction owner for ordinary tool confirmation', async () => {
-    const confirm = vi.fn(async () => false);
-    const context = { ui: { confirm } } as unknown as AgentSessionRuntimeContext;
+    const confirm = vi.fn(async () => ({
+      requestId: 'confirmation-1',
+      kind: 'confirmation' as const,
+      status: 'declined' as const,
+    }));
+    const context = {
+      services: { interactions: { confirm } },
+    } as unknown as AgentSessionRuntimeContext;
     const engine = createClaudeNativePermissionEngine(context);
 
     await expect(engine.canCallTool('Bash', { command: 'rm -rf build' })).resolves.toEqual({
@@ -67,6 +75,10 @@ describe('createClaudeNativePermissionEngine', () => {
       message: 'Permission denied',
       interrupt: true,
     });
-    expect(confirm).toHaveBeenCalledWith('Allow Claude to use Bash?');
+    expect(confirm).toHaveBeenCalledWith({
+      kind: 'confirmation',
+      title: 'Claude permission',
+      message: 'Allow Claude to use Bash?',
+    });
   });
 });

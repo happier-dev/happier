@@ -104,6 +104,12 @@ function serializedByteLength(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), 'utf8');
 }
 
+/**
+ * Output overflow is not a malformed inbound request: the caller's byte bound is
+ * well formed and only this Agent's own result overran it. It is reported as a
+ * NONRETRYABLE `agent_error`, the same classification the host's
+ * bounded-invocation owner applies when a leaf overruns the identical budget.
+ */
 function bounded<T>(
   invocation: AgentExternalSessionsInvocation,
   result: AgentExternalSessionsResult<T>,
@@ -111,7 +117,7 @@ function bounded<T>(
 ): AgentExternalSessionsResult<T> {
   return serializedByteLength(result) <= invocation.maxSerializedBytes
     ? result
-    : failed('invalid_request', message);
+    : failed('agent_error', message, false);
 }
 
 function toAgentSource(source: OpenCodeExternalSessionSource): AgentExternalSessionSource | null {
@@ -360,7 +366,7 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
         };
         const result = serializedByteLength(ok(value)) <= request.maxSerializedBytes
           ? ok(value)
-          : failed('invalid_request', 'OpenCode candidate result byte budget cannot fit the page envelope.');
+          : failed('agent_error', 'OpenCode candidate result byte budget cannot fit the page envelope.', false);
         return bounded(
           request,
           result,

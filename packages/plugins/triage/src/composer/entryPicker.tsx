@@ -11,12 +11,15 @@ import {
     Status,
     TextField,
     defineUiSurface,
+    usePluginTranslation,
     usePluginUiFocusTarget,
     useComposerView,
     type ComposerHandle,
+    type ComposerRefV1,
 } from '@happier-dev/plugin-ui';
 
-import { TRIAGE_DISPLAY_NAME } from '../manifest.js';
+import { TRIAGE_DISPLAY_NAME } from '../displayName.js';
+import type { TriageRefreshPacingReasonV1 } from '../refresh/refreshEligibility.js';
 import { useTriageListWindow } from '../ui/window/useTriageListWindow.js';
 import { selectTriageAttachedEntries, type TriageAttachedEntryV1 } from './attachedEntries.js';
 import { applyTriageEntryMutation } from './applyEntryMutation.js';
@@ -27,6 +30,7 @@ import {
     buildTriagePickerView,
     requestTriagePickerRefresh,
     type TriagePickerRowV1,
+    type TriagePickerStateV1,
 } from './pickerModel.js';
 import { describeTriageRowActions } from './rowActions.js';
 import {
@@ -81,9 +85,17 @@ function TriagePickerRow(props: Readonly<{
     row: TriagePickerRowV1;
     handle: ComposerHandle | null;
     hostApi: Pick<PluginUiHostApi, 'openSurface'>;
+    /**
+     * The exact scope this picker was mounted on, forwarded to View details as
+     * the launch ADDRESS — never as a capability. The row already holds the
+     * handle it writes through; this is the same fact spelled so the opened page
+     * can find its way back, and it is absent when the picker has no mount.
+     */
+    originComposer: ComposerRefV1 | undefined;
     onSettled: () => Promise<void>;
 }>): React.ReactElement {
-    const { row, handle, hostApi, onSettled } = props;
+    const text = usePluginTranslation();
+    const { row, handle, hostApi, onSettled, originComposer } = props;
     const [state, dispatch] = React.useReducer(
         reduceTriageRowInteraction,
         TRIAGE_ROW_INTERACTION_INITIAL_STATE_V1,
@@ -128,6 +140,7 @@ function TriagePickerRow(props: Readonly<{
             hostApi,
             entryRef: row.entryRef,
             sourceInstance: row.viewDetails.sourceInstance,
+            originComposer,
         });
         switch (outcome.kind) {
             case 'opened':
@@ -142,13 +155,18 @@ function TriagePickerRow(props: Readonly<{
                 dispatch({
                     kind: 'failed',
                     action: 'viewDetails',
-                    reason: 'This entry could not be opened.',
+                    reason: text(
+                        'plugins.triage.picker.openFailed',
+                        'This entry could not be opened.',
+                    ),
                 });
         }
-    }, [hostApi, row]);
+    }, [hostApi, originComposer, row]);
 
     const attachedNow = row.attachment.kind === 'attached';
-    const attachmentLabel = attachedNow ? 'Remove' : 'Attach';
+    const attachmentLabel = attachedNow
+        ? text('plugins.triage.picker.remove', 'Remove')
+        : text('plugins.triage.picker.attach', 'Attach');
     const failure = state.attachment.kind === 'failed'
         ? state.attachment.reason
         : state.viewDetails.kind === 'failed' ? state.viewDetails.reason : null;
@@ -158,7 +176,7 @@ function TriagePickerRow(props: Readonly<{
             title={row.title}
             subtitle={row.scopeLabel}
             {...(failure === null
-                ? attachedNow ? { detail: 'Attached' } : {}
+                ? attachedNow ? { detail: text('plugins.triage.picker.attached', 'Attached') } : {}
                 : { detail: failure, tone: 'danger' as const })}
             accessory={(
                 <Row gap="small" align="center">
@@ -174,12 +192,12 @@ function TriagePickerRow(props: Readonly<{
                         onPress={mutate}
                     />
                     <Button
-                        title="View details"
+                        title={text('plugins.triage.picker.viewDetails', 'View details')}
                         variant="plain"
                         disabled={!viewDetailsAction.enabled}
                         busy={state.viewDetails.kind === 'pending'}
                         focusTarget={viewDetailsFocus}
-                        accessibilityLabel={`View details ${row.title}`}
+                        accessibilityLabel={`${text('plugins.triage.picker.viewDetails', 'View details')} ${row.title}`}
                         onPress={openDetails}
                     />
                 </Row>
@@ -189,6 +207,7 @@ function TriagePickerRow(props: Readonly<{
 }
 
 export function TriageEntryPicker(context: RenderContext): React.ReactElement {
+    const text = usePluginTranslation();
     const window = useTriageListWindow();
     // The exact scope this picker was opened from, and the only one it writes.
     const mount = readTriageComposerPickerMount(context.launchInput);
@@ -222,43 +241,79 @@ export function TriageEntryPicker(context: RenderContext): React.ReactElement {
         await composerView.refresh();
     }, [composerView]);
 
+    const originComposer = mount.status === 'bound' ? mount.composer : undefined;
     const renderRow = React.useCallback((row: TriagePickerRowV1): React.ReactElement => (
         <TriagePickerRow
             row={row}
             handle={handle}
             hostApi={context.hostApi}
+            originComposer={originComposer}
             onSettled={settle}
         />
-    ), [context.hostApi, handle, settle]);
+    ), [context.hostApi, handle, originComposer, settle]);
+
+    /**
+     * The ONE Refresh control of this surface, and the one sentence that says
+     * why it cannot read yet.
+     *
+     * Both are built here rather than at each arm below because the pacing
+     * model is a property of the surface, not of whichever headline state it is
+     * in: the `sourcesUnavailable` arm rendered its own always-enabled Refresh
+     * and no waiting notice, so the one state in which every connection had
+     * just stated a retry deadline was also the one state that offered a press
+     * the coordinator was already refusing, silently. A second control is a
+     * second answer to "may this read now", and this surface only has one.
+     */
+    const refreshable = requestTriagePickerRefresh(view).status === 'invoke';
+    const refreshControl = (
+        <Button
+            title={text('plugins.triage.surface.refresh', 'Refresh')}
+            variant="secondary"
+            disabled={!refreshable}
+            busy={view.refresh.kind === 'running'}
+            onPress={refresh}
+        />
+    );
+    const pacingNotice = view.refresh.kind !== 'blockedUntil' ? null : (
+        <Banner
+            tone="info"
+            title={text('plugins.triage.surface.waiting', 'Waiting before the next read')}
+            description={resolvePacingReasonDescription(text, view.refresh.reason)}
+        />
+    );
 
     if (view.state.kind === 'configureSources') {
         return (
             <EmptyState
-                title="No sources are configured"
-                description={`Connect a source in Settings to attach ${TRIAGE_DISPLAY_NAME} to a message.`}
+                title={text('plugins.triage.picker.noSources.title', 'No sources are configured')}
+                description={text(
+                    'plugins.triage.picker.noSources.description',
+                    `Connect a source in Settings to attach ${TRIAGE_DISPLAY_NAME} to a message.`,
+                )}
             />
         );
     }
 
     if (view.state.kind === 'sourcesUnavailable') {
         return (
-            <ErrorState
-                title="No source could be read"
-                description={view.health.map((entry) => entry.displayName).join(', ')}
-                action={<Button title="Refresh" variant="secondary" onPress={refresh} />}
-            />
+            <Stack gap="small">
+                <ErrorState
+                    title={text('plugins.triage.picker.sourcesUnavailable', 'No source could be read')}
+                    description={view.health.map((entry) => entry.displayName).join(', ')}
+                    action={refreshControl}
+                />
+                {pacingNotice}
+            </Stack>
         );
     }
-
-    const refreshable = requestTriagePickerRefresh(view).status === 'invoke';
 
     return (
         <Stack gap="small">
             <TextField
-                label={`Search ${TRIAGE_DISPLAY_NAME}`}
+                label={text('plugins.triage.picker.search', `Search ${TRIAGE_DISPLAY_NAME}`)}
                 value={query}
                 onChange={setQuery}
-                placeholder="Filter by title or scope"
+                placeholder={text('plugins.triage.picker.filter', 'Filter by title or scope')}
             />
 
             <Row justify="space-between" align="center">
@@ -267,21 +322,17 @@ export function TriageEntryPicker(context: RenderContext): React.ReactElement {
                         ? 'info'
                         : view.state.kind === 'ready' ? 'success' : 'muted'}
                     pulsing={view.state.kind === 'refreshing'}
-                    label={PICKER_STATE_LABELS[view.state.kind]}
+                    label={resolvePickerStateLabel(text, view.state.kind)}
                 />
-                <Button
-                    title="Refresh"
-                    variant="secondary"
-                    disabled={!refreshable}
-                    busy={view.refresh.kind === 'running'}
-                    onPress={refresh}
-                />
+                {refreshControl}
             </Row>
+
+            {pacingNotice}
 
             {view.health.length === 0 ? null : (
                 <Banner
                     tone="warning"
-                    title="Some sources could not be read"
+                    title={text('plugins.triage.surface.failure.some', 'Some sources could not be read')}
                     description={view.health.map((entry) => entry.displayName).join(', ')}
                 />
             )}
@@ -294,12 +345,17 @@ export function TriageEntryPicker(context: RenderContext): React.ReactElement {
                 renderItem={renderRow}
                 empty={(
                     <EmptyState
-                        title={PICKER_STATE_LABELS[view.state.kind]}
+                        title={resolvePickerStateLabel(text, view.state.kind)}
                         // An empty body that only restates the headline leaves
                         // the reader nothing to do. When a read is actually
                         // available — which is exactly the cold and stale
                         // cases — the body names it instead.
-                        {...(refreshable ? { description: PICKER_REFRESH_REMEDY } : {})}
+                        {...(refreshable ? {
+                            description: text(
+                                'plugins.triage.picker.refreshRemedy',
+                                'Refresh to read your connected sources.',
+                            ),
+                        } : {})}
                     />
                 )}
             />
@@ -311,21 +367,74 @@ export function TriageEntryPicker(context: RenderContext): React.ReactElement {
  * One label per headline state. `noMatchYet` and `noMatch` are deliberately
  * different words: a bounded window that is still walking has not concluded
  * absence, and saying it has would be the false-empty this surface exists to
- * avoid.
+ * avoid. `boundedWindow` is that same unfinished walk with nothing typed, so it
+ * reuses the shell's own translated sentence for it rather than telling a reader
+ * who filtered nothing that nothing matches yet.
+ *
+ * The map is keyed by the state union rather than by `string`, so a new arm
+ * without copy is a compile error instead of a headline that renders its own
+ * enum name on every locale.
  */
-const PICKER_REFRESH_REMEDY = 'Refresh to read your connected sources.';
-
-const PICKER_STATE_LABELS: Readonly<Record<string, string>> = Object.freeze({
-    configureSources: 'No sources are configured',
-    refreshing: 'Refreshing',
-    neverSynchronized: 'Not synchronized yet',
-    stale: 'Showing the last known list',
-    sourcesUnavailable: 'No source could be read',
-    noMatchYet: 'No match yet — still reading',
-    noMatch: 'No match',
-    empty: 'Nothing to attach',
-    ready: 'Up to date',
+const PICKER_STATE_COPY: Readonly<Record<
+    TriagePickerStateV1['kind'],
+    Readonly<{ key: string; fallback: string }>
+>> = Object.freeze({
+    configureSources: { key: 'plugins.triage.picker.noSources.title', fallback: 'No sources are configured' },
+    refreshing: { key: 'plugins.triage.surface.refreshing', fallback: 'Refreshing' },
+    neverSynchronized: { key: 'plugins.triage.picker.notSynchronized', fallback: 'Not synchronized yet' },
+    stale: { key: 'plugins.triage.surface.lastKnown', fallback: 'Showing the last known list' },
+    sourcesUnavailable: { key: 'plugins.triage.picker.sourcesUnavailable', fallback: 'No source could be read' },
+    noMatchYet: { key: 'plugins.triage.picker.noMatchYet', fallback: 'No match yet — still reading' },
+    boundedWindow: {
+        key: 'plugins.triage.surface.empty.incomplete.title',
+        fallback: 'This list is not complete yet',
+    },
+    noMatch: { key: 'plugins.triage.picker.noMatch', fallback: 'No match' },
+    empty: { key: 'plugins.triage.picker.empty', fallback: 'Nothing to attach' },
+    ready: { key: 'plugins.triage.surface.upToDate', fallback: 'Up to date' },
 });
+
+/**
+ * Why a Refresh cannot read yet, in the reader's words.
+ *
+ * A disabled control with no sentence beside it is the same silence as a control
+ * that does nothing: the reader presses it, nothing happens, and nothing says
+ * why. Each arm is the coordinator's own reason, so the sentence cannot claim a
+ * different cause than the one that actually refused (`core/CORPUS.md` §4.2).
+ */
+const PACING_REASON_COPY: Readonly<Record<TriageRefreshPacingReasonV1, Readonly<{
+    key: string;
+    fallback: string;
+}>>> = Object.freeze({
+    sourceRetryDeadline: {
+        key: 'plugins.triage.surface.waiting.source',
+        fallback: 'A source asked us to wait before reading it again.',
+    },
+    failureBackoff: {
+        key: 'plugins.triage.surface.waiting.backoff',
+        fallback: 'A source could not be read, so the next attempt waits a moment.',
+    },
+    minimumInterval: {
+        key: 'plugins.triage.surface.waiting.recent',
+        fallback: 'These sources were read a moment ago.',
+    },
+});
+
+function resolvePacingReasonDescription(
+    text: (key: string, fallback?: string) => string,
+    reason: TriageRefreshPacingReasonV1,
+): string {
+    const copy = PACING_REASON_COPY[reason];
+    return text(copy.key, copy.fallback);
+}
+
+function resolvePickerStateLabel(
+    text: (key: string, fallback?: string) => string,
+    state: TriagePickerStateV1['kind'],
+): string {
+    const copy = PICKER_STATE_COPY[state];
+    return text(copy.key, copy.fallback);
+}
 
 /**
  * The picker artifact entry the declared attachment renderer mounts. It adds no

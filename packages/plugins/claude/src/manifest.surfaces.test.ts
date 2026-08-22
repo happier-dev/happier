@@ -59,7 +59,6 @@ describe('Claude session surface declarations', () => {
             {
                 sourceKind: 'claudeConfig',
                 schema: {
-                    passthrough: true,
                     fields: [
                         { name: 'kind', kind: 'literal', value: 'claudeConfig' },
                         { name: 'configDir', kind: 'string', min: 1, max: 10_000, nullish: true },

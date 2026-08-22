@@ -2,12 +2,13 @@ import type {
   ConversationDeliveryResultV1,
   ConversationResolvedEndpointV1,
 } from '@happier-dev/channels-protocol/v1';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type {
   TargetedContributionPointRef,
   TargetedContributionSnapshot,
   TargetedContributionsService,
 } from '@happier-dev/plugin-sdk';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CHANNEL_DELIVERIES_COLLECTION } from './collections.js';
@@ -19,6 +20,7 @@ import {
   deliverConversationSessionProjectionOutwardDelivery,
   deliverConversationOutwardDelivery,
   deliverConversationControlResponse,
+  readConversationOutwardDeliveryConnectionAttention,
   readConversationOutwardDeliveryResolutionPage,
   redriveConversationOutwardDeliveryThroughProviderAction,
   reconcileConversationOutwardDeliveryAttempt,
@@ -41,6 +43,9 @@ const endpoint: ConversationResolvedEndpointV1 = {
   audience: 'direct',
   id: 'chat-1',
 };
+
+/** A syntactically valid opaque custody id whose retained row is unparsable. */
+const corruptCustodyId = Buffer.alloc(32, 7).toString('base64url');
 
 const providerTransportOrigin = {
   serverIdentityId: 'srv_account_one',
@@ -236,7 +241,7 @@ class MemoryAccountCollection {
   readonly rows = new Map<string, Readonly<{
     rowId: string;
     revision: number;
-    value: Record<string, unknown>;
+    value: Record<string, JsonValue>;
     deleted?: boolean;
   }>>();
 
@@ -245,7 +250,7 @@ class MemoryAccountCollection {
     return row?.deleted === true ? null : row ?? null;
   }
 
-  async put(value: Record<string, unknown>, input: Readonly<{
+  async put(value: Record<string, JsonValue>, input: Readonly<{
     expectedRevision: number | 'absent';
   }>) {
     const rowId = value.id;
@@ -275,7 +280,12 @@ class MemoryAccountCollection {
     return { rowId, revision: row.revision, deleted: true as const };
   }
 
-  async query() {
+  async query(_request?: Readonly<{
+    index?: string;
+    prefix?: readonly (string | number | boolean | null)[];
+    cursor?: string;
+    limit?: number;
+  }>) {
     return {
       rows: [...this.rows.values()].filter((row) => row.deleted !== true),
       changeCursor: 1,
@@ -284,23 +294,23 @@ class MemoryAccountCollection {
 }
 
 class BindingIndexedAccountCollection extends MemoryAccountCollection {
-  override async query(request: Readonly<{
+  override async query(request?: Readonly<{
     index?: string;
-    prefix?: readonly string[];
+    prefix?: readonly (string | number | boolean | null)[];
     cursor?: string;
     limit?: number;
   }>) {
     const matching = [...this.rows.values()]
       .filter((row) => {
-        if (request.index !== 'by-owner-attention') return true;
+        if (request?.index !== 'by-owner-attention') return true;
         return row.value['connection-id'] === request.prefix?.[0]
           && row.value['binding-id'] === request.prefix?.[1];
       })
       .sort((left, right) => left.rowId.localeCompare(right.rowId));
-    const start = request.cursor === undefined
+    const start = request?.cursor === undefined
       ? 0
       : matching.findIndex((row) => row.rowId === request.cursor) + 1;
-    const limit = request.limit ?? matching.length;
+    const limit = request?.limit ?? matching.length;
     const rows = matching.slice(Math.max(start, 0), Math.max(start, 0) + limit);
     const next = matching[Math.max(start, 0) + limit];
     return {
@@ -357,9 +367,14 @@ describe('Channels control-response outward custody', () => {
       content: 'Session A private delivery body.',
       deliveryKey: 'delivery-session-a',
     });
+    const baseObligation = obligation();
+    if (baseObligation.bindingId === undefined) {
+      throw new Error('Expected a binding-routed control-response obligation.');
+    }
     const forSessionB = await store.ensure({
-      ...obligation(),
+      ...baseObligation,
       bindingId: 'binding-2',
+      routeAuthority: baseObligation.routeAuthority,
       source: { kind: 'controlResponse', controlId: 'session-b', controlKind: 'recovery' },
       content: 'Session B private delivery body.',
       deliveryKey: 'delivery-session-b',
@@ -401,6 +416,102 @@ describe('Channels control-response outward custody', () => {
     });
     expect(JSON.stringify(snapshot)).not.toContain('private delivery body');
     expect(JSON.stringify(snapshot)).not.toContain('provider-private');
+  });
+
+  it('keeps every readable delivery when one custody row in the same page cannot be parsed', async () => {
+    const state = new MemoryAccountCollection();
+    const deliveries = new BindingIndexedAccountCollection();
+    await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
+    const signal = new AbortController().signal;
+    const store = createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never,
+      deliveriesCollection: deliveries as never,
+      signal,
+      now: () => 100,
+    });
+    const readable = await store.ensure({
+      ...obligation(),
+      source: { kind: 'controlResponse', controlId: 'readable', controlKind: 'recovery' },
+      content: 'Readable delivery body.',
+      deliveryKey: 'delivery-readable',
+    });
+    if (readable.kind !== 'created') throw new Error('Expected canonical retained custody row.');
+    // A retained row the canonical parser rejects, returned under the exact
+    // binding-qualified owner index the reader queries.
+    deliveries.rows.set(corruptCustodyId, {
+      rowId: corruptCustodyId,
+      revision: 1,
+      value: {
+        id: corruptCustodyId,
+        'connection-id': 'connection-1',
+        'binding-id': 'binding-1',
+        custody: { state: 'not-a-custody-state' },
+      },
+    });
+
+    const snapshot = await readConversationOutwardDeliveryTranscriptActivities({
+      deliveriesCollection: deliveries,
+      signal,
+      bindingTargets: [{ connectionId: 'connection-1', bindingId: 'binding-1' }],
+    });
+
+    if (snapshot.kind !== 'ready') throw new Error('Expected a degraded but ready snapshot.');
+    expect(snapshot.activities.map((activity) => activity.status).sort()).toEqual([
+      'Delivery details could not be read',
+      'Waiting to deliver',
+    ]);
+  });
+
+  it('degrades one unparsable custody row to unknown attention for its own connection only', async () => {
+    const state = new MemoryAccountCollection();
+    const deliveries = new MemoryAccountCollection();
+    await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
+    const signal = new AbortController().signal;
+    const store = createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never,
+      deliveriesCollection: deliveries as never,
+      signal,
+      now: () => 100,
+    });
+    const readable = await store.ensure({
+      ...obligation(),
+      source: { kind: 'controlResponse', controlId: 'attention-readable', controlKind: 'recovery' },
+      content: 'Readable delivery body.',
+      deliveryKey: 'delivery-attention-readable',
+    });
+    if (readable.kind !== 'created') throw new Error('Expected canonical retained custody row.');
+    const retryDue = await store.compareAndSwap({
+      custodyId: readable.record.custodyId,
+      expectedRevision: readable.record.revision,
+      custody: { state: 'retryDue', attemptCount: 1, providerMessageIds: [], retryNotBefore: 200 },
+    });
+    if (retryDue.kind !== 'updated') throw new Error('Expected canonical custody lifecycle update.');
+    deliveries.rows.set(corruptCustodyId, {
+      rowId: corruptCustodyId,
+      revision: 1,
+      value: {
+        id: corruptCustodyId,
+        'connection-id': 'connection-1',
+        custody: { state: 'not-a-custody-state' },
+      },
+    });
+
+    const attention = await readConversationOutwardDeliveryConnectionAttention({
+      deliveriesCollection: deliveries as never,
+      signal,
+      connectionIds: ['connection-1'],
+    });
+
+    expect(attention).toEqual({
+      kind: 'ready',
+      attentionByConnection: new Map([['connection-1', {
+        retryDue: true,
+        notDelivered: false,
+        partial: false,
+        outcomeUnknown: true,
+        archiveRecovery: false,
+      }]]),
+    });
   });
 
   it('reads binding-qualified transcript targets in canonical code-unit order', async () => {
@@ -454,9 +565,11 @@ describe('Channels control-response outward custody', () => {
       source: { kind: 'controlResponse', controlId: 'attempting-1', controlKind: 'pairing' },
       deliveryKey: 'delivery-attempting-1',
     });
-    if (ready.kind === 'conflict' || ready.kind === 'invalid' || ready.kind === 'unavailable'
-      || retryLater.kind === 'conflict' || retryLater.kind === 'invalid' || retryLater.kind === 'unavailable'
-      || attempting.kind === 'conflict' || attempting.kind === 'invalid' || attempting.kind === 'unavailable') {
+    // `ensure` can also answer `retired`, which carries no record; require the
+    // ensured shape positively so a fixture that stops producing one fails here.
+    if ((ready.kind !== 'created' && ready.kind !== 'rejoined')
+      || (retryLater.kind !== 'created' && retryLater.kind !== 'rejoined')
+      || (attempting.kind !== 'created' && attempting.kind !== 'rejoined')) {
       throw new Error('expected custody fixtures');
     }
     await store.compareAndSwap({
@@ -567,7 +680,11 @@ describe('Channels control-response outward custody', () => {
     const store = new MemoryDeliveryStore();
     const record = sessionProjectionRecord();
     store.rows.set(record.custodyId, record);
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
+      _operation: unknown,
+      _input: Readonly<Record<string, unknown>>,
+      _options: Readonly<{ signal?: AbortSignal }>,
+    ) => ({
       result: { kind: 'delivered', providerMessageIds: ['provider-message-1'] },
       executionOrigin: providerTransportOrigin,
     }));
@@ -621,7 +738,11 @@ describe('Channels control-response outward custody', () => {
       },
     }, { expectedRevision: 'absent' });
     const store = new MemoryDeliveryStore();
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
+      _operation: unknown,
+      _input: Readonly<Record<string, unknown>>,
+      _options: Readonly<{ signal?: AbortSignal }>,
+    ) => ({
       result: { kind: 'delivered', providerMessageIds: ['provider-message-1'] },
       executionOrigin: providerTransportOrigin,
     }));
@@ -651,7 +772,7 @@ describe('Channels control-response outward custody', () => {
       custody: { state: 'delivered' },
     });
 
-    const delivered = executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
+    const delivered = executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls[0]?.[1];
     expect(delivered?.deliveryKey).toMatch(/^channels:delivery:v1:[A-Za-z0-9_-]{43}$/u);
     expect(store.rows.values().next().value?.obligation).toMatchObject({
       source: {
@@ -697,7 +818,11 @@ describe('Channels control-response outward custody', () => {
       },
     };
     store.rows.set(record.custodyId, record);
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
+      _operation: unknown,
+      _input: Readonly<Record<string, unknown>>,
+      _options: Readonly<{ signal?: AbortSignal }>,
+    ) => ({
       result: { kind: 'notDelivered', retry: 'safe' },
       executionOrigin: providerTransportOrigin,
     }));
@@ -749,7 +874,11 @@ describe('Channels control-response outward custody', () => {
     const store = new MemoryDeliveryStore();
     const record = sessionProjectionRecord();
     store.rows.set(record.custodyId, record);
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
+      _operation: unknown,
+      _input: Readonly<Record<string, unknown>>,
+      _options: Readonly<{ signal?: AbortSignal }>,
+    ) => ({
       result: { kind: 'delivered', providerMessageIds: ['provider-message-1'] },
       executionOrigin: {
         ...providerTransportOrigin,
@@ -802,7 +931,7 @@ describe('Channels control-response outward custody', () => {
     const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
       _action: unknown,
       _input: unknown,
-      options: Readonly<{ expectedExecutionOrigin?: typeof providerTransportOrigin }>,
+      options: Readonly<{ expectedExecutionOrigin?: PluginMachineExecutionOriginV1 }>,
     ) => {
       const currentExecutionOrigin = {
         ...providerTransportOrigin,
@@ -1173,6 +1302,91 @@ describe('Channels control-response outward custody', () => {
     expect(providerCalls).toBe(1);
   });
 
+  it('rejoins a delivered custody row after an ordinary binding edit, and still fences a live attempt', async () => {
+    const state = new MemoryAccountCollection();
+    const deliveries = new MemoryAccountCollection();
+    await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
+    const store = createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never,
+      deliveriesCollection: deliveries as never,
+      signal: new AbortController().signal,
+      now: () => 100,
+    });
+    const projected: ConversationOutwardDeliveryObligation = {
+      ...obligation(),
+      source: {
+        kind: 'sessionProjection',
+        sessionId: 'session-route-1',
+        semanticItemId: 'semantic-route-1',
+      },
+      content: 'An assistant reply already delivered to the provider.',
+      deliveryKey: 'channels:delivery:v1:session-route-1:semantic-route-1',
+    };
+    if (projected.bindingId === undefined) throw new Error('Expected a binding-routed obligation.');
+    let providerCalls = 0;
+    const deliver = async () => {
+      providerCalls += 1;
+      return { kind: 'delivered' as const, providerMessageIds: ['provider-route-1'] };
+    };
+
+    await expect(deliverConversationOutwardDelivery({
+      store,
+      obligation: projected,
+      attemptId: 'attempt-route-1',
+      now: () => 101,
+      ...currentAuthority(),
+      deliver,
+    })).resolves.toMatchObject({ kind: 'settled', custody: { state: 'delivered' } });
+    expect(providerCalls).toBe(1);
+
+    // Frontier advancement lost its CAS to an ordinary binding edit, so the
+    // next wake derives the same semantic source under a new binding revision.
+    const afterBindingEdit: ConversationOutwardDeliveryObligation = {
+      ...projected,
+      routeAuthority: {
+        connectionAuthorityEpoch: projected.routeAuthority.connectionAuthorityEpoch,
+        bindingRevision: projected.routeAuthority.bindingRevision + 1,
+        bindingAuthorityEpoch: projected.routeAuthority.bindingAuthorityEpoch,
+      },
+    };
+    await expect(store.ensure(afterBindingEdit)).resolves.toMatchObject({
+      kind: 'rejoined',
+      record: { custody: { state: 'delivered' } },
+    });
+    await expect(deliverConversationOutwardDelivery({
+      store,
+      obligation: afterBindingEdit,
+      attemptId: 'attempt-route-after-edit',
+      now: () => 102,
+      ...currentAuthority(),
+      deliver,
+    })).resolves.toMatchObject({ kind: 'settled', custody: { state: 'delivered' } });
+    expect(providerCalls).toBe(1);
+
+    const live: ConversationOutwardDeliveryObligation = {
+      ...projected,
+      source: {
+        kind: 'sessionProjection',
+        sessionId: 'session-route-2',
+        semanticItemId: 'semantic-route-2',
+      },
+      deliveryKey: 'channels:delivery:v1:session-route-2:semantic-route-2',
+    };
+    if (live.bindingId === undefined) throw new Error('Expected a binding-routed obligation.');
+    const created = await store.ensure(live);
+    if (created.kind !== 'created') throw new Error('expected a created custody row');
+    // A non-terminal row keeps the exact route authority its attempt is fenced
+    // by; only a settled row may rejoin across changed route metadata.
+    await expect(store.ensure({
+      ...live,
+      routeAuthority: {
+        connectionAuthorityEpoch: live.routeAuthority.connectionAuthorityEpoch,
+        bindingRevision: live.routeAuthority.bindingRevision + 1,
+        bindingAuthorityEpoch: live.routeAuthority.bindingAuthorityEpoch,
+      },
+    })).resolves.toEqual({ kind: 'conflict' });
+  });
+
   it('returns retired and performs no provider effect when deterministic custody was logically deleted', async () => {
     const state = new MemoryAccountCollection();
     const deliveries = new MemoryAccountCollection();
@@ -1438,6 +1652,117 @@ describe('Channels control-response outward custody', () => {
       code: 'aborted',
       retryable: true,
     });
+  });
+
+  it('offers and performs owner-led archive recovery through the one custody transition owner', async () => {
+    const state = new MemoryAccountCollection();
+    const deliveries = new MemoryAccountCollection();
+    await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
+    const signal = new AbortController().signal;
+    const store = createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never,
+      deliveriesCollection: deliveries as never,
+      signal,
+      now: () => 100,
+    });
+    const recoverable = await store.ensure({
+      ...obligation(),
+      source: { kind: 'controlResponse', controlId: 'archived-thread', controlKind: 'recovery' },
+      content: 'Archived destination delivery body.',
+      deliveryKey: 'delivery-archived-thread',
+    });
+    const refused = await store.ensure({
+      ...obligation(),
+      source: { kind: 'controlResponse', controlId: 'plain-refusal', controlKind: 'recovery' },
+      content: 'Plainly refused delivery body.',
+      deliveryKey: 'delivery-plain-refusal',
+    });
+    if (recoverable.kind !== 'created' || refused.kind !== 'created') {
+      throw new Error('Expected canonical retained custody rows.');
+    }
+    // Exactly the arm Discord reports for code 50083 when the bot may manage
+    // threads; the neighbouring row is an ordinary terminal refusal.
+    const archived = await store.compareAndSwap({
+      custodyId: recoverable.record.custodyId,
+      expectedRevision: recoverable.record.revision,
+      custody: {
+        state: 'notDelivered',
+        attemptCount: 1,
+        providerMessageIds: [],
+        archiveRecovery: 'unarchiveAndRetry',
+      },
+    });
+    const plain = await store.compareAndSwap({
+      custodyId: refused.record.custodyId,
+      expectedRevision: refused.record.revision,
+      custody: { state: 'notDelivered', attemptCount: 3, providerMessageIds: [] },
+    });
+    if (archived.kind !== 'updated' || plain.kind !== 'updated') {
+      throw new Error('Expected canonical custody lifecycle updates.');
+    }
+
+    await expect(readConversationOutwardDeliveryConnectionAttention({
+      deliveriesCollection: deliveries as never,
+      signal,
+      connectionIds: ['connection-1'],
+    })).resolves.toEqual({
+      kind: 'ready',
+      attentionByConnection: new Map([['connection-1', {
+        retryDue: false,
+        notDelivered: true,
+        partial: false,
+        outcomeUnknown: false,
+        archiveRecovery: true,
+      }]]),
+    });
+    // Only the recoverable arm is offered; the plain refusal stays terminal.
+    await expect(readConversationOutwardDeliveryResolutionPage({
+      deliveriesCollection: deliveries as never,
+      connectionId: 'connection-1',
+      signal,
+    })).resolves.toEqual({
+      rows: [{
+        custodyId: recoverable.record.custodyId,
+        revision: archived.record.revision,
+        state: 'archiveRecoverable',
+      }],
+    });
+
+    await expect(resolveConversationOutwardDeliveryCustodyInAccountCollection({
+      stateCollection: state as never,
+      deliveriesCollection: deliveries as never,
+      custodyId: recoverable.record.custodyId,
+      expectedRevision: archived.record.revision,
+      resolution: 'retryAfterUnarchive',
+      signal,
+      now: () => 500,
+    })).resolves.toEqual({
+      kind: 'resolved',
+      custodyId: recoverable.record.custodyId,
+      revision: archived.record.revision + 1,
+      resolution: 'retryAfterUnarchive',
+    });
+    // The reopened obligation returns to the ordinary due scan, so the existing
+    // supervisor sends it again with no new owner.
+    const scanner = createConversationOutwardDeliveryCollectionScanner({
+      deliveriesCollection: deliveries as never,
+      signal,
+    });
+    const rescanned = await scanner.scan({ now: 600, limit: 10 });
+    if (rescanned.kind !== 'ready') throw new Error('Expected a canonical delivery scan.');
+    expect(rescanned.records).toEqual([expect.objectContaining({
+      custodyId: recoverable.record.custodyId,
+      custody: expect.objectContaining({ state: 'ready' }),
+    })]);
+
+    await expect(resolveConversationOutwardDeliveryCustodyInAccountCollection({
+      stateCollection: state as never,
+      deliveriesCollection: deliveries as never,
+      custodyId: refused.record.custodyId,
+      expectedRevision: plain.record.revision,
+      resolution: 'retryAfterUnarchive',
+      signal,
+    })).rejects.toMatchObject({ code: 'channels_delivery_resolve_not_resolvable' });
   });
 
   it('preserves exact opaque custody IDs across connection, binding, and closed source arms', async () => {
@@ -1770,7 +2095,11 @@ describe('Channels control-response outward custody', () => {
       custody: { state: 'ready', attemptCount: 0, providerMessageIds: [] },
     };
     store.rows.set(record.custodyId, record);
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
+      _operation: unknown,
+      _input: Readonly<Record<string, unknown>>,
+      _options: Readonly<{ signal?: AbortSignal }>,
+    ) => ({
       result: { kind: 'delivered', providerMessageIds: ['must-not-exist'] },
       executionOrigin: providerTransportOrigin,
     }));
@@ -2013,7 +2342,6 @@ describe('Channels control-response outward custody', () => {
         ...obligation(),
         content: '😀'.repeat(60_000),
       },
-      outboundTextLimit: { maximum: 4_096, unit: 'unicodeCodePoints' },
       attemptId: 'attempt-1',
       now: () => 100,
       ...currentAuthority(),

@@ -59,6 +59,13 @@ describe('parseSentryLinkHeader', () => {
     expect(parsed.next?.cursor).toBe('1700000000000:25:0');
   });
 
+  it('reads a present-but-empty Link header as absent, never as a finished collection', () => {
+    // A `Link:` with no value states nothing. Reading it as present makes `next === null`,
+    // which the scan and detail walks both read as "the provider says the collection ended".
+    expect(parseSentryLinkHeader({ Link: '' })).toEqual({ present: false });
+    expect(parseSentryLinkHeader({ link: '   ' })).toEqual({ present: false });
+  });
+
   it('treats a syntactically unusable Link value as present with no usable relation', () => {
     expect(parseSentryLinkHeader({ link: 'not-a-link-header' })).toEqual({
       present: true,

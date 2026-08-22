@@ -1,459 +1,469 @@
-export const PLUGIN_MANIFEST = Object.freeze({
-  schemaVersion: 2,
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { VoiceCredentialSlotIdSchema } from '@happier-dev/plugin-sdk/voice';
+
+import { ELEVENLABS_VOICE_PROVIDER_CONTRIBUTION_ID } from './constants.js';
+
+const ELEVENLABS_API_KEY_VOICE_CREDENTIAL_SLOT_ID = VoiceCredentialSlotIdSchema.parse('api_key');
+
+export const ELEVENLABS_PLUGIN = definePlugin({
   id: 'happier.voice.elevenlabs',
   version: '0.0.0',
   displayName: 'ElevenLabs Voice',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   hostAccess: { required: [], optional: [] },
-  contributes: {
-    voiceProviders: [{
-      id: 'realtime-elevenlabs',
-      title: 'ElevenLabs Voice',
-      kind: 'conversation',
-      roles: ['conversation_stt', 'conversation_tts', 'realtime_conversation', 'turn_control'],
-      platforms: ['web', 'ios', 'android'],
-      capabilities: {
-        turn: {
-          cancelResponse: false,
-          bargeIn: false,
-          exactMessage: true,
-          interruptionPolicy: 'disabled',
-        },
-      },
-      settings: {
-        schemaVersion: 2,
-        privacyDisclosure: 'Audio and conversation content are sent from this device to ElevenLabs through the ElevenLabs client connection. Depending on the selected setup, Happier may also send ElevenLabs bounded agent instructions, client-tool definitions and results, and authentication or provisioning requests needed for the feature. Happier’s server may participate in hosted authentication and usage accounting, but neither Happier’s server nor relay carries the live conversation audio. ElevenLabs may process and retain received data under your ElevenLabs account settings and its terms. Voice context-sharing controls are separate from this provider processing.',
-        fields: [
-          {
-            id: 'billingMode',
-            title: 'Billing mode',
-            schema: {
-              type: 'string',
-              enum: ['happier', 'byo'],
-            },
-            default: 'happier',
-            presentation: {
-              control: 'select',
-              options: [
-                { value: 'happier', title: 'Happier hosted' },
-                { value: 'byo', title: 'Bring your own ElevenLabs account' },
-              ],
-            },
+  voiceProviders: {
+    [ELEVENLABS_VOICE_PROVIDER_CONTRIBUTION_ID]: {
+      declaration: {
+        title: 'ElevenLabs Voice',
+        kind: 'conversation',
+        roles: ['conversation_stt', 'conversation_tts', 'realtime_conversation', 'turn_control'],
+        platforms: ['web', 'ios', 'android'],
+        capabilities: {
+          turn: {
+            cancelResponse: false,
+            bargeIn: false,
+            exactMessage: true,
+            interruptionPolicy: 'disabled',
           },
-          {
-            id: 'tts',
-            title: 'Text-to-speech configuration',
-            schema: {
-              type: 'object',
-              properties: {
-                voiceId: { type: 'string', minLength: 1, maxLength: 256 },
-                modelId: {
-                  anyOf: [
-                    { type: 'string', minLength: 1, maxLength: 256 },
-                    { type: 'null' },
-                  ],
-                },
-                voiceSettings: {
-                  type: 'object',
-                  properties: {
-                    stability: {
-                      anyOf: [
-                        { type: 'number', minimum: 0, maximum: 1 },
-                        { type: 'null' },
-                      ],
-                    },
-                    similarityBoost: {
-                      anyOf: [
-                        { type: 'number', minimum: 0, maximum: 1 },
-                        { type: 'null' },
-                      ],
-                    },
-                    speed: {
-                      anyOf: [
-                        { type: 'number', minimum: 0.7, maximum: 1.2 },
-                        { type: 'null' },
-                      ],
-                    },
+          tools: { effectCalls: 'none' },
+        },
+        settings: {
+          schemaVersion: 2,
+          privacyDisclosure: 'Audio and conversation content are sent from this device to ElevenLabs through the ElevenLabs client connection. Depending on the selected setup, Happier may also send ElevenLabs bounded agent instructions, client-tool definitions and results, and authentication or provisioning requests needed for the feature. Happier’s server may participate in hosted authentication and usage accounting, but neither Happier’s server nor relay carries the live conversation audio. ElevenLabs may process and retain received data under your ElevenLabs account settings and its terms. Voice context-sharing controls are separate from this provider processing.',
+          fields: [
+            {
+              id: 'billingMode',
+              title: 'Billing mode',
+              schema: {
+                type: 'string',
+                enum: ['happier', 'byo'],
+              },
+              default: 'happier',
+              presentation: {
+                control: 'select',
+                options: [
+                  { value: 'happier', title: 'Happier hosted' },
+                  { value: 'byo', title: 'Bring your own ElevenLabs account' },
+                ],
+              },
+            },
+            {
+              id: 'tts',
+              title: 'Text-to-speech configuration',
+              schema: {
+                type: 'object',
+                properties: {
+                  voiceId: { type: 'string', minLength: 1, maxLength: 256 },
+                  modelId: {
+                    anyOf: [
+                      { type: 'string', minLength: 1, maxLength: 256 },
+                      { type: 'null' },
+                    ],
                   },
-                  required: [
-                    'stability',
-                    'similarityBoost',
-                    'speed',
-                  ],
+                  voiceSettings: {
+                    type: 'object',
+                    properties: {
+                      stability: {
+                        anyOf: [
+                          { type: 'number', minimum: 0, maximum: 1 },
+                          { type: 'null' },
+                        ],
+                      },
+                      similarityBoost: {
+                        anyOf: [
+                          { type: 'number', minimum: 0, maximum: 1 },
+                          { type: 'null' },
+                        ],
+                      },
+                      speed: {
+                        anyOf: [
+                          { type: 'number', minimum: 0.7, maximum: 1.2 },
+                          { type: 'null' },
+                        ],
+                      },
+                    },
+                    required: [
+                      'stability',
+                      'similarityBoost',
+                      'speed',
+                    ],
+                    additionalProperties: false,
+                  },
+                },
+                required: ['voiceId', 'modelId', 'voiceSettings'],
+                additionalProperties: false,
+              },
+              default: {
+                voiceId: 'hpp4J3VqNfWAUOO0d1Us',
+                modelId: null,
+                voiceSettings: {
+                  stability: null,
+                  similarityBoost: null,
+                  speed: null,
+                },
+              },
+              presentation: { control: 'json' },
+            },
+            {
+              id: 'agentId',
+              title: 'ElevenLabs Agent ID',
+              schema: {
+                type: 'string',
+                minLength: 0,
+                maxLength: 256,
+                pattern: '^[A-Za-z0-9_-]*$',
+              },
+              default: '',
+              presentation: { control: 'text' },
+            },
+          ],
+          readiness: [{
+            kind: 'setting_nonempty',
+            settingId: 'agentId',
+            when: { settingId: 'billingMode', equals: 'byo' },
+          }],
+          actions: [
+            {
+              id: 'create-agent',
+              title: 'Create Happier Voice agent',
+              placement: { kind: 'afterField', fieldId: 'agentId' },
+              confirmation: {
+                kind: 'required',
+                title: 'Create ElevenLabs agent?',
+                description: 'Creates a Happier Voice agent and its client tools in the selected ElevenLabs account.',
+                confirmLabel: 'Create agent',
+              },
+              patchFieldIds: ['agentId'],
+            },
+            {
+              id: 'update-agent',
+              title: 'Update Happier Voice agent',
+              placement: { kind: 'afterField', fieldId: 'agentId' },
+              enabledWhen: { kind: 'setting_nonempty', settingId: 'agentId' },
+              confirmation: {
+                kind: 'required',
+                title: 'Update ElevenLabs agent?',
+                description: 'Reconciles the configured Happier Voice agent and its client tools in the selected ElevenLabs account.',
+                confirmLabel: 'Update agent',
+              },
+              patchFieldIds: ['agentId'],
+            },
+          ],
+        },
+        credentials: {
+          slot: {
+            id: ELEVENLABS_API_KEY_VOICE_CREDENTIAL_SLOT_ID,
+            purpose: 'voice.client-auth.elevenlabs',
+            title: 'ElevenLabs API key',
+            description: 'Used only for BYO conversation authentication, voice catalogs, and explicit agent settings actions.',
+          },
+          requirement: {
+            kind: 'when_setting_equals',
+            settingId: 'billingMode',
+            value: 'byo',
+          },
+          sources: [{
+            kind: 'savedSecret',
+            secretKinds: ['apiKey'],
+            operationProjections: [
+              { kind: 'recipientCredential', operation: 'signed-url', phase: 'prepare', format: 'raw' },
+              { kind: 'recipientCredential', operation: 'conversation-token', phase: 'prepare', format: 'raw' },
+              { kind: 'recipientCredential', operation: 'voices', phase: 'settings', format: 'raw' },
+              { kind: 'recipientCredential', operation: 'agents', phase: 'settings', format: 'raw' },
+              { kind: 'recipientCredential', operation: 'tools', phase: 'settings', format: 'raw' },
+              { kind: 'recipientCredential', operation: 'create-tool', phase: 'settings', format: 'raw' },
+              { kind: 'recipientCredential', operation: 'update-tool', phase: 'settings', format: 'raw' },
+              { kind: 'recipientCredential', operation: 'create-agent', phase: 'settings', format: 'raw' },
+              { kind: 'recipientCredential', operation: 'update-agent', phase: 'settings', format: 'raw' },
+            ],
+          }],
+          hostMediated: { operations: [
+            {
+              id: 'signed-url',
+              purpose: 'voice.client-auth.signed-url',
+              credentialSlotId: ELEVENLABS_API_KEY_VOICE_CREDENTIAL_SLOT_ID,
+              effect: 'read',
+              request: {
+                origin: 'https://api.elevenlabs.io',
+                pathTemplate: '/v1/convai/conversation/get-signed-url',
+                queryTemplate: [],
+                headerTemplate: [{ name: 'accept', value: 'application/json' }],
+                bodyTemplate: { kind: 'none' },
+                method: 'GET',
+                credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
+                redirect: 'error',
+                maxBodyBytes: 0,
+                contentTypes: [],
+              },
+              parameters: {
+                schema: {
+                  type: 'object',
+                  properties: { agentId: { type: 'string', minLength: 1, maxLength: 256 } },
+                  required: ['agentId'],
                   additionalProperties: false,
                 },
+                mapping: [{ parameter: 'agentId', target: { kind: 'query', name: 'agent_id' } }],
               },
-              required: ['voiceId', 'modelId', 'voiceSettings'],
-              additionalProperties: false,
+              response: { maxBytes: 32768, contentTypes: ['application/json'] },
             },
-            default: {
-              voiceId: 'hpp4J3VqNfWAUOO0d1Us',
-              modelId: null,
-              voiceSettings: {
-                stability: null,
-                similarityBoost: null,
-                speed: null,
+            {
+              id: 'conversation-token',
+              purpose: 'voice.client-auth.sdk-token',
+              credentialSlotId: ELEVENLABS_API_KEY_VOICE_CREDENTIAL_SLOT_ID,
+              effect: 'read',
+              request: {
+                origin: 'https://api.elevenlabs.io',
+                pathTemplate: '/v1/convai/conversation/token',
+                queryTemplate: [],
+                headerTemplate: [{ name: 'accept', value: 'application/json' }],
+                bodyTemplate: { kind: 'none' },
+                method: 'GET',
+                credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
+                redirect: 'error',
+                maxBodyBytes: 0,
+                contentTypes: [],
               },
+              parameters: {
+                schema: {
+                  type: 'object',
+                  properties: { agentId: { type: 'string', minLength: 1, maxLength: 256 } },
+                  required: ['agentId'],
+                  additionalProperties: false,
+                },
+                mapping: [{ parameter: 'agentId', target: { kind: 'query', name: 'agent_id' } }],
+              },
+              response: { maxBytes: 32768, contentTypes: ['application/json'] },
             },
-            presentation: { control: 'json' },
-          },
-          {
-            id: 'agentId',
-            title: 'ElevenLabs Agent ID',
-            schema: {
-              type: 'string',
-              minLength: 0,
-              maxLength: 256,
-              pattern: '^[A-Za-z0-9_-]*$',
+            {
+              id: 'voices',
+              purpose: 'voice.catalog.voices',
+              credentialSlotId: ELEVENLABS_API_KEY_VOICE_CREDENTIAL_SLOT_ID,
+              effect: 'read',
+              request: {
+                origin: 'https://api.elevenlabs.io',
+                pathTemplate: '/v1/voices',
+                queryTemplate: [],
+                headerTemplate: [{ name: 'accept', value: 'application/json' }],
+                bodyTemplate: { kind: 'none' },
+                method: 'GET',
+                credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
+                redirect: 'error',
+                maxBodyBytes: 0,
+                contentTypes: [],
+              },
+              parameters: {
+                schema: { type: 'object', properties: {}, additionalProperties: false },
+                mapping: [],
+              },
+              response: { maxBytes: 2097152, contentTypes: ['application/json'] },
             },
-            default: '',
-            presentation: { control: 'text' },
-          },
-        ],
-        readiness: [{
-          kind: 'setting_nonempty',
-          settingId: 'agentId',
-          when: { settingId: 'billingMode', equals: 'byo' },
-        }],
-        actions: [
-          {
-            id: 'create-agent',
-            title: 'Create Happier Voice agent',
-            placement: { kind: 'afterField', fieldId: 'agentId' },
-            confirmation: {
-              kind: 'required',
-              title: 'Create ElevenLabs agent?',
-              description: 'Creates a Happier Voice agent and its client tools in the selected ElevenLabs account.',
-              confirmLabel: 'Create agent',
+            {
+              id: 'agents',
+              purpose: 'voice.provision.agents.list',
+              credentialSlotId: ELEVENLABS_API_KEY_VOICE_CREDENTIAL_SLOT_ID,
+              effect: 'read',
+              request: {
+                origin: 'https://api.elevenlabs.io',
+                pathTemplate: '/v1/convai/agents',
+                queryTemplate: [
+                  { name: 'page_size', value: '50' },
+                  { name: 'search', value: 'Happier Voice' },
+                ],
+                headerTemplate: [{ name: 'accept', value: 'application/json' }],
+                bodyTemplate: { kind: 'none' },
+                method: 'GET',
+                credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
+                redirect: 'error',
+                maxBodyBytes: 0,
+                contentTypes: [],
+              },
+              parameters: {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    cursor: { type: 'string', minLength: 1, maxLength: 512 },
+                  },
+                  additionalProperties: false,
+                },
+                mapping: [{ parameter: 'cursor', target: { kind: 'query', name: 'cursor' } }],
+              },
+              response: { maxBytes: 2097152, contentTypes: ['application/json'] },
             },
-            patchFieldIds: ['agentId'],
-          },
-          {
-            id: 'update-agent',
-            title: 'Update Happier Voice agent',
-            placement: { kind: 'afterField', fieldId: 'agentId' },
-            enabledWhen: { kind: 'setting_nonempty', settingId: 'agentId' },
-            confirmation: {
-              kind: 'required',
-              title: 'Update ElevenLabs agent?',
-              description: 'Reconciles the configured Happier Voice agent and its client tools in the selected ElevenLabs account.',
-              confirmLabel: 'Update agent',
+            {
+              id: 'tools',
+              purpose: 'voice.provision.tools.list',
+              credentialSlotId: ELEVENLABS_API_KEY_VOICE_CREDENTIAL_SLOT_ID,
+              effect: 'read',
+              request: {
+                origin: 'https://api.elevenlabs.io',
+                pathTemplate: '/v1/convai/tools',
+                queryTemplate: [{ name: 'page_size', value: '100' }],
+                headerTemplate: [{ name: 'accept', value: 'application/json' }],
+                bodyTemplate: { kind: 'none' },
+                method: 'GET',
+                credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
+                redirect: 'error',
+                maxBodyBytes: 0,
+                contentTypes: [],
+              },
+              parameters: {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    cursor: { type: 'string', minLength: 1, maxLength: 512 },
+                  },
+                  additionalProperties: false,
+                },
+                mapping: [{ parameter: 'cursor', target: { kind: 'query', name: 'cursor' } }],
+              },
+              response: { maxBytes: 2097152, contentTypes: ['application/json'] },
             },
-            patchFieldIds: ['agentId'],
-          },
-        ],
-      },
-      credentials: {
-        slot: {
-          id: 'api_key',
-          purpose: 'voice.client-auth.elevenlabs',
-          title: 'ElevenLabs API key',
-          description: 'Used only for BYO conversation authentication, voice catalogs, and explicit agent settings actions.',
+            {
+              id: 'create-tool',
+              purpose: 'voice.provision.tool.create',
+              credentialSlotId: ELEVENLABS_API_KEY_VOICE_CREDENTIAL_SLOT_ID,
+              effect: 'mutation',
+              request: {
+                origin: 'https://api.elevenlabs.io',
+                pathTemplate: '/v1/convai/tools',
+                queryTemplate: [],
+                headerTemplate: [
+                  { name: 'accept', value: 'application/json' },
+                  { name: 'content-type', value: 'application/json' },
+                ],
+                bodyTemplate: { kind: 'json', value: {} },
+                method: 'POST',
+                credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
+                redirect: 'error',
+                maxBodyBytes: 524288,
+                contentTypes: ['application/json'],
+              },
+              parameters: {
+                schema: {
+                  type: 'object',
+                  properties: { body: { type: 'object', additionalProperties: true } },
+                  required: ['body'],
+                  additionalProperties: false,
+                },
+                mapping: [{ parameter: 'body', target: { kind: 'body', pointer: '' } }],
+              },
+              response: { maxBytes: 2097152, contentTypes: ['application/json'] },
+            },
+            {
+              id: 'update-tool',
+              purpose: 'voice.provision.tool.update',
+              credentialSlotId: ELEVENLABS_API_KEY_VOICE_CREDENTIAL_SLOT_ID,
+              effect: 'mutation',
+              request: {
+                origin: 'https://api.elevenlabs.io',
+                pathTemplate: '/v1/convai/tools/{toolId}',
+                queryTemplate: [],
+                headerTemplate: [
+                  { name: 'accept', value: 'application/json' },
+                  { name: 'content-type', value: 'application/json' },
+                ],
+                bodyTemplate: { kind: 'json', value: {} },
+                method: 'PATCH',
+                credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
+                redirect: 'error',
+                maxBodyBytes: 524288,
+                contentTypes: ['application/json'],
+              },
+              parameters: {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    toolId: { type: 'string', minLength: 1, maxLength: 256 },
+                    body: { type: 'object', additionalProperties: true },
+                  },
+                  required: ['toolId', 'body'],
+                  additionalProperties: false,
+                },
+                mapping: [
+                  { parameter: 'toolId', target: { kind: 'path', placeholder: 'toolId', encoding: 'uri_component' } },
+                  { parameter: 'body', target: { kind: 'body', pointer: '' } },
+                ],
+              },
+              response: { maxBytes: 2097152, contentTypes: ['application/json'] },
+            },
+            {
+              id: 'create-agent',
+              purpose: 'voice.provision.agent.create',
+              credentialSlotId: ELEVENLABS_API_KEY_VOICE_CREDENTIAL_SLOT_ID,
+              effect: 'mutation',
+              request: {
+                origin: 'https://api.elevenlabs.io',
+                pathTemplate: '/v1/convai/agents/create',
+                queryTemplate: [],
+                headerTemplate: [
+                  { name: 'accept', value: 'application/json' },
+                  { name: 'content-type', value: 'application/json' },
+                ],
+                bodyTemplate: { kind: 'json', value: {} },
+                method: 'POST',
+                credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
+                redirect: 'error',
+                maxBodyBytes: 524288,
+                contentTypes: ['application/json'],
+              },
+              parameters: {
+                schema: {
+                  type: 'object',
+                  properties: { body: { type: 'object', additionalProperties: true } },
+                  required: ['body'],
+                  additionalProperties: false,
+                },
+                mapping: [{ parameter: 'body', target: { kind: 'body', pointer: '' } }],
+              },
+              response: { maxBytes: 2097152, contentTypes: ['application/json'] },
+            },
+            {
+              id: 'update-agent',
+              purpose: 'voice.provision.agent.update',
+              credentialSlotId: ELEVENLABS_API_KEY_VOICE_CREDENTIAL_SLOT_ID,
+              effect: 'mutation',
+              request: {
+                origin: 'https://api.elevenlabs.io',
+                pathTemplate: '/v1/convai/agents/{agentId}',
+                queryTemplate: [],
+                headerTemplate: [
+                  { name: 'accept', value: 'application/json' },
+                  { name: 'content-type', value: 'application/json' },
+                ],
+                bodyTemplate: { kind: 'json', value: {} },
+                method: 'PATCH',
+                credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
+                redirect: 'error',
+                maxBodyBytes: 524288,
+                contentTypes: ['application/json'],
+              },
+              parameters: {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    agentId: { type: 'string', minLength: 1, maxLength: 256 },
+                    body: { type: 'object', additionalProperties: true },
+                  },
+                  required: ['agentId', 'body'],
+                  additionalProperties: false,
+                },
+                mapping: [
+                  { parameter: 'agentId', target: { kind: 'path', placeholder: 'agentId', encoding: 'uri_component' } },
+                  { parameter: 'body', target: { kind: 'body', pointer: '' } },
+                ],
+              },
+              response: { maxBytes: 2097152, contentTypes: ['application/json'] },
+            },
+          ] },
         },
-        requirement: {
-          kind: 'when_setting_equals',
-          settingId: 'billingMode',
-          value: 'byo',
+        client: {
+          artifactId: 'voice-runtime',
+          modulePath: './ui/voice',
+          exportName: 'activate',
         },
-        sources: [{
-          kind: 'savedSecret',
-          secretKinds: ['apiKey'],
-          operationProjections: [
-            { kind: 'recipientCredential', operation: 'signed-url', phase: 'prepare', format: 'raw' },
-            { kind: 'recipientCredential', operation: 'conversation-token', phase: 'prepare', format: 'raw' },
-            { kind: 'recipientCredential', operation: 'voices', phase: 'settings', format: 'raw' },
-            { kind: 'recipientCredential', operation: 'agents', phase: 'settings', format: 'raw' },
-            { kind: 'recipientCredential', operation: 'tools', phase: 'settings', format: 'raw' },
-            { kind: 'recipientCredential', operation: 'create-tool', phase: 'settings', format: 'raw' },
-            { kind: 'recipientCredential', operation: 'update-tool', phase: 'settings', format: 'raw' },
-            { kind: 'recipientCredential', operation: 'create-agent', phase: 'settings', format: 'raw' },
-            { kind: 'recipientCredential', operation: 'update-agent', phase: 'settings', format: 'raw' },
-          ],
-        }],
-        hostMediated: { operations: [
-          {
-            id: 'signed-url',
-            purpose: 'voice.client-auth.signed-url',
-            credentialSlotId: 'api_key',
-            effect: 'read',
-            request: {
-              origin: 'https://api.elevenlabs.io',
-              pathTemplate: '/v1/convai/conversation/get-signed-url',
-              queryTemplate: [],
-              headerTemplate: [{ name: 'accept', value: 'application/json' }],
-              bodyTemplate: { kind: 'none' },
-              method: 'GET',
-              credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
-              redirect: 'error',
-              maxBodyBytes: 0,
-              contentTypes: [],
-            },
-            parameters: {
-              schema: {
-                type: 'object',
-                properties: { agentId: { type: 'string', minLength: 1, maxLength: 256 } },
-                required: ['agentId'],
-                additionalProperties: false,
-              },
-              mapping: [{ parameter: 'agentId', target: { kind: 'query', name: 'agent_id' } }],
-            },
-            response: { maxBytes: 32768, contentTypes: ['application/json'] },
-          },
-          {
-            id: 'conversation-token',
-            purpose: 'voice.client-auth.sdk-token',
-            credentialSlotId: 'api_key',
-            effect: 'read',
-            request: {
-              origin: 'https://api.elevenlabs.io',
-              pathTemplate: '/v1/convai/conversation/token',
-              queryTemplate: [],
-              headerTemplate: [{ name: 'accept', value: 'application/json' }],
-              bodyTemplate: { kind: 'none' },
-              method: 'GET',
-              credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
-              redirect: 'error',
-              maxBodyBytes: 0,
-              contentTypes: [],
-            },
-            parameters: {
-              schema: {
-                type: 'object',
-                properties: { agentId: { type: 'string', minLength: 1, maxLength: 256 } },
-                required: ['agentId'],
-                additionalProperties: false,
-              },
-              mapping: [{ parameter: 'agentId', target: { kind: 'query', name: 'agent_id' } }],
-            },
-            response: { maxBytes: 32768, contentTypes: ['application/json'] },
-          },
-          {
-            id: 'voices',
-            purpose: 'voice.catalog.voices',
-            credentialSlotId: 'api_key',
-            effect: 'read',
-            request: {
-              origin: 'https://api.elevenlabs.io',
-              pathTemplate: '/v1/voices',
-              queryTemplate: [],
-              headerTemplate: [{ name: 'accept', value: 'application/json' }],
-              bodyTemplate: { kind: 'none' },
-              method: 'GET',
-              credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
-              redirect: 'error',
-              maxBodyBytes: 0,
-              contentTypes: [],
-            },
-            parameters: {
-              schema: { type: 'object', properties: {}, additionalProperties: false },
-              mapping: [],
-            },
-            response: { maxBytes: 2097152, contentTypes: ['application/json'] },
-          },
-          {
-            id: 'agents',
-            purpose: 'voice.provision.agents.list',
-            credentialSlotId: 'api_key',
-            effect: 'read',
-            request: {
-              origin: 'https://api.elevenlabs.io',
-              pathTemplate: '/v1/convai/agents',
-              queryTemplate: [
-                { name: 'page_size', value: '50' },
-                { name: 'search', value: 'Happier Voice' },
-              ],
-              headerTemplate: [{ name: 'accept', value: 'application/json' }],
-              bodyTemplate: { kind: 'none' },
-              method: 'GET',
-              credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
-              redirect: 'error',
-              maxBodyBytes: 0,
-              contentTypes: [],
-            },
-            parameters: {
-              schema: {
-                type: 'object',
-                properties: {
-                  cursor: { type: 'string', minLength: 1, maxLength: 512 },
-                },
-                additionalProperties: false,
-              },
-              mapping: [{ parameter: 'cursor', target: { kind: 'query', name: 'cursor' } }],
-            },
-            response: { maxBytes: 2097152, contentTypes: ['application/json'] },
-          },
-          {
-            id: 'tools',
-            purpose: 'voice.provision.tools.list',
-            credentialSlotId: 'api_key',
-            effect: 'read',
-            request: {
-              origin: 'https://api.elevenlabs.io',
-              pathTemplate: '/v1/convai/tools',
-              queryTemplate: [{ name: 'page_size', value: '100' }],
-              headerTemplate: [{ name: 'accept', value: 'application/json' }],
-              bodyTemplate: { kind: 'none' },
-              method: 'GET',
-              credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
-              redirect: 'error',
-              maxBodyBytes: 0,
-              contentTypes: [],
-            },
-            parameters: {
-              schema: {
-                type: 'object',
-                properties: {
-                  cursor: { type: 'string', minLength: 1, maxLength: 512 },
-                },
-                additionalProperties: false,
-              },
-              mapping: [{ parameter: 'cursor', target: { kind: 'query', name: 'cursor' } }],
-            },
-            response: { maxBytes: 2097152, contentTypes: ['application/json'] },
-          },
-          {
-            id: 'create-tool',
-            purpose: 'voice.provision.tool.create',
-            credentialSlotId: 'api_key',
-            effect: 'mutation',
-            request: {
-              origin: 'https://api.elevenlabs.io',
-              pathTemplate: '/v1/convai/tools',
-              queryTemplate: [],
-              headerTemplate: [
-                { name: 'accept', value: 'application/json' },
-                { name: 'content-type', value: 'application/json' },
-              ],
-              bodyTemplate: { kind: 'json', value: {} },
-              method: 'POST',
-              credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
-              redirect: 'error',
-              maxBodyBytes: 524288,
-              contentTypes: ['application/json'],
-            },
-            parameters: {
-              schema: {
-                type: 'object',
-                properties: { body: { type: 'object', additionalProperties: true } },
-                required: ['body'],
-                additionalProperties: false,
-              },
-              mapping: [{ parameter: 'body', target: { kind: 'body', pointer: '' } }],
-            },
-            response: { maxBytes: 2097152, contentTypes: ['application/json'] },
-          },
-          {
-            id: 'update-tool',
-            purpose: 'voice.provision.tool.update',
-            credentialSlotId: 'api_key',
-            effect: 'mutation',
-            request: {
-              origin: 'https://api.elevenlabs.io',
-              pathTemplate: '/v1/convai/tools/{toolId}',
-              queryTemplate: [],
-              headerTemplate: [
-                { name: 'accept', value: 'application/json' },
-                { name: 'content-type', value: 'application/json' },
-              ],
-              bodyTemplate: { kind: 'json', value: {} },
-              method: 'PATCH',
-              credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
-              redirect: 'error',
-              maxBodyBytes: 524288,
-              contentTypes: ['application/json'],
-            },
-            parameters: {
-              schema: {
-                type: 'object',
-                properties: {
-                  toolId: { type: 'string', minLength: 1, maxLength: 256 },
-                  body: { type: 'object', additionalProperties: true },
-                },
-                required: ['toolId', 'body'],
-                additionalProperties: false,
-              },
-              mapping: [
-                { parameter: 'toolId', target: { kind: 'path', placeholder: 'toolId', encoding: 'uri_component' } },
-                { parameter: 'body', target: { kind: 'body', pointer: '' } },
-              ],
-            },
-            response: { maxBytes: 2097152, contentTypes: ['application/json'] },
-          },
-          {
-            id: 'create-agent',
-            purpose: 'voice.provision.agent.create',
-            credentialSlotId: 'api_key',
-            effect: 'mutation',
-            request: {
-              origin: 'https://api.elevenlabs.io',
-              pathTemplate: '/v1/convai/agents/create',
-              queryTemplate: [],
-              headerTemplate: [
-                { name: 'accept', value: 'application/json' },
-                { name: 'content-type', value: 'application/json' },
-              ],
-              bodyTemplate: { kind: 'json', value: {} },
-              method: 'POST',
-              credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
-              redirect: 'error',
-              maxBodyBytes: 524288,
-              contentTypes: ['application/json'],
-            },
-            parameters: {
-              schema: {
-                type: 'object',
-                properties: { body: { type: 'object', additionalProperties: true } },
-                required: ['body'],
-                additionalProperties: false,
-              },
-              mapping: [{ parameter: 'body', target: { kind: 'body', pointer: '' } }],
-            },
-            response: { maxBytes: 2097152, contentTypes: ['application/json'] },
-          },
-          {
-            id: 'update-agent',
-            purpose: 'voice.provision.agent.update',
-            credentialSlotId: 'api_key',
-            effect: 'mutation',
-            request: {
-              origin: 'https://api.elevenlabs.io',
-              pathTemplate: '/v1/convai/agents/{agentId}',
-              queryTemplate: [],
-              headerTemplate: [
-                { name: 'accept', value: 'application/json' },
-                { name: 'content-type', value: 'application/json' },
-              ],
-              bodyTemplate: { kind: 'json', value: {} },
-              method: 'PATCH',
-              credential: { kind: 'httpHeader', name: 'xi-api-key', format: 'raw' },
-              redirect: 'error',
-              maxBodyBytes: 524288,
-              contentTypes: ['application/json'],
-            },
-            parameters: {
-              schema: {
-                type: 'object',
-                properties: {
-                  agentId: { type: 'string', minLength: 1, maxLength: 256 },
-                  body: { type: 'object', additionalProperties: true },
-                },
-                required: ['agentId', 'body'],
-                additionalProperties: false,
-              },
-              mapping: [
-                { parameter: 'agentId', target: { kind: 'path', placeholder: 'agentId', encoding: 'uri_component' } },
-                { parameter: 'body', target: { kind: 'body', pointer: '' } },
-              ],
-            },
-            response: { maxBytes: 2097152, contentTypes: ['application/json'] },
-          },
-        ] },
       },
-      client: {
-        artifactId: 'voice-runtime',
-        modulePath: './voiceRuntime',
-        exportName: 'activate',
-      },
-    }],
+    },
   },
-} satisfies import('@happier-dev/plugin-sdk/manifest').PluginManifest);
+});
+
+export const PLUGIN_MANIFEST = ELEVENLABS_PLUGIN.manifest;

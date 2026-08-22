@@ -70,17 +70,20 @@ describe('Codex external-session transcript helpers', () => {
     }))).toBeNull();
   });
 
-  it('decodes provenance-pinned forward cursors written by released cli-v0.2.1', () => {
-    // Golden vectors from cli-v0.2.1 (b1d15a8),
+  it('refuses to reuse provenance-pinned released forward cursor offsets', () => {
+    // Golden vectors from released cli-v0.2.1 (b1d15a8),
     // apps/cli/src/backends/codex/directSessions/codexDirectForwardCursor.ts.
+    // v1/v3 carry no rollout generation or content anchor, so this decoder
+    // must never hand their byte offsets back to the reader: it rejects them
+    // and the caller resets against current rollout bytes instead.
     expect(decodeCodexExternalForwardCursor(
       'eyJ2IjoxLCJraW5kIjoiY29kZXhGb3J3YXJkIiwiZmlsZVJlbFBhdGgiOiJzZXNzaW9ucy8yMDI2LzAyLzE4L3JvbGxvdXQtMjAyNi0wMi0xOFQwOC0yOC0wNS01NTU1NTU1NS01NTU1LTU1NTUtNTU1NS01NTU1NTU1NTU1NTUuanNvbmwiLCJvZmZzZXRCeXRlcyI6MTIzfQ',
-    )).toEqual({
-      v: 1,
-      kind: 'codexForward',
-      fileRelPath: 'sessions/2026/02/18/rollout-2026-02-18T08-28-05-55555555-5555-5555-5555-555555555555.jsonl',
-      offsetBytes: 123,
-    });
+    )).toBeNull();
+    expect(decodeCodexExternalForwardCursor(
+      'eyJ2IjozLCJraW5kIjoiY29kZXhGb3J3YXJkTWVyZ2VkIiwibGFzdENyZWF0ZWRBdE1zIjoxNzcxNDAzMjg1MDAwLCJsYXN0SWQiOiJjb2RleDpzZXNzaW9ucy8yMDI2LzAyLzE4L3JvbGxvdXQtMjAyNi0wMi0xOFQwOC0yOC0wNS01NTU1NTU1NS01NTU1LTU1NTUtNTU1NS01NTU1NTU1NTU1NTUuanNvbmw6MDAwMDAwMDAwMDAwOjAwMCJ9',
+    )).toBeNull();
+    // v2 is still the cursor the current app-server path writes, so it keeps
+    // decoding to its exact released shape.
     expect(decodeCodexExternalForwardCursor(
       'eyJ2IjoyLCJraW5kIjoiY29kZXhGb3J3YXJkQXBwU2VydmVyIiwidXBkYXRlZEF0TXMiOjE3MzYwMDAxMDAwMDAsInByZXZpZXdUZXh0IjoiUmVsZWFzZWQgcHJldmlldyJ9',
     )).toEqual({
@@ -88,14 +91,6 @@ describe('Codex external-session transcript helpers', () => {
       kind: 'codexForwardAppServer',
       updatedAtMs: 1_736_000_100_000,
       previewText: 'Released preview',
-    });
-    expect(decodeCodexExternalForwardCursor(
-      'eyJ2IjozLCJraW5kIjoiY29kZXhGb3J3YXJkTWVyZ2VkIiwibGFzdENyZWF0ZWRBdE1zIjoxNzcxNDAzMjg1MDAwLCJsYXN0SWQiOiJjb2RleDpzZXNzaW9ucy8yMDI2LzAyLzE4L3JvbGxvdXQtMjAyNi0wMi0xOFQwOC0yOC0wNS01NTU1NTU1NS01NTU1LTU1NTUtNTU1NS01NTU1NTU1NTU1NTUuanNvbmw6MDAwMDAwMDAwMDAwOjAwMCJ9',
-    )).toEqual({
-      v: 3,
-      kind: 'codexForwardMerged',
-      lastCreatedAtMs: 1_771_403_285_000,
-      lastId: 'codex:sessions/2026/02/18/rollout-2026-02-18T08-28-05-55555555-5555-5555-5555-555555555555.jsonl:000000000000:000',
     });
   });
 

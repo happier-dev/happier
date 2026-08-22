@@ -1,14 +1,18 @@
 import {
+  isPluginError,
   PluginError,
   arePluginMachineExecutionOriginsEqual,
   type JsonValue,
   type PluginInvocationCaller,
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
+import type {
+  PluginCollectionBatchMeasurement,
+  PluginCollectionLimits,
+} from '@happier-dev/plugin-sdk/collections';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
 import {
-  AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
   AutomationConversationResultDeliveryV1Schema,
   type AutomationConversationAdmitInputV1,
   type AutomationConversationAdmitResultV1,
@@ -17,6 +21,7 @@ import {
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/plugin-sdk/sessions';
 import {
   areConversationEndpointIdentitiesEqual,
+  CONVERSATION_AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
   type ChannelSessionSpawnRecipeV1,
   type ConversationBindingInputModeV1,
   ConversationAuthenticatedObservationShellV1Schema,
@@ -32,6 +37,7 @@ import {
   type ConversationNormalizedIngressV1,
   MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
   MAX_CONVERSATION_DELIVERY_ATTEMPTS,
+  MAX_CONVERSATION_OBSERVATION_CLOCK_SKEW_MS,
   MAX_CONVERSATION_RECEIVE_WAIT_MS,
   MIN_CONVERSATION_OBSERVATION_AGE_MS,
   type ConversationObservationV1,
@@ -56,6 +62,7 @@ import {
   type ConversationPendingOldTransportStopV1,
 } from './connectionLifecycle.js';
 import { readPersistedConversationConnectionPollFailure } from './connectionPollFailurePersistence.js';
+import { hasCurrentConversationTransportCaller } from './reconciliation.js';
 import {
   CONVERSATION_NON_ADMISSION_REASONS,
   decideConversationCommandPolicy,
@@ -68,12 +75,15 @@ import {
   CHANNEL_STATE_COLLECTION,
   CHANNEL_STATE_FIELD,
   CHANNEL_STATE_INDEX_ID,
-  MAX_CHANNEL_STATE_ROW_BYTES,
   CHANNEL_STATE_RECORD_KIND,
   isCanonicalChannelStateRecordIdentity,
   type PersistedConversationProviderContributionSelection,
 } from './collections.js';
-import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
+import {
+  MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
+  requireChannelsAccountStorage,
+} from './requiredAccountStorage.js';
+import { conversationRetryDelayMs } from './retryBackoff.js';
 import {
   acceptConversationOutwardDeliveryReady,
   createConversationOutwardDeliveryCollectionStore,
@@ -83,6 +93,7 @@ import {
 import {
   readConversationBindingUpdateRow,
   readConversationConnectionUpdateRow,
+  type ConversationConnectionUpdateRow,
 } from './accountLocalBindingPolicy.js';
 import {
   importHmacSha256Key,
@@ -147,6 +158,15 @@ function readConversationPollResultForAdmission(
   }
   return result;
 }
+
+type ChannelConnectionProviderTransport = Readonly<{
+  transport: Readonly<{ kind: 'checkpointedPull' | 'socket' | 'durablePush' }>;
+  providerConnectionKey: string;
+  providerConfigVersion: number;
+  providerConfig: JsonValue;
+  credentialRef: JsonValue;
+  replayContinuity: 'checkpointed' | 'sessionBound' | 'none';
+}>;
 
 type ChannelConnectionPayload = Readonly<{
   providerPluginId: string;
@@ -321,55 +341,18 @@ type IngressAuthorityFence = Readonly<{
   bindings: readonly Readonly<{ row: StateRow; value: ChannelBindingRecord }>[];
 }>;
 
-const MAX_COLLECTION_QUERY_PAGE_SIZE = 200;
-const MAX_INGRESS_PREPARATION_BATCH_ENCODED_BYTES = 8 * 1024 * 1024;
-/** Account Collection admits at most one hundred logical mutations per atomic batch. */
-const MAX_ACCOUNT_COLLECTION_MUTATION_OPERATIONS = 100;
-const MAX_INGRESS_PREPARATION_OPERATION_COUNT = MAX_ACCOUNT_COLLECTION_MUTATION_OPERATIONS;
-/** One connection fence plus one checkpoint leave the remaining atomic batch slots for census coverage. */
-const MAX_CHECKPOINTED_POLL_COVERAGE_OBSERVATIONS = MAX_ACCOUNT_COLLECTION_MUTATION_OPERATIONS - 2;
-
-function encodedJsonUtf8ByteLength(value: unknown): number {
-  const encoded = JSON.stringify(value);
-  if (encoded === undefined) throw new Error('Ingress preparation values must be JSON serializable.');
-  return new TextEncoder().encode(encoded).byteLength;
-}
-
-/*
- * Account Data validates the sealed PluginCollectionMutationRequestV1, not
- * the plugin's logical values. Allocating two complete Channel row bounds
- * across the sealed content and projection, plus the exact request/operation
- * shells, remains conservative for plain and E2EE Accounts without copying
- * the Data owner's cipher or serializer.
+/**
+ * The protocol ceiling on logical mutations per atomic Account Collection
+ * batch. This is a provider-facing contract bound — how many observations one
+ * poll may claim coverage for — so it stays fixed rather than following a
+ * deployment's lowered `maxBatchRows`; writers that size a real batch read the
+ * in-force limit from the collection handle instead.
+ *
+ * One connection fence plus one checkpoint leave the remaining slots for census
+ * coverage.
  */
-const MAX_INGRESS_PREPARATION_PUT_WIRE_BYTES = (2 * MAX_CHANNEL_STATE_ROW_BYTES)
-  + encodedJsonUtf8ByteLength({
-    kind: 'put',
-    rowId: 'x'.repeat(43),
-    expectedRevision: Number.MAX_SAFE_INTEGER,
-    content: null,
-    projection: null,
-  });
-const MAX_INGRESS_PREPARATION_FIXED_WIRE_BYTES = encodedJsonUtf8ByteLength({
-  pluginId: 'happier.channels',
-  collectionId: CHANNEL_STATE_COLLECTION,
-  writerContext: { schemaVersion: Number.MAX_SAFE_INTEGER, contractDigest: 'x'.repeat(43) },
-  operations: [{
-    kind: 'assert',
-    rowId: 'x'.repeat(43),
-    expectedRevision: Number.MAX_SAFE_INTEGER,
-  }],
-});
-const MAX_INGRESS_PREPARATION_PUTS_PER_BATCH = Math.min(
-  MAX_INGRESS_PREPARATION_OPERATION_COUNT - 1,
-  Math.floor(
-    (MAX_INGRESS_PREPARATION_BATCH_ENCODED_BYTES - MAX_INGRESS_PREPARATION_FIXED_WIRE_BYTES)
-      / (MAX_INGRESS_PREPARATION_PUT_WIRE_BYTES + 1),
-  ),
-);
+const MAX_CHECKPOINTED_POLL_COVERAGE_OBSERVATIONS = 100 - 2;
 const INGRESS_RECOVERY_DELAY_MS = 0;
-const DEFAULT_INGRESS_RETRY_DELAY_MS = 1_000;
-const MAX_INGRESS_RETRY_DELAY_MS = 8_000;
 const NEW_SESSION_CONTROL_RESPONSE_TEXT = {
   started: 'Started a new Session.',
   busy: 'Another /new command is already in progress.',
@@ -434,84 +417,34 @@ function readStateRow(value: unknown): StateRow | undefined {
   return { rowId, revision, value: rowValue };
 }
 
-function readTransportOrigin(value: JsonValue | undefined): PluginMachineExecutionOriginV1 | undefined {
-  if (!isJsonRecord(value)) return undefined;
-  const serverIdentityId = own(value, 'serverIdentityId');
-  const materializationRef = own(value, 'materializationRef');
-  if (!isJsonRecord(materializationRef) || typeof serverIdentityId !== 'string') return undefined;
-  const pluginId = own(materializationRef, 'pluginId');
-  const machineId = own(materializationRef, 'machineId');
-  const materializationId = own(materializationRef, 'materializationId');
-  if (
-    typeof pluginId !== 'string'
-    || typeof machineId !== 'string'
-    || typeof materializationId !== 'string'
-  ) return undefined;
-  return {
-    serverIdentityId,
-    materializationRef: { pluginId, machineId, materializationId },
-  };
-}
-
-function readProviderContributionSelection(
-  value: JsonValue | undefined,
-): PersistedConversationProviderContributionSelection | undefined {
-  if (!isJsonRecord(value)) return undefined;
-  const contributionId = own(value, 'contributionId');
-  const immutableGenerationId = own(value, 'immutableGenerationId');
-  if (typeof contributionId !== 'string'
-    || contributionId.length === 0
-    || typeof immutableGenerationId !== 'string'
-    || immutableGenerationId.length === 0) return undefined;
-  return { contributionId, immutableGenerationId };
-}
-
-function readConnectionPayload(
-  value: JsonValue | undefined,
-  lifecycle: ConversationConnectionLifecycleStateV1,
-): ChannelConnectionPayload | undefined {
-  if (!isJsonRecord(value)) return undefined;
-  const providerPluginId = own(value, 'providerPluginId');
-  const providerContributionSelection = readProviderContributionSelection(
-    own(value, 'providerContributionSelection'),
-  );
-  const transportOrigin = readTransportOrigin(own(value, 'transportOrigin'));
-  const transport = own(value, 'transport');
-  const routingIdentityKey = own(value, 'routingIdentityKey');
-  const providerConnectionKey = own(value, 'providerConnectionKey');
-  const providerConfigVersion = own(value, 'providerConfigVersion');
-  const providerConfig = own(value, 'providerConfig');
-  const credentialRef = own(value, 'credentialRef');
+/**
+ * Reads the provider-transport slice of a retained connection payload.
+ *
+ * `readConversationConnectionUpdateRow` is the canonical retained-connection
+ * decoder: it owns record kind, row identity, and every lifecycle field. These
+ * six fields are the only ones it does not project, so this reads exactly them
+ * and re-validates nothing the canonical decoder has already checked.
+ */
+function readConnectionProviderTransport(
+  payload: JsonValue | undefined,
+): ChannelConnectionProviderTransport | undefined {
+  if (!isJsonRecord(payload)) return undefined;
+  const transport = own(payload, 'transport');
+  const providerConnectionKey = own(payload, 'providerConnectionKey');
+  const providerConfigVersion = own(payload, 'providerConfigVersion');
+  const providerConfig = own(payload, 'providerConfig');
+  const credentialRef = own(payload, 'credentialRef');
   const replayContinuity = stringMember(
-    own(value, 'replayContinuity'),
+    own(payload, 'replayContinuity'),
     ['checkpointed', 'sessionBound', 'none'] as const,
   );
-  const authorityEpoch = own(value, 'authorityEpoch');
-  const enabled = own(value, 'enabled');
-  const deletionState = stringMember(
-    own(value, 'deletionState'),
-    ['none', 'pendingStopReconciliation', 'finalizingDelete'] as const,
-  );
-  const historyGap = own(value, 'historyGap');
-  const pollFailure = readPersistedConversationConnectionPollFailure(own(value, 'pollFailure'));
-  const maximumObservationAgeMs = own(value, 'maximumObservationAgeMs');
   if (
-    typeof providerPluginId !== 'string'
-    || providerContributionSelection === undefined
-    || transportOrigin === undefined
-    || !isJsonRecord(transport)
-    || typeof routingIdentityKey !== 'string'
+    !isJsonRecord(transport)
     || typeof providerConnectionKey !== 'string'
     || !isPositiveSafeInteger(providerConfigVersion)
     || providerConfig === undefined
     || credentialRef === undefined
     || replayContinuity === undefined
-    || !isPositiveSafeInteger(authorityEpoch)
-    || typeof enabled !== 'boolean'
-    || deletionState === undefined
-    || historyGap === undefined
-    || pollFailure === undefined
-    || !isPositiveSafeInteger(maximumObservationAgeMs)
   ) return undefined;
   const transportKind = stringMember(
     own(transport, 'kind'),
@@ -519,35 +452,13 @@ function readConnectionPayload(
   );
   if (transportKind === undefined) return undefined;
   return {
-    providerPluginId,
-    providerContributionSelection,
-    transportOrigin,
     transport: { kind: transportKind },
-    overlapSafety: lifecycle.overlapSafety,
-    routingIdentityKey,
     providerConnectionKey,
     providerConfigVersion,
     providerConfig,
     credentialRef,
     replayContinuity,
-    authorityEpoch,
-    enabled,
-    deletionState,
-    pendingOldTransportStop: lifecycle.pendingOldTransportStop,
-    historyGap,
-    pollFailure,
-    maximumObservationAgeMs,
-    observationAgeExpansionFloorOccurredAt: lifecycle.observationAgeExpansionFloorOccurredAt,
   };
-}
-
-function hasExactMaterialization(
-  left: PluginCaller['materialization'],
-  right: PluginCaller['materialization'],
-): boolean {
-  return left.machineId === right.machineId
-    && left.materializationId === right.materializationId
-    && left.pluginId === right.pluginId;
 }
 
 function stampedPluginCaller(context: PluginInvocationContext): PluginCaller | undefined {
@@ -573,28 +484,42 @@ function expectedObservationTransport(
 function asConnection(row: StateRow | null):
   | Readonly<{ row: StateRow; value: ChannelConnectionRecord }>
   | undefined {
-  if (row === null || own(row.value, CHANNEL_STATE_FIELD.recordKind) !== CHANNEL_STATE_RECORD_KIND.connection) {
-    return undefined;
-  }
-  const id = own(row.value, CHANNEL_STATE_FIELD.id);
-  const version = own(row.value, CHANNEL_STATE_FIELD.version);
-  const connectionId = own(row.value, CHANNEL_STATE_FIELD.connectionId);
-  if (id !== row.rowId || connectionId !== row.rowId) return undefined;
-  let lifecycle: ConversationConnectionLifecycleStateV1;
+  if (row === null) return undefined;
+  // Ingress treats a corrupt retained row as "no current connection", so the
+  // canonical decoder's throw is degraded to `undefined` here — once, instead
+  // of re-parsing the same payload behind it.
+  let connection: ConversationConnectionUpdateRow;
   try {
-    lifecycle = readConversationConnectionUpdateRow({ row, connectionId }).lifecycle;
+    connection = readConversationConnectionUpdateRow({ row, connectionId: row.rowId });
   } catch {
     return undefined;
   }
-  const payload = readConnectionPayload(own(row.value, 'payload'), lifecycle);
-  if (payload === undefined) return undefined;
+  if (own(row.value, CHANNEL_STATE_FIELD.id) !== row.rowId) return undefined;
+  const providerTransport = readConnectionProviderTransport(connection.payload);
+  if (providerTransport === undefined) return undefined;
+  const { lifecycle } = connection;
   return {
     row,
     value: {
-      id,
+      id: row.rowId,
       'record-kind': CHANNEL_STATE_RECORD_KIND.connection,
-      'connection-id': connectionId,
-      payload,
+      'connection-id': row.rowId,
+      payload: {
+        providerPluginId: connection.providerPluginId,
+        providerContributionSelection: connection.providerContributionSelection,
+        transportOrigin: connection.transportOrigin,
+        routingIdentityKey: connection.routingIdentityKey,
+        ...providerTransport,
+        overlapSafety: lifecycle.overlapSafety,
+        authorityEpoch: lifecycle.authorityEpoch,
+        enabled: lifecycle.enabled,
+        deletionState: lifecycle.deletionState,
+        pendingOldTransportStop: lifecycle.pendingOldTransportStop,
+        historyGap: lifecycle.historyGap,
+        pollFailure: lifecycle.pollFailure,
+        maximumObservationAgeMs: lifecycle.maximumObservationAgeMs,
+        observationAgeExpansionFloorOccurredAt: lifecycle.observationAgeExpansionFloorOccurredAt,
+      },
     },
   };
 }
@@ -957,16 +882,14 @@ function assertCurrentConnection(input: Readonly<{
   const { connection, source, observation } = input;
   const payload = connection.payload;
   if (source.kind === 'providerObservation') {
-    if (source.caller === undefined || source.caller.pluginId !== payload.providerPluginId) {
+    if (!hasCurrentConversationTransportCaller({
+      caller: source.caller,
+      providerPluginId: payload.providerPluginId,
+      transportOrigin: payload.transportOrigin,
+    })) {
       throw pluginError(
         'channels_ingress_stale_authority',
-        'The provider observation caller does not hold the connection authority.',
-      );
-    }
-    if (!hasExactMaterialization(source.caller.materialization, payload.transportOrigin.materializationRef)) {
-      throw pluginError(
-        'channels_ingress_stale_authority',
-        'The provider observation caller materialization is no longer current for the connection.',
+        'The provider observation caller is no longer the current transport authority for the connection.',
       );
     }
     if (source.directAction && payload.transport.kind === 'checkpointedPull') {
@@ -1083,13 +1006,21 @@ function combineIngressCheckpointOutcomes(
   return 'checkpointSafe';
 }
 
+/**
+ * `occurredAt` is minted by the provider's clock, so an observation that is in
+ * fact brand new can carry a timestamp ahead of this host's clock. Treating
+ * that lead as staleness dropped the message *and* let the poll checkpoint
+ * advance past it, so the bounded forward allowance is what keeps a one-second
+ * clock difference from silently losing inbound mail. The allowance stays
+ * bounded because `occurredAt` also pins the census retention horizon.
+ */
 function isObservationFresh(
   maximumObservationAgeMs: number,
   observation: ConversationAuthenticatedObservationShellV1,
 ): boolean {
-  const now = Date.now();
-  return observation.occurredAt <= now
-    && now - observation.occurredAt <= maximumObservationAgeMs;
+  const observedAgeMs = Date.now() - observation.occurredAt;
+  return observedAgeMs >= -MAX_CONVERSATION_OBSERVATION_CLOCK_SKEW_MS
+    && observedAgeMs <= maximumObservationAgeMs;
 }
 
 function isAddressedForBinding(
@@ -1398,7 +1329,7 @@ async function readBindingsForConnection(input: Readonly<{
       index: CHANNEL_STATE_INDEX_ID.byKind,
       prefix: [CHANNEL_STATE_RECORD_KIND.binding],
       order: 'asc',
-      limit: Math.min(remaining, MAX_COLLECTION_QUERY_PAGE_SIZE),
+      limit: Math.min(remaining, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE),
       ...(cursor === undefined ? {} : { cursor }),
     }, { signal: input.context.signal });
     for (const candidate of page.rows) {
@@ -1453,7 +1384,7 @@ function frozenTargetForBinding(input: Readonly<{
       ? { kind: 'none' }
       : {
         kind: 'finalResult',
-        actionRef: AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
+        actionRef: CONVERSATION_AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
         opaqueContext: {
           v: 1,
           kind: 'conversationAutomationResultDelivery',
@@ -1720,13 +1651,66 @@ async function markIngressCensusOccurrenceConflict(input: Readonly<{
   }
 }
 
-export function partitionIngressPreparationValues(
-  values: readonly JsonRecord[],
-): readonly (readonly JsonRecord[])[] {
-  const batches: JsonRecord[][] = [];
-  for (let offset = 0; offset < values.length; offset += MAX_INGRESS_PREPARATION_PUTS_PER_BATCH) {
-    batches.push(values.slice(offset, offset + MAX_INGRESS_PREPARATION_PUTS_PER_BATCH));
+/**
+ * Ingress preparation settles every obligation it writes against one immutable
+ * census fence, so each batch carries that fence plus as many puts as the
+ * deployment admits.
+ *
+ * What may travel together is the Account Data owner's fact, not this plugin's:
+ * `limits` is what the deployment enforces and `measurement` is what the sealed
+ * request actually costs, both read from the collection handle. Channels only
+ * decides what must settle atomically, then packs greedily against those
+ * measured bytes.
+ *
+ * `measurement` must describe `[fence, ...values as puts]`, in that order.
+ */
+export function partitionIngressPreparationValues(input: Readonly<{
+  values: readonly JsonRecord[];
+  limits: PluginCollectionLimits;
+  measurement: PluginCollectionBatchMeasurement;
+}>): readonly (readonly JsonRecord[])[] {
+  const { values, limits, measurement } = input;
+  if (values.length === 0) return [];
+  const fenceEncodedBytes = measurement.operationEncodedBytes[0];
+  if (
+    fenceEncodedBytes === undefined
+    || measurement.operationEncodedBytes.length !== values.length + 1
+  ) {
+    throw pluginError(
+      'channels_ingress_preparation_unmeasured',
+      'Ingress preparation batching requires a measurement of its fence and every prepared value.',
+    );
   }
+  const budgetEncodedBytes = limits.maxBatchBytes
+    - measurement.overheadEncodedBytes
+    - fenceEncodedBytes;
+  const maximumPutsPerBatch = limits.maxBatchRows - 1;
+  const batches: JsonRecord[][] = [];
+  let current: JsonRecord[] = [];
+  let currentEncodedBytes = 0;
+  for (const [index, value] of values.entries()) {
+    const putEncodedBytes = measurement.operationEncodedBytes[index + 1]!;
+    if (putEncodedBytes > budgetEncodedBytes || maximumPutsPerBatch < 1) {
+      throw pluginError(
+        'channels_ingress_preparation_oversized',
+        'A prepared ingress obligation exceeds what one Account Collection batch can carry.',
+      );
+    }
+    if (
+      current.length > 0
+      && (
+        current.length >= maximumPutsPerBatch
+        || currentEncodedBytes + putEncodedBytes > budgetEncodedBytes
+      )
+    ) {
+      batches.push(current);
+      current = [];
+      currentEncodedBytes = 0;
+    }
+    current.push(value);
+    currentEncodedBytes += putEncodedBytes;
+  }
+  if (current.length > 0) batches.push(current);
   return batches;
 }
 
@@ -1876,7 +1860,7 @@ function retryDueIngressObligationValue(input: Readonly<{
   now: number;
 }>): JsonRecord {
   const attemptCount = input.obligation.payload.lifecycle.attemptCount;
-  const dueAt = input.now + defaultIngressRetryDelayMs(attemptCount);
+  const dueAt = input.now + conversationRetryDelayMs(attemptCount);
   return {
     ...input.obligation,
     [CHANNEL_STATE_FIELD.terminal]: false,
@@ -1939,6 +1923,45 @@ async function putIngressObligationLifecycle(input: Readonly<{
   return parsed;
 }
 
+/**
+ * A retired or replaced contribution is the provider half of stale authority.
+ * Its own reader raises exactly these codes; every other failure stays a live
+ * boundary error the caller still owns.
+ */
+function isRetiredProviderContribution(error: unknown): boolean {
+  return isPluginError(error)
+    && (error.code === 'channels_provider_contribution_unavailable'
+      || error.code === 'channels_provider_contribution_ambiguous');
+}
+
+/**
+ * Row currentness is only half of the authority a dispatch runs under. A
+ * debounced, retried, or rotated obligation can become due long after its
+ * connection was admitted, so both last-moment fences reread the retained
+ * selection against the canonical contribution owner instead of trusting the
+ * frozen census. Neither keeps a provider cache or a census-local copy.
+ */
+async function hasCurrentProviderContributionSelection(input: Readonly<{
+  context: PluginInvocationContext;
+  connection: Readonly<{ row: StateRow; value: ChannelConnectionRecord }>;
+}>): Promise<boolean> {
+  try {
+    await readCurrentProviderContributionForPersistedSelection({
+      context: {
+        targetedContributions: input.context.services.targetedContributions,
+        signal: input.context.signal,
+      },
+      providerPluginId: input.connection.value.payload.providerPluginId,
+      providerContributionSelection: input.connection.value.payload.providerContributionSelection,
+    });
+    return true;
+  } catch (error) {
+    assertNotAborted(input.context.signal);
+    if (!isRetiredProviderContribution(error)) throw error;
+    return false;
+  }
+}
+
 async function revalidateFirstDispatchAuthority(input: Readonly<{
   context: PluginInvocationContext;
   source: IngressExecutionSource;
@@ -1963,6 +1986,9 @@ async function revalidateFirstDispatchAuthority(input: Readonly<{
     return undefined;
   }
   if (connection.value.payload.authorityEpoch !== input.obligation.payload.sourceAuthority.connectionAuthorityEpoch) {
+    return undefined;
+  }
+  if (!await hasCurrentProviderContributionSelection({ context: input.context, connection })) {
     return undefined;
   }
   const binding = asBinding(readStateRow(await collection.get(
@@ -2330,6 +2356,9 @@ async function readCurrentRotationAuthority(input: Readonly<{
     return undefined;
   }
   if (connection.value.payload.authorityEpoch !== input.obligation.payload.sourceAuthority.connectionAuthorityEpoch) {
+    return undefined;
+  }
+  if (!await hasCurrentProviderContributionSelection({ context: input.context, connection })) {
     return undefined;
   }
   const binding = asBinding(readStateRow(await collection.get(
@@ -2954,7 +2983,7 @@ async function dispatchIngressObligation(input: Readonly<{
         expectedRevision: obligation.row.revision,
       });
     } catch (error) {
-      if (error instanceof PluginError && error.code === 'channels_ingress_stale_authority') {
+      if (isPluginError(error) && error.code === 'channels_ingress_stale_authority') {
         return terminalizeReadyAsStaleAuthority({ context: input.context, obligation });
       }
       throw error;
@@ -3379,13 +3408,33 @@ async function ingestConversationObservationForInvocation(
         now: Date.now(),
       }));
     }
-    for (const values of partitionIngressPreparationValues(missingValues)) {
-      const result = await collection.batch([
-        { kind: 'assert', rowId: census.row.rowId, expectedRevision: census.row.revision },
-        ...values.map((value) => ({ kind: 'put' as const, value, expectedRevision: 'absent' as const })),
-      ], { signal: context.signal });
-      if (result.status === 'conflict') {
-        throw pluginError('channels_ingress_preparation_conflict', 'Ingress obligation preparation conflicted and must rejoin.', true);
+    if (missingValues.length > 0) {
+      const fence = {
+        kind: 'assert' as const,
+        rowId: census.row.rowId,
+        expectedRevision: census.row.revision,
+      };
+      const puts = missingValues.map((value) => ({
+        kind: 'put' as const,
+        value,
+        expectedRevision: 'absent' as const,
+      }));
+      const [limits, measurement] = await Promise.all([
+        collection.limits({ signal: context.signal }),
+        collection.measureBatch([fence, ...puts], { signal: context.signal }),
+      ]);
+      for (const values of partitionIngressPreparationValues({
+        values: missingValues,
+        limits,
+        measurement,
+      })) {
+        const result = await collection.batch([
+          fence,
+          ...values.map((value) => ({ kind: 'put' as const, value, expectedRevision: 'absent' as const })),
+        ], { signal: context.signal });
+        if (result.status === 'conflict') {
+          throw pluginError('channels_ingress_preparation_conflict', 'Ingress obligation preparation conflicted and must rejoin.', true);
+        }
       }
     }
     const preparedValue = preparedIngressCensusValue({ census: census.value, now: Date.now() });
@@ -3444,7 +3493,7 @@ async function ingestConversationObservationForInvocation(
     } catch (error) {
       if (
         source.kind !== 'checkpointedPoll'
-        || (error instanceof PluginError && error.code === 'channels_ingress_stale_authority')
+        || (isPluginError(error) && error.code === 'channels_ingress_stale_authority')
       ) {
         throw error;
       }
@@ -3579,6 +3628,20 @@ type IngressRetentionCandidate = Readonly<{
   obligations: readonly Readonly<{ row: StateRow; value: IngressObligationRecord }>[];
 }>;
 
+/**
+ * Replay coverage is transport-shaped. A checkpointed pull can re-deliver an
+ * occurrence until its checkpoint advances past it, so only the checkpoint
+ * commit may declare replay unnecessary there. Direct socket and durable-push
+ * ingress has no such cursor: nothing can re-present the occurrence once its
+ * obligations are terminal, and the frozen observation window plus the
+ * connection-local expansion floor already reject a late re-delivery. Demanding
+ * a checkpoint fact those transports can never receive is what retained their
+ * complete inbound message bodies indefinitely.
+ */
+function requiresIngressCensusCheckpointCoverage(census: IngressCensusRecord): boolean {
+  return ingressShell(census.payload.normalizedIngress).transport.kind === 'poll';
+}
+
 function isIngressCensusPastFrozenRetentionHorizon(input: Readonly<{
   census: IngressCensusRecord;
   now: number;
@@ -3589,10 +3652,16 @@ function isIngressCensusPastFrozenRetentionHorizon(input: Readonly<{
 }
 
 /**
- * Coverage was written only after every census member reached a checkpoint-safe
- * terminal state. A row that disappears afterward is therefore a completed
- * deletion, not a retry obligation; a present member still has to prove that
- * same terminal, non-attention state before its census can be retired.
+ * A census becomes retirable only when replay is impossible and every member
+ * has settled terminally. A checkpointed pull proves the replay half with its
+ * coverage fact; direct ingress has no replay source to prove. A member row
+ * that disappears afterward is a completed deletion, not a retry obligation.
+ *
+ * A terminal member's `attention` is an owner-visible diagnostic with no
+ * recovery action attached, so it expires with the row exactly as c0.56's
+ * outward `notDelivered` does. What still pins a census is unfinished work an
+ * owner can act on: a non-terminal `blocked` member awaiting its retry, and
+ * contradictory occurrence evidence on the census itself.
  */
 async function readIngressRetentionCandidate(input: Readonly<{
   context: PluginInvocationContext;
@@ -3602,7 +3671,13 @@ async function readIngressRetentionCandidate(input: Readonly<{
   const { census } = input;
   if (
     census.value.payload.phase !== 'prepared'
-    || census.value.payload.checkpointCoveredAt === null
+    // Contradictory occurrence evidence is the ingress analogue of unresolved
+    // outward ambiguity: it names a fact an owner still has to reconcile, so it
+    // is retained indefinitely rather than expiring with the horizon.
+    || census.value.attention
+    || census.value.payload.conflict !== null
+    || (requiresIngressCensusCheckpointCoverage(census.value)
+      && census.value.payload.checkpointCoveredAt === null)
     || !isIngressCensusPastFrozenRetentionHorizon({ census: census.value, now: input.now })
   ) return undefined;
 
@@ -3624,14 +3699,13 @@ async function readIngressRetentionCandidate(input: Readonly<{
       obligationId,
       { signal: input.context.signal },
     )) ?? null);
-    // A coverage marker proves this member was terminal before the checkpoint
-    // committed. Its later absence is a completed prior deletion; a retained
-    // row must still satisfy the same monotonic terminal invariant.
+    // Members are only ever deleted by this same unit-wide sweep, so an absent
+    // row is a completed prior deletion of an already-eligible unit. A retained
+    // row must still satisfy the monotonic terminal invariant itself.
     if (obligation === undefined) continue;
     if (
       obligation.value.payload.censusId !== census.value.id
       || !obligation.value.terminal
-      || obligation.value.attention
       || obligation.value.payload.lifecycle.phase !== 'terminal'
       || terminalCheckpointOutcome(obligation.value) !== 'checkpointSafe'
     ) return undefined;
@@ -3645,11 +3719,17 @@ async function deleteIngressRetentionCandidate(input: Readonly<{
   candidate: IngressRetentionCandidate;
 }>): Promise<boolean> {
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
-  for (let offset = 0; offset < input.candidate.obligations.length; offset += MAX_ACCOUNT_COLLECTION_MUTATION_OPERATIONS) {
+  // The in-force batch-row limit, not the protocol ceiling: an operator can
+  // lower it, and the ingress preparation packer already plans against the
+  // published value. A retention delete sized to the ceiling would be rejected
+  // outright on such a deployment and retention would silently stop.
+  const { maxBatchRows } = await collection.limits({ signal: input.context.signal });
+  assertNotAborted(input.context.signal);
+  for (let offset = 0; offset < input.candidate.obligations.length; offset += maxBatchRows) {
     assertNotAborted(input.context.signal);
     const result = await collection.batch(input.candidate.obligations.slice(
       offset,
-      offset + MAX_ACCOUNT_COLLECTION_MUTATION_OPERATIONS,
+      offset + maxBatchRows,
     ).map((obligation) => ({
       kind: 'delete' as const,
       rowId: obligation.row.rowId,
@@ -3682,12 +3762,12 @@ export async function runConversationIngressRetentionForInvocation(input: Readon
   cursor?: string;
 }>, context: PluginInvocationContext): Promise<ConversationIngressRetentionRunResult> {
   const now = input.now ?? Date.now();
-  const limit = input.limit ?? MAX_COLLECTION_QUERY_PAGE_SIZE;
+  const limit = input.limit ?? MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE;
   if (
     !isNonNegativeSafeInteger(now)
     || !Number.isSafeInteger(limit)
     || limit < 1
-    || limit > MAX_COLLECTION_QUERY_PAGE_SIZE
+    || limit > MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE
   ) {
     throw new Error('Ingress retention bounds are invalid.');
   }
@@ -4564,7 +4644,7 @@ function boundedPollActionText(value: unknown, maximumUtf8Bytes: number, fallbac
 }
 
 function pollActionFailureEvidence(cause: unknown): ConversationConnectionPollFailureEvidenceV1 {
-  const code = cause instanceof PluginError
+  const code = isPluginError(cause)
     ? cause.code
     : 'channels_checkpointed_poll_action_failed';
   const message = cause instanceof Error
@@ -4587,17 +4667,10 @@ function pollActionFailureEvidence(cause: unknown): ConversationConnectionPollFa
  * not turn a superseded origin into a durable user-unblock state.
  */
 function isPollActionOriginCurrentnessLoss(cause: unknown): boolean {
-  return cause instanceof PluginError && (
+  return isPluginError(cause) && (
     cause.code === 'plugin_action_execution_origin_mismatch'
     || cause.code === 'plugin_action_execution_origin_unavailable'
     || cause.code === 'plugin_action_execution_origin_changed'
-  );
-}
-
-function defaultIngressRetryDelayMs(attemptCount: number): number {
-  return Math.min(
-    DEFAULT_INGRESS_RETRY_DELAY_MS * (2 ** (attemptCount - 1)),
-    MAX_INGRESS_RETRY_DELAY_MS,
   );
 }
 
@@ -4630,7 +4703,7 @@ async function settleCurrentCheckpointedPollFailure(input: Readonly<{
   const nextAttemptCount = (current.value.payload.pollFailure?.attemptCount ?? 0) + 1;
   const retryable = input.retryableProviderResult && nextAttemptCount < 5;
   const now = Date.now();
-  const retryAfterMs = input.retryAfterMs ?? defaultIngressRetryDelayMs(nextAttemptCount);
+  const retryAfterMs = input.retryAfterMs ?? conversationRetryDelayMs(nextAttemptCount);
   const pollFailure: ConversationConnectionPollFailureV1 = retryable
     ? {
         phase: 'retryDue',
@@ -4792,10 +4865,17 @@ async function settleCapturedCheckpointedPollStop(input: Readonly<{
 }
 
 /**
- * A census settlement is deliberately stricter than checkpoint eligibility:
- * blocked, attention, ambiguous, and incomplete obligations may allow the
- * provider cursor to advance, but they retain the ingress census body for
- * restart/retry and therefore never receive this marker.
+ * Coverage records exactly one fact: the checkpoint being committed in this
+ * batch advances the provider cursor past this occurrence, so no later poll
+ * can re-present it. That is true of every observation the committing batch
+ * carries, including one whose obligation is still blocked — the cursor is
+ * held back only when the whole batch is unsettled, and then nothing commits.
+ *
+ * Member custody is deliberately not folded in here. Retention re-derives it
+ * from the live rows anyway, and requiring it at commit time stranded any
+ * occurrence that blocked at poll time: it is never presented again, so the
+ * coverage it had already earned could never be written and its complete
+ * inbound body was retained forever even after a manual retry settled it.
  */
 async function readIngressCensusCheckpointCoverageCandidate(input: Readonly<{
   context: PluginInvocationContext;
@@ -4825,26 +4905,6 @@ async function readIngressCensusCheckpointCoverageCandidate(input: Readonly<{
     || census.value.attention
     || census.value.payload.conflict !== null
   ) return undefined;
-
-  for (const member of census.value.payload.matchedBindings) {
-    const obligationId = await opaqueHmacRowId({
-      routingIdentityKey: connection.value.payload.routingIdentityKey,
-      domain: 'ingress-obligation',
-      parts: [input.connectionId, member.bindingId, shell.occurrenceId],
-    });
-    const obligation = asIngressObligation(readStateRow(await collection.get(
-      obligationId,
-      { signal: input.context.signal },
-    )) ?? null);
-    if (
-      obligation === undefined
-      || obligation.value.payload.censusId !== census.value.id
-      || !obligation.value.terminal
-      || obligation.value.attention
-      || obligation.value.payload.lifecycle.phase !== 'terminal'
-      || terminalCheckpointOutcome(obligation.value) !== 'checkpointSafe'
-    ) return undefined;
-  }
   return {
     kind: census.value.payload.checkpointCoveredAt === null ? 'cover' : 'assert',
     census,
@@ -4965,7 +5025,7 @@ export async function runConversationCheckpointedPollForInvocation(input: Readon
   } catch (cause) {
     assertNotAborted(context.signal);
     if (isPollActionOriginCurrentnessLoss(cause)) {
-      if (cause instanceof PluginError && cause.code === 'plugin_action_execution_origin_changed') {
+      if (isPluginError(cause) && cause.code === 'plugin_action_execution_origin_changed') {
         await settleCapturedCheckpointedPollStop({
           context,
           connectionId: input.connectionId,

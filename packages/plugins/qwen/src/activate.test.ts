@@ -7,7 +7,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
-import { activate } from './activate.js';
+import { activate } from './manifest.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Qwen activation', () => {

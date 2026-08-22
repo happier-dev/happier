@@ -137,6 +137,31 @@ describe('git remove index-lock operation', () => {
         expect(response.success ? response.snapshot?.repo.isRepo : false).toBe(true);
     });
 
+    it('allows a resolved index.lock under a dot-dot-prefixed Git directory child', async () => {
+        const workspace = createRepository();
+        const gitDir = join(workspace, '.git');
+        const lockParent = join(gitDir, '..build');
+        const lockPath = join(lockParent, 'index.lock');
+        await mkdir(lockParent);
+        await writeFile(lockPath, 'stale lock');
+        const context = makeContext(workspace);
+        const removeIndexLock = getRemoveIndexLockOperation();
+
+        const response = await withFakeGitPath(lockPath, gitDir, '.git', () =>
+            removeIndexLockWithRuntime(removeIndexLock, {
+                context,
+                request: confirmedRequest(workspace),
+            }),
+        );
+
+        expect(response).toMatchObject({
+            success: true,
+            removed: true,
+            reason: 'removed',
+        });
+        expect(existsSync(lockPath)).toBe(false);
+    });
+
     it('returns removed false when the resolved Git index.lock is absent', async () => {
         const workspace = createRepository();
         const removeIndexLock = getRemoveIndexLockOperation();

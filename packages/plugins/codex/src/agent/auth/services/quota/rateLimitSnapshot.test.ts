@@ -86,34 +86,31 @@ describe('Codex public runtime usage snapshots', () => {
     });
   });
 
-  it('uses the published numeric-epoch threshold for a numeric app-server reset', () => {
-    const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
-      profileId: 'work',
-      fetchedAt: 1_768_000_000_000,
-      rawSnapshot: {
-        primary: { used_percent: 50, resets_at: 10_000_000_000 },
-      },
-    });
+  it('normalizes app-server reset timestamps through the shared epoch boundary', () => {
+    const cases = [
+      [1_700_000_000, 1_700_000_000_000],
+      [1_700_000_000_000, 1_700_000_000_000],
+      [1_000_000_000_000, 1_000_000_000_000],
+      ['1700000000', 1_700_000_000_000],
+      ['1700000000000', 1_700_000_000_000],
+      ['100000000000', 100_000_000_000_000],
+      ['1000000000000', 1_000_000_000_000],
+    ] as const;
 
-    expect(snapshot.meters).toEqual([expect.objectContaining({
-      meterId: 'primary',
-      resetsAt: 10_000_000_000_000,
-    })]);
-  });
+    for (const [resetsAt, expected] of cases) {
+      const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
+        profileId: 'work',
+        fetchedAt: 1_768_000_000_000,
+        rawSnapshot: {
+          primary: { used_percent: 50, resets_at: resetsAt },
+        },
+      });
 
-  it('retains the provider-specific numeric-string reset parsing', () => {
-    const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
-      profileId: 'work',
-      fetchedAt: 1_768_000_000_000,
-      rawSnapshot: {
-        primary: { used_percent: 50, resets_at: '10000000000' },
-      },
-    });
-
-    expect(snapshot.meters).toEqual([expect.objectContaining({
-      meterId: 'primary',
-      resetsAt: 10_000_000_000,
-    })]);
+      expect(snapshot.meters).toEqual([expect.objectContaining({
+        meterId: 'primary',
+        resetsAt: expected,
+      })]);
+    }
   });
 
   it('unwraps official app-server rateLimits response and notification envelopes', () => {

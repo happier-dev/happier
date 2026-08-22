@@ -33,7 +33,7 @@ const selection = {
 } as const satisfies PluginTargetedContributionSelectionV1;
 
 function contribution(
-  immutableGenerationId = selection.contributor.immutableGenerationId,
+  immutableGenerationId: string = selection.contributor.immutableGenerationId,
 ): ChannelsProviderContributionV1 {
   // The host admission boundary vends typed opaque operation handles. Their
   // concrete values are irrelevant to provider selection and remain opaque here.

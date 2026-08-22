@@ -1,12 +1,15 @@
 type CodexAppServerTimeoutEnv = Readonly<Record<string, string | undefined>>;
 
-const STARTUP_RPC_METHODS = new Set(['thread/start', 'thread/resume']);
+const STARTUP_RPC_METHODS = new Set(['initialize', 'thread/start', 'thread/resume']);
 const FORK_RPC_METHODS = new Set(['thread/fork', 'conversation/fork']);
 const REALTIME_START_RPC_METHOD = 'thread/realtime/start';
 
 // A retained Codex 0.146 provider-boundary run needed 17.118s to produce the
 // started/SDP pair. Keep the same bounded 45s budget used by that live probe.
 const DEFAULT_REALTIME_START_TIMEOUT_MS = 45_000;
+// Codex 0.145 can spend just over 30 seconds replaying state during
+// initialization. Keep ordinary startup bounded, but above that observed gate.
+const DEFAULT_STARTUP_RPC_TIMEOUT_MS = 45_000;
 
 function clampRpcTimeoutMs(rawValue: unknown, fallbackMs: number, maxMs: number): number {
     const raw = Number.parseInt(String(rawValue ?? ''), 10);
@@ -23,7 +26,11 @@ export function readCodexAppServerStartupRpcTimeoutMs(
     baseTimeoutMs?: number,
 ): number {
     const base = baseTimeoutMs ?? readCodexAppServerRpcTimeoutMs(env);
-    const configured = clampRpcTimeoutMs(env?.HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS, 20_000, 120_000);
+    const configured = clampRpcTimeoutMs(
+        env?.HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS,
+        DEFAULT_STARTUP_RPC_TIMEOUT_MS,
+        120_000,
+    );
     return Math.max(base, configured);
 }
 

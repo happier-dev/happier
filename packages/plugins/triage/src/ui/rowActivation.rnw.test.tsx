@@ -34,6 +34,7 @@ import {
 } from '../corpus/testkit/observations.test-support.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { renderSurface as renderShellSurface } from './surface.js';
+import { triageListRowTestId } from './list/rows.js';
 
 /**
  * Opening a row, driven through the real mounted vertical.
@@ -166,6 +167,7 @@ async function mountShell(harness: Harness): Promise<Readonly<{
             surfaceContext: createSurfaceContextFixture(),
             adapter: createPluginUiRnwSemanticSurfaceAdapter(),
             handlers: {
+                publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
                 // The host owns history and settlement; the surface only writes
                 // the lens and consumes what settles.
@@ -197,6 +199,21 @@ describe('opening a PRs & Issues row', () => {
         })).toHaveLength(1);
     });
 
+    it('exposes the canonical collision-safe entry key as a stable native automation id', async () => {
+        await mountShell(createHarness());
+
+        const rowKey = JSON.stringify([
+            SOURCE.pluginId,
+            SOURCE.localId,
+            'pull-request',
+            'example/repository',
+            '17',
+        ]);
+        expect([...document.querySelectorAll('[data-testid]')].some(
+            (element) => element.getAttribute('data-testid') === triageListRowTestId(rowKey),
+        )).toBe(true);
+    });
+
     it('writes the activated entry into the shareable location', async () => {
         const { shell, locations } = await mountShell(createHarness());
         const before = locations.length;
@@ -221,8 +238,13 @@ describe('opening a PRs & Issues row', () => {
     it('does not claim every source answered when a source failed', async () => {
         const { shell } = await mountShell(createHarness({ scanFails: true }));
 
-        await expect(shell.getByText('Some sources could not be read'))
-            .resolves.toEqual({ content: 'Some sources could not be read' });
+        // Named, not "some sources": the reader has to know which connection to
+        // go and fix, and the source's own words are quoted rather than the
+        // published classification word (`REQ-01`).
+        await expect(shell.getByText('example/repository could not be read'))
+            .resolves.toEqual({ content: 'example/repository could not be read' });
+        await expect(shell.getByText('Example forge is not answering.'))
+            .resolves.toEqual({ content: 'Example forge is not answering.' });
         // The old shell said this under a failure banner, which told a reader
         // that nothing needed them while a source was down.
         await expect(shell.queryByText(

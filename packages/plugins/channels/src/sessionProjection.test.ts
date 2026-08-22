@@ -103,7 +103,14 @@ class MemoryProjectionCollection {
       const expectedRevision = operation.expectedRevision;
       const current = typeof rowId === 'string' ? this.rows.get(rowId) : undefined;
       if (typeof expectedRevision !== 'number' || current?.revision !== expectedRevision) {
-        return { status: 'conflict' as const, results: [] };
+        return {
+          status: 'conflict' as const,
+          conflicts: [{
+            rowId: typeof rowId === 'string' ? rowId : '',
+            revision: current?.revision ?? 0,
+            deleted: false as const,
+          }],
+        };
       }
     }
     const results: Array<Readonly<{ rowId: string; revision: number; deleted: false }>> = [];
@@ -115,13 +122,20 @@ class MemoryProjectionCollection {
       const current = typeof rowId === 'string' ? this.rows.get(rowId) : undefined;
       if (typeof rowId !== 'string'
         || (expectedRevision === 'absent' ? current !== undefined : current?.revision !== expectedRevision)) {
-        return { status: 'conflict' as const, results: [] };
+        return {
+          status: 'conflict' as const,
+          conflicts: [{
+            rowId: typeof rowId === 'string' ? rowId : '',
+            revision: current?.revision ?? 0,
+            deleted: false as const,
+          }],
+        };
       }
       const row = { rowId, revision: (current?.revision ?? 0) + 1, value };
       this.rows.set(rowId, row);
       results.push({ rowId, revision: row.revision, deleted: false });
     }
-    return { status: 'updated' as const, results };
+    return { status: 'updated' as const, results, changeCursor: 1 };
   }
 }
 

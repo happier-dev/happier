@@ -750,6 +750,27 @@ describe('ElevenLabs public account operations', () => {
     }));
   });
 
+  it('separates a real empty account catalog from a malformed voices payload', async () => {
+    const respond = (payload: unknown) => vi.fn(async () => ({
+      status: 200,
+      finalUrl: 'https://api.elevenlabs.io/v1/voices',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify(payload)),
+    }));
+
+    await expect(listElevenLabsVoicesWithAccountOperations({
+      accountOperations: Object.freeze({ request: respond({ voices: [] }) }),
+      signal: new AbortController().signal,
+    })).resolves.toEqual([]);
+
+    for (const malformed of [{}, { voices: null }, { voices: { v1: 'Alpha' } }, []]) {
+      await expect(listElevenLabsVoicesWithAccountOperations({
+        accountOperations: Object.freeze({ request: respond(malformed) }),
+        signal: new AbortController().signal,
+      })).rejects.toMatchObject({ code: 'provider_response_invalid' });
+    }
+  });
+
   it('rejects an unsafe signed-url artifact returned by the bounded auth operation', async () => {
     const request = vi.fn(async () => ({
       status: 200,

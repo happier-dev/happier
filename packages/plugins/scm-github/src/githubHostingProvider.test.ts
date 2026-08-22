@@ -28,7 +28,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
 
     expect(mod.PLUGIN_MANIFEST).toMatchObject({
       id: 'happier.scm.forge.github',
-      entrypoints: { daemon: './dist/index.js' },
+      entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: {
         required: expect.arrayContaining([expect.objectContaining({
           id: 'github-api',
@@ -85,9 +85,10 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     expect(mod.PLUGIN_MANIFEST).not.toHaveProperty('activationEvents');
     expect(mod.PLUGIN_MANIFEST.entrypoints).not.toHaveProperty('main');
     expect(ingestPluginManifestV2(mod.PLUGIN_MANIFEST)).toMatchObject({ ok: true });
-    // Generated manifests retain an empty declared family; the contract is
-    // that GitHub contributes no legacy hooks, not property omission.
-    expect(mod.PLUGIN_MANIFEST.contributes.hooks).toEqual([]);
+    // This direct cold manifest retains author-declared shape. Canonical host
+    // ingestion later normalizes an undeclared hooks family to an empty array.
+    expect(mod.PLUGIN_MANIFEST.contributes).not.toHaveProperty('hooks');
+    expect(mod.PLUGIN_MANIFEST.contributes.hooks).toBeUndefined();
   }, 30_000);
 
   it('rejects dangling auth refs and wildcard SCM access', async () => {

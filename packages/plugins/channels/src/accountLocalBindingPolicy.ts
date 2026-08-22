@@ -29,6 +29,7 @@ import {
   isCanonicalChannelStateRecordIdentity,
   type PersistedConversationProviderContributionSelection,
 } from './collections.js';
+import { MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE } from './requiredAccountStorage.js';
 import {
   freezeConversationPendingOldTransportStop,
   transitionConversationConnection,
@@ -49,7 +50,6 @@ import {
   type ConversationBindingStateV1,
 } from './bindingTransition.js';
 
-const MAX_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE = 200;
 const MANAGEMENT_SUMMARY_MAX_CODE_POINTS = 28;
 
 export type ChannelStateJsonRecord = Readonly<Record<string, JsonValue>>;
@@ -733,6 +733,43 @@ export function readConversationBindingUpdateRow(input: Readonly<{
   }
 }
 
+export type ConversationBindingPolicyReadResult =
+  | Readonly<{
+    kind: 'ready';
+    bindingId: string;
+    revision: number;
+    binding: ConversationBindingUpdateState;
+  }>
+  | Readonly<{ kind: 'notFound' }>;
+
+/**
+ * The Account-local counterpart of the exact binding read the online editor
+ * performs through its management Action. It reuses the one canonical retained
+ * row parser so an offline editor drafts from the same authoritative binding
+ * the transition and CAS owner will compare against, never from the summary
+ * projection the binding index renders.
+ */
+export async function readConversationBindingPolicyFromAccountCollection(input: Readonly<{
+  collection: ChannelStateBindingCollection;
+  bindingId: string;
+  signal?: AbortSignal;
+  assertCurrent?: () => void;
+}>): Promise<ConversationBindingPolicyReadResult> {
+  assertCurrent(input, 'channels_binding_update');
+  const row = await input.collection.get(
+    input.bindingId,
+    input.signal === undefined ? undefined : { signal: input.signal },
+  );
+  assertCurrent(input, 'channels_binding_update');
+  if (row === null) return { kind: 'notFound' };
+  return {
+    kind: 'ready',
+    bindingId: input.bindingId,
+    revision: row.revision,
+    binding: readConversationBindingUpdateRow({ row, bindingId: input.bindingId }).binding,
+  };
+}
+
 /** Rebuilds the one retained row from a shared parsed policy state. */
 export function withConversationBindingPolicy(input: Readonly<{
   row: ChannelStateRow;
@@ -829,7 +866,7 @@ export async function readConversationBindingManagementRows(input: Readonly<{
       index: CHANNEL_STATE_INDEX_ID.byKind,
       prefix: [CHANNEL_STATE_RECORD_KIND.binding],
       order: 'asc',
-      limit: Math.min(MAX_CONVERSATION_BINDINGS_PER_ACCOUNT - bindings.length, MAX_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE),
+      limit: Math.min(MAX_CONVERSATION_BINDINGS_PER_ACCOUNT - bindings.length, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE),
       ...(cursor === undefined ? {} : { cursor }),
     }, input.signal === undefined ? undefined : { signal: input.signal });
     assertCurrent(input);
@@ -882,7 +919,7 @@ export async function readConversationSessionBindingDeliveryTargets(input: Reado
       order: 'asc',
       limit: Math.min(
         MAX_CONVERSATION_BINDINGS_PER_ACCOUNT - bindingCount,
-        MAX_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
+        MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
       ),
       ...(cursor === undefined ? {} : { cursor }),
     }, input.signal === undefined ? undefined : { signal: input.signal });
@@ -942,7 +979,7 @@ export async function readConversationIngressAttentionPage(input: Readonly<{
   obligations: readonly ConversationIngressAttentionRow[];
   nextCursor?: string;
 }>> {
-  const limit = Math.min(input.limit ?? MAX_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE, MAX_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE);
+  const limit = Math.min(input.limit ?? MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE);
   if (!Number.isSafeInteger(limit) || limit < 1) {
     throw policyError(
       'channels_ingress_attention_page_invalid',

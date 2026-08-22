@@ -1,18 +1,19 @@
-import type {
-    AgentSessionHookServerHandle,
-    AgentSessionProviderBinding,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+import {
+    AgentRuntimeJsonValueSchema,
+    type AgentSessionHostServices,
+    type AgentSessionHookServerHandle,
+    type AgentSessionProviderBinding,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import {
+    redactBugReportSensitiveText,
+    type JsonValue,
+} from '@happier-dev/plugin-sdk';
+import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/sessions/work-state';
 import { createClaudeRuntimeActivityPublisher } from '../../shared/runtimeActivityPublisher.js';
-import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk/experimental/diagnostics';
 import {
     readClaudePendingLocalId,
 } from '../../providerOperations.js';
-import { raceWithTimeout } from '@happier-dev/plugin-sdk/experimental/timeout';
-import {
-    ConnectedServiceCredentialRevisionV1Schema,
-    type ConnectedServiceCredentialRevisionV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -49,7 +50,8 @@ import type {
 } from '../../../usage/types.js';
 import { resolveClaudePermissionModeFromRuntimeMode } from '../../permissionMode.js';
 import { isClaudeUltracodeSupportedModelId } from '../../reasoningEffort.js';
-import { getClaudeProjectPath, resolveClaudeConfigDirOverride } from '../../../surfaces/sessions/handoff/path.js';
+import { resolveClaudeConfigDirOverride } from '../../../environment.js';
+import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js';
 import type {
     ClaudeProviderPromptDeliveryOutcomeCallback,
     ClaudeRuntimePromptSubmissionOutcome,
@@ -66,10 +68,10 @@ import {
 } from '../../issues/runtimeIssues.js';
 import {
     createClaudeUnifiedWorkflowRuntime,
-    registerClaudeWorkflowOwnedToolUseIds,
 } from '../../../workflowRecords/index.js';
 import { createClaudeUnifiedGoalRuntime } from '../../terminal/unified/goalRuntime.js';
 import { computeClaudeSubscriptionAccessTokenFingerprint } from '../../../auth/services/cloud/refreshBridge.js';
+import { readClaudeSubscriptionRuntimeAuthSelectionFromEnv } from '../../../auth/services/runtime/index.js';
 import {
     createClaudeAgentSdkGoalStatusTail,
     type ClaudeAgentSdkGoalStatusTail,
@@ -77,6 +79,8 @@ import {
 import {
     extractToolResultBlocksFromSdkMessage,
     extractToolUseBlocksFromSdkMessage,
+    hasClaudeAgentSdkDefinitiveSubagentRuntimeAuthFailureEvidence,
+    shouldSurfaceClaudeAgentSdkRuntimeFailure,
 } from './streamEvents.js';
 import {
     createClaudeProviderActivityLedger,
@@ -95,11 +99,14 @@ import {
 } from '../../shared/runtimeHelpers.js';
 import { createClaudeAgentSdkResumeIdentityOwner } from './resumeIdentity.js';
 import type { ClaudeUnifiedTerminalContext } from '../../terminal/unified/turnOperations.js';
-import type {
-    ClaudeEffectiveModelEvidence,
-    ClaudeEffectiveModelEvidenceSubscription,
+import {
+    readClaudeMainChainAssistantModelId,
+    type ClaudeEffectiveModelEvidence,
+    type ClaudeEffectiveModelEvidenceSubscription,
 } from '../../effectiveModelEvidence.js';
-import type { ClaudeRemoteAdvancedOptions } from '../../../../protocol/remoteSettings.js';
+import type {
+    ClaudeRemoteAdvancedOptions,
+} from '../../../../protocol/remoteSettings.js';
 
 export type ClaudeAgentSdkToolPermissionPolicy =
     | 'no_tools'
@@ -107,15 +114,25 @@ export type ClaudeAgentSdkToolPermissionPolicy =
     | 'workspace_write'
     | 'parent_session_prompt';
 
+function readAgentToolInputRecord(value: unknown): Readonly<Record<string, JsonValue>> | null {
+    const parsed = AgentRuntimeJsonValueSchema.safeParse(value);
+    return parsed.success && parsed.data !== null && typeof parsed.data === 'object' && !Array.isArray(parsed.data)
+        ? parsed.data as Readonly<Record<string, JsonValue>>
+        : null;
+}
+
+function deniedToolInterception(message: string): PermissionResult {
+    return { behavior: 'deny', message, interrupt: true };
+}
+
 export type ClaudeAgentSdkContext = Readonly<{
     logger: ClaudeUnifiedTerminalContext['logger'];
     agentRuntime: Readonly<{
         exec: ClaudeSdkQueryContext;
         sessionHooks: ClaudeUnifiedTerminalContext['agentRuntime']['sessionHooks'];
-        transcripts: Readonly<{
-            fileFollow: ClaudeUnifiedTerminalContext['agentRuntime']['transcripts']['fileFollow'];
-        }>;
+        transcripts: ClaudeUnifiedTerminalContext['agentRuntime']['transcripts'];
         accountUsage: ClaudeUnifiedTerminalContext['agentRuntime']['accountUsage'];
+        toolExecution: ClaudeUnifiedTerminalContext['agentRuntime']['toolExecution'];
     }>;
     sessions: ClaudeUnifiedTerminalContext['sessions'];
 }>;
@@ -126,26 +143,7 @@ type ClaudeProviderFailureEvidence = Readonly<{
     source: ClaudeSessionRuntimeIssueSource;
     preview: string | null;
 }>;
-type ClaudeSubscriptionRuntimeAuthSelection =
-    | Readonly<{
-        kind: 'profile';
-        serviceId: 'claude-subscription';
-        profileId: string;
-        credentialRevision: ConnectedServiceCredentialRevisionV1;
-    }>
-    | Readonly<{
-        kind: 'group';
-        serviceId: 'claude-subscription';
-        groupId: string;
-        activeProfileId: string;
-        fallbackProfileId: string;
-        generation: number;
-        credentialRevision: ConnectedServiceCredentialRevisionV1;
-        policy?: unknown;
-    }>;
-
 const readString = readClaudeRuntimeString;
-const HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY = 'HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON';
 const CLAUDE_CONTEXT_USAGE_REFRESH_CONFIG_OPTION_ID = 'context_usage_refresh';
 const CLAUDE_CONTEXT_USAGE_REFRESH_TIMEOUT_MS = 1_500;
 
@@ -172,8 +170,7 @@ function isSdkResultMessage(message: SDKMessage): message is SDKResultMessage {
 }
 
 function readSdkAssistantModelId(message: SDKMessage): string | null {
-    if (!isSdkAssistantMessage(message)) return null;
-    return readString((message.message as Readonly<Record<string, unknown>>).model);
+    return readClaudeMainChainAssistantModelId(message);
 }
 
 function readSdkAssistantUsage(message: SDKMessage): ClaudeTokenUsage | null {
@@ -211,56 +208,6 @@ function readNonnegativeInteger(value: unknown): number | null {
         : null;
 }
 
-function readClaudeSubscriptionSelection(value: unknown): ClaudeSubscriptionRuntimeAuthSelection | null {
-    if (!isRecord(value) || value.serviceId !== 'claude-subscription') return null;
-    const credentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(value.credentialRevision);
-    if (!credentialRevision.success) return null;
-    if (value.kind === 'profile') {
-        const profileId = readString(value.profileId);
-        return profileId ? {
-            kind: 'profile',
-            serviceId: 'claude-subscription',
-            profileId,
-            credentialRevision: credentialRevision.data,
-        } : null;
-    }
-    if (value.kind !== 'group') return null;
-    const groupId = readString(value.groupId);
-    const activeProfileId = readString(value.activeProfileId);
-    const fallbackProfileId = readString(value.fallbackProfileId);
-    const generation = readNonnegativeInteger(value.generation);
-    if (!groupId || !activeProfileId || !fallbackProfileId || generation === null) return null;
-    return {
-        kind: 'group',
-        serviceId: 'claude-subscription',
-        groupId,
-        activeProfileId,
-        fallbackProfileId,
-        generation,
-        credentialRevision: credentialRevision.data,
-        ...(Object.prototype.hasOwnProperty.call(value, 'policy') ? { policy: value.policy } : {}),
-    };
-}
-
-function readClaudeSubscriptionSelectionFromEnv(
-    env: Readonly<Record<string, string>> | null | undefined,
-): ClaudeSubscriptionRuntimeAuthSelection | null {
-    const raw = env?.[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
-    if (!raw) return null;
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(raw);
-    } catch {
-        return null;
-    }
-    if (!Array.isArray(parsed)) return null;
-    for (const item of parsed) {
-        const selection = readClaudeSubscriptionSelection(item);
-        if (selection) return selection;
-    }
-    return null;
-}
-
 function readRefreshedAccessToken(value: unknown): string | null {
     if (!isRecord(value) || value.status !== 'refreshed' || !isRecord(value.result)) return null;
     return readString(value.result.accessToken);
@@ -270,9 +217,15 @@ function createDeferred(): Readonly<{
     promise: Promise<void>;
     resolve(): void;
     reject(error: Error): void;
+    /**
+     * One canonical terminal event per turn. The claim lives on the turn, not on the message
+     * loop, so the stream owner and the local cancellation owner cannot both publish one.
+     */
+    claimTerminalPublication(): boolean;
 }> {
     let resolvePromise: (() => void) | null = null;
     let rejectPromise: ((error: Error) => void) | null = null;
+    let terminalPublished = false;
     const promise = new Promise<void>((resolve, reject) => {
         resolvePromise = resolve;
         rejectPromise = reject;
@@ -284,6 +237,11 @@ function createDeferred(): Readonly<{
         },
         reject(error) {
             rejectPromise?.(error);
+        },
+        claimTerminalPublication() {
+            if (terminalPublished) return false;
+            terminalPublished = true;
+            return true;
         },
     };
 }
@@ -353,6 +311,7 @@ function readProviderFailureEvidence(message: SDKMessage): ClaudeProviderFailure
     const providerErrorCode = readString(record.error);
     const isApiErrorMessage = record.isApiErrorMessage === true;
     if (!providerErrorCode && !isApiErrorMessage) return null;
+    if (!shouldSurfaceClaudeAgentSdkRuntimeFailure(message)) return null;
     const preview = sanitizeProviderErrorPreview(readAssistantText(message));
     const code = normalizeProviderErrorCode(providerErrorCode ?? 'provider_error');
     return {
@@ -386,6 +345,14 @@ function createResultError(message: SDKResultMessage, providerFailure: ClaudePro
         failure.preview ? `preview=${failure.preview}` : null,
     ].filter((part): part is string => part !== null);
     return new Error(`Claude Agent SDK turn failed with result subtype ${subtype} (${details.join(', ')})`);
+}
+
+function createProviderFailureError(failure: ClaudeProviderFailureEvidence): Error {
+    const details = [
+        `code=${failure.code}`,
+        failure.preview ? `preview=${failure.preview}` : null,
+    ].filter((part): part is string => part !== null);
+    return new Error(`Claude Agent SDK provider failure (${details.join(', ')})`);
 }
 
 function readTimeoutMs(value: unknown): number | null {
@@ -706,29 +673,20 @@ export function createClaudeAgentSdkTurnOperations(
     });
     // Centralized Dynamic Workflow ACTIVITY runtime (mirrors the unified runner). Turns the
     // `Workflow`/`Task`/`task_*`/`workflow_progress` events on the live SDK stream into durable
-    // `activity/workflow_run.v1` records (record-FIRST via the host `writeSystemRecord` capability,
-    // with the same absent-capability guard) plus the compact headline (via `writeMetadata`).
+    // `activity/workflow_run.v1` records (record-FIRST via the private host-owned System Records port)
+    // plus the compact typed workflow headline.
     const workflowRuntime = sessionWorkStateEnabled
         ? createClaudeUnifiedWorkflowRuntime({
             backendId: 'claude',
             agentId: 'claude',
             getCurrentClaudeSessionId: () => providerSessionId,
-            writeSystemRecord: async (request) => {
-                const writeSystemRecordFn = params.ctx.sessions.current.writeSystemRecord;
-                if (!writeSystemRecordFn) {
-                    throw new Error('host session does not support durable system records');
-                }
-                await writeSystemRecordFn(request);
+            writeSystemRecord: async (request) =>
+                await params.ctx.sessions.current.writeSystemRecord(request),
+            readSystemRecord: async (request) =>
+                await params.ctx.sessions.current.readSystemRecord(request),
+            publishHeadlines: async (bundle) => {
+                await params.ctx.sessions.current.workflowActivity.publishHeadlines(bundle);
             },
-            ...(params.ctx.sessions.current.readSystemRecord
-                ? {
-                    readSystemRecord: async (request) => {
-                        const readSystemRecordFn = params.ctx.sessions.current.readSystemRecord;
-                        return readSystemRecordFn ? await readSystemRecordFn(request) : null;
-                    },
-                }
-                : {}),
-            writeMetadata: async (request) => { await params.ctx.sessions.current.writeMetadata(request); },
             fileFollow: params.ctx.agentRuntime.transcripts.fileFollow,
             onProviderTaskActivity: (activity) => {
                 applyProviderTaskActivity(activity);
@@ -740,16 +698,10 @@ export function createClaudeAgentSdkTurnOperations(
                 }
             },
             logError: (message, error) => { params.ctx.logger.debug(`[ClaudeAgentSdk] ${message}`, { error }); },
+            // On `warn`, not `debug`: a session process runs at `info`, so a debug line here could
+            // never be seen in the situation it exists to report.
+            reportShapeDrift: (message) => { params.ctx.logger.warn(`[ClaudeAgentSdk] ${message}`); },
         })
-        : null;
-    // CWF4: expose workflow-owned subagent tool-use ids to the (stateless) task work-state derivation,
-    // keyed by the Happier session id, so a canonical Workflow run's agents do not ALSO render as
-    // top-level task/todo rows.
-    const disposeWorkflowOwnedToolUseIdsRegistration = workflowRuntime
-        ? registerClaudeWorkflowOwnedToolUseIds(
-            happierSessionId ?? 'claude-agent-sdk',
-            () => workflowRuntime.getWorkflowOwnedAgentToolUseIds(),
-        )
         : null;
     // Centralized native `/goal` runtime. The SOURCE observes the live SDK stream (system-init
     // `slash_commands` => `/goal` capability) AND the file-only `goal_status` attachments via the
@@ -761,7 +713,7 @@ export function createClaudeAgentSdkTurnOperations(
             getCurrentClaudeSessionId: () => providerSessionId,
             ...(params.publishGoalWorkState
                 ? { publishWorkStateSnapshot: params.publishGoalWorkState }
-                : { writeMetadataUpdate: async (request) => { await params.ctx.sessions.current.writeMetadata(request); } }),
+                : {}),
             injectGoalCommand: async (message) => { await operations.sendProviderTurnPrompt(message); },
             logError: (message, error) => { params.ctx.logger.debug(`[ClaudeAgentSdk] ${message}`, { error }); },
         })
@@ -820,12 +772,17 @@ export function createClaudeAgentSdkTurnOperations(
     const resumeIdentityOwner = params.enableSessionResumability === true && happierSessionId
         ? createClaudeAgentSdkResumeIdentityOwner({
             ctx: params.ctx,
+            expectedInitialProviderSessionId: params.initialProviderSessionId,
             onProviderSessionId: observeProviderSessionId,
             onTranscriptCandidateActivated: ({ transcriptPath }) => {
                 if (promotedTranscriptPath === null || promotedTranscriptPath === transcriptPath) return;
                 resumableProviderSessionId = null;
                 pendingResumeProviderSessionId = null;
                 clearPromotedTranscriptForRekey();
+                // The previously proven transcript is no longer the live one, so
+                // retract the published proof. Leaving it would let a resume use
+                // a proof that no longer matches this id.
+                if (providerSessionId) publishProviderSessionId(providerSessionId);
             },
             onTranscriptPromoted: async ({ providerSessionId: provenProviderSessionId, transcriptPath, isCurrent }) => {
                 if (!isCurrent() || providerSessionId !== provenProviderSessionId) return;
@@ -841,6 +798,11 @@ export function createClaudeAgentSdkTurnOperations(
                 }
                 if (!isCurrent() || providerSessionId !== provenProviderSessionId) return;
                 promotedTranscriptPath = transcriptPath;
+                // The id was already published bare when it first appeared; this
+                // is the generation that PROVES it, so republish the matched pair
+                // or the proof never reaches Session metadata and native return
+                // stays unavailable for a resumable Session.
+                publishProviderSessionId(provenProviderSessionId);
                 ensureGoalStatusTail();
             },
         })
@@ -861,6 +823,11 @@ export function createClaudeAgentSdkTurnOperations(
                 onSessionHook: async (providerSessionId, payload) => {
                     observeProviderTaskActivity(payload, providerSessionId);
                     await resumeIdentityOwner?.observeSessionHook(providerSessionId, payload);
+                    const explicitResumeFailure = resumeIdentityOwner?.readExplicitResumeFailure();
+                    if (explicitResumeFailure) {
+                        lastTurnCompletionFailure = explicitResumeFailure;
+                        activeCompletion?.reject(explicitResumeFailure);
+                    }
                 },
             });
             sessionHookServer = server;
@@ -1044,6 +1011,7 @@ export function createClaudeAgentSdkTurnOperations(
         turn: SuccessfulTurn,
         publishTerminal: (event: ClaudeProviderEvent) => void,
     ): void {
+        const observedAtMs = Date.now();
         if (activeQuery === turn.turnQuery) activeQuery = null;
         if (activeCompletion === turn.completion) {
             activeCompletion = null;
@@ -1061,6 +1029,7 @@ export function createClaudeAgentSdkTurnOperations(
         publishUsageObservation(buildClaudeSdkResultUsageObservation({
             modelId: currentModelId ?? currentProviderModel?.id ?? 'unknown',
             ...(currentProviderModel ? { modelSource: 'provider' } : {}),
+            observedAtMs,
             result: turn.message,
         }));
         if (params.publishTranscriptMessages === true && !turn.publishedTranscriptText) {
@@ -1088,13 +1057,25 @@ export function createClaudeAgentSdkTurnOperations(
         }
     }
 
+    /**
+     * Publishes the resume id and, when this generation already materialized
+     * one, the transcript path holding that id's conversation.
+     * `promotedTranscriptPath` is only set by `onTranscriptPromoted`, which
+     * fires after a submitted prompt materialized in that exact transcript for
+     * that exact id — so the pair published here is matched by construction, and
+     * a re-key clears the path before the new id is published.
+     */
     function publishProviderSessionId(nextSessionId: string): void {
+        const nativeSessionLogPath = providerSessionId === nextSessionId
+            ? promotedTranscriptPath
+            : null;
         publishRuntimeEvent(ClaudeProviderEventSchema.parse({
             sessionId: readString(params.happierSessionId) ?? nextSessionId,
             emittedAtMs: Date.now(),
             kind: 'session-id-publish',
             publishedSessionId: nextSessionId,
             source: 'claude-agent-sdk',
+            ...(nativeSessionLogPath ? { nativeSessionLogPath } : {}),
         }));
     }
 
@@ -1133,33 +1114,62 @@ export function createClaudeAgentSdkTurnOperations(
     async function resolvePermission(
         toolName: string,
         input: unknown,
-        options: { signal: AbortSignal },
+        options: { signal: AbortSignal; requestId?: string },
     ): Promise<PermissionResult> {
+        const parsedInput = readAgentToolInputRecord(input);
+        if (!parsedInput) return deniedToolInterception('Claude supplied invalid tool input.');
+        let interception: Awaited<ReturnType<AgentSessionHostServices['toolExecution']['before']>>;
+        try {
+            interception = await params.ctx.agentRuntime.toolExecution.before({
+                callId: options.requestId ?? `claude-sdk:${randomUUID()}`,
+                name: toolName,
+                input: parsedInput,
+            }, { signal: options.signal });
+        } catch {
+            return deniedToolInterception('Tool interception failed.');
+        }
+        if (interception.status === 'rejected') {
+            return deniedToolInterception(interception.message ?? 'Tool execution was rejected.');
+        }
+        if (interception.status === 'failed') {
+            return deniedToolInterception('Tool interception failed.');
+        }
+        const transformedInput = readAgentToolInputRecord(interception.input);
+        if (!transformedInput) {
+            return deniedToolInterception('Tool interception returned invalid input.');
+        }
         if (toolPermissionPolicy === 'no_tools') {
             return { behavior: 'deny', message: 'Tools are disabled for this execution run.', interrupt: true };
         }
         if (toolPermissionPolicy === 'workspace_write') {
             return {
                 behavior: 'allow',
-                updatedInput: input && typeof input === 'object' && !Array.isArray(input)
-                    ? input as Record<string, unknown>
-                    : {},
+                updatedInput: transformedInput,
             };
         }
-        return permissionEngine.canCallTool(toolName, input, options);
+        return permissionEngine.canCallTool(toolName, transformedInput, options);
     }
 
-    const claudeSubscriptionRuntimeAuthSelection = readClaudeSubscriptionSelectionFromEnv(params.launchEnv);
+    const claudeSubscriptionRuntimeAuthSelection = readClaudeSubscriptionRuntimeAuthSelectionFromEnv(params.launchEnv);
+    const claudeSubscriptionRuntimeAuthSelectionJson = readAgentToolInputRecord(
+        claudeSubscriptionRuntimeAuthSelection,
+    );
     const refreshRuntimeAuth = params.ctx.sessions.current.auth?.services?.refreshRuntimeAuth;
     let lastClaudeSdkOAuthTokenFingerprint: string | null = null;
     let pendingClaudeSdkOAuthRefreshAttempt: Readonly<{
-        expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+        expectedCredentialRevision: string;
         refreshAttemptId: string;
     }> | null = null;
-    const getClaudeSdkOAuthToken = (
-        claudeSubscriptionRuntimeAuthSelection && typeof refreshRuntimeAuth === 'function'
+    const requestClaudeSdkRuntimeAuthRefresh = (
+        claudeSubscriptionRuntimeAuthSelection
+        && claudeSubscriptionRuntimeAuthSelectionJson
+        && typeof refreshRuntimeAuth === 'function'
     )
-        ? async (options: { signal: AbortSignal }): Promise<string | null> => {
+        ? async (input: Readonly<{
+            reason: string;
+            signal?: AbortSignal;
+            failingAccessTokenFingerprint?: string | null;
+        }>): Promise<unknown> => {
             // The SDK calls this again after a delivered token fails; carry only the previous
             // token fingerprint so the daemon can adopt a newer stored token before forcing rotation.
             const expectedCredentialRevision = claudeSubscriptionRuntimeAuthSelection.credentialRevision;
@@ -1176,24 +1186,65 @@ export function createClaudeAgentSdkTurnOperations(
                 refreshAttemptId: refreshAttempt.refreshAttemptId,
                 targetId: readString(params.happierSessionId),
                 env: params.launchEnv,
-                selection: claudeSubscriptionRuntimeAuthSelection,
+                selection: claudeSubscriptionRuntimeAuthSelectionJson,
                 expectedCredentialRevision,
-                reason: 'claude_agent_sdk_oauth_token_refresh',
-                failingAccessTokenFingerprint: lastClaudeSdkOAuthTokenFingerprint,
+                reason: input.reason,
+                ...(input.failingAccessTokenFingerprint !== undefined
+                    ? { failingAccessTokenFingerprint: input.failingAccessTokenFingerprint }
+                    : {}),
             };
-            const result = await refreshRuntimeAuth(refreshRequest, { signal: options.signal });
+            const result = await refreshRuntimeAuth(refreshRequest, { signal: input.signal });
             const accessToken = readRefreshedAccessToken(result);
             if (accessToken) {
                 pendingClaudeSdkOAuthRefreshAttempt = null;
                 lastClaudeSdkOAuthTokenFingerprint = computeClaudeSubscriptionAccessTokenFingerprint(accessToken);
             }
-            return accessToken;
+            return result;
+        }
+        : null;
+    const getClaudeSdkOAuthToken = requestClaudeSdkRuntimeAuthRefresh
+        ? async (options: { signal: AbortSignal }): Promise<string | null> => {
+            const result = await requestClaudeSdkRuntimeAuthRefresh({
+                reason: 'claude_agent_sdk_oauth_token_refresh',
+                signal: options.signal,
+                failingAccessTokenFingerprint: lastClaudeSdkOAuthTokenFingerprint,
+            });
+            return readRefreshedAccessToken(result);
         }
         : null;
 
+    function publishCancelledTurnTerminal(completion: DeferredCompletion, reason: string): void {
+        if (!completion.claimTerminalPublication()) return;
+        publishRuntimeEvent(ClaudeProviderEventSchema.parse({
+            sessionId: readRuntimeEventSessionId(),
+            emittedAtMs: Date.now(),
+            kind: 'turn-cancelled',
+            turnId: currentTurnId ?? 'claude-agent-sdk-turn',
+            reason,
+        }));
+    }
+
+    /**
+     * A user cancellation is a local authority decision, not a provider observation: the turn ends
+     * as soon as the interrupt is dispatched. Waiting for the provider's trailing interruption
+     * result left `waitForProviderTurnCompletion` unsettled and `turnInFlight` latched whenever a
+     * wedged CLI never answered, so the session could never accept another prompt. The interrupted
+     * query keeps draining so its trailing result can still retain the process for the next turn.
+     */
+    function settleUserCancelledTurn(turnQuery: ClaudeSdkQuery): void {
+        if (activeQuery !== turnQuery) return;
+        const completion = activeCompletion;
+        if (!completion) return;
+        activeCompletion = null;
+        turnInFlight = false;
+        lastTurnCompletionFailure = null;
+        reconcileProviderTaskRuntimeActivityForCurrentQuery('user-cancelled');
+        publishCancelledTurnTerminal(completion, 'user_request');
+        completion.resolve();
+    }
+
     async function consumeTurnMessages(turnQuery: ClaudeSdkQuery, completion: DeferredCompletion): Promise<void> {
         let sawResult = false;
-        let terminalPublished = false;
         let retainQueryForNextTurn = false;
         let messageSequence = 0;
         let publishedTranscriptText = false;
@@ -1201,8 +1252,7 @@ export function createClaudeAgentSdkTurnOperations(
         let foregroundCompleted = false;
         const toolNameByCallId = new Map<string, string>();
         const publishTerminal = (event: ClaudeProviderEvent): void => {
-            if (terminalPublished) return;
-            terminalPublished = true;
+            if (!completion.claimTerminalPublication()) return;
             publishRuntimeEvent(event);
         };
         const publishFailedTerminal = (
@@ -1224,14 +1274,23 @@ export function createClaudeAgentSdkTurnOperations(
                 }),
             }));
         };
-        const publishCancelledTerminal = (reason: string): void => {
+        const publishProviderFailureTerminal = (failure: ClaudeProviderFailureEvidence): void => {
             publishTerminal(ClaudeProviderEventSchema.parse({
                 sessionId: readRuntimeEventSessionId(),
                 emittedAtMs: Date.now(),
-                kind: 'turn-cancelled',
+                kind: 'turn-failed',
                 turnId: currentTurnId ?? 'claude-agent-sdk-turn',
-                reason,
+                issue: buildClaudeSessionRuntimeIssue({
+                    code: failure.code,
+                    source: failure.source,
+                    occurredAt: Date.now(),
+                    agentId: 'claude',
+                    sanitizedPreview: failure.preview,
+                }),
             }));
+        };
+        const publishCancelledTerminal = (reason: string): void => {
+            publishCancelledTurnTerminal(completion, reason);
         };
         try {
             while (true) {
@@ -1254,6 +1313,14 @@ export function createClaudeAgentSdkTurnOperations(
                 }
                 if (params.enableSessionResumability !== true && isSdkResultMessage(message)) {
                     observeProviderSessionId(message.session_id);
+                }
+                if (
+                    requestClaudeSdkRuntimeAuthRefresh
+                    && hasClaudeAgentSdkDefinitiveSubagentRuntimeAuthFailureEvidence(message)
+                ) {
+                    await requestClaudeSdkRuntimeAuthRefresh({
+                        reason: 'claude_agent_sdk_subagent_oauth_revoked',
+                    }).catch(() => undefined);
                 }
                 const nextProviderFailure = readProviderFailureEvidence(message);
                 if (nextProviderFailure) {
@@ -1296,6 +1363,7 @@ export function createClaudeAgentSdkTurnOperations(
                     publishUsageObservation(buildClaudeAssistantUsageObservation({
                         modelId: currentModelId,
                         ...(currentProviderModel ? { modelSource: 'provider' } : {}),
+                        observedAtMs: Date.now(),
                         usage: usage ?? {},
                     }));
                 }
@@ -1309,7 +1377,32 @@ export function createClaudeAgentSdkTurnOperations(
                         publishRuntimeEvent(runtimeEvent);
                     }
                 }
+                if (nextProviderFailure) {
+                    if (activeQuery === turnQuery) activeQuery = null;
+                    if (activeCompletion === completion) {
+                        activeCompletion = null;
+                        turnInFlight = false;
+                    }
+                    reconcileProviderTaskRuntimeActivityForCurrentQuery('provider-error');
+                    publishProviderFailureTerminal(nextProviderFailure);
+                    const providerError = createProviderFailureError(nextProviderFailure);
+                    lastTurnCompletionFailure = providerError;
+                    completion.reject(providerError);
+                    return;
+                }
                 if (!isSdkResultMessage(message)) continue;
+                const explicitResumeFailure = resumeIdentityOwner
+                    ?.validateSdkResultProviderSessionId(message.session_id);
+                if (explicitResumeFailure) {
+                    publishFailedTerminal(
+                        explicitResumeFailure,
+                        'stream_error',
+                        explicitResumeFailure.code,
+                    );
+                    lastTurnCompletionFailure = explicitResumeFailure;
+                    completion.reject(explicitResumeFailure);
+                    return;
+                }
                 const modelUsage = isRecord(message.modelUsage) ? message.modelUsage : null;
                 if (modelUsage) {
                     const modelIds = Object.keys(modelUsage)
@@ -1372,8 +1465,13 @@ export function createClaudeAgentSdkTurnOperations(
                         publishCancelledTerminal(cancellationReason);
                         lastTurnCompletionFailure = null;
                         completion.resolve();
-                        retainedInterruptedQuery = turnQuery;
-                        retainQueryForNextTurn = true;
+                        // The local cancellation already ended this turn, so a next prompt may have
+                        // opened a newer query before this trailing result landed. Only the newest
+                        // query may be retained; an already-superseded one is disposed below.
+                        if (disposeQuery === turnQuery) {
+                            retainedInterruptedQuery = turnQuery;
+                            retainQueryForNextTurn = true;
+                        }
                         return;
                     }
                     if (activeQuery === turnQuery) activeQuery = null;
@@ -1640,7 +1738,26 @@ export function createClaudeAgentSdkTurnOperations(
             }
         },
         async steerProviderTurn(message, meta) {
-            return await operations.sendProviderTurnPrompt(message, meta);
+            if (runtimeDisposed) {
+                return {
+                    kind: 'rejected_before_effect',
+                    reason: 'Claude Agent SDK runtime is disposed.',
+                };
+            }
+            const turnQuery = activeQuery;
+            if (!turnInFlight || !turnQuery) {
+                return {
+                    kind: 'rejected_before_effect',
+                    reason: 'Claude Agent SDK has no active turn to steer.',
+                };
+            }
+            const outcome = await turnQuery.sendUserMessage(message);
+            if (outcome.kind === 'accepted') return outcome;
+            return {
+                kind: outcome.kind,
+                reason: sanitizeProviderErrorPreview(outcome.error.message)
+                    ?? 'Claude SDK steer transport failed.',
+            };
         },
         async waitForProviderTurnCompletion(opts) {
             const timeoutMs = readTimeoutMs(opts);
@@ -1683,6 +1800,7 @@ export function createClaudeAgentSdkTurnOperations(
             }
             await turnQuery.interrupt();
             backgroundQueries.delete(turnQuery);
+            settleUserCancelledTurn(turnQuery);
         },
         readProviderIdentity() {
             return { sessionId: providerSessionId };
@@ -1772,10 +1890,18 @@ export function createClaudeAgentSdkTurnOperations(
                 turnInFlight = false;
                 await sessionHookSetupPromise?.catch(() => undefined);
                 if (workflowRuntime) {
+                    // Workflow runs, their agents and their `Task` children all live INSIDE this
+                    // query, so this teardown is the observation that they are over — resolve them
+                    // BEFORE the drain that publishes the query's last rows, or they stay painted
+                    // live until some later process's reconcile grace expires.
+                    try {
+                        workflowRuntime.finalizeInterruptedActivityOnShutdown();
+                    } catch {
+                        // Non-fatal: the startup reconcile still resolves these rows later.
+                    }
                     await workflowRuntime.flush().catch(() => undefined);
                     workflowRuntime.dispose();
                 }
-                disposeWorkflowOwnedToolUseIdsRegistration?.();
                 await resumeIdentityOwner?.dispose().catch(() => undefined);
                 const tail = goalStatusTail;
                 goalStatusTail = null;

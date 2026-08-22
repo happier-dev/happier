@@ -33,11 +33,11 @@ const basePayload: ClaudeStatuslinePayload = {
 };
 
 describe('createClaudeStatuslineApplier', () => {
-    it('publishes effective model identity and the direct context window once', () => {
+    it('publishes effective model identity and the direct context window once', async () => {
         const harness = createHarness();
 
-        harness.applier.apply(basePayload);
-        harness.applier.apply(basePayload);
+        await harness.applier.apply(basePayload);
+        await harness.applier.apply(basePayload);
 
         expect(harness.onEffectiveModel).toHaveBeenCalledTimes(1);
         expect(harness.onEffectiveModel).toHaveBeenCalledWith({
@@ -47,11 +47,11 @@ describe('createClaudeStatuslineApplier', () => {
         });
     });
 
-    it('emits model changes through the semantic sink without a metadata writer', () => {
+    it('emits model changes through the semantic sink without a metadata writer', async () => {
         const harness = createHarness();
 
-        harness.applier.apply(basePayload);
-        harness.applier.apply({
+        await harness.applier.apply(basePayload);
+        await harness.applier.apply({
             ...basePayload,
             model: { id: 'claude-opus-4-8', display_name: 'Opus 4.8' },
         });
@@ -62,11 +62,33 @@ describe('createClaudeStatuslineApplier', () => {
         }));
     });
 
-    it('publishes new effective evidence when the model or window changes', () => {
+    it('retries a model change when the semantic sink rejects durable custody', async () => {
+        const onModelChanged = vi
+            .fn()
+            .mockRejectedValueOnce(new Error('durable custody rejected'))
+            .mockResolvedValueOnce(undefined);
+        const applier = createClaudeStatuslineApplier({
+            logger: { debug: vi.fn(), warn: vi.fn() },
+            readIdentity: () => ({ providerSessionId: null, transcriptPath: null }),
+            onModelChanged,
+        });
+        const changedPayload = {
+            ...basePayload,
+            model: { id: 'claude-opus-4-8', display_name: 'Opus 4.8' },
+        };
+
+        await applier.apply(basePayload);
+        await expect(applier.apply(changedPayload)).rejects.toThrow('durable custody rejected');
+        await expect(applier.apply(changedPayload)).resolves.toBeUndefined();
+
+        expect(onModelChanged).toHaveBeenCalledTimes(2);
+    });
+
+    it('publishes new effective evidence when the model or window changes', async () => {
         const harness = createHarness();
 
-        harness.applier.apply(basePayload);
-        harness.applier.apply({
+        await harness.applier.apply(basePayload);
+        await harness.applier.apply({
             ...basePayload,
             context_window: { context_window_size: 200_000 },
         });
@@ -78,50 +100,50 @@ describe('createClaudeStatuslineApplier', () => {
         }));
     });
 
-    it('ignores payloads from a foreign Claude session when identity is known', () => {
+    it('ignores payloads from a foreign Claude session when identity is known', async () => {
         const harness = createHarness({
             providerSessionId: 'other-session',
             transcriptPath: '/other/transcript.jsonl',
         });
 
-        harness.applier.apply(basePayload);
+        await harness.applier.apply(basePayload);
 
         expect(harness.onEffectiveModel).not.toHaveBeenCalled();
         expect(harness.onRuntimeTruth).not.toHaveBeenCalled();
     });
 
-    it('accepts payloads before session identity is adopted', () => {
+    it('accepts payloads before session identity is adopted', async () => {
         const harness = createHarness();
 
-        harness.applier.apply(basePayload);
+        await harness.applier.apply(basePayload);
 
         expect(harness.onEffectiveModel).toHaveBeenCalledTimes(1);
     });
 
-    it('matches on transcript path after provider identity rotates', () => {
+    it('matches on transcript path after provider identity rotates', async () => {
         const harness = createHarness({
             providerSessionId: 'pre-rotation-id',
             transcriptPath: '/projects/demo/transcript.jsonl',
         });
 
-        harness.applier.apply(basePayload);
+        await harness.applier.apply(basePayload);
 
         expect(harness.onEffectiveModel).toHaveBeenCalledTimes(1);
     });
 
-    it('tolerates payloads without model facts', () => {
+    it('tolerates payloads without model facts', async () => {
         const harness = createHarness();
 
-        expect(() => harness.applier.apply({ version: '2.1.170' })).not.toThrow();
+        await expect(harness.applier.apply({ version: '2.1.170' })).resolves.toBeUndefined();
         expect(harness.onEffectiveModel).not.toHaveBeenCalled();
     });
 
-    it('feeds verified model and effort truth with a separate dedupe key', () => {
+    it('feeds verified model and effort truth with a separate dedupe key', async () => {
         const harness = createHarness();
 
-        harness.applier.apply({ ...basePayload, effort: { level: 'high' } });
-        harness.applier.apply({ ...basePayload, effort: { level: 'high' } });
-        harness.applier.apply({ ...basePayload, effort: { level: 'medium' } });
+        await harness.applier.apply({ ...basePayload, effort: { level: 'high' } });
+        await harness.applier.apply({ ...basePayload, effort: { level: 'high' } });
+        await harness.applier.apply({ ...basePayload, effort: { level: 'medium' } });
 
         expect(harness.onRuntimeTruth).toHaveBeenCalledTimes(2);
         expect(harness.onRuntimeTruth).toHaveBeenLastCalledWith({
@@ -130,12 +152,12 @@ describe('createClaudeStatuslineApplier', () => {
         });
     });
 
-    it('logs a change-only runtime canary line', () => {
+    it('logs a change-only runtime canary line', async () => {
         const harness = createHarness();
 
-        harness.applier.apply(basePayload);
-        harness.applier.apply(basePayload);
-        harness.applier.apply({ ...basePayload, fast_mode: true });
+        await harness.applier.apply(basePayload);
+        await harness.applier.apply(basePayload);
+        await harness.applier.apply({ ...basePayload, fast_mode: true });
 
         const canaryCalls = harness.logger.debug.mock.calls.filter(
             (call) => typeof call[0] === 'string' && call[0].includes('statusline runtime state'),

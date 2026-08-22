@@ -17,6 +17,13 @@ export type PosthogFailure =
     /** A 3xx is surfaced, never followed: following it would silently read a different resource. */
     | Readonly<{ kind: 'redirected'; status: number }>
     | Readonly<{ kind: 'server'; status: number }>
+    /**
+     * Every status no arm above matched — in practice `400`, `409`, `410` and `422`.
+     * PostHog's contract gives them no meaning, so this names what was observed and
+     * nothing more. It is deliberately not folded into `server`: repeating the identical
+     * request cannot fix a request the provider rejected on its shape, and the source
+     * projection classifies it `unknown` rather than `transient` for exactly that reason.
+     */
     | Readonly<{ kind: 'unexpectedStatus'; status: number }>
     | Readonly<{ kind: 'transport' }>
     | Readonly<{ kind: 'timeout' }>

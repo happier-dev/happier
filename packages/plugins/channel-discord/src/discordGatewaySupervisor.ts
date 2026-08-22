@@ -9,7 +9,7 @@ import {
   type ConversationTransportFactReportInputV1,
 } from '@happier-dev/channels-protocol/v1';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { Disposable, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 
 import {
   assertDiscordChannelsCoreCaller,
@@ -21,11 +21,15 @@ import { createDiscordIdentifyConcurrency } from './discordGatewayIdentifyConcur
 import {
   startDiscordGatewayWorker,
   type DiscordGatewayRuntimeFacts,
+  type DiscordGatewayTerminalReason,
   type DiscordGatewayWorker,
   type DiscordGatewayWorkerInput,
   type DiscordGatewayWorkerResult,
 } from './discordGatewayWorker.js';
-import { DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID } from './discordPluginConstants.js';
+import {
+  DISCORD_BOT_CREDENTIAL_PURPOSE,
+  DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
+} from './discordPluginConstants.js';
 
 const CHANNELS_CORE_PLUGIN_ID = 'happier.channels';
 const RECONCILIATION_INTERVAL_MS = 30_000;
@@ -256,9 +260,23 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
     throw new Error('Discord Gateway stop wait must be a positive safe integer.');
   }
 
+  // This supervisor reaches no Automation authority. The Discord Automation
+  // Event is WITHHELD from the manifest (see `discordAutomationEvent.ts`), so
+  // the host builds no adopted-definition owner for this plugin and every
+  // `automation.event.sources.list` call would fail with
+  // `automation_event_adopted_definitions_unavailable` — once per tick, for
+  // every Machine, forever. The observer capability is retained whole in
+  // `discordAutomationEventAdmission.ts`; re-declaring the Event restores its
+  // two call sites here, exactly as that module's resume note describes.
   const workers = new Map<string, WorkerEntry>();
   const pendingFacts = new Map<string, PendingTransportFact[]>();
-  const terminalFingerprints = new Set<string>();
+  // A connection fingerprint is built from the core reconciliation snapshot,
+  // which identifies the selected Connected Account but carries no revision of
+  // the credential material inside it. Repairing a wrong bot token therefore
+  // produces a byte-identical fingerprint, so the terminal reason is retained
+  // and the host's credential resync — not the fingerprint — retires the one
+  // reason that repair can fix.
+  const terminalReasonByFingerprint = new Map<string, DiscordGatewayTerminalReason>();
   const blockedUntilByFingerprint = new Map<string, number>();
   const reportedNotRunning = new Set<string>();
   let supervisorAbort: AbortController | null = null;
@@ -299,7 +317,7 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
       }, { kind: 'stopConfirmed', reason: 'explicitStop' });
     }
     if (result.kind === 'terminal') {
-      terminalFingerprints.add(entry.fingerprint);
+      terminalReasonByFingerprint.set(entry.fingerprint, result.reason);
     }
     if (result.kind === 'blocked') blockedUntilByFingerprint.set(entry.fingerprint, result.retryAtMs);
     if (result.kind === 'messageContentIntentRecoveryRequired' && result.source === 'gateway4014') {
@@ -537,7 +555,7 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
         continue;
       }
       if (workers.get(snapshot.connectionId)?.fingerprint === fingerprint) continue;
-      if (terminalFingerprints.has(fingerprint)) continue;
+      if (terminalReasonByFingerprint.has(fingerprint)) continue;
       const blockedUntil = blockedUntilByFingerprint.get(fingerprint);
       if (blockedUntil !== undefined && clock.now() < blockedUntil) continue;
       const runtime = resolveRuntimeFacts(snapshot);
@@ -557,6 +575,18 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
     const abortFromContext = (): void => controller.abort(context.signal.reason);
     if (context.signal.aborted) abortFromContext();
     else context.signal.addEventListener('abort', abortFromContext, { once: true });
+    // The selected Connected Account is a separate authority whose credential
+    // material can change without changing any fact in the core reconciliation
+    // snapshot. This resync is the only signal that tells the supervisor a
+    // Gateway authentication failure is worth another attempt.
+    const credentialResync: Disposable = context.services.connectedAccounts.watch(
+      DISCORD_BOT_CREDENTIAL_PURPOSE,
+      () => {
+        for (const [fingerprint, reason] of terminalReasonByFingerprint) {
+          if (reason === 'authenticationFailed') terminalReasonByFingerprint.delete(fingerprint);
+        }
+      },
+    );
     runPromise = (async () => {
       try {
         while (!controller.signal.aborted) {
@@ -569,6 +599,7 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
           }
         }
       } finally {
+        await credentialResync.dispose();
         context.signal.removeEventListener('abort', abortFromContext);
         stopAllWorkers('generationRetired');
         await Promise.allSettled([...workers.values()].map((entry) => entry.completion));

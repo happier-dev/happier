@@ -1,3 +1,5 @@
+import { isGenericSubagentToolName } from '@happier-dev/plugin-sdk/sessions/subagents';
+
 import {
   normalizeClaudeActivityStatusSignal,
   type ClaudeActivityStatusSignal,
@@ -44,6 +46,21 @@ function readNumber(value: unknown): number | undefined {
 function readNonNegativeInteger(value: unknown): number | undefined {
   const parsed = readNumber(value);
   return parsed !== undefined && parsed >= 0 ? Math.trunc(parsed) : undefined;
+}
+
+/**
+ * The instant a raw Claude record carries, when it carries one.
+ *
+ * A replayed row already happened; stamping it with the clock of the process that reopened the
+ * transcript dates every resumed workflow at the moment it was re-read. For a LIVE row the clock IS
+ * its instant, so this reader is only consulted on the replay branch.
+ */
+export function readClaudeRecordTimestampMs(value: unknown): number | undefined {
+  const raw = readRecord(value)?.timestamp;
+  if (typeof raw === 'number') return Number.isFinite(raw) && raw > 0 ? raw : undefined;
+  if (typeof raw !== 'string') return undefined;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 /** A `Workflow {script}` tool-use that starts an explicit workflow run. */
@@ -149,12 +166,27 @@ export type WorkflowJournalFact = Readonly<{
   sourceSessionId?: string;
 }>;
 
+/**
+ * The run's DURABLE record, replayed through the live stream's own `workflow_progress[]` vocabulary.
+ *
+ * A run-scoped fact rather than a lifecycle one: the record restates the run's structure, never its
+ * ending. Its own `status` is deliberately ignored here so a backfill cannot move a run whose
+ * outcome the transcript already decided.
+ */
+export type WorkflowRunRecordFact = Readonly<{
+  kind: 'workflow-run-record';
+  workflowToolUseId: string;
+  workflowProgress: readonly WorkflowProgressEntryFact[];
+  sourceSessionId?: string;
+}>;
+
 export type ClaudeWorkflowFact =
   | WorkflowStartFact
   | WorkflowLaunchFact
   | TaskLifecycleFact
   | SubagentStartFact
-  | WorkflowJournalFact;
+  | WorkflowJournalFact
+  | WorkflowRunRecordFact;
 
 const TASK_LIFECYCLE_SUBTYPES = new Set([
   'task_started',
@@ -222,8 +254,70 @@ function readWorkflowJournalAgentSpecs(input: Record<string, unknown> | null): W
   return specs.length > 0 ? specs : undefined;
 }
 
-function parseWorkflowProgress(value: unknown): WorkflowProgressEntryFact[] | undefined {
-  if (!Array.isArray(value)) return undefined;
+/**
+ * How this module says "the shape we depend on is gone".
+ *
+ * A plain message rather than an error object: nothing here failed, and there is nothing to retry.
+ * The caller binds it to a signal that is ON BY DEFAULT — `logger.warn`, never `logger.debug`,
+ * which is off in a session process and would make this report its own silent degradation.
+ */
+export type ClaudeWorkflowShapeDriftReporter = (message: string) => void;
+
+/**
+ * Drift signatures already reported by this process.
+ *
+ * `workflow_progress` is the roster's only live source and the Claude Agent SDK does NOT declare it:
+ * `SDKTaskProgressMessage` declares `type/subtype/task_id/tool_use_id/description/usage/
+ * last_tool_name/summary/uuid/session_id` and nothing more. So a provider-side rename or retype
+ * ships with NO compile error, every reader below quietly stops matching, and the workflow roster
+ * goes blank while the run itself is fine — precisely the silent degradation this corridor exists
+ * to remove.
+ *
+ * Reported once per distinct signature because a `task_progress` tick fires throughout a run and a
+ * per-tick warning would be its own defect. The set is bounded by the number of shapes, not by
+ * traffic.
+ */
+const reportedWorkflowProgressShapeDrift = new Set<string>();
+
+function reportWorkflowProgressShapeDrift(params: Readonly<{
+  signature: string;
+  detail: string;
+  report: ClaudeWorkflowShapeDriftReporter | undefined;
+}>): void {
+  // Latched only once something can actually hear it, so an unwired parse cannot silence the
+  // first wired one.
+  if (!params.report) return;
+  if (reportedWorkflowProgressShapeDrift.has(params.signature)) return;
+  reportedWorkflowProgressShapeDrift.add(params.signature);
+  params.report(
+    `Claude workflow_progress is no longer readable (${params.detail}). `
+    + 'This field is undeclared by the Claude Agent SDK, so a provider-side shape change cannot '
+    + 'fail the build; workflow agent rosters will stay empty until the parser is updated.',
+  );
+}
+
+function describeUnreadableWorkflowProgress(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+function parseWorkflowProgress(
+  value: unknown,
+  report?: ClaudeWorkflowShapeDriftReporter,
+): WorkflowProgressEntryFact[] | undefined {
+  // A tick that ships no `workflow_progress` key at all is NORMAL and frequent — the live stream
+  // throttles and a suppressed tick carries the field as absent. It says nothing about the roster,
+  // and warning on it would drown the one case that matters.
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    reportWorkflowProgressShapeDrift({
+      signature: `not-an-array:${describeUnreadableWorkflowProgress(value)}`,
+      detail: `expected an array, received ${describeUnreadableWorkflowProgress(value)}`,
+      report,
+    });
+    return undefined;
+  }
   const facts: WorkflowProgressEntryFact[] = [];
   for (const entry of value) {
     const record = readRecord(entry);
@@ -266,6 +360,15 @@ function parseWorkflowProgress(value: unknown): WorkflowProgressEntryFact[] | un
         ...(timeUsedSeconds !== undefined ? { timeUsedSeconds } : {}),
       });
     }
+  }
+  // An array that named nothing readable is indistinguishable, downstream, from a run with no
+  // agents — so the array being non-empty is the only place that difference is still visible.
+  if (facts.length === 0 && value.length > 0) {
+    reportWorkflowProgressShapeDrift({
+      signature: 'no-readable-entries',
+      detail: `${value.length} entries carried no readable workflow_phase or workflow_agent`,
+      report,
+    });
   }
   return facts;
 }
@@ -403,7 +506,11 @@ function parseSubagentUse(message: Record<string, unknown>): SubagentStartFact |
   const uuid = readString(message.uuid) ?? undefined;
   for (const part of content) {
     const block = readRecord(part);
-    if (block?.type !== 'tool_use' || block.name !== 'Task') continue;
+    // Which tool names ARE a generic sub-agent launch is the protocol's answer (`Task`/`Agent`/
+    // `SubAgent`), not this parser's: Claude Code renamed the tool to `Agent`, and a private
+    // `'Task'` literal here made every plain sub-agent invisible to the tracker — no start fact, no
+    // implicit run, no roster row that could say `running`.
+    if (block?.type !== 'tool_use' || typeof block.name !== 'string' || !isGenericSubagentToolName(block.name)) continue;
     const id = readString(block.id);
     if (!id) continue;
     const input = readRecord(block.input);
@@ -454,7 +561,10 @@ function parseTaskNotificationEnvelope(message: Record<string, unknown>): TaskLi
   };
 }
 
-function parseTaskLifecycle(message: Record<string, unknown>): TaskLifecycleFact | null {
+function parseTaskLifecycle(
+  message: Record<string, unknown>,
+  report?: ClaudeWorkflowShapeDriftReporter,
+): TaskLifecycleFact | null {
   if (message.type !== 'system') return null;
   const subtype = readString(message.subtype);
   if (!subtype || !TASK_LIFECYCLE_SUBTYPES.has(subtype)) return null;
@@ -469,7 +579,7 @@ function parseTaskLifecycle(message: Record<string, unknown>): TaskLifecycleFact
   const summary = normalizeSummary(message.summary);
   // `task_notification` carries the final result/summary; `task_progress` carries progress summary.
   const resultPreview = normalizeResultPreview(message.result ?? message.summary);
-  const workflowProgress = parseWorkflowProgress(message.workflow_progress);
+  const workflowProgress = parseWorkflowProgress(message.workflow_progress, report);
   const startedAt = readNumber(message.start_time);
   const completedAt = readNumber(message.end_time) ?? readNumber(patch?.end_time);
 
@@ -494,6 +604,50 @@ function parseTaskLifecycle(message: Record<string, unknown>): TaskLifecycleFact
 }
 
 const WORKFLOW_JOURNAL_WRAPPER_TYPE = 'happier_workflow_journal';
+const WORKFLOW_RUN_RECORD_WRAPPER_TYPE = 'happier_workflow_run_record';
+
+/**
+ * Feed the run's DURABLE record — `<sessionRoot>/workflows/<runId>.json` — through the same
+ * `workflow_progress[]` fact path the live `task_progress` stream takes. One fact path, two sources.
+ *
+ * It carries what no other on-disk artifact does: each agent's `phaseIndex`/`phaseTitle`, the label
+ * the script assigned it, its model, tokens, tool calls and duration. Crucially the runtime records
+ * runtime VALUES, so a computed `label:` expression — which no scrape of the script source can
+ * resolve — reads back correctly here.
+ *
+ * It is written ONCE, at terminal state. So this backfills a finished run; it can never drive a live
+ * roster, and it cannot resolve an interrupted one.
+ */
+export function createClaudeWorkflowRunRecordWrapper(params: Readonly<{
+  workflowToolUseId: string;
+  workflowProgress: unknown;
+  sourceSessionId?: string | undefined;
+}>): Record<string, unknown> {
+  return {
+    type: WORKFLOW_RUN_RECORD_WRAPPER_TYPE,
+    workflowToolUseId: params.workflowToolUseId,
+    workflowProgress: params.workflowProgress,
+    ...(params.sourceSessionId ? { sourceSessionId: params.sourceSessionId } : {}),
+  };
+}
+
+function parseWorkflowRunRecordFact(
+  message: Record<string, unknown>,
+  report?: ClaudeWorkflowShapeDriftReporter,
+): WorkflowRunRecordFact | null {
+  if (message.type !== WORKFLOW_RUN_RECORD_WRAPPER_TYPE) return null;
+  const workflowToolUseId = readString(message.workflowToolUseId);
+  if (!workflowToolUseId) return null;
+  const workflowProgress = parseWorkflowProgress(message.workflowProgress, report);
+  if (!workflowProgress?.length) return null;
+  const sourceSessionId = readString(message.sourceSessionId) ?? undefined;
+  return {
+    kind: 'workflow-run-record',
+    workflowToolUseId,
+    workflowProgress,
+    ...(sourceSessionId ? { sourceSessionId } : {}),
+  };
+}
 
 export function createClaudeWorkflowJournalWrapper(params: Readonly<{
   workflowToolUseId: string;
@@ -567,17 +721,26 @@ function parseWorkflowJournalFact(message: Record<string, unknown>): WorkflowJou
 /**
  * Parse one raw transcript value into a workflow fact, or `null` if it carries no workflow-relevant
  * signal. The tracker decides routing/promotion; this only extracts shapes.
+ *
+ * `report` is optional because most callers only ask this parser a yes/no question about one shape
+ * (the journal follower asks "is this a workflow launch?"). The caller that folds the whole live
+ * stream — the tracker — supplies it, so an undeclared field going unreadable is observed exactly
+ * once rather than at every reader that happens to look.
  */
-export function parseClaudeWorkflowFact(value: unknown): ClaudeWorkflowFact | null {
+export function parseClaudeWorkflowFact(
+  value: unknown,
+  report?: ClaudeWorkflowShapeDriftReporter,
+): ClaudeWorkflowFact | null {
   const message = readRecord(value);
   if (!message) return null;
   return (
     parseTaskNotificationEnvelope(message)
     ?? parseWorkflowJournalFact(message)
+    ?? parseWorkflowRunRecordFact(message, report)
     ?? parseSuccessfulWorkflowTaskStopResult(message)
     ?? parseWorkflowLaunchResult(message)
     ?? parseWorkflowToolUse(message)
-    ?? parseTaskLifecycle(message)
+    ?? parseTaskLifecycle(message, report)
     ?? parseSubagentUse(message)
   );
 }

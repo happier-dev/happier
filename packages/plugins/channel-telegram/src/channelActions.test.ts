@@ -43,6 +43,8 @@ function coreContext(
   options: Readonly<{
     signal?: AbortSignal;
     materialize?: PluginInvocationContext['services']['connectedAccounts']['materialize'];
+    /** The real runtime always provides host Actions; tests may observe them. */
+    executeAction?: PluginInvocationContext['services']['actions']['execute'];
   }> = {},
 ): PluginInvocationContext {
   return {
@@ -63,7 +65,15 @@ function coreContext(
         })),
       },
       http,
-    } as PluginInvocationContext['services'],
+      actions: {
+        execute: options.executeAction ?? vi.fn(async (actionId: string) => {
+          if (actionId === 'automation.event.sources.list') {
+            return { kind: 'page', definitions: [], nextCursor: null, revision: '1' };
+          }
+          throw new Error(`unexpected host action ${actionId}`);
+        }),
+      },
+    } as unknown as PluginInvocationContext['services'],
   };
 }
 

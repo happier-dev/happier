@@ -30,15 +30,13 @@ import {
  * renderer under another source's entry.
  *
  * **It deliberately decodes nothing.** The snapshot also carries each
- * contributor's `descriptor` as raw JSON, and that is the one value
- * `SDK-EU-26` reserves: the approved SDK owner keeps the cold UI
- * descriptor/surface *semantic* projection amendment-required, and
- * `PLAN.md` §5.2 forbids a UI-local decoder or raw-snapshot branch in this
- * shell. So the source's own display name and its name for this entry kind are
- * absent from the header until that producer lands, rather than parsed here
- * behind the owner's back. Comparing published identity strings is not that
- * projection — no meaning is decoded, and every value compared is one the host
- * already published as identity.
+ * contributor's `descriptor`, and the semantic projection of that value belongs
+ * to the SDK owner, which parses it with this target's own schema during cold
+ * admission. The one reader that needs the result — §2.2's common header — gets
+ * it typed from `entries/read-detail-v1`, never from a branch on snapshot bytes
+ * here. Comparing published identity strings is not that projection: no meaning
+ * is decoded, and every value compared is one the host already published as
+ * identity.
  */
 
 export type TriageSourceDetailContributionLookupV1 =

@@ -6,8 +6,13 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
-import { TELEGRAM_BOT_CREDENTIAL_PURPOSE, TELEGRAM_CHANNEL_ACTION_IDS } from './constants.js';
+import {
+  TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
+  TELEGRAM_BOT_CREDENTIAL_PURPOSE,
+  TELEGRAM_CHANNEL_ACTION_IDS,
+} from './constants.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
+import { TELEGRAM_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
 const telegramAccount = Object.freeze({
   service: Object.freeze({ pluginId: 'happier.channel.telegram', localId: 'telegram-bot' }),
@@ -62,6 +67,29 @@ function coreContext(services: Pick<PluginInvocationContext['services'], 'connec
 }
 
 describe('Telegram Channel plugin activation', () => {
+  it('withholds the Automation Event declaration while its occurrence has no durable obligation', () => {
+    // Telegram `getUpdates` is single-consumer: one `offset` confirms and
+    // discards every earlier update for every reader of the bot. The admission
+    // in `automationEvents.ts` runs inline inside that shared cycle and holds
+    // no durable obligation, so declaring the Event would force a catalog or
+    // admission outage to choose between losing occurrences and stalling
+    // Channel delivery for every user of the bot. Nothing may arm a Telegram
+    // chat source until the occurrence is persisted in the canonical Channels
+    // ingress store before the shared offset advances.
+    expect(PLUGIN_MANIFEST.contributes.events ?? []).toEqual([]);
+    // Withholding the declaration is not deleting the work: the setup Action
+    // stays declared so the retained admission keeps its one registered entry
+    // point, and it is reachable only from the `plugin` surface, so nothing
+    // user-facing can offer an Automation that cannot exist.
+    expect(PLUGIN_MANIFEST.contributes.actions.find(
+      ({ id }) => id === TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
+    )).toMatchObject({ surfaces: ['plugin'] });
+  });
+
+  it('publishes the complete plugin-owned UI translation bundles', () => {
+    expect(PLUGIN_MANIFEST.contributes.ui.translations).toEqual(TELEGRAM_UI_TRANSLATION_BUNDLES);
+  });
+
   it('serializes one checkpointed-pull provider contribution through arbitrary local Actions', async () => {
     assertConversationProviderContributionV1(PLUGIN_MANIFEST);
     const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
@@ -74,6 +102,7 @@ describe('Telegram Channel plugin activation', () => {
       }]);
       expect(testkit.registrations()).toEqual([
         ...Object.values(TELEGRAM_CHANNEL_ACTION_IDS).map((localId) => ({ family: 'actions' as const, localId })),
+        { family: 'actions' as const, localId: TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID },
         { family: 'connectedAccountDescriptors', localId: 'telegram-bot' },
       ]);
 
@@ -119,6 +148,7 @@ describe('Telegram Channel plugin activation', () => {
         { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.endpointResolve },
         { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll },
         { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver },
+        { family: 'actions', localId: TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID },
         { family: 'connectedAccountDescriptors', localId: 'telegram-bot' },
       ]);
 
@@ -167,7 +197,11 @@ describe('Telegram Channel plugin activation', () => {
         TELEGRAM_CHANNEL_ACTION_IDS.endpointResolve,
         TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll,
         TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver,
+        TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
       ]);
+      for (const action of PLUGIN_MANIFEST.contributes.actions) {
+        expect(action.execution).toEqual({ target: 'daemon' });
+      }
       const setupRemediation = PLUGIN_MANIFEST.contributes.actions.find(
         ({ id }) => id === TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation,
       );

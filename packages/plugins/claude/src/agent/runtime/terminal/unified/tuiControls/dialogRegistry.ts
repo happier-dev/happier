@@ -43,15 +43,22 @@ export type ClaudeUnifiedDialogOwnerRegistration = Readonly<{
   controlKeys: readonly ('model' | 'reasoningEffort' | 'launchOption')[];
 }>;
 
+export type ClaudeUnifiedDialogSettingMutation =
+  | Readonly<{
+    settingId: 'claudeUnifiedTerminalWorkspaceTrust';
+    value: 'always_trust_happier_workspaces' | 'always_reject_happier_workspaces';
+  }>
+  | Readonly<{
+    settingId: 'claudeUnifiedTerminalResumeChoice';
+    value: 'resume_from_summary' | 'resume_full_session';
+  }>;
+
 export type ClaudeUnifiedDialogOption = Readonly<{
   choice: string;
   label: string;
   description: string;
   answer: Readonly<{ kind: 'literal'; text: string }>;
-  settingMutation?: Readonly<{
-    settingId: 'claudeUnifiedTerminalWorkspaceTrust';
-    value: 'always_trust_happier_workspaces' | 'always_reject_happier_workspaces';
-  }> | undefined;
+  settingMutation?: ClaudeUnifiedDialogSettingMutation | undefined;
 }>;
 
 export type ClaudeUnifiedRecognizedDialogRegistryEntry = Readonly<{
@@ -156,10 +163,12 @@ export const CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY: readonly ClaudeUnifiedRe
     requestReason: 'claude_unified_terminal_usage_limit',
     header: 'Claude usage limit',
     question: 'Claude reached a usage limit. What should it do?',
-    options: () => [
-      option('wait_for_reset', 'Stop and wait', 'Wait for Claude\'s usage limit to reset.', '1'),
-      option('upgrade_plan', 'Upgrade plan', 'Continue with Claude\'s plan-upgrade flow.', '2'),
-    ],
+    options: (state) => state.visibleNumberedDialog?.options.map((dialogOption) => option(
+      dialogOption.choice,
+      dialogOption.label,
+      'Send this exact visible choice to Claude.',
+      dialogOption.choice,
+    )) ?? [],
   },
   {
     dialogId: 'resume_choice',
@@ -176,7 +185,27 @@ export const CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY: readonly ClaudeUnifiedRe
     question: 'How should Claude resume this session?',
     options: () => [
       option('resume_from_summary', 'Resume from summary', 'Resume faster from Claude\'s saved summary.', '1'),
+      option(
+        'always_resume_from_summary',
+        'Always resume from summary',
+        'Resume from Claude\'s saved summary now and remember this choice.',
+        '1',
+        {
+          settingId: 'claudeUnifiedTerminalResumeChoice',
+          value: 'resume_from_summary',
+        },
+      ),
       option('resume_full_session', 'Resume full session', 'Load the full session context.', '2'),
+      option(
+        'always_resume_full_session',
+        'Always resume full session',
+        'Load the full session context now and remember this choice.',
+        '2',
+        {
+          settingId: 'claudeUnifiedTerminalResumeChoice',
+          value: 'resume_full_session',
+        },
+      ),
     ],
   },
   {
@@ -446,8 +475,13 @@ export function resolveClaudeUnifiedDialogSelectedOption(
 ): ClaudeUnifiedDialogOption | null {
   if (!answers) return null;
   for (const value of Object.values(answers)) {
-    if (typeof value !== 'string') continue;
-    const normalized = normalizeChoiceToken(value);
+    const answer = typeof value === 'string'
+      ? value
+      : Array.isArray(value) && value.length === 1 && typeof value[0] === 'string'
+        ? value[0]
+        : null;
+    if (answer === null) continue;
+    const normalized = normalizeChoiceToken(answer);
     const match = options.find((candidate) => (
       normalizeChoiceToken(candidate.choice) === normalized
       || normalizeChoiceToken(candidate.label) === normalized

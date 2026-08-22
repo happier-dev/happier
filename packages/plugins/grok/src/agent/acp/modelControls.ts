@@ -4,6 +4,13 @@ type JsonObject = Readonly<Record<string, unknown>>;
 
 export type GrokModelOption = AgentAcpModelOption;
 
+const FALLBACK_REASONING_EFFORT_OPTIONS = Object.freeze([
+  { value: 'xhigh', name: 'XHigh', description: 'Extended reasoning' },
+  { value: 'high', name: 'High', description: 'Heavy reasoning' },
+  { value: 'medium', name: 'Medium', description: 'Balanced reasoning' },
+  { value: 'low', name: 'Low', description: 'Faster, lighter reasoning' },
+]);
+
 function asRecord(value: unknown): JsonObject | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as JsonObject
@@ -27,18 +34,29 @@ function projectReasoningEffort(rawModel: JsonObject): GrokModelOption | null {
   const metadata = asRecord(Object.hasOwn(rawModel, '_meta') ? rawModel._meta : rawModel.meta);
   if (metadata?.supportsReasoningEffort !== true) return null;
   const currentValue = readExactNonblankString(metadata.reasoningEffort);
-  if (!currentValue || !Array.isArray(metadata.reasoningEfforts) || metadata.reasoningEfforts.length === 0) return null;
+  if (!currentValue) return null;
 
   const seen = new Set<string>();
   const options: Array<{ value: string; name: string; description?: string }> = [];
-  for (const rawOption of metadata.reasoningEfforts) {
+  const providerOptions = Array.isArray(metadata.reasoningEfforts) ? metadata.reasoningEfforts : [];
+  let providerOptionsValid = providerOptions.length > 0;
+  for (const rawOption of providerOptions) {
     const option = asRecord(rawOption);
     const value = readExactNonblankString(option?.value);
-    if (!option || !value || seen.has(value)) return null;
+    if (!option || !value || seen.has(value)) {
+      providerOptionsValid = false;
+      break;
+    }
     const providerLabel = option.label === undefined ? defaultEffortLabel(value) : readExactNonblankString(option.label);
-    if (!providerLabel) return null;
+    if (!providerLabel) {
+      providerOptionsValid = false;
+      break;
+    }
     const description = option.description === undefined ? null : readExactNonblankString(option.description);
-    if (option.description !== undefined && !description) return null;
+    if (option.description !== undefined && !description) {
+      providerOptionsValid = false;
+      break;
+    }
     seen.add(value);
     options.push({
       value,
@@ -46,13 +64,14 @@ function projectReasoningEffort(rawModel: JsonObject): GrokModelOption | null {
       ...(description ? { description } : {}),
     });
   }
-  if (!seen.has(currentValue)) return null;
+  const resolvedOptions = providerOptionsValid ? options : FALLBACK_REASONING_EFFORT_OPTIONS;
+  if (!resolvedOptions.some((option) => option.value === currentValue)) return null;
   return {
     id: 'reasoning_effort',
     name: 'Reasoning effort',
     type: 'select',
     currentValue,
-    options: Object.freeze(options),
+    options: Object.freeze([...resolvedOptions]),
   };
 }
 
@@ -63,6 +82,21 @@ export function projectGrokModelOptions(
   const retained = normalizedModelOptions.filter((option) => option.id !== 'reasoning_effort');
   const effort = projectReasoningEffort(rawModel);
   return effort ? Object.freeze([...retained, effort]) : Object.freeze(retained);
+}
+
+export function projectGrokModel(rawModel: JsonObject, normalizedModel: AgentAcpModel): AgentAcpModel {
+  const metadata = asRecord(Object.hasOwn(rawModel, '_meta') ? rawModel._meta : rawModel.meta);
+  const totalContextTokens = metadata?.totalContextTokens;
+  const modelOptions = projectGrokModelOptions(rawModel, normalizedModel.modelOptions ?? []);
+  return {
+    ...normalizedModel,
+    ...(typeof totalContextTokens === 'number'
+      && Number.isInteger(totalContextTokens)
+      && totalContextTokens > 0
+      ? { contextWindowTokens: totalContextTokens }
+      : {}),
+    ...(modelOptions.length > 0 ? { modelOptions } : {}),
+  };
 }
 
 export function resolveGrokReasoningEffortUpdate(params: Readonly<{

@@ -145,15 +145,25 @@ export function createCurrentConversationConnectionFixture(input: Readonly<{
  * authority and must name the exact predecessor poll basis and authority epoch
  * at which its request was frozen.
  */
-export function createCurrentConversationPendingOldTransportStopFixture(input: Readonly<{
+/**
+ * Threads the caller's exact stop reason through the result. Transfer and
+ * delete transitions each accept only their own reason, so widening it here
+ * would hand every caller a value none of those owners can consume.
+ */
+export function createCurrentConversationPendingOldTransportStopFixture<
+  TReason extends 'transfer' | 'delete',
+>(input: Readonly<{
   connectionId: string;
   authority: ConversationConnectionFixtureAuthority;
   predecessorCheckpointedPollInvocation: ConversationCheckpointedPollInvocationBasisV1;
   authorityEpoch: number;
-  reason: 'transfer' | 'delete';
+  reason: TReason;
   overlapSafety: ConversationConnectionOverlapSafetyV1;
   acceptedPossibleLoss?: boolean;
-}>): ConversationPendingOldTransportStopV1 {
+}>): Omit<ConversationPendingOldTransportStopV1, 'stopRequest'> & Readonly<{
+  stopRequest: Omit<ConversationPendingOldTransportStopV1['stopRequest'], 'reason'>
+    & Readonly<{ reason: TReason }>;
+}> {
   return {
     predecessorCheckpointedPollInvocation: input.predecessorCheckpointedPollInvocation,
     transportOrigin: input.authority.transportOrigin,

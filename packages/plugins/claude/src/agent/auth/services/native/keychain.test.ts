@@ -1,4 +1,4 @@
-import type { PluginExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -31,7 +31,7 @@ function createExecFixture(params: Readonly<{
     stdout?: string;
     stderr?: string;
     exitCode?: number | null;
-}> = {}): PluginExecService {
+}> = {}): ExecService {
     return {
         systemTools: {
             resolve: vi.fn(async () => ({
@@ -40,7 +40,7 @@ function createExecFixture(params: Readonly<{
             })),
         },
         run: vi.fn(async () => createProcessResult(params)),
-    } as unknown as PluginExecService;
+    } as unknown as ExecService;
 }
 
 describe('keychain', () => {
@@ -155,7 +155,7 @@ describe('keychain', () => {
         const exec = {
             ...createExecFixture(),
             run,
-        } as unknown as PluginExecService;
+        } as unknown as ExecService;
 
         await expect(sweepStaleClaudeCodeMacOsKeychainCredentials({
             exec,

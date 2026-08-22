@@ -1,4 +1,6 @@
+import type { ProtocolComposerRefV1 } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import { isHostCancellation } from '../hostCancellation.js';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageEntryRefV1, TriageSourceInstanceRefV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -20,6 +22,12 @@ import {
  * rather than a rule someone has to keep remembering. A denied or cancelled
  * open therefore leaves the draft byte-identical without doing anything to
  * preserve it.
+ *
+ * `originComposer` does not weaken that: it is the mounted scope's ADDRESS, not
+ * a handle. It travels inside the strict launch input — the one carrier PEP
+ * `03d1` §17.8 allows — so the opened page can later reach back to the draft the
+ * reader was writing in through the canonical Composer owner, which stays the
+ * sole authority on whether that scope is still live.
  *
  * Triage owns no router here. `subPath: ''` is the destination's host-owned
  * page root; the opened page's own selection reducer and location writer
@@ -52,15 +60,13 @@ export type TriageEntryDetailOpenRequestV1 = Readonly<{
     hostApi: Pick<PluginUiHostApi, 'openSurface'>;
     entryRef: TriageEntryRefV1;
     sourceInstance: TriageSourceInstanceRefV1;
+    /**
+     * The exact scope this mount was stamped with, on a Composer-origin open.
+     * Absent for an app-origin open; never inferred from `current()`/`active()`.
+     */
+    originComposer?: ProtocolComposerRefV1;
     signal?: AbortSignal;
 }>;
-
-function isCancellation(error: unknown, signal: AbortSignal | undefined): boolean {
-    if (signal?.aborted === true) return true;
-    if (error instanceof DOMException) return error.name === 'AbortError';
-    const code = (error as Readonly<{ code?: unknown }> | null)?.code;
-    return code === 'cancelled' || code === 'aborted';
-}
 
 function hostErrorCode(error: unknown): string | undefined {
     const code = (error as Readonly<{ code?: unknown }> | null)?.code;
@@ -78,6 +84,7 @@ export async function openTriageEntryDetails(
     const parsed = parseTriageEntryDetailLaunchInput(buildTriageEntryDetailLaunchInput({
         entryRef: request.entryRef,
         sourceInstance: request.sourceInstance,
+        originComposer: request.originComposer,
     }));
     if (parsed.status !== 'valid') return { kind: 'refused', reason: 'invalidSelection' };
 
@@ -91,7 +98,7 @@ export async function openTriageEntryDetails(
         // A fail-closed destination resolver is correct behaviour, not something
         // to route around: there is no second opener to try, and the invoked
         // control has to be able to say why nothing happened.
-        if (isCancellation(error, request.signal)) return { kind: 'cancelled' };
+        if (isHostCancellation(error, request.signal)) return { kind: 'cancelled' };
         const code = hostErrorCode(error);
         return code === undefined
             ? { kind: 'refused', reason: 'unavailable' }

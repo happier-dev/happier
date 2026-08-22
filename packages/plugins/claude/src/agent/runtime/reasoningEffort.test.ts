@@ -75,7 +75,23 @@ describe('buildClaudeEffortCliArgs', () => {
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-5', effort: 'xhigh' })).toEqual(['--effort', 'xhigh']);
   });
 
+  it('projects all five Sonnet 5 effort levels with high as the default', () => {
+    expect(resolveClaudeEffortLevelsForModelId('claude-sonnet-5'))
+      .toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-sonnet-5', effort: 'high' })).toEqual([]);
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-sonnet-5', effort: 'xhigh' }))
+      .toEqual(['--effort', 'xhigh']);
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-sonnet-5', effort: 'max' }))
+      .toEqual(['--effort', 'max']);
+  });
 
+  it('projects all five Mythos 5 effort levels with high as the default', () => {
+    expect(resolveClaudeEffortLevelsForModelId('claude-mythos-5'))
+      .toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-mythos-5', effort: 'high' })).toEqual([]);
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-mythos-5', effort: 'xhigh' }))
+      .toEqual(['--effort', 'xhigh']);
+  });
 
   it('treats Opus 4.8 high as the default effort', () => {
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-4-8', effort: 'high' })).toEqual([]);
@@ -163,6 +179,8 @@ describe('isClaudeUltracodeSupportedModelId', () => {
     expect(isClaudeUltracodeSupportedModelId('claude-fable-5')).toBe(true);
     expect(isClaudeUltracodeSupportedModelId('claude-fable-5[1m]')).toBe(true);
     expect(isClaudeUltracodeSupportedModelId('claude-opus-5')).toBe(true);
+    expect(isClaudeUltracodeSupportedModelId('claude-sonnet-5')).toBe(true);
+    expect(isClaudeUltracodeSupportedModelId('claude-mythos-5')).toBe(true);
     expect(isClaudeUltracodeSupportedModelId('claude-opus-4-8')).toBe(true);
     expect(isClaudeUltracodeSupportedModelId('claude-opus-4-7')).toBe(true);
     expect(isClaudeUltracodeSupportedModelId('opus')).toBe(true);

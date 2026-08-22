@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { CURRENT_FLAGSHIP_CLAUDE_MODEL_ID } from '@happier-dev/plugin-sdk/agents';
 
 import {
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -96,7 +95,7 @@ describe('buildPiRpcArgs', () => {
     ]);
   });
 
-  it('uses the public shared Claude policy for Anthropic connected-service startup', () => {
+  it('starts the Anthropic connected service on Pi\'s own pinned Claude model', () => {
     expect(buildPiRpcArgs({
       permissionMode: 'default',
       connectedServiceId: 'anthropic',
@@ -104,7 +103,7 @@ describe('buildPiRpcArgs', () => {
       '--provider',
       'anthropic',
       '--model',
-      CURRENT_FLAGSHIP_CLAUDE_MODEL_ID,
+      'claude-opus-5',
       '--models',
       'anthropic/*',
       '--mode',

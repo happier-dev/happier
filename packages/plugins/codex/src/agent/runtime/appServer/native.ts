@@ -127,7 +127,7 @@ export function createCodexNativeAppServerRuntimeHost(params: Readonly<{
           ...(accountId ? { 'ChatGPT-Account-Id': accountId } : {}),
           Accept: 'application/json',
         },
-        redirect: 'follow',
+        redirect: 'error',
       }, { signal: params.context.signal });
       if (response.status < 200 || response.status >= 300) {
         throw new Error(`OpenAI reset-credit fetch failed (${response.status})`);
@@ -650,6 +650,7 @@ export async function openCodexNativeAppServerSession(
       exec: context.services.exec,
       cwd: request.cwd,
       processEnv,
+      forkOnly: true,
       signal: context.signal,
     });
     try {

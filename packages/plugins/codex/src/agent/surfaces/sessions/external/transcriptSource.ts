@@ -37,33 +37,7 @@ import {
   type CodexExternalSessionInvocationBounds,
 } from './invocationBounds.js';
 
-type CodexBackwardStreamVectorCursorV1 = Readonly<{
-  v: 1;
-  kind: 'codexBackwardStreamVector';
-  streams: readonly Readonly<{
-    fileRelPath: string;
-    endOffsetBytes: number;
-  }>[];
-}>;
-
-type PredecessorCodexBackwardStreamVectorCursorV3 = Readonly<{
-  v: 3;
-  kind: 'codexBackwardStreamVector';
-  streams: CodexBackwardStreamVectorCursorV1['streams'];
-}>;
-
-type CodexBackwardGenerationStreamVectorCursorV4 = Readonly<{
-  v: 4;
-  kind: 'codexBackwardStreamVector';
-  sourceGeneration: readonly string[];
-  streams: readonly Readonly<{
-    fileRelPath: string;
-    physicalGeneration: string;
-    endOffsetBytes: number;
-  }>[];
-}>;
-
-type CodexBackwardAnchoredGenerationStreamVectorCursorV5 = Readonly<{
+type CodexBackwardCursor = Readonly<{
   v: 5;
   kind: 'codexBackwardStreamVector';
   sourceGeneration: readonly string[];
@@ -75,19 +49,6 @@ type CodexBackwardAnchoredGenerationStreamVectorCursorV5 = Readonly<{
     contentFingerprint: string;
   }>[];
 }>;
-
-type ReleasedCodexBackwardMergedCursorV2 = Readonly<{
-  v: 2;
-  kind: 'codexBackwardMerged';
-  endIndex: number;
-}>;
-
-type CodexBackwardCursor =
-  | CodexBackwardStreamVectorCursorV1
-  | ReleasedCodexBackwardMergedCursorV2
-  | PredecessorCodexBackwardStreamVectorCursorV3
-  | CodexBackwardGenerationStreamVectorCursorV4
-  | CodexBackwardAnchoredGenerationStreamVectorCursorV5;
 
 type CodexExternalTranscriptRolloutStream = CodexRolloutFile & Readonly<{
   sidechainId: string | null;
@@ -127,54 +88,6 @@ export function decodeCodexExternalBackwardCursor(raw: string | undefined): Code
     const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     const record = parsed as Record<string, unknown>;
-    if (record.v === 2 && record.kind === 'codexBackwardMerged') {
-      const endIndex = typeof record.endIndex === 'number' && Number.isFinite(record.endIndex)
-        ? Math.trunc(record.endIndex)
-        : NaN;
-      return Number.isFinite(endIndex) && endIndex >= 0
-        ? { v: 2, kind: 'codexBackwardMerged', endIndex }
-        : null;
-    }
-    if (record.v === 4 && record.kind === 'codexBackwardStreamVector') {
-      const sourceGeneration = Array.isArray(record.sourceGeneration)
-        ? record.sourceGeneration.filter(
-          (entry): entry is string => typeof entry === 'string' && entry.length > 0,
-        )
-        : [];
-      if (
-        !Array.isArray(record.sourceGeneration)
-        || sourceGeneration.length !== record.sourceGeneration.length
-      ) {
-        return null;
-      }
-      const rawStreams = Array.isArray(record.streams) ? record.streams : [];
-      const streams = rawStreams.flatMap((entry) => {
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
-        const streamRecord = entry as Record<string, unknown>;
-        const fileRelPath = typeof streamRecord.fileRelPath === 'string'
-          ? streamRecord.fileRelPath.trim()
-          : '';
-        const physicalGeneration =
-          typeof streamRecord.physicalGeneration === 'string'
-            ? streamRecord.physicalGeneration.trim()
-            : '';
-        const endOffsetBytes =
-          typeof streamRecord.endOffsetBytes === 'number'
-            && Number.isFinite(streamRecord.endOffsetBytes)
-            ? Math.max(0, Math.trunc(streamRecord.endOffsetBytes))
-            : NaN;
-        return fileRelPath && physicalGeneration && Number.isFinite(endOffsetBytes)
-          ? [{ fileRelPath, physicalGeneration, endOffsetBytes }]
-          : [];
-      });
-      if (streams.length !== rawStreams.length) return null;
-      return {
-        v: 4,
-        kind: 'codexBackwardStreamVector',
-        sourceGeneration,
-        streams,
-      };
-    }
     if (record.v === 5 && record.kind === 'codexBackwardStreamVector') {
       const sourceGeneration = Array.isArray(record.sourceGeneration)
         ? record.sourceGeneration.filter(
@@ -244,19 +157,7 @@ export function decodeCodexExternalBackwardCursor(raw: string | undefined): Code
         streams,
       };
     }
-    if ((record.v !== 1 && record.v !== 3) || record.kind !== 'codexBackwardStreamVector') return null;
-    const streams = Array.isArray(record.streams) ? record.streams.flatMap((entry) => {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
-      const streamRecord = entry as Record<string, unknown>;
-      const fileRelPath = typeof streamRecord.fileRelPath === 'string' ? streamRecord.fileRelPath.trim() : '';
-      const endOffsetBytes = typeof streamRecord.endOffsetBytes === 'number' && Number.isFinite(streamRecord.endOffsetBytes)
-        ? Math.max(0, Math.trunc(streamRecord.endOffsetBytes))
-        : NaN;
-      return fileRelPath && Number.isFinite(endOffsetBytes) ? [{ fileRelPath, endOffsetBytes }] : [];
-    }) : [];
-    return record.v === 3
-      ? { v: 3, kind: 'codexBackwardStreamVector', streams }
-      : { v: 1, kind: 'codexBackwardStreamVector', streams };
+    return null;
   } catch {
     return null;
   }
@@ -893,7 +794,6 @@ export async function pageCodexExternalSessionTranscript(params: Readonly<{
   const decoded = decodeCodexExternalBackwardCursor(params.cursor);
   if (params.cursor && (
     !decoded
-    || decoded.v !== 5
     || !resourceIdentity
     || !resourceIdentityMatches(decoded, resourceIdentity)
     || !await contentAnchorsMatch(decoded.streams, streams, params)
@@ -907,7 +807,7 @@ export async function pageCodexExternalSessionTranscript(params: Readonly<{
     };
   }
   const endByStreamId = new Map(
-    decoded?.v === 5
+    decoded
       ? decoded.streams.map((entry) => [entry.fileRelPath, entry.endOffsetBytes] as const)
       : [],
   );
@@ -1116,7 +1016,6 @@ export async function readAfterCodexExternalSessionTranscript(params: Readonly<{
       truncated: true,
       readAfterOutcome:
         releasedCursor?.kind === 'codexForwardStreamVector'
-        && (releasedCursor.v === 6 || releasedCursor.v === 7)
           ? 'source_replaced'
           : 'gap_or_cursor_expired',
     };
@@ -1157,9 +1056,10 @@ export async function readAfterCodexExternalSessionTranscript(params: Readonly<{
     || !await resourceIdentityCanContinue(decoded, resourceIdentity, streams, params)
     || !priorContentIsContinuous
   ) {
-    // Released v1-v3, predecessor v5, and current-worktree v4/v6 cursors do not
-    // carry this leaf's complete generation plus content anchor. Reset
-    // explicitly rather than guessing offsets against rewritten rollout bytes.
+    // A released v2 app-server cursor carries no rollout generation or content
+    // anchor at all, and every unrecognized cursor already decoded to null
+    // above. Reset explicitly rather than guessing offsets against rewritten
+    // rollout bytes.
     return {
       items: [],
       nextCursor: tailCursor,
@@ -1169,11 +1069,9 @@ export async function readAfterCodexExternalSessionTranscript(params: Readonly<{
       // items; the shared follow owner may then perform its bounded canonical
       // reread. Any prior-stream/source change remains terminal replacement.
       readAfterOutcome:
-        membershipGrowthIsContinuous
+        membershipGrowthIsContinuous || decoded.v !== 7
           ? 'gap_or_cursor_expired'
-          : decoded.v === 6 || decoded.v === 7
-          ? 'source_replaced'
-          : 'gap_or_cursor_expired',
+          : 'source_replaced',
     };
   }
   const progressByStreamId = new Map(

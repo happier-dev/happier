@@ -1,20 +1,20 @@
-import type {
-  ForgePagedEventV1,
-  ForgePagedPageV1,
-  ForgePagedStateV1,
-} from '@happier-dev/scm-forge-adapter';
 import {
-  forgePagedInitialState,
-  forgePagedReducer,
-} from '@happier-dev/scm-forge-adapter';
-import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+  triagePagedPanelInitialState,
+  triagePagedPanelReducer,
+} from '@happier-dev/triage-protocol/v1';
+import type {
+  TriagePagedPanelEventV1,
+  TriagePagedPanelPageV1,
+  TriagePagedPanelStateV1,
+  TriageSourceFailureV1,
+} from '@happier-dev/triage-protocol/v1';
 
 /**
- * Azure DevOps's binding of the shared forge paged-panel state machine.
+ * Azure DevOps's binding of the shared Triage paged-panel state machine.
  *
  * The four-outcome rule — provider-stated empty, first read failed, later page
- * failed over visible rows, walk stopped short — is one product contract across
- * all four forges and lives at `@happier-dev/scm-forge-adapter`. What Azure
+ * failed over visible rows, walk stopped short — is one product contract for every
+ * Triage source and lives at `@happier-dev/triage-protocol`. What Azure
  * supplies is its own vocabulary, and here that is another deliberate absence:
  * Azure publishes no short-walk reason. A collection continues while it issues a
  * position and ends when it does not, so `TIncomplete` is `never`.
@@ -31,19 +31,19 @@ export type AzureReadStateV1<T> =
   | Readonly<{ kind: 'ready'; value: T }>
   | Readonly<{ kind: 'unavailable'; failure: TriageSourceFailureV1 }>;
 
-export type AzurePagedStateV1<TRow> = ForgePagedStateV1<TRow, TriageSourceFailureV1>;
-export type AzurePagedPageV1<TRow> = ForgePagedPageV1<TRow>;
-export type AzurePagedEventV1<TRow> = ForgePagedEventV1<TRow, TriageSourceFailureV1>;
+export type AzurePagedStateV1<TRow> = TriagePagedPanelStateV1<TRow, TriageSourceFailureV1>;
+export type AzurePagedPageV1<TRow> = TriagePagedPanelPageV1<TRow>;
+export type AzurePagedEventV1<TRow> = TriagePagedPanelEventV1<TRow, TriageSourceFailureV1>;
 
 export function azurePagedInitialState<TRow>(): AzurePagedStateV1<TRow> {
-  return forgePagedInitialState<TRow, TriageSourceFailureV1>();
+  return triagePagedPanelInitialState<TRow, TriageSourceFailureV1>();
 }
 
 export function azurePagedReducer<TRow>(
   state: AzurePagedStateV1<TRow>,
   event: AzurePagedEventV1<TRow>,
 ): AzurePagedStateV1<TRow> {
-  return forgePagedReducer<TRow, TriageSourceFailureV1>(state, event);
+  return triagePagedPanelReducer<TRow, TriageSourceFailureV1>(state, event);
 }
 
 /**

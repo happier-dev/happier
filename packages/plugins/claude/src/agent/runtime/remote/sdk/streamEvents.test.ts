@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    hasClaudeAgentSdkDefinitiveSubagentRuntimeAuthFailureEvidence,
     hasClaudeAgentSdkRuntimeAuthFailureEvidence,
     readClaudeAgentSdkResultFailure,
     readClaudeAgentSdkResultText,
@@ -63,6 +64,25 @@ describe('Claude remote SDK stream event helpers', () => {
             isSidechain: false,
             parent_tool_use_id: null,
         })).toBe(true);
+
+        expect(hasClaudeAgentSdkDefinitiveSubagentRuntimeAuthFailureEvidence({
+            ...incidentMessage,
+            isSidechain: true,
+        })).toBe(false);
+        expect(hasClaudeAgentSdkDefinitiveSubagentRuntimeAuthFailureEvidence({
+            ...incidentMessage,
+            isSidechain: true,
+            message: {
+                content: [{ type: 'text', text: 'Please run /login · API Error: 401 OAuth access token has been revoked.' }],
+            },
+        })).toBe(true);
+        expect(hasClaudeAgentSdkDefinitiveSubagentRuntimeAuthFailureEvidence({
+            type: 'assistant',
+            isSidechain: true,
+            message: {
+                content: [{ type: 'text', text: 'The logs mention: API Error: 401 OAuth access token has been revoked.' }],
+            },
+        })).toBe(false);
     });
 
     it('keeps provider-owned Claude SDK 401 retries out of runtime auth evidence', () => {

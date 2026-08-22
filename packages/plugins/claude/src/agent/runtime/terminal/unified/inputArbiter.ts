@@ -2,7 +2,7 @@ import type {
   TerminalInputInjectionResult,
   TerminalInputReadinessV1,
   TerminalPromptInput,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { classifyClaudeUnifiedInjectionFailure } from './injectionFailurePolicy.js';
 import { normalizeClaudeUnifiedPromptIdentityText } from './promptIdentity.js';
@@ -776,8 +776,22 @@ export function createClaudeUnifiedInputArbiter(
         return;
       }
       if (action.kind === 'await_provider_confirmation') {
-        pendingProviderAcceptance = { input, acceptance };
+        pendingProviderAcceptance = injectionAcceptance;
+        providerAcceptanceUnknownTerminalInputs.add(input);
         headInputState = 'awaiting_provider_acceptance';
+        return;
+      }
+      if (action.kind === 'handoff_ambiguous_failure') {
+        queue.shift();
+        retryAttempt = 0;
+        lastDeferredReason = null;
+        headInputState = queue.length > 0 ? 'queued' : null;
+        options.onInjectionFailure?.({
+          input,
+          result,
+          failureState: 'failed_ambiguous',
+        });
+        if (queue.length > 0) continue;
         return;
       }
 

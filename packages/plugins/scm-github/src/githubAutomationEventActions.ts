@@ -1,4 +1,4 @@
-import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type {
   PluginActionInputById,
   PluginActionResultById,
@@ -137,7 +137,7 @@ function throwTypedRepositoryResolutionFailure(error: unknown, signal: AbortSign
         : 'GitHub could not resolve the selected repository.',
     });
   }
-  if (error instanceof PluginError) throw error;
+  if (isPluginError(error)) throw error;
   if (error instanceof RangeError) {
     throw new PluginError({
       code: 'github_repository_response_invalid',

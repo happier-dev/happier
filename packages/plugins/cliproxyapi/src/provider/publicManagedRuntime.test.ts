@@ -538,6 +538,7 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
 
     const purposeConfiguration = JSON.stringify({
       v: 2,
+      modelListEnabled: true,
       purposes: managedPurposeFamilies.filter((family) => (
         boundPurposes.includes(family.purpose)
       )).map((family) => ({
@@ -723,5 +724,11 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
     } finally {
       await rm(root, { force: true, recursive: true });
     }
-  }, 120_000);
+    // Budget derived from the two measured terms, not from a round number. `buildManagedWrapper`
+    // compiles the Go wrapper in-test: 85.9 s against an empty GOCACHE and 37.7 s against a warm
+    // one, both under heavy parallel load. Driving the built wrapper for both families adds ~30 s.
+    // Worst measured total is therefore ~116 s, which the previous 120 s budget cleared by 3% --
+    // it timed out under parallel suite load and passed at 115.2 s alone. 300 s is ~2.6x the
+    // worst measurement and still bounds a wrapper that never becomes ready.
+  }, 300_000);
 });

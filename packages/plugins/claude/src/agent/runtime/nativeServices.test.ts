@@ -1,54 +1,50 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { createClaudeUnifiedWorkflowRuntime } from '../workflowRecords/workflowRuntime.js';
 import {
   createClaudeNativeAgentSdkContext,
   createClaudeNativeGoalWorkStatePublisher,
 } from './nativeServices.js';
 
-function workflowToolUse(): unknown {
-  return {
-    type: 'assistant',
-    session_id: 'claude-session-native',
-    uuid: 'uuid-workflow-native',
-    message: {
-      content: [{
-        type: 'tool_use',
-        id: 'workflow-native',
-        name: 'Workflow',
-        input: {
-          script: "export const meta = { name: 'Native workflow', phases: [{ title: 'Implement' }] }",
-        },
-      }],
-    },
-  };
-}
-
-function workflowProgress(): unknown {
-  return {
-    type: 'system',
-    subtype: 'task_progress',
-    task_id: 'workflow-task-native',
-    tool_use_id: 'workflow-native',
-    task_type: 'local_workflow',
-    session_id: 'claude-session-native',
-    workflow_progress: [
-      { type: 'workflow_phase', index: 1, title: 'Implement' },
-      {
-        type: 'workflow_agent',
-        agentId: 'agent-native',
-        label: 'coder',
-        phaseIndex: 1,
-        phaseTitle: 'Implement',
-        state: 'running',
-      },
-    ],
-    uuid: 'uuid-progress-native',
-  };
-}
-
 describe('createClaudeNativeAgentSdkContext', () => {
+  it('preserves execution-run tool proposals when no session interception scope exists', async () => {
+    const context = {
+      services: {
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        exec: {},
+      },
+    };
+    const native = createClaudeNativeAgentSdkContext(context as never);
+
+    await expect(native.agentRuntime.toolExecution.before({
+      callId: 'execution-run-call-1',
+      name: 'Read',
+      input: { path: 'README.md' },
+    })).resolves.toEqual({
+      status: 'continue',
+      input: { path: 'README.md' },
+    });
+  });
+
+  it('does not discover workflow records outside a private native-session invocation', async () => {
+    const context = {
+      services: {
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        exec: {},
+      },
+      session: { services: {} },
+    } as unknown as AgentSessionRuntimeContext;
+    const native = createClaudeNativeAgentSdkContext(context, context);
+
+    await expect(native.sessions.current.writeSystemRecord({
+      namespace: 'activity',
+      kind: 'workflow_run.v1',
+      localId: 'workflow:outside-invocation',
+      payload: {},
+      reason: 'outside invocation must not receive a host port',
+    })).rejects.toThrow(/unavailable outside a native session invocation/u);
+  });
+
   it('publishes Claude goal snapshots through the declared native work-state source', async () => {
     const publish = vi.fn(async () => ({
       status: 'applied' as const,
@@ -98,126 +94,118 @@ describe('createClaudeNativeAgentSdkContext', () => {
     });
   });
 
-  it('delegates typed workflow records through the session-scoped native system-record service', async () => {
-    const write = vi.fn(async () => undefined);
-    const read = vi.fn(async () => ({
-      namespace: 'activity' as const,
-      kind: 'workflow_run.v1' as const,
-      localId: 'workflow:wf-1',
-      payload: {
-        v: 1,
-        projectionVersion: 1,
-        runId: 'wf-1',
-        backendId: 'claude',
-        agentId: 'claude',
-        title: 'Implement feature',
-        status: 'active',
-        recordRevision: '7',
-        updatedAt: 1,
-        totalAgents: 0,
-        completedAgents: 0,
-        phases: [],
-        agents: [],
-      },
-    }));
+  it('refreshes runtime auth through the common Session handle without forwarding Agent identity', async () => {
+    const refreshRuntimeAuth = vi.fn(async () => ({ status: 'refreshed' as const }));
+    const controller = new AbortController();
     const context = {
       services: {
-        logger: {
-          debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        exec: {},
+        sessions: {
+          current: { auth: { services: { refreshRuntimeAuth } } },
         },
+      },
+      session: { services: {} },
+    } as unknown as AgentSessionRuntimeContext;
+    const native = createClaudeNativeAgentSdkContext(context, context);
+
+    await expect(native.sessions.current.auth.services.refreshRuntimeAuth({
+      agentId: 'claude',
+      serviceId: 'anthropic',
+      reason: 'credential_expired',
+    }, { signal: controller.signal })).resolves.toEqual({ status: 'refreshed' });
+
+    expect(refreshRuntimeAuth).toHaveBeenCalledWith({
+      serviceId: 'anthropic',
+      reason: 'credential_expired',
+    }, { signal: controller.signal });
+  });
+
+  it('awaits the native host durable transcript publisher for typed Session events', async () => {
+    const publishSessionEvent = vi.fn(async () => ({ status: 'custodied' as const }));
+    const context = {
+      services: {
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
         exec: {},
       },
       session: {
         services: {
-          systemRecords: { write, read },
+          transcripts: {
+            fileFollow: {},
+            publishSessionEvent,
+          },
         },
       },
     } as unknown as AgentSessionRuntimeContext;
     const native = createClaudeNativeAgentSdkContext(context, context);
-    const request = {
-      namespace: 'activity' as const,
-      kind: 'workflow_run.v1' as const,
-      localId: 'workflow:wf-1',
-      payload: (await read()).payload,
-      reason: 'claude_workflow_activity_record',
+    const event = {
+      type: 'terminal-composer-draft-blocked' as const,
+      reason: 'idle_draft_guard' as const,
+      stateAtMs: 123,
+      message: 'Clear the terminal draft.',
     };
 
-    await expect(native.sessions.current.writeSystemRecord?.(request)).resolves.toBeUndefined();
-    await expect(native.sessions.current.readSystemRecord?.({
-      namespace: 'activity',
-      localId: 'workflow:wf-1',
-      reason: 'claude_workflow_activity_record_readback',
-    })).resolves.toMatchObject({ kind: 'workflow_run.v1', localId: 'workflow:wf-1' });
-
-    expect(write).toHaveBeenCalledWith({
-      namespace: 'activity',
-      kind: 'workflow_run.v1',
-      localId: 'workflow:wf-1',
-      payload: request.payload,
-    });
-    expect(read).toHaveBeenCalledWith({ namespace: 'activity', localId: 'workflow:wf-1' });
+    await expect(
+      native.agentRuntime.transcripts.publishSessionEvent(event),
+    ).resolves.toEqual({ status: 'custodied' });
+    expect(publishSessionEvent).toHaveBeenCalledWith(event);
   });
 
-  it('publishes the workflow record before its compact headline through the semantic native service', async () => {
-    const order: string[] = [];
-    const headlineWrites: unknown[] = [];
+  it('uses the bound public SessionHandle for host-owned workflow records', async () => {
+    const upsertSystemRecord = vi.fn(async () => ({
+      id: 'record-1',
+      address: {
+        owner: 'host' as const,
+        namespace: 'activity',
+        kind: 'workflow_run.v1',
+        localId: 'workflow:public-session-handle',
+      },
+      content: { v: 1 },
+      revision: 'ssr1.AAAAAQ',
+      createdAt: '2026-08-17T00:00:00.000Z',
+      updatedAt: '2026-08-17T00:00:00.000Z',
+    }));
+    const structuralWrite = vi.fn(async () => undefined);
     const context = {
       services: {
-        logger: {
-          debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
-        },
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
         exec: {},
+        sessions: {
+          current: {
+            upsertSystemRecord,
+            readSystemRecord: vi.fn(async () => null),
+          },
+        },
       },
       session: {
         services: {
-          systemRecords: {
-            write: vi.fn(async () => { order.push('record'); }),
-            read: vi.fn(async () => null),
-          },
-          workflowActivity: {
-            publishHeadline: vi.fn(async (headline: unknown) => {
-              order.push('headline');
-              headlineWrites.push(headline);
-            }),
-          },
+          systemRecords: { write: structuralWrite, read: vi.fn(async () => null) },
         },
       },
     } as unknown as AgentSessionRuntimeContext;
     const native = createClaudeNativeAgentSdkContext(context, context);
-    const runtime = createClaudeUnifiedWorkflowRuntime({
-      backendId: 'claude',
-      agentId: 'claude',
-      getCurrentClaudeSessionId: () => 'claude-session-native',
-      debounceMs: 0,
-      writeSystemRecord: async (request) => {
-        await native.sessions.current.writeSystemRecord?.(request);
-      },
-      writeMetadata: async (request) => {
-        await native.sessions.current.writeMetadata(request);
-      },
-    });
 
-    runtime.observeTranscriptMessage(workflowToolUse());
-    runtime.observeTranscriptMessage(workflowProgress());
-    await runtime.flush();
+    await expect(native.sessions.current.writeSystemRecord({
+      namespace: 'activity',
+      kind: 'workflow_run.v1',
+      localId: 'workflow:public-session-handle',
+      payload: { v: 1 },
+      reason: 'the public SessionHandle owns workflow-record custody',
+    })).resolves.toBeUndefined();
 
-    expect(order[0]).toBe('record');
-    expect(order[order.length - 1]).toBe('headline');
-    expect(headlineWrites.length).toBeGreaterThan(0);
-    expect(headlineWrites[headlineWrites.length - 1]).toMatchObject({
-      v: 1,
-      backendId: 'claude',
-      primaryRunId: 'workflow-native',
-      activeRuns: [{ runId: 'workflow-native', totalAgents: 1 }],
+    expect(upsertSystemRecord).toHaveBeenCalledWith({
+      address: {
+        owner: 'host',
+        namespace: 'activity',
+        kind: 'workflow_run.v1',
+        localId: 'workflow:public-session-handle',
+      },
+      content: { v: 1 },
     });
-    expect(JSON.stringify(headlineWrites[headlineWrites.length - 1])).not.toContain('workflow_agent');
-    for (let index = 0; index < order.length; index += 1) {
-      if (order[index] === 'headline') expect(order[index - 1]).toBe('record');
-    }
-    runtime.dispose();
+    expect(structuralWrite).not.toHaveBeenCalled();
   });
 
-  it('rejects every native legacy metadata request except the locked workflow headline projection', async () => {
+  it('exposes only the typed workflow headline owner, not a whole-metadata writer', async () => {
     const publishHeadline = vi.fn(async () => undefined);
     const context = {
       services: {
@@ -228,17 +216,27 @@ describe('createClaudeNativeAgentSdkContext', () => {
       },
       session: {
         services: {
-          workflowActivity: { publishHeadline },
+          workflowActivity: { publishHeadlines: publishHeadline },
         },
       },
     } as unknown as AgentSessionRuntimeContext;
     const native = createClaudeNativeAgentSdkContext(context, context);
 
-    await expect(native.sessions.current.writeMetadata({
-      kind: 'update',
-      handler: (current) => ({ ...current, arbitrary: true }),
-      reason: 'claude_arbitrary_metadata',
-    })).rejects.toThrow(/unavailable/u);
-    expect(publishHeadline).not.toHaveBeenCalled();
+    expect(native.sessions.current).not.toHaveProperty('writeMetadata');
+    await native.sessions.current.workflowActivity.publishHeadlines({
+      workflow: {
+        v: 1,
+        backendId: 'claude',
+        activeRuns: [],
+        updatedAt: 1,
+      },
+      agentActivity: {
+        v: 1,
+        backendId: 'claude',
+        activeEntries: [],
+        updatedAt: 1,
+      },
+    });
+    expect(publishHeadline).toHaveBeenCalledOnce();
   });
 });

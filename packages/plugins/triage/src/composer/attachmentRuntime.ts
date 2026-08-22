@@ -25,8 +25,10 @@ export function createTriageEntryAttachmentRuntime(): ComposerAttachmentRuntime 
             request: ComposerAttachmentResolveRequestV1,
             context: PluginInvocationContext,
         ): Promise<ComposerAttachmentResolveResultV1> {
+            const collections = bindCorpusCollections(requireTriageAccountStorage(context));
             return await resolveTriageEntryForDispatch({ attachments: request.attachments }, {
-                sourceInstances: bindCorpusCollections(requireTriageAccountStorage(context)).sourceInstances,
+                sourceInstances: collections.sourceInstances,
+                sessionLinks: collections.sessionLinks,
                 readAdmittedSources: async (options) => {
                     const observation = context.services.targetedContributions.observeForSelf(
                         TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,

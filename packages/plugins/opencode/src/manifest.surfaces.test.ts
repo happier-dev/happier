@@ -34,7 +34,9 @@ describe('OpenCode plugin session surface declarations', () => {
         instances: [
           { kind: 'default', constants: { managedEndpoint: true } },
           {
-            kind: 'agentSetting',
+            // An admitted operator-configured server REPLACES the managed
+            // default rather than materializing beside it.
+            kind: 'agentSettingOverride',
             settingId: 'opencodeServerBaseUrl',
             byServerIdSettingId: 'opencodeServerBaseUrlByServerIdV1',
             field: 'baseUrl',

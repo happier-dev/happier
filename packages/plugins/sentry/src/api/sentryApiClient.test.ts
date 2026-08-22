@@ -208,6 +208,53 @@ describe('createSentryApiClient', () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it('reports a HOST materialization refusal as authentication, not as an upstream outage', async () => {
+    // The aggregate exempts `authentication` from provider-pacing backoff exactly so a
+    // user who reconnects can press Refresh (`refresh/refreshEligibility.ts`). Reporting a
+    // revoked or removed account as `transient` puts a failure the user has already fixed
+    // into a wait of up to five minutes, and blames Sentry for it.
+    const { client, request } = await createClient({
+      materialize: vi.fn(async () => {
+        throw new Error('purpose no longer authorized for account-1');
+      }),
+    });
+
+    const outcome = await client.request({
+      url: issuesListPage1.request.url,
+      operation: 'issuesList',
+    });
+
+    expect(outcome.kind).toBe('failed');
+    if (outcome.kind !== 'failed') return;
+    expect(outcome.failure.class).toBe('authentication');
+    expect(request).not.toHaveBeenCalled();
+    // The host rejection can carry the very material it failed to deliver.
+    expect(JSON.stringify(outcome)).not.toContain('account-1');
+  });
+
+  it('reports a materialization cancelled by the invocation as cancellation', async () => {
+    const controller = new AbortController();
+    const { client } = await createClient({
+      signal: controller.signal,
+      materialize: vi.fn(async () => {
+        controller.abort();
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        throw error;
+      }),
+    });
+
+    const outcome = await client.request({
+      url: issuesListPage1.request.url,
+      operation: 'issuesList',
+    });
+
+    expect(outcome).toEqual({
+      kind: 'failed',
+      failure: { class: 'transient', code: 'sentry-cancelled' },
+    });
+  });
+
   it('never returns the token, a token prefix or a header dump in any outcome', async () => {
     const { client } = await createClient();
 

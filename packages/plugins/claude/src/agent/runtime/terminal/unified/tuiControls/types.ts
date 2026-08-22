@@ -1,4 +1,4 @@
-import type { TerminalControlPort } from '@happier-dev/agents';
+import type { TerminalControlPort } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { ClaudeTuiModeMarker } from '../screenState.js';
 import type {

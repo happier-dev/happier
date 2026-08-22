@@ -1,3 +1,5 @@
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+
 import {
   isGithubRateLimited,
   readGithubRateLimitRetryAfterMs,
@@ -38,14 +40,6 @@ import type { GithubTriageFailureV1 } from './types.js';
 /** GitHub names the permission a rejected request required on this response header. */
 const ACCEPTED_PERMISSIONS_HEADER = 'x-accepted-github-permissions';
 
-function readHeader(
-  headers: Readonly<Record<string, string>>,
-  name: string,
-): string | null {
-  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name);
-  return entry?.[1]?.trim() || null;
-}
-
 export function isGithubSuccessStatus(status: number): boolean {
   return status >= 200 && status < 300;
 }
@@ -73,7 +67,7 @@ export function classifyGithubResponseFailure(
   if (response.status === 403) {
     return Object.freeze({
       class: 'permission',
-      code: readHeader(response.headers, ACCEPTED_PERMISSIONS_HEADER) === null
+      code: readTriageResponseHeaderV1(response.headers, ACCEPTED_PERMISSIONS_HEADER) === null
         ? 'github_forbidden'
         : 'insufficient_scope',
     });
@@ -106,6 +100,11 @@ export function classifyGithubTransportFailure(error: unknown): GithubTriageFail
     : null;
   if (code === 'github_credential_unavailable' || code === 'github_credential_mismatch') {
     return Object.freeze({ class: 'authentication', code });
+  }
+  // The shared exact-account materializer converts an abort into a typed reason rather
+  // than letting the `AbortError` propagate, so cancellation reaches here as a code.
+  if (code === 'github_request_cancelled') {
+    return Object.freeze({ class: 'transient', code });
   }
   if (code !== null) {
     return Object.freeze({ class: 'unsupportedContract', code });

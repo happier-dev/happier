@@ -4,8 +4,8 @@ import {
   resolveSessionFileStoreDirs,
   scanJsonlSessionFile,
 } from '@happier-dev/plugin-sdk/sessions/file-stores';
+import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import { lstat, realpath } from 'node:fs/promises';
-import { isAbsolute, relative } from 'node:path';
 
 import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../../sessionFileStoreDescriptor.js';
 import { resolveOhMyPiAgentDir, type OhMyPiExternalSessionSource } from './source.js';
@@ -63,13 +63,9 @@ export async function resolveOhMyPiSessionFile(params: Readonly<{
     if (!requestedMetadata?.isFile() || requestedMetadata.isSymbolicLink()) return null;
     const requestedPath = await realpath(params.sessionFilePath).catch(() => null);
     if (!requestedPath) return null;
-    const isWithinRoot = sessionRoots.some((sessionRoot) => {
-      const pathFromRoot = relative(sessionRoot, requestedPath);
-      return pathFromRoot.length > 0
-        && !isAbsolute(pathFromRoot)
-        && pathFromRoot !== '..'
-        && !pathFromRoot.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`);
-    });
+    const isWithinRoot = sessionRoots.some((sessionRoot) => (
+      isCanonicalAbsolutePathInsideRoot(sessionRoot, requestedPath)
+    ));
     if (!isWithinRoot) return null;
     const descriptor = await scanJsonlSessionFile(requestedPath);
     return descriptor?.sessionId === params.remoteSessionId

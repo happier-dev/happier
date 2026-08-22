@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { usePluginHostApi } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
 
 import type { TriageListDisplayRowV1 } from './pinnedRows.js';
 import {
@@ -58,15 +58,30 @@ function intentFor(row: TriageListDisplayRowV1): TriagePinIntentV1 {
       };
 }
 
-function noticeFor(status: 'pinned' | 'unpinned' | 'conflict'): TriagePinNoticeV1 {
+function noticeFor(
+  status: 'pinned' | 'unpinned' | 'conflict',
+  text: (key: string, fallback?: string) => string,
+): TriagePinNoticeV1 {
   if (status === 'conflict') {
-    return { tone: 'warning', message: 'That pin was changed somewhere else. Showing the current state.' };
+    return {
+      tone: 'warning',
+      message: text(
+        'plugins.triage.surface.pin.conflict',
+        'That pin was changed somewhere else. Showing the current state.',
+      ),
+    };
   }
-  return { tone: 'success', message: status === 'pinned' ? 'Pinned' : 'Unpinned' };
+  return {
+    tone: 'success',
+    message: status === 'pinned'
+      ? text('plugins.triage.surface.pin.pinned', 'Pinned')
+      : text('plugins.triage.surface.pin.unpinned', 'Unpinned'),
+  };
 }
 
 export function useTriagePinnedEntries(): TriageMountedPinsV1 {
   const hostApi = usePluginHostApi();
+  const text = usePluginTranslation();
   const [pins, setPins] = useState<readonly TriagePinnedEntryV1[]>([]);
   const [more, setMore] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -88,9 +103,9 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
       if (signal.aborted || current !== generation.current) return;
       // The retained pins stay on screen: they are the last thing the Account
       // actually said, and blanking them would read as "you pinned nothing".
-      setUnavailableReason(UNAVAILABLE_REASON);
+      setUnavailableReason(text('plugins.triage.surface.pin.unavailable', UNAVAILABLE_REASON));
     }
-  }, [hostApi]);
+  }, [hostApi, text]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -106,15 +121,15 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
     void (async () => {
       try {
         const result = await submitTriagePin(hostApi, intentFor(row), { signal: controller.signal });
-        setNotice(noticeFor(result.status));
+        setNotice(noticeFor(result.status, text));
         await read(controller.signal);
       } catch {
-        setUnavailableReason(UNAVAILABLE_REASON);
+        setUnavailableReason(text('plugins.triage.surface.pin.unavailable', UNAVAILABLE_REASON));
       } finally {
         setBusyKey(null);
       }
     })();
-  }, [busyKey, hostApi, read, unavailableReason]);
+  }, [busyKey, hostApi, read, text, unavailableReason]);
 
   return useMemo(() => Object.freeze({
     pins,

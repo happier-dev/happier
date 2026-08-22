@@ -4,8 +4,8 @@ import {
     defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
-    defineProtocolString,
     defineProtocolUnion,
+    defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 import {
@@ -40,23 +40,29 @@ import { MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 } from '../settings/savedViews.js
  *
  * Every provider-derived member is composed from the published V1 schemas, so a
  * value that would be rejected on the source wire cannot be re-minted here.
+ *
+ * The three strings this Action declares itself are bounded the way the source
+ * wire bounds them: in UTF-8 bytes, which is what every published V1 maximum
+ * counts and what the derived worst-case encoded result is measured in. A
+ * length bound counts code points instead, so it would admit a value three or
+ * four times over the byte maximum a source is refused for sending.
  */
 
-const triageIdentifier = defineProtocolString({
+const triageIdentifier = defineProtocolUtf8String({
+    maxUtf8Bytes: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     minLength: 1,
-    maxLength: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 });
 
-const triageCollisionScope = defineProtocolString({
+const triageCollisionScope = defineProtocolUtf8String({
+    maxUtf8Bytes: MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1,
     minLength: 1,
-    maxLength: MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1,
     pattern: TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1,
 });
 
-const triageText = defineProtocolString({
+const triageText = defineProtocolUtf8String({
+    maxUtf8Bytes: MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     minLength: 1,
-    maxLength: MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 });
 

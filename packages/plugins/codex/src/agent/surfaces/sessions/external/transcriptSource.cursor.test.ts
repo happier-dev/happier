@@ -464,7 +464,7 @@ describe('Codex external transcript cursor generations', () => {
     }
   });
 
-  it('explicitly resets provenance-pinned released and predecessor forward cursors, then writes anchored v7', async () => {
+  it('explicitly resets provenance-pinned released and unrecognized forward cursors, then writes anchored v7', async () => {
     const fixture = await createFixture();
     try {
       await writeFile(
@@ -518,6 +518,8 @@ describe('Codex external transcript cursor generations', () => {
         maxItems: 20,
       });
       if (!currentPage.tailCursor) throw new Error('Expected a current Codex tail cursor');
+      // An unrecognized cursor version must never have its offsets reused,
+      // even when every other field matches the current anchored vector.
       const priorUnanchoredCursor = encodeCursorRecord({
         ...decodeCursorRecord(currentPage.tailCursor),
         v: 6,
@@ -532,14 +534,14 @@ describe('Codex external transcript cursor generations', () => {
         nextCursor: expect.any(String),
         tailCursor: expect.any(String),
         truncated: true,
-        readAfterOutcome: 'source_replaced',
+        readAfterOutcome: 'gap_or_cursor_expired',
       });
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
   });
 
-  it('explicitly resets provenance-pinned released and predecessor backward cursors, then writes anchored v5', async () => {
+  it('explicitly resets provenance-pinned released and unrecognized backward cursors, then writes anchored v5', async () => {
     const fixture = await createFixture();
     try {
       await writeFile(

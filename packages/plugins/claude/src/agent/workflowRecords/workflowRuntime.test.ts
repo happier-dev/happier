@@ -3,22 +3,25 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-  SessionMetadataWriteRequestV1,
   SessionSystemRecordReadRequestV1,
   SessionSystemRecordReadResultV1,
   SessionSystemRecordWriteRequestV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/agents';
+import {
+  SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY,
+  type SessionActivityHeadlineBundleV1,
+} from '@happier-dev/plugin-sdk/sessions/work-state';
 import type {
   AgentTranscriptFileFollowHandle as TranscriptFileFollowHandleV1,
   AgentTranscriptFileFollowInput as TranscriptFileFollowInputV1,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createClaudeUnifiedWorkflowRuntime } from './workflowRuntime.js';
 
 /**
  * Integration test for the live bind: observing a workflow transcript row through the runtime must
- * write a durable `activity/workflow_run.v1` system record FIRST (host `writeSystemRecord`) and the
- * compact `sessionWorkflowActivityHeadlineV1` metadata headline SECOND (`writeMetadata`).
+ * write a durable `activity/workflow_run.v1` system record FIRST through the private host port and the
+ * compact session-activity headlines SECOND (`publishHeadlines`, one write, both keys).
  */
 
 function workflowToolUse(params: Readonly<{ id: string; name: string }>): unknown {
@@ -146,12 +149,19 @@ function subagentTask(params: Readonly<{ id: string; parentToolUseId: string }>)
 
 type SystemRecordCall = SessionSystemRecordWriteRequestV1;
 
-function applyMetadataWrite(
+/**
+ * Mirrors the host's merge exactly: ONE metadata mutation carrying BOTH keys. Applying them
+ * separately here would let a runtime that publishes twice look correct in this harness.
+ */
+function applyHeadlines(
   current: Record<string, unknown>,
-  request: SessionMetadataWriteRequestV1,
+  bundle: SessionActivityHeadlineBundleV1,
 ): Record<string, unknown> {
-  if (request.kind === 'set') return { ...request.metadata };
-  return { ...request.handler(current) };
+  return {
+    ...current,
+    sessionWorkflowActivityHeadlineV1: bundle.workflow,
+    [SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY]: bundle.agentActivity,
+  };
 }
 
 async function waitForCondition(predicate: () => boolean): Promise<void> {
@@ -173,7 +183,7 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
       getCurrentClaudeSessionId: () => 'claude-session-1',
       debounceMs: 0,
       writeSystemRecord: async () => {},
-      writeMetadata: async () => {},
+      publishHeadlines: async () => {},
       onProviderTaskActivity: async (activity) => {
         providerTaskActivities.push(activity);
       },
@@ -205,7 +215,7 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
       getCurrentClaudeSessionId: () => 'claude-session-1',
       debounceMs: 0,
       writeSystemRecord: async () => {},
-      writeMetadata: async () => {},
+      publishHeadlines: async () => {},
       onProviderTaskActivity: async (activity) => {
         providerTaskActivities.push(activity);
       },
@@ -247,9 +257,9 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
         order.push(`record:${request.localId}`);
         systemRecordCalls.push(request);
       },
-      writeMetadata: async (request) => {
+      publishHeadlines: async (bundle) => {
         order.push('headline');
-        metadata = applyMetadataWrite(metadata, request);
+        metadata = applyHeadlines(metadata, bundle);
       },
     });
 
@@ -271,6 +281,7 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
     expect(lastRecord.namespace).toBe('activity');
     expect(lastRecord.kind).toBe('workflow_run.v1');
     expect(lastRecord.localId).toContain('wf-tool-1');
+    expect(lastRecord.payload).toMatchObject({ runId: 'wf-tool-1' });
 
     // The headline rides the LOCKED metadata key and carries no full workflow detail (count-only).
     const headline = metadata.sessionWorkflowActivityHeadlineV1 as
@@ -321,7 +332,7 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
       writeSystemRecord: async (request) => {
         systemRecordCalls.push(request);
       },
-      writeMetadata: async () => {},
+      publishHeadlines: async () => {},
     });
 
     runtime.observeTranscriptMessage(workflowToolUse({ id: 'wf-tool-1', name: 'Implement Feature' }));
@@ -358,8 +369,8 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
         systemRecordLocalIds.push(request.localId);
         throw new Error('transient record write failure');
       },
-      writeMetadata: async (request) => {
-        metadata = applyMetadataWrite(metadata, request);
+      publishHeadlines: async (bundle) => {
+        metadata = applyHeadlines(metadata, bundle);
       },
     });
 
@@ -393,12 +404,12 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
       writeSystemRecord: async (request) => {
         systemRecordCalls.push(request);
       },
-      writeMetadata: async (request) => {
+      publishHeadlines: async (bundle) => {
         headlineAttempts += 1;
         if (headlineAttempts === 1) {
           throw new Error('headline metadata unavailable');
         }
-        metadata = applyMetadataWrite(metadata, request);
+        metadata = applyHeadlines(metadata, bundle);
       },
     });
 
@@ -435,7 +446,7 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
       getCurrentClaudeSessionId: () => 'claude-session-1',
       debounceMs: 0,
       writeSystemRecord: async () => {},
-      writeMetadata: async () => {},
+      publishHeadlines: async () => {},
     });
 
     runtime.observeTranscriptMessage(workflowToolUse({ id: 'wf-tool-1', name: 'Implement Feature' }));
@@ -454,7 +465,7 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
       getCurrentClaudeSessionId: () => 'claude-session-1',
       debounceMs: 0,
       writeSystemRecord: async () => {},
-      writeMetadata: async () => {},
+      publishHeadlines: async () => {},
     });
 
     runtime.observeTranscriptMessage(workflowToolUse({ id: 'wf-tool-1', name: 'Implement Feature' }));
@@ -479,9 +490,9 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
         order.push('record');
         systemRecordCalls.push(request);
       },
-      writeMetadata: async (request) => {
+      publishHeadlines: async (bundle) => {
         order.push('headline');
-        metadata = applyMetadataWrite(metadata, request);
+        metadata = applyHeadlines(metadata, bundle);
       },
     });
 
@@ -526,7 +537,7 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
       writeSystemRecord: async (request) => {
         systemRecordCalls.push(request);
       },
-      writeMetadata: async () => {},
+      publishHeadlines: async () => {},
     });
     runtime.observeTranscriptMessage(workflowToolUse({ id: 'wf_resumed', name: 'Resumed workflow' }));
 
@@ -573,7 +584,7 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
       writeSystemRecord: async (request) => {
         systemRecordCalls.push(request);
       },
-      writeMetadata: async () => {},
+      publishHeadlines: async () => {},
     });
 
     await waitForCondition(() => systemRecordCalls.length > 0);
@@ -584,6 +595,80 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
       statusReason: 'interrupted',
       totalAgents: 5,
       completedAgents: 2,
+    });
+    runtime.dispose();
+  });
+
+  it('rebuilds the orphaned agents the agent-activity headline names, not just the run', async () => {
+    // The workflow headline is count-only: reconciled from it alone, a crash-residue run came back
+    // `stopped` with zero agents, so every agent orphaned by the killed process either vanished from
+    // the roster or kept spinning in the metadata copy this republish was supposed to replace. The
+    // agent-activity headline published beside it in the SAME metadata write does carry identities.
+    const systemRecordCalls: SystemRecordCall[] = [];
+    const runtime = createClaudeUnifiedWorkflowRuntime({
+      backendId: 'claude',
+      agentId: 'claude',
+      getCurrentClaudeSessionId: () => 'claude-session-1',
+      initialWorkflowActivityHeadline: {
+        v: 1,
+        backendId: 'claude',
+        updatedAt: 1000,
+        primaryRunId: 'wf_stale',
+        activeRuns: [{
+          runId: 'wf_stale',
+          title: 'Stale workflow',
+          status: 'active',
+          workflowToolUseId: 'toolu_stale',
+          updatedAt: 1000,
+          recordRevision: '4',
+          recordUpdatedAt: 1000,
+          totalAgents: 2,
+          completedAgents: 0,
+        }],
+      },
+      initialAgentActivityHeadline: {
+        v: 1,
+        backendId: 'claude',
+        updatedAt: 1000,
+        activeEntries: [
+          {
+            entryId: 'workflow_run:wf_stale',
+            kind: 'workflow_run',
+            title: 'Stale workflow',
+            status: 'running',
+            updatedAt: 1000,
+            runId: 'wf_stale',
+          },
+          {
+            entryId: 'workflow_agent:wf_stale:workflow-agent%3A1',
+            kind: 'workflow_agent',
+            title: 'researcher',
+            status: 'running',
+            updatedAt: 900,
+            startedAt: 800,
+            runId: 'wf_stale',
+            parentId: 'workflow_run:wf_stale',
+          },
+        ],
+      },
+      startupReconcileGraceMs: 0,
+      debounceMs: 60_000,
+      writeSystemRecord: async (request) => {
+        systemRecordCalls.push(request);
+      },
+      publishHeadlines: async () => {},
+    });
+
+    await waitForCondition(() => systemRecordCalls.length > 0);
+
+    const payload = systemRecordCalls.at(-1)?.payload;
+    expect(payload).toMatchObject({ runId: 'wf_stale', status: 'stopped', statusReason: 'interrupted' });
+    expect(payload?.agents).toHaveLength(1);
+    expect(payload?.agents?.[0]).toMatchObject({
+      id: 'workflow-agent:1',
+      title: 'researcher',
+      status: 'cancelled',
+      startedAt: 800,
     });
     runtime.dispose();
   });
@@ -622,12 +707,12 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
       startupReconcileGraceMs: 0,
       debounceMs: 5,
       writeSystemRecord: async () => {},
-      writeMetadata: async (request) => {
+      publishHeadlines: async (bundle) => {
         metadataAttempts += 1;
         if (metadataAttempts === 1) {
           throw new Error('startup headline unavailable');
         }
-        metadata = applyMetadataWrite(metadata, request);
+        metadata = applyHeadlines(metadata, bundle);
       },
       logError: (message, error) => {
         loggedErrors.push({ message, error });
@@ -710,7 +795,7 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
       writeSystemRecord: async (request) => {
         systemRecordCalls.push(request);
       },
-      writeMetadata: async () => {},
+      publishHeadlines: async () => {},
       fileFollow,
     });
 
@@ -734,6 +819,125 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
       ],
     });
     expect(JSON.stringify(lastRecord?.payload)).toContain('Alpha lane finished.');
+    runtime.dispose();
+  });
+
+  it('dates a historically replayed workflow row from the record, never from the replay clock', async () => {
+    const systemRecordCalls: SystemRecordCall[] = [];
+    const recordInstantIso = '2026-01-02T03:04:05.000Z';
+    const recordInstantMs = Date.parse(recordInstantIso);
+    const runtime = createClaudeUnifiedWorkflowRuntime({
+      backendId: 'claude',
+      agentId: 'claude',
+      getCurrentClaudeSessionId: () => 'claude-session-1',
+      debounceMs: 0,
+      writeSystemRecord: async (request) => {
+        systemRecordCalls.push(request);
+      },
+      publishHeadlines: async () => {},
+    });
+
+    // Replay is the ONLY source of this run's start, so re-stamping it with the wall clock dates
+    // every resumed workflow at the moment the process happened to reopen the transcript.
+    runtime.observeTranscriptMessage(
+      {
+        ...(workflowToolUse({ id: 'wf-tool-1', name: 'Implement Feature' }) as Record<string, unknown>),
+        timestamp: recordInstantIso,
+      },
+      { historicalReplay: true },
+    );
+    // A live row on the same run is what publishes the snapshot the replay built.
+    runtime.observeTranscriptMessage(taskProgress({
+      toolUseId: 'wf-tool-1',
+      workflowProgress: TWO_AGENT_PROGRESS,
+    }));
+    await runtime.flush();
+
+    const lastRecord = systemRecordCalls[systemRecordCalls.length - 1];
+    expect(lastRecord?.payload).toMatchObject({
+      runId: 'wf-tool-1',
+      startedAt: recordInstantMs,
+    });
+    runtime.dispose();
+  });
+
+  it('resolves runs and agents still active when the owning query shuts down', async () => {
+    const systemRecordCalls: SystemRecordCall[] = [];
+    const runtime = createClaudeUnifiedWorkflowRuntime({
+      backendId: 'claude',
+      agentId: 'claude',
+      getCurrentClaudeSessionId: () => 'claude-session-1',
+      debounceMs: 0,
+      writeSystemRecord: async (request) => {
+        systemRecordCalls.push(request);
+      },
+      publishHeadlines: async () => {},
+    });
+
+    runtime.observeTranscriptMessage(workflowToolUse({ id: 'wf-tool-1', name: 'Implement Feature' }));
+    runtime.observeTranscriptMessage(taskProgress({
+      toolUseId: 'wf-tool-1',
+      workflowProgress: TWO_AGENT_PROGRESS,
+    }));
+    await runtime.flush();
+    expect(systemRecordCalls[systemRecordCalls.length - 1]?.payload).toMatchObject({
+      runId: 'wf-tool-1',
+      status: 'active',
+    });
+
+    // The query's teardown is the OBSERVED death of everything inside it. Without this the run and
+    // its agents stay painted live until some later process's reconcile grace expires — i.e. forever
+    // if the session is never reopened.
+    runtime.finalizeInterruptedActivityOnShutdown();
+    await runtime.flush();
+
+    expect(systemRecordCalls[systemRecordCalls.length - 1]?.payload).toMatchObject({
+      runId: 'wf-tool-1',
+      status: 'stopped',
+      statusReason: 'interrupted',
+      agents: [
+        { id: 'agent_1', status: 'complete' },
+        { id: 'agent_2', status: 'cancelled' },
+      ],
+    });
+    runtime.dispose();
+  });
+
+  it('cannot re-open a run that already reached a terminal status when the query shuts down', async () => {
+    const systemRecordCalls: SystemRecordCall[] = [];
+    const runtime = createClaudeUnifiedWorkflowRuntime({
+      backendId: 'claude',
+      agentId: 'claude',
+      getCurrentClaudeSessionId: () => 'claude-session-1',
+      debounceMs: 0,
+      writeSystemRecord: async (request) => {
+        systemRecordCalls.push(request);
+      },
+      publishHeadlines: async () => {},
+    });
+
+    runtime.observeTranscriptMessage(workflowToolUse({ id: 'wf-tool-1', name: 'Implement Feature' }));
+    runtime.observeTranscriptMessage(workflowLaunchResult({
+      toolUseId: 'wf-tool-1',
+      transcriptDir: '/tmp/happier-workflow/wf-terminal',
+    }));
+    runtime.observeTranscriptMessage(successfulWorkflowTaskStop('workflow-task-1'));
+    await runtime.flush();
+    const terminalPayload = systemRecordCalls[systemRecordCalls.length - 1]?.payload;
+    // `cancelled`, not `stopped` — so a finalizer that overwrote the run's own outcome with the
+    // shutdown's `stopped`/`interrupted` verdict would be visible here.
+    expect(terminalPayload).toMatchObject({ runId: 'wf-tool-1', status: 'cancelled' });
+
+    runtime.finalizeInterruptedActivityOnShutdown();
+    await runtime.flush();
+
+    expect(systemRecordCalls[systemRecordCalls.length - 1]?.payload).toMatchObject({
+      runId: 'wf-tool-1',
+      status: 'cancelled',
+    });
+    expect(systemRecordCalls[systemRecordCalls.length - 1]?.payload).not.toMatchObject({
+      statusReason: 'interrupted',
+    });
     runtime.dispose();
   });
 });

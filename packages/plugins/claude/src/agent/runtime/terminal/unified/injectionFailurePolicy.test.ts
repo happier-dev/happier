@@ -60,7 +60,7 @@ describe('classifyClaudeUnifiedInjectionFailure', () => {
     });
   });
 
-  it('keeps possible-effect failures in custody without manufacturing a deadline', () => {
+  it('hands possible-effect failures to the host without blocking later injection', () => {
     expect(classifyClaudeUnifiedInjectionFailure(failedInjection({
       phase: 'after_write_before_enter',
       duplicateRisk: 'possible',
@@ -69,7 +69,7 @@ describe('classifyClaudeUnifiedInjectionFailure', () => {
       retryLimit: 3,
       retryBaseDelayMs: -1,
     })).toEqual({
-      kind: 'await_provider_confirmation',
+      kind: 'handoff_ambiguous_failure',
     });
   });
 });

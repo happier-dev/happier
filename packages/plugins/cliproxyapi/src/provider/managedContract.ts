@@ -18,13 +18,15 @@ export const CLIPROXYAPI_MANAGED_SERVICE = Object.freeze({
   healthPath: '/healthz',
 });
 
+export const CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED = true;
+
 export const CLIPROXYAPI_MANAGED_HEALTH_IDENTITY = Object.freeze({
   responseMaxBytes: 16 * 1024,
   v: 1,
   contractVersion: 'happier.cliproxyapi-managed/v1',
   sdkVersion: 'v7.2.95',
   wrapperBuildVersionMaxBytes: 128,
-  modelListEnabled: true,
+  modelListEnabled: CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED,
 });
 
 /**

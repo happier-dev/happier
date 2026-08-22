@@ -473,24 +473,40 @@ export async function listCodexSessionCandidates(params: Readonly<{
     });
   }
   const offset = decodeCodexExternalSessionIndexCursor(params.cursor);
+  // The index cursor has exactly ONE owner: the canonical merged ordering paged
+  // by `pageMergedCandidateOrdering` below. The app-server half of that ordering
+  // is unpaged, so the rollout half must supply the ordering PREFIX `[0, offset +
+  // limit)` rather than a page of its own. Applying the offset to both halves
+  // dropped the first `offset` merged rows and could answer a valid cursor with
+  // an empty page under that same cursor — a browse that reports "no more
+  // results" while candidates remain.
   const rolloutListing = await listRolloutCandidates({
     source: params.source,
     activeServerDir: params.activeServerDir,
     env: params.env,
-    offset,
-    limit,
+    offset: 0,
+    limit: offset + limit,
     searchTerm,
     searchMode: params.searchMode,
     signal: params.signal,
     deadlineAtMs: params.deadlineAtMs,
   });
+  const pageMergedCandidateOrdering = (
+    ordering: readonly CodexExternalSessionCandidate[],
+    totalCount: number,
+  ) => {
+    const candidates = ordering.slice(offset, offset + limit);
+    const nextOffset = offset + candidates.length;
+    return {
+      candidates: [...candidates],
+      nextCursor: nextOffset < totalCount ? encodeCodexExternalSessionIndexCursor(nextOffset) : null,
+    };
+  };
   const exactRolloutIdMatch = Boolean(searchTerm)
     && rolloutListing.candidates.some((candidate) => candidate.remoteSessionId.toLowerCase() === searchTerm)
     && rolloutListing.searchIncomplete !== true;
   if (exactRolloutIdMatch) {
-    const nextOffset = offset + rolloutListing.candidates.length;
-    const nextCursor = nextOffset < rolloutListing.totalCount ? encodeCodexExternalSessionIndexCursor(nextOffset) : null;
-    return { candidates: rolloutListing.candidates, nextCursor };
+    return pageMergedCandidateOrdering(rolloutListing.candidates, rolloutListing.totalCount);
   }
 
   const appServerListing = params.searchMode === 'fast'
@@ -510,11 +526,8 @@ export async function listCodexSessionCandidates(params: Readonly<{
   throwIfCodexExternalSessionInvocationStopped(params);
   const searchIncomplete = rolloutListing.searchIncomplete === true || appServerListing.incomplete === true;
   if (appServerListing.candidates.length === 0) {
-    const nextOffset = offset + rolloutListing.candidates.length;
-    const nextCursor = nextOffset < rolloutListing.totalCount ? encodeCodexExternalSessionIndexCursor(nextOffset) : null;
     return {
-      candidates: rolloutListing.candidates,
-      nextCursor,
+      ...pageMergedCandidateOrdering(rolloutListing.candidates, rolloutListing.totalCount),
       ...(searchIncomplete ? { searchIncomplete: true } : {}),
     };
   }
@@ -523,18 +536,14 @@ export async function listCodexSessionCandidates(params: Readonly<{
   for (const candidate of appServerListing.candidates) merged.set(candidate.remoteSessionId, candidate);
   for (const candidate of rolloutListing.candidates) merged.set(candidate.remoteSessionId, candidate);
 
-  const candidates = Array.from(merged.values())
+  const ordering = Array.from(merged.values())
     .sort((left, right) =>
       right.updatedAtMs - left.updatedAtMs
       || compareCodexRolloutCandidateCodeUnits(left.remoteSessionId, right.remoteSessionId),
-    )
-    .slice(offset, offset + limit);
-  const totalCount = Math.max(rolloutListing.totalCount, merged.size);
-  const nextOffset = offset + candidates.length;
+    );
 
   return {
-    candidates,
-    nextCursor: nextOffset < totalCount ? encodeCodexExternalSessionIndexCursor(nextOffset) : null,
+    ...pageMergedCandidateOrdering(ordering, Math.max(rolloutListing.totalCount, merged.size)),
     ...(searchIncomplete ? { searchIncomplete: true } : {}),
   };
 }

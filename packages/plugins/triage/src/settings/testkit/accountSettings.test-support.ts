@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { Disposable, JsonValue } from '@happier-dev/plugin-sdk';
 import type {
     ScopedSettingsService,
@@ -68,7 +69,15 @@ export function createTestkitAccountSettings(
             }
             if (options?.expectedRevision !== undefined && options.expectedRevision !== currentRevision()) {
                 rejected.push(options.expectedRevision);
-                throw new Error('settings_revision_mismatch');
+                // The exact shape the host raises: a `PluginError` carrying the
+                // canonical code, not a bare `Error`. A stand-in that threw
+                // anything else would let a caller that folds *every* failure
+                // into a conflict verdict pass this fixture.
+                throw new PluginError({
+                    code: 'plugin_settings_revision_conflict',
+                    message: 'Plugin settings revision does not match the current daemon revision',
+                    details: { currentRevision: currentRevision() },
+                });
             }
             values.set(id, value);
             revisionCounter += 1;

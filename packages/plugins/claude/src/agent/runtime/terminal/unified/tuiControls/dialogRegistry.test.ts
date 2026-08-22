@@ -39,6 +39,22 @@ const TRUST_FOLDER_DIALOG = [
   '  2. No, exit',
 ].join('\n');
 
+const RESUME_DIALOG = [
+  'This session is 18h 2m old and 560.4k tokens.',
+  'To reduce startup time, Claude can resume from the saved summary or load the full session.',
+  '',
+  '❯ 1. Resume from summary',
+  '  2. Resume full session',
+].join('\n');
+
+const CURRENT_USAGE_LIMIT_DIALOG = [
+  "You've hit your session limit · resets 2:40am (Europe/Zurich)",
+  'What do you want to do?',
+  '> 1. Stop and wait for limit to reset',
+  '  2. Switch to usage credits',
+  '  3. Switch to Team plan',
+].join('\n');
+
 // Live Claude 2.1.170+ terminal capture can crop the trust question while retaining the exact
 // numbered choices. Those choices still uniquely identify Claude's provider-owned trust gate.
 const CROPPED_TRUST_FOLDER_DIALOG = [
@@ -49,6 +65,20 @@ const CROPPED_TRUST_FOLDER_DIALOG = [
 ].join('\n');
 
 describe('Claude unified recognized dialog registry', () => {
+  it('presents the exact current provider-owned usage-limit choices', () => {
+    const visible = resolveClaudeUnifiedVisibleDialog(parseClaudeScreenState(CURRENT_USAGE_LIMIT_DIALOG));
+
+    expect(visible).toMatchObject({
+      kind: 'recognized',
+      dialogId: 'usage_limit',
+      options: [
+        { choice: '1', label: 'Stop and wait for limit to reset', answer: { text: '1' } },
+        { choice: '2', label: 'Switch to usage credits', answer: { text: '2' } },
+        { choice: '3', label: 'Switch to Team plan', answer: { text: '3' } },
+      ],
+    });
+  });
+
   it('registers every recognized screen-state detector key exactly once', () => {
     expect(CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY.map((entry) => entry.detectorStateKey)).toEqual([
       'switchModelDialogVisible',
@@ -163,6 +193,33 @@ describe('Claude unified recognized dialog registry', () => {
         {
           choice: 'always_reject_happier_workspaces',
           answer: { kind: 'literal', text: '2' },
+        },
+      ],
+    });
+  });
+
+  it('offers one-shot and remembered policies through the same resume dialog registry', () => {
+    expect(resolveClaudeUnifiedVisibleDialog(parseClaudeScreenState(RESUME_DIALOG))).toMatchObject({
+      kind: 'recognized',
+      dialogId: 'resume_choice',
+      options: [
+        { choice: 'resume_from_summary', answer: { text: '1' } },
+        {
+          choice: 'always_resume_from_summary',
+          answer: { text: '1' },
+          settingMutation: {
+            settingId: 'claudeUnifiedTerminalResumeChoice',
+            value: 'resume_from_summary',
+          },
+        },
+        { choice: 'resume_full_session', answer: { text: '2' } },
+        {
+          choice: 'always_resume_full_session',
+          answer: { text: '2' },
+          settingMutation: {
+            settingId: 'claudeUnifiedTerminalResumeChoice',
+            value: 'resume_full_session',
+          },
         },
       ],
     });

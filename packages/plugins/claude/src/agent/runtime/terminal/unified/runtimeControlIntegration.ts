@@ -229,7 +229,7 @@ function describeGroup(
 }
 
 export type ClaudeUnifiedRuntimeConfigOutcomeEmitter = Readonly<{
-  emit(outcome: RuntimeConfigApplyOutcome): void;
+  emit(outcome: RuntimeConfigApplyOutcome): Promise<void>;
   dispose(): void;
 }>;
 
@@ -240,7 +240,9 @@ export type ClaudeUnifiedRuntimeConfigOutcomeEmitter = Readonly<{
  * emit only on transitions.
  */
 export function createClaudeUnifiedRuntimeConfigOutcomeEmitter(params: Readonly<{
-  sendSessionEvent: (event: ClaudeUnifiedRuntimeConfigOutcomeSessionEvent) => void;
+  sendSessionEvent: (
+    event: ClaudeUnifiedRuntimeConfigOutcomeSessionEvent,
+  ) => Promise<Readonly<{ status: 'custodied' }>>;
 }>): ClaudeUnifiedRuntimeConfigOutcomeEmitter {
   const lastEmittedChangeSignatures = new Map<string, string>();
 
@@ -249,12 +251,11 @@ export function createClaudeUnifiedRuntimeConfigOutcomeEmitter(params: Readonly<
   }
 
   return {
-    emit(outcome: RuntimeConfigApplyOutcome): void {
+    async emit(outcome: RuntimeConfigApplyOutcome): Promise<void> {
       const transitionedChanges = outcome.changes.filter((change) => {
         const dedupKey = `${change.key}:${String(change.requested)}`;
         const signature = changeSignature(change);
         if (lastEmittedChangeSignatures.get(dedupKey) === signature) return false;
-        lastEmittedChangeSignatures.set(dedupKey, signature);
         return true;
       });
       const grouped = new Map<RuntimeConfigOutcomeStatusV1, RuntimeConfigChangeOutcome[]>();
@@ -274,7 +275,7 @@ export function createClaudeUnifiedRuntimeConfigOutcomeEmitter(params: Readonly<
           ...(change.effective !== undefined ? { effective: change.effective } : {}),
           ...(change.reason !== undefined ? { reason: change.reason } : {}),
         }));
-        params.sendSessionEvent({
+        await params.sendSessionEvent({
           type: 'runtime-config-outcome',
           agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
           runtime: 'claude-unified-terminal',
@@ -284,6 +285,10 @@ export function createClaudeUnifiedRuntimeConfigOutcomeEmitter(params: Readonly<
           message: describeGroup(status, emittedChanges),
           changes: emittedChanges,
         });
+        for (const change of changes) {
+          const dedupKey = `${change.key}:${String(change.requested)}`;
+          lastEmittedChangeSignatures.set(dedupKey, changeSignature(change));
+        }
       }
     },
     dispose(): void {

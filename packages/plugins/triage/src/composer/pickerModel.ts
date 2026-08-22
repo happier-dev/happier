@@ -1,11 +1,20 @@
 import type { ComposerAttachmentAuthorPresentationV1 } from '@happier-dev/plugin-sdk/ui';
 import type {
     TriageEntryRefV1,
-    TriageSourceFailureV1,
     TriageSourceInstanceRefV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import type { CorpusSelectedInstanceV1 } from '../corpus/selection/selectObservationInstance.js';
+import {
+    isTriageRefreshPacingBlockActiveV1,
+    type TriageRefreshPacingBlockV1,
+} from '../refresh/refreshEligibility.js';
+import {
+    parseTriageSearchQuery,
+    triageEntryMatchesSearch,
+    type TriageEntrySearchTextV1,
+} from '../projection/entrySearch.js';
+import type { TriageSourceHealthV1 } from '../projection/sourceHealth.js';
 import { findTriageAttachedEntry, type TriageAttachedEntryV1 } from './attachedEntries.js';
 import { deriveTriageComposerEntryAttachmentKey } from './attachmentValue.js';
 import { buildTriageEntryAttachmentPresentation } from './mutationPlan.js';
@@ -32,17 +41,26 @@ export type TriagePickerCorpusRowV1 = Readonly<{
     title: string;
     scopeLabel: string;
     /**
+     * What a reader can find this row by, projected by the one search owner.
+     *
+     * It is carried rather than re-derived because the picker must answer a
+     * query exactly as the list does: a private haystack here is how the same
+     * query came to mean two things over one projection.
+     */
+    search: TriageEntrySearchTextV1;
+    /**
      * Which configured connection currently observes this entry, decided by the
      * corpus's one instance selector — never re-derived here.
      */
     instance: CorpusSelectedInstanceV1;
 }>;
 
-export type TriagePickerSourceHealthV1 = Readonly<{
-    sourceInstance: TriageSourceInstanceRefV1;
-    displayName: string;
-    failure: TriageSourceFailureV1;
-}>;
+/*
+ * Which connections could not be read is `projection/sourceHealth.ts`'s
+ * `TriageSourceHealthV1`, used here verbatim. The picker names them; it does
+ * not decide them, because the shell names the same connections beside the list
+ * and two joins would be two answers to one question.
+ */
 
 /**
  * Materialization freshness, decided by the corpus.
@@ -62,7 +80,16 @@ export type TriagePickerCorpusFactsV1 = Readonly<{
     coverage: 'complete' | 'progressive';
     freshness: TriagePickerFreshnessV1;
     refreshRunning: boolean;
-    health: readonly TriagePickerSourceHealthV1[];
+    health: readonly TriageSourceHealthV1[];
+    /**
+     * The refresh coordinator's own refusal, when a read cannot start yet.
+     *
+     * It arrives as a decided fact for the same reason freshness does: a local
+     * derivation here would be a second pacing owner, and the narrower one this
+     * module used to compute knew only about rate limits — so an aggregate
+     * transient backoff left Refresh enabled and silent.
+     */
+    refreshBlocked: TriageRefreshPacingBlockV1 | null;
     nowMs: number;
 }>;
 
@@ -99,7 +126,14 @@ export type TriagePickerStateV1 =
     | Readonly<{ kind: 'neverSynchronized' }>
     | Readonly<{ kind: 'stale'; lastMaterializedAtMs: number }>
     | Readonly<{ kind: 'sourcesUnavailable' }>
+    /**
+     * The window has not exhausted every lane and the reader has narrowed it.
+     * Spelled as `ui/shell/emptyState.ts` spells the same two facts, so one
+     * concept keeps one word across the two surfaces that report it.
+     */
     | Readonly<{ kind: 'noMatchYet' }>
+    /** Not exhausted, and nothing narrowing it: there is no match to be waiting for. */
+    | Readonly<{ kind: 'boundedWindow' }>
     | Readonly<{ kind: 'noMatch' }>
     | Readonly<{ kind: 'empty' }>
     | Readonly<{ kind: 'ready' }>;
@@ -107,27 +141,20 @@ export type TriagePickerStateV1 =
 export type TriagePickerRefreshV1 =
     | Readonly<{ kind: 'available' }>
     | Readonly<{ kind: 'running' }>
-    | Readonly<{ kind: 'blockedUntil'; retryNotBeforeMs: number }>
+    | (Readonly<{ kind: 'blockedUntil' }> & TriageRefreshPacingBlockV1)
     | Readonly<{ kind: 'unavailable'; reason: 'noConfiguredSources' }>;
 
 export type TriagePickerViewV1 = Readonly<{
     rows: readonly TriagePickerRowV1[];
     state: TriagePickerStateV1;
-    health: readonly TriagePickerSourceHealthV1[];
+    health: readonly TriageSourceHealthV1[];
     refresh: TriagePickerRefreshV1;
     coverage: 'complete' | 'progressive';
 }>;
 
 export type TriagePickerRefreshRequestV1 =
     | Readonly<{ status: 'invoke' }>
-    | Readonly<{ status: 'refused'; reason: 'running' | 'rateLimited' | 'noConfiguredSources' }>;
-
-/** Every whitespace-separated term must appear, in any order, in either field. */
-function matchesQuery(row: TriagePickerCorpusRowV1, terms: readonly string[]): boolean {
-    if (terms.length === 0) return true;
-    const haystack = `${row.title}\0${row.scopeLabel}`.toLocaleLowerCase();
-    return terms.every((term) => haystack.includes(term));
-}
+    | Readonly<{ status: 'refused'; reason: 'running' | 'notYetEligible' | 'noConfiguredSources' }>;
 
 /**
  * Whether the projection has concluded anything about configured sources.
@@ -149,18 +176,16 @@ function resolveRefresh(
     }
     if (facts.refreshRunning) return { kind: 'running' };
 
-    // The provider told us when it will answer again. Refresh stays disabled
-    // until then, and the deadline is shown immediately rather than after a
-    // failed retry. Several limited sources yield the furthest deadline,
-    // because an earlier one would re-enable a refresh that cannot complete.
-    let retryNotBeforeMs: number | null = null;
-    for (const entry of facts.health) {
-        if (entry.failure.class !== 'rateLimit') continue;
-        const deadline = entry.failure.retryNotBeforeMs;
-        if (deadline === undefined || deadline <= facts.nowMs) continue;
-        retryNotBeforeMs = retryNotBeforeMs === null ? deadline : Math.max(retryNotBeforeMs, deadline);
-    }
-    return retryNotBeforeMs === null ? { kind: 'available' } : { kind: 'blockedUntil', retryNotBeforeMs };
+    // A provider deadline or an aggregate backoff is still running. Refresh stays
+    // disabled until it passes, and it is stated immediately rather than after a
+    // press that does nothing. Which deadline, and whether any connection is
+    // still readable, are the coordinator's answers — read, never recomputed.
+    const blocked = facts.refreshBlocked;
+    // The boundary comparison itself has one owner, so the picker and the shell
+    // cannot disagree about whether a deadline has passed.
+    return isTriageRefreshPacingBlockActiveV1(blocked, facts.nowMs)
+        ? { kind: 'blockedUntil', reason: blocked.reason, nextEligibleAtMs: blocked.nextEligibleAtMs }
+        : { kind: 'available' };
 }
 
 function resolveState(input: Readonly<{
@@ -179,14 +204,28 @@ function resolveState(input: Readonly<{
     if (facts.freshness.kind === 'stale') {
         return { kind: 'stale', lastMaterializedAtMs: facts.freshness.lastMaterializedAtMs };
     }
-    // Only when no cached row can answer does source health become the headline;
-    // otherwise the rows are the answer and health is named beside them.
-    if (rowCount === 0 && facts.health.length > 0) return { kind: 'sourcesUnavailable' };
-    if (rowCount > 0) return { kind: 'ready' };
-    if (input.hasQuery) {
-        return facts.coverage === 'progressive' ? { kind: 'noMatchYet' } : { kind: 'noMatch' };
+    // Only when no configured connection could be read at all does source health
+    // become the headline; otherwise the rows are the answer and health is named
+    // beside them. `health` is the failed SUBSET, so its mere presence proves
+    // nothing about the connections it does not name: reading it that way
+    // replaced the whole picker — search field, rows and Refresh — with "No
+    // source could be read" while every other connection was walking normally.
+    if (rowCount === 0 && facts.health.length >= facts.configuredSourceInstanceCount) {
+        return { kind: 'sourcesUnavailable' };
     }
-    return { kind: 'empty' };
+    if (rowCount > 0) return { kind: 'ready' };
+    // Coverage decides both empty arms, because a bounded window that has not
+    // exhausted every lane has concluded nothing — with or without a query.
+    // Freshness is a separate fact: a walk can be current and still be walking,
+    // so "Nothing to attach" read from a fresh progressive window is the same
+    // false claim of exhaustion "No match" would be over the same rows. Which
+    // of the two unexhausted answers applies is the reader's own lens, exactly
+    // as `ui/shell/emptyState.ts` decides it: with nothing typed there is no
+    // match to be waiting for, only a list that is not complete yet.
+    if (facts.coverage === 'progressive') {
+        return input.hasQuery ? { kind: 'noMatchYet' } : { kind: 'boundedWindow' };
+    }
+    return input.hasQuery ? { kind: 'noMatch' } : { kind: 'empty' };
 }
 
 export function buildTriagePickerView(input: Readonly<{
@@ -197,12 +236,15 @@ export function buildTriagePickerView(input: Readonly<{
     attached: readonly TriageAttachedEntryV1[];
 }>): TriagePickerViewV1 {
     const { facts, attached } = input;
-    const terms = input.query.trim().toLocaleLowerCase().split(/\s+/u).filter((term) => term !== '');
+    // The one search owner decides both halves. Folding the query here would
+    // reintroduce the divergence: the list and the picker must fold the same
+    // way, and locale-dependent folding made them disagree per device.
+    const terms = parseTriageSearchQuery(input.query);
 
     const rows = facts.rows
         // Filtered, never re-ranked: the declared corpus order is the product's
         // one ordering decision.
-        .filter((row) => matchesQuery(row, terms))
+        .filter((row) => triageEntryMatchesSearch(row.search, terms))
         .map((row): TriagePickerRowV1 => {
             const attachedRecord = findTriageAttachedEntry(attached, row.entryRef);
             const sourceInstance: TriageSourceInstanceRefV1 | null = row.instance.kind === 'selected'
@@ -253,7 +295,7 @@ export function requestTriagePickerRefresh(view: TriagePickerViewV1): TriagePick
         case 'running':
             return { status: 'refused', reason: 'running' };
         case 'blockedUntil':
-            return { status: 'refused', reason: 'rateLimited' };
+            return { status: 'refused', reason: 'notYetEligible' };
         case 'unavailable':
             return { status: 'refused', reason: 'noConfiguredSources' };
         case 'available':

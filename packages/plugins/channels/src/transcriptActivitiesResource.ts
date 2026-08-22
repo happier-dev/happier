@@ -1,4 +1,4 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type {
   PluginDynamicResourceInvocationOptionsV1,
   PluginDynamicResourceRuntime,
@@ -51,14 +51,14 @@ async function readTranscriptActivitiesResource(
       signal: options.signal,
     });
   } catch (cause) {
-    if (cause instanceof PluginError
+    if (isPluginError(cause)
       && cause.code === 'channels_binding_session_target_row_invalid') {
       throw new PluginError({
         code: 'channels_transcript_activities_resource_binding_row_invalid',
         message: 'The Channels transcript Activity Resource received an invalid binding row.',
       }, { cause });
     }
-    if (cause instanceof PluginError
+    if (isPluginError(cause)
       && cause.code === 'channels_binding_session_target_page_invalid') {
       throw new PluginError({
         code: 'channels_transcript_activities_resource_binding_page_invalid',

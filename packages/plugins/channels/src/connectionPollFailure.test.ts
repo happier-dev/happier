@@ -1,3 +1,4 @@
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 import {
   compilePluginJsonSchema,
@@ -32,7 +33,7 @@ describe('Conversation connection poll-failure codec', () => {
         evidence: { kind: 'action', code: 'poll_failed', message: 'Provider poll failed.' },
       },
     ] as const;
-    const rejected = [
+    const rejected: readonly (JsonValue | undefined)[] = [
       undefined,
       {
         phase: 'retryDue',

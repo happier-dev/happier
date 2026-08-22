@@ -1,7 +1,7 @@
 import {
-  HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV,
-  HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV,
-} from '@happier-dev/plugin-sdk/experimental/envConstants';
+    HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV,
+    HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 const CONNECTED_SERVICE_SELECTIONS_ENV_KEY = HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV;
 const CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY = HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV;
@@ -17,6 +17,24 @@ export const CLAUDE_AUTH_ENV_KEYS = [
 ] as const;
 
 export type ClaudeAuthEnvKey = typeof CLAUDE_AUTH_ENV_KEYS[number];
+
+export type ClaudeSubscriptionRuntimeAuthSelection =
+  | Readonly<{
+      kind: 'profile';
+      serviceId: 'claude-subscription';
+      profileId: string;
+      credentialRevision: string;
+    }>
+  | Readonly<{
+      kind: 'group';
+      serviceId: 'claude-subscription';
+      groupId: string;
+      activeProfileId: string;
+      fallbackProfileId: string;
+      generation: number;
+      credentialRevision: string;
+      policy?: unknown;
+    }>;
 
 export const CLAUDE_RUNTIME_REFRESH_SECRET_ENV_KEYS = [
   'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
@@ -66,6 +84,53 @@ function parseJsonArray(value: string | undefined): readonly unknown[] {
   } catch {
     return [];
   }
+}
+
+function readNonnegativeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.trunc(value)
+    : null;
+}
+
+function readClaudeSubscriptionSelection(value: unknown): ClaudeSubscriptionRuntimeAuthSelection | null {
+  if (!isRecord(value) || value.serviceId !== 'claude-subscription') return null;
+  const credentialRevision = readString(value.credentialRevision);
+  if (!credentialRevision || !/^csr_[A-Za-z0-9_-]{22,64}$/u.test(credentialRevision)) return null;
+  if (value.kind === 'profile') {
+    const profileId = readString(value.profileId);
+    return profileId ? {
+      kind: 'profile',
+      serviceId: 'claude-subscription',
+      profileId,
+      credentialRevision,
+    } : null;
+  }
+  if (value.kind !== 'group') return null;
+  const groupId = readString(value.groupId);
+  const activeProfileId = readString(value.activeProfileId);
+  const fallbackProfileId = readString(value.fallbackProfileId);
+  const generation = readNonnegativeInteger(value.generation);
+  if (!groupId || !activeProfileId || !fallbackProfileId || generation === null) return null;
+  return {
+    kind: 'group',
+    serviceId: 'claude-subscription',
+    groupId,
+    activeProfileId,
+    fallbackProfileId,
+    generation,
+    credentialRevision,
+    ...(Object.prototype.hasOwnProperty.call(value, 'policy') ? { policy: value.policy } : {}),
+  };
+}
+
+export function readClaudeSubscriptionRuntimeAuthSelectionFromEnv(
+  env: Readonly<Record<string, string | undefined>> | null | undefined,
+): ClaudeSubscriptionRuntimeAuthSelection | null {
+  for (const item of parseJsonArray(env?.[CONNECTED_SERVICE_SELECTIONS_ENV_KEY])) {
+    const selection = readClaudeSubscriptionSelection(item);
+    if (selection) return selection;
+  }
+  return null;
 }
 
 function readConnectedServiceId(

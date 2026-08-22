@@ -1,7 +1,10 @@
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type {
+    OauthCredentialRecord,
+    TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 export function materializeClaudeApiKeyAuth(params: Readonly<{
-    record: ConnectedServiceCredentialRecordV1;
+    record: OauthCredentialRecord | TokenCredentialRecord;
 }>): Readonly<{ env: Record<string, string> }> {
     const env: Record<string, string> = {};
     if (params.record.kind === 'oauth') {

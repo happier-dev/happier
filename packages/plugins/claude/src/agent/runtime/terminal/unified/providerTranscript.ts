@@ -4,7 +4,7 @@ import type {
   AgentTranscriptFileFollowInput,
   AgentTranscriptFileFollowHandle,
   AgentTranscriptFileFollowService,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   classifyClaudeNativeTranscriptRow,
@@ -55,7 +55,7 @@ export type ClaudeUnifiedProviderTranscriptPublisherParams = Readonly<{
       providerSessionId: string;
       historicalReplay: boolean;
     }>,
-  ) => void;
+  ) => void | Promise<void>;
 }>;
 
 type TranscriptBinding = Readonly<{
@@ -419,10 +419,10 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
     await params.ctx.agentRuntime.sessionHooks.publishProviderTranscript(payload);
   }
 
-  function observeRawRow(activeBinding: TranscriptBinding, row: RawJSONLines): void {
+  async function observeRawRow(activeBinding: TranscriptBinding, row: RawJSONLines): Promise<void> {
     if (!params.onObserveRow) return;
     try {
-      params.onObserveRow(row, {
+      await params.onObserveRow(row, {
         providerSessionId: activeBinding.providerSessionId,
         historicalReplay: initialFileReplayBindings.has(activeBinding),
       });
@@ -453,7 +453,7 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
         && rawRow.attachment.type === 'queued_command';
       if (nativeQueuedCommandOperation || isQueuedCommandAttachment) {
         if (shouldObserveRawRow(activeBinding, rawRow)) {
-          observeRawRow(activeBinding, rawRow as RawJSONLines);
+          await observeRawRow(activeBinding, rawRow as RawJSONLines);
         }
         // `follow({ startAt: 'beginning' })` may synchronously replay existing JSONL rows before
         // returning its handle. Historical enqueue/remove/attachment triples are observation-only:
@@ -487,7 +487,7 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
     // Single shared raw-row seam: derived work-state sources observe every parsed
     // row (incl. `attachment`/`system`) before the visibility filter drops them.
     if (shouldObserveRawRow(activeBinding, row)) {
-      observeRawRow(activeBinding, row);
+      await observeRawRow(activeBinding, row);
     }
     const payload = projectClaudeTranscriptRowToProviderPayload({
       providerSessionId: activeBinding.providerSessionId,

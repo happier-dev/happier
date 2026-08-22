@@ -1,41 +1,53 @@
-export const PLUGIN_MANIFEST = Object.freeze({
-  schemaVersion: 2,
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { VoiceCredentialSlotIdSchema } from '@happier-dev/plugin-sdk/voice';
+
+import { openAiConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
+import { OPENAI_VOICE_PROVIDER_CONTRIBUTION_ID } from './constants.js';
+
+const OPENAI_API_KEY_CREDENTIAL_SLOT_ID = VoiceCredentialSlotIdSchema.parse('api_key');
+
+export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: 'happier.voice.openai',
   version: '0.0.0',
   displayName: 'OpenAI Realtime Voice',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
-  contributes: {
-    connectedAccountDescriptors: [{
-      id: 'openai',
-      title: 'OpenAI API key',
-      authentication: {
-        defaultModeId: 'api-key',
-        modes: [{
-          id: 'api-key',
-          kind: 'manual',
-          outcomeReconciliation: 'none',
-          fields: [{
-            id: 'token',
-            title: 'OpenAI API key',
-            schema: { type: 'string', minLength: 1 },
-            secret: true,
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  connectedAccountDescriptors: {
+    openai: {
+      declaration: {
+        title: 'OpenAI API key',
+        authentication: {
+          defaultModeId: 'api-key',
+          modes: [{
+            id: 'api-key',
+            kind: 'manual',
+            outcomeReconciliation: 'none',
+            fields: [{
+              id: 'token',
+              title: 'OpenAI API key',
+              schema: { type: 'string', minLength: 1 },
+              secret: true,
+            }],
           }],
-        }],
+        },
       },
-    }],
-    voiceProviders: [{
-      id: 'realtime-openai',
+      runtime: openAiConnectedAccountRuntime,
+    },
+  },
+  voiceProviders: {
+    [OPENAI_VOICE_PROVIDER_CONTRIBUTION_ID]: {
+      declaration: {
       title: 'OpenAI Realtime Voice',
       kind: 'conversation',
       roles: ['conversation_stt', 'conversation_tts', 'realtime_conversation', 'turn_control'],
       platforms: ['web', 'ios', 'android'],
       capabilities: {
         turn: { cancelResponse: true, bargeIn: true },
+        tools: { effectCalls: 'stable_ids' },
       },
       credentials: {
         slot: {
-          id: 'api_key',
+          id: OPENAI_API_KEY_CREDENTIAL_SLOT_ID,
           purpose: 'voice.client-auth',
           title: 'OpenAI credential',
           description: 'Credential used to mint short-lived OpenAI Realtime client authentication.',
@@ -83,7 +95,7 @@ export const PLUGIN_MANIFEST = Object.freeze({
           operations: [{
             id: 'client-auth',
             purpose: 'voice.client-auth',
-            credentialSlotId: 'api_key',
+            credentialSlotId: OPENAI_API_KEY_CREDENTIAL_SLOT_ID,
             effect: 'read',
             request: {
               origin: 'https://api.openai.com',
@@ -179,11 +191,12 @@ export const PLUGIN_MANIFEST = Object.freeze({
           fallback: 'Audio and conversation content are sent from this device to OpenAI using WebRTC. When enabled or used, OpenAI may also receive bounded Voice context updates, client-tool definitions, and delegated results from this device. Happier uses the selected Saved Voice API key, OpenAI Connected Service, or experimental Codex OAuth account to mint short-lived client authentication; connected accounts are accessed through the selected machine. OpenAI processes the live conversation under the selected account and may retain received data according to that account’s settings and OpenAI’s terms. Happier’s server and relay do not carry live audio. Voice context-sharing controls are separate from this provider processing.',
         },
       },
-      client: {
-        artifactId: 'voice-runtime-web',
-        modulePath: './voiceRuntime',
-        exportName: 'activate',
+        client: {
+          artifactId: 'voice-runtime-web',
+          modulePath: './ui/voice',
+          exportName: 'activate',
+        },
       },
-    }],
+    },
   },
-} satisfies import('@happier-dev/plugin-sdk/manifest').PluginManifest);
+});

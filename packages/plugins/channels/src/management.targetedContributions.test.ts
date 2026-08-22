@@ -18,6 +18,7 @@ import {
   createConversationConnectionForInvocation,
   prepareConversationConnectionForInvocation,
   setConversationConnectionEnabledForInvocation,
+  updateConversationConnectionForInvocation,
   transferConversationConnectionForInvocation,
 } from './management.js';
 import {
@@ -354,6 +355,88 @@ describe('prepareConversationConnectionForInvocation targeted provider selection
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
   });
 
+  it('projects a durable-push-capable provider onto the transports connection creation can currently select', async () => {
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+      result: {
+        v: 1,
+        credentialRef: selectedCredentialRef,
+        providerConnectionKey: 'example:connection',
+        providerConfigVersion: 1,
+        providerConfig: { opaque: true },
+        integrationPrincipal: { id: 'example-bot' },
+        supportedTransports: ['durablePush', 'socket'],
+        recommendedTransport: 'durablePush',
+        overlapSafety: 'safe',
+        replayContinuity: 'none',
+        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+        webhookContributionRef: { pluginId: providerSelection.contributor.pluginId, localId: 'webhook' },
+      },
+      executionOrigin: {
+        serverIdentityId: 'srv-example',
+        materializationRef: {
+          pluginId: providerSelection.contributor.pluginId,
+          machineId: 'machine-example',
+          materializationId: 'materialization-example',
+        },
+      },
+    }));
+    const context = invocationContext({
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+      }),
+    });
+
+    await expect(prepareConversationConnectionForInvocation({
+      providerSelection,
+      providerSetupInput: { source: 'durable-push-capable' },
+      credentialRef: selectedCredentialRef,
+    }, context)).resolves.toMatchObject({
+      kind: 'ready',
+      supportedTransports: ['socket'],
+      recommendedTransport: 'socket',
+    });
+  });
+
+  it('rejects preparation when a provider only supports durable push', async () => {
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+      result: {
+        v: 1,
+        credentialRef: selectedCredentialRef,
+        providerConnectionKey: 'example:connection',
+        providerConfigVersion: 1,
+        providerConfig: { opaque: true },
+        integrationPrincipal: { id: 'example-bot' },
+        supportedTransports: ['durablePush'],
+        recommendedTransport: 'durablePush',
+        overlapSafety: 'safe',
+        replayContinuity: 'none',
+        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+        webhookContributionRef: { pluginId: providerSelection.contributor.pluginId, localId: 'webhook' },
+      },
+      executionOrigin: {
+        serverIdentityId: 'srv-example',
+        materializationRef: {
+          pluginId: providerSelection.contributor.pluginId,
+          machineId: 'machine-example',
+          materializationId: 'materialization-example',
+        },
+      },
+    }));
+    const context = invocationContext({
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+      }),
+    });
+
+    await expect(prepareConversationConnectionForInvocation({
+      providerSelection,
+      providerSetupInput: { source: 'durable-push-only' },
+      credentialRef: selectedCredentialRef,
+    }, context)).rejects.toMatchObject({ code: 'channels_connection_transport_unavailable' });
+  });
+
   it('returns provider-neutral remediation without creating or testing a connection', async () => {
     const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown, actionInput: unknown, options: unknown) => {
       expect(action).toBe(setupAction);
@@ -430,8 +513,6 @@ describe('prepareConversationConnectionForInvocation targeted provider selection
         providerConfigVersion: 1,
         providerConfig: { opaque: true },
         integrationPrincipal: { id: 'example-bot' },
-        supportedTransports: ['socket'],
-        recommendedTransport: 'socket',
         overlapSafety: 'safe',
         replayContinuity: 'none',
         outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
@@ -1068,8 +1149,147 @@ describe('createConversationConnectionForInvocation targeted provider selection'
 });
 
 describe('transferConversationConnectionForInvocation targeted provider selection', () => {
-  it('re-runs setup/test to replace the execution origin when the selected provider configuration is unchanged', async () => {
+  it('re-runs setup/test, then stops the frozen old socket transport through its exact retired origin', async () => {
     const connectionId = 'connection-transfer-same-config-new-origin';
+    const oldExecutionOrigin = {
+      serverIdentityId: 'srv-example',
+      materializationRef: {
+        pluginId: providerSelection.contributor.pluginId,
+        machineId: 'machine-old',
+        materializationId: 'materialization-old',
+      },
+    } as const;
+    const replacementExecutionOrigin = {
+      serverIdentityId: 'srv-example',
+      materializationRef: {
+        pluginId: providerSelection.contributor.pluginId,
+        machineId: 'machine-replacement',
+        materializationId: 'materialization-replacement',
+      },
+    } as const;
+    const collection = createMutableConnectionStateCollection();
+    const authority = {
+      providerPluginId: providerSelection.contributor.pluginId,
+      providerContributionSelection: {
+        contributionId: providerSelection.contributor.contributionId,
+        immutableGenerationId: providerSelection.contributor.immutableGenerationId,
+      },
+      providerSetupInput: { source: 'same' },
+      credentialRef: null,
+      transportOrigin: oldExecutionOrigin,
+      providerConnectionKey: 'example:connection',
+      providerConfig: { source: 'same' },
+      routingIdentityKey: 'r'.repeat(43),
+      integrationPrincipal: { id: 'example-bot' },
+      authorityEpoch: 4,
+    } as const satisfies ConversationConnectionFixtureAuthority;
+    collection.rows.set(connectionId, {
+      rowId: connectionId,
+      revision: 4,
+      value: createCurrentConversationConnectionFixture({
+        connectionId,
+        authority,
+        transport: { kind: 'socket' },
+        overlapSafety: 'safe',
+        replayContinuity: 'none',
+        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+      }),
+    });
+    const stopInvocations: unknown[] = [];
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
+      action: unknown,
+      operationInput: unknown,
+      options?: unknown,
+    ) => {
+      if (action === setupAction) {
+        return {
+          result: {
+            v: 1,
+            credentialRef: null,
+            providerConnectionKey: 'example:connection',
+            providerConfigVersion: 1,
+            providerConfig: { source: 'same' },
+            integrationPrincipal: { id: 'example-bot' },
+            supportedTransports: ['socket'],
+            recommendedTransport: 'socket',
+            overlapSafety: 'safe',
+            replayContinuity: 'none',
+            outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+          },
+          executionOrigin: replacementExecutionOrigin,
+        };
+      }
+      if (action === connectionTestAction) {
+        return {
+          result: {
+            kind: 'ready',
+            integrationPrincipal: { id: 'example-bot' },
+            providerConnectionKey: 'example:connection',
+          },
+          executionOrigin: replacementExecutionOrigin,
+        };
+      }
+      if (action === connectionStopAction) {
+        stopInvocations.push({ operationInput, options });
+        return { result: { kind: 'stopped' }, executionOrigin: oldExecutionOrigin };
+      }
+      throw new Error('Expected only the selected setup/test/stop Actions.');
+    });
+    const context = invocationContext({
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+        operations: {
+          setup: setupAction,
+          connectionTest: connectionTestAction,
+          messageDeliver: messageDeliverAction,
+          connectionStop: connectionStopAction,
+        },
+      }),
+      stateCollection: collection,
+    });
+
+    await expect(transferConversationConnectionForInvocation({
+      connectionId,
+      expectedRevision: 4,
+      providerSelection,
+      providerSetupInput: { source: 'same' },
+      credentialRef: null,
+      selectedTransport: 'socket',
+    }, context)).resolves.toEqual({
+      kind: 'transferred',
+      connectionId,
+      revision: 6,
+      authorityEpoch: 5,
+    });
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(3);
+    expect(stopInvocations).toEqual([{
+      operationInput: {
+        v: 1,
+        connectionId,
+        providerConnectionKey: 'example:connection',
+        providerConfigVersion: 1,
+        providerConfig: { source: 'same' },
+        credentialRef: null,
+        authorityEpoch: 5,
+        reason: 'transfer',
+      },
+      options: expect.objectContaining({ expectedExecutionOrigin: oldExecutionOrigin }),
+    }]);
+    expect(collection.rows.get(connectionId)).toMatchObject({
+      revision: 6,
+      value: {
+        payload: {
+          transportOrigin: replacementExecutionOrigin,
+          authorityEpoch: 5,
+          pendingOldTransportStop: null,
+        },
+      },
+    });
+  });
+
+  it('keeps a socket transfer disclosed as pending custody when the frozen old stop is not proven', async () => {
+    const connectionId = 'connection-transfer-unproven-old-stop';
     const oldExecutionOrigin = {
       serverIdentityId: 'srv-example',
       materializationRef: {
@@ -1143,7 +1363,10 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
           executionOrigin: replacementExecutionOrigin,
         };
       }
-      throw new Error('Expected only the selected setup/test Actions.');
+      if (action === connectionStopAction) {
+        return { result: { kind: 'pending' }, executionOrigin: oldExecutionOrigin };
+      }
+      throw new Error('Expected only the selected setup/test/stop Actions.');
     });
     const context = invocationContext({
       actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
@@ -1172,18 +1395,12 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
       revision: 5,
       authorityEpoch: 5,
     });
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(3);
     expect(collection.rows.get(connectionId)).toMatchObject({
       revision: 5,
       value: {
         payload: {
-          transportOrigin: replacementExecutionOrigin,
           pendingOldTransportStop: {
-            predecessorCheckpointedPollInvocation: {
-              connectionRevision: 4,
-              authorityEpoch: 4,
-              transportOrigin: oldExecutionOrigin,
-            },
             transportOrigin: oldExecutionOrigin,
             providerContributionSelection: authority.providerContributionSelection,
             stopRequest: {
@@ -1197,7 +1414,7 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
     });
   });
 
-  it('persists the exact replacement setup/selection and rejoins a lost committed transfer without replaying provider effects', async () => {
+  it('rejoins a lost committed transfer by replaying only the idempotent frozen old stop', async () => {
     const connectionId = 'connection-transfer-targeted';
     const oldExecutionOrigin = {
       serverIdentityId: 'srv-example',
@@ -1292,9 +1509,9 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
         };
       }
       if (action === oldConnectionStopAction) {
-        throw new Error('Transfer must not stop the frozen old transport inline.');
+        return { result: { kind: 'notRunning' }, executionOrigin: oldExecutionOrigin };
       }
-      throw new Error('Expected only the selected replacement setup/test Actions.');
+      throw new Error('Expected only the selected replacement setup/test/stop Actions.');
     });
     const context = invocationContext({
       actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
@@ -1391,13 +1608,18 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
 
     await expect(transferConversationConnectionForInvocation(transferInput, context)).resolves.toEqual({
-      kind: 'rejoined',
+      kind: 'transferred',
       connectionId,
-      revision: 5,
+      revision: 6,
       authorityEpoch: 5,
     });
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
-    expect(collection.batch).toHaveBeenCalledOnce();
+    // Setup and test are never replayed; only the exact frozen old stop runs.
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(3);
+    expect(collection.batch).toHaveBeenCalledTimes(2);
+    expect(collection.rows.get(connectionId)).toMatchObject({
+      revision: 6,
+      value: { payload: { authorityEpoch: 5, pendingOldTransportStop: null } },
+    });
   });
 
   it('rejects an exact-revision equal-origin rejoin when Account authority changes during provider setup/test', async () => {
@@ -1725,6 +1947,98 @@ describe('setConversationConnectionEnabledForInvocation targeted provider stop',
       expectedRevision: 4,
       enabled: false,
     }, context)).resolves.toMatchObject({ kind: 'updated', revision: 5 });
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
+  });
+
+  it('stops the socket transport when the ordinary connection policy Action is the one that disables it', async () => {
+    const connectionId = 'connection-policy-disable-targeted';
+    const connectionStop = admittedProviderOperation({ role: 'connectionStop' });
+    const persistedAuthority = {
+      providerPluginId: providerSelection.contributor.pluginId,
+      providerContributionSelection: {
+        contributionId: providerSelection.contributor.contributionId,
+        immutableGenerationId: providerSelection.contributor.immutableGenerationId,
+      },
+      providerSetupInput: { source: 'persisted' },
+      credentialRef: null,
+      transportOrigin: {
+        serverIdentityId: 'server-example',
+        materializationRef: {
+          pluginId: providerSelection.contributor.pluginId,
+          machineId: 'machine-example',
+          materializationId: 'materialization-example',
+        },
+      },
+      providerConnectionKey: 'example:connection',
+      providerConfig: { opaque: true },
+      routingIdentityKey: 'r'.repeat(43),
+      integrationPrincipal: { id: 'example-bot' },
+      authorityEpoch: 4,
+    } as const satisfies ConversationConnectionFixtureAuthority;
+    let row = {
+      rowId: connectionId,
+      revision: 4,
+      value: createCurrentConversationConnectionFixture({
+        connectionId,
+        authority: persistedAuthority,
+        transport: { kind: 'socket' },
+        overlapSafety: 'safe',
+        replayContinuity: 'none',
+        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+      }),
+    };
+    const stateCollection = {
+      async get() { return row; },
+      async batch(operations: readonly Readonly<{
+        kind: string;
+        value?: typeof row.value;
+        expectedRevision?: number | 'absent';
+      }>[]) {
+        const mutation = operations[0];
+        if (mutation?.kind !== 'put' || mutation.expectedRevision !== row.revision || mutation.value === undefined) {
+          return { status: 'conflict' as const, conflicts: [] };
+        }
+        row = { rowId: connectionId, revision: row.revision + 1, value: mutation.value };
+        return {
+          status: 'updated' as const,
+          results: [{ rowId: connectionId, revision: row.revision, deleted: false }],
+        };
+      },
+    };
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown, actionInput: unknown) => {
+      expect(action).toBe(connectionStop);
+      expect(actionInput).toMatchObject({ connectionId, authorityEpoch: 5, reason: 'disable' });
+      return {
+        result: { kind: 'stopped' },
+        executionOrigin: row.value.payload.transportOrigin,
+      };
+    });
+    const context = invocationContext({
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+        operations: {
+          setup: setupAction,
+          connectionTest: connectionTestAction,
+          messageDeliver: messageDeliverAction,
+          connectionStop,
+        },
+      }),
+      stateCollection,
+    });
+
+    await expect(updateConversationConnectionForInvocation({
+      connectionId,
+      expectedRevision: 4,
+      enabled: false,
+      maximumObservationAgeMs: 60_000,
+    }, context)).resolves.toEqual({
+      kind: 'updated',
+      connectionId,
+      revision: 5,
+      authorityEpoch: 5,
+    });
+    expect(row.value.payload.enabled).toBe(false);
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
   });
 

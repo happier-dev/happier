@@ -9,6 +9,8 @@
  * means an intermediary rewrote the response — never that the walk finished.
  */
 
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+
 export type SentryLinkRelationV1 = Readonly<{
   url: string;
   /** The `cursor` link parameter, or the `cursor` query value of the URL. */
@@ -27,14 +29,6 @@ export type SentryLinkHeaderV1 =
 
 const LINK_ENTRY_PATTERN = /<([^>]*)>([^,<]*)/gu;
 const LINK_PARAMETER_PATTERN = /;\s*([A-Za-z0-9_-]+)\s*=\s*("[^"]*"|[^;,\s]*)/gu;
-
-function readHeaderCaseInsensitive(
-  headers: Readonly<Record<string, string>>,
-  name: string,
-): string | undefined {
-  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name);
-  return entry?.[1];
-}
 
 function unquote(value: string): string {
   return value.startsWith('"') && value.endsWith('"') && value.length >= 2
@@ -84,8 +78,8 @@ function parseRelation(url: string, parameterText: string): {
 export function parseSentryLinkHeader(
   headers: Readonly<Record<string, string>>,
 ): SentryLinkHeaderV1 {
-  const raw = readHeaderCaseInsensitive(headers, 'link');
-  if (raw === undefined) return Object.freeze({ present: false as const });
+  const raw = readTriageResponseHeaderV1(headers, 'link');
+  if (raw === null) return Object.freeze({ present: false as const });
 
   let next: SentryLinkRelationV1 | null = null;
   let previous: SentryLinkRelationV1 | null = null;

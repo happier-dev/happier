@@ -4,8 +4,7 @@ import type {
 } from '@happier-dev/channels-protocol/v1';
 import { MAX_CONVERSATION_DELIVERY_ATTEMPTS } from '@happier-dev/channels-protocol/v1';
 
-const DEFAULT_CONVERSATION_DELIVERY_RETRY_DELAY_MS = 1_000;
-const MAX_CONVERSATION_DELIVERY_RETRY_DELAY_MS = 8_000;
+import { conversationRetryDelayMs } from './retryBackoff.js';
 
 export const CONVERSATION_DELIVERY_CUSTODY_STATES = [
   'ready',
@@ -151,13 +150,6 @@ function attemptResultBase(custody: ConversationDeliveryCustody): Pick<
   return { attemptCount: custody.attemptCount };
 }
 
-function defaultConversationDeliveryRetryDelayMs(attemptCount: number): number {
-  return Math.min(
-    DEFAULT_CONVERSATION_DELIVERY_RETRY_DELAY_MS * (2 ** Math.max(0, attemptCount - 1)),
-    MAX_CONVERSATION_DELIVERY_RETRY_DELAY_MS,
-  );
-}
-
 export function settleConversationDeliveryAttempt(input: Readonly<{
   custody: ConversationDeliveryCustody;
   attemptId: string;
@@ -200,7 +192,7 @@ export function settleConversationDeliveryAttempt(input: Readonly<{
             state: 'retryDue',
             providerMessageIds: [],
             retryNotBefore: input.now + (input.result.retryAfterMs
-              ?? defaultConversationDeliveryRetryDelayMs(input.custody.attemptCount)),
+              ?? conversationRetryDelayMs(input.custody.attemptCount)),
           },
         };
       }

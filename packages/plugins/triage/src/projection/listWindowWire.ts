@@ -32,31 +32,23 @@ function byInstanceIdAscending(left: string, right: string): number {
 /**
  * The one connection's answer the row is rendered from.
  *
- * It follows the decision the fold already made rather than making a second
- * one: the selected connection when a connection was selectable, and otherwise
- * the newest present answer — which is exactly the order the display projection
- * reads in. A row with no present answer anywhere still carries its newest
- * answer, so `presence` and the identity-only display have the observation they
+ * It is the fold's own `content` decision rather than a second one: the wire
+ * carries exactly the observation the display renders from, so a row read back
+ * off the wire says what the row that produced it said. Choosing here again —
+ * the selected connection, or whichever answered last — is how the wire, the
+ * fold and the display came to hold three rules for one question.
+ *
+ * A row with no present answer anywhere still carries its newest answer of any
+ * kind, so `presence` and the identity-only display have the observation they
  * describe.
  */
 function renderedObservation(row: TriageListRowV1): ProjectedObservationV1 | undefined {
-    if (row.selected.kind === 'selected') {
-        const selectedInstanceId = row.selected.sourceInstanceId;
-        for (const observation of row.observations) {
-            if (observation.sourceInstanceId !== selectedInstanceId) continue;
-            if (observation.outcome.kind === 'present') return observation;
-        }
-    }
-    let newestPresent: ProjectedObservationV1 | undefined;
+    if (row.content !== null) return row.content;
     let newest: ProjectedObservationV1 | undefined;
     for (const observation of row.observations) {
         if (newest === undefined || observation.observedAtMs > newest.observedAtMs) newest = observation;
-        if (observation.outcome.kind !== 'present') continue;
-        if (newestPresent === undefined || observation.observedAtMs > newestPresent.observedAtMs) {
-            newestPresent = observation;
-        }
     }
-    return newestPresent ?? newest;
+    return newest;
 }
 
 /**

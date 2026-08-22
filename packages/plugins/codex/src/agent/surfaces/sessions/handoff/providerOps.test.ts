@@ -1,10 +1,16 @@
+import { existsSync } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AgentRuntimeHandoffSurface } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { codexHandoffSurface } from './providerOps.js';
+
+function handoffContext(): import('@happier-dev/plugin-sdk').PluginInvocationContext {
+  return { signal: new AbortController().signal } as import('@happier-dev/plugin-sdk').PluginInvocationContext;
+}
 
 describe('codex handoff provider surface', () => {
   afterEach(() => {
@@ -30,7 +36,7 @@ describe('codex handoff provider surface', () => {
         codexBackendMode: 'appServer',
       },
       directory: '/active-server',
-    });
+    }, handoffContext());
 
     expect(result).toMatchObject({
       ok: true,
@@ -62,7 +68,7 @@ describe('codex handoff provider surface', () => {
           },
         ],
       },
-    });
+    }, handoffContext());
 
     expect(result).toMatchObject({
       ok: true,
@@ -90,6 +96,54 @@ describe('codex handoff provider surface', () => {
     )).resolves.toBe('{"event":"surface"}\n');
   });
 
+  it('stops later native writes when the runtime generation retires during a multi-file import', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-provider-retired-'));
+    vi.stubEnv('CODEX_HOME', codexHome);
+    const remoteSessionId = 'thread_retired';
+    const firstRelativePath = `sessions/2026/06/22/rollout-2026-06-22T10-00-00-${remoteSessionId}.jsonl`;
+    const secondRelativePath = `sessions/2026/06/22/rollout-2026-06-22T10-01-00-${remoteSessionId}.jsonl`;
+    const firstPath = join(codexHome, firstRelativePath);
+    const secondPath = join(codexHome, secondRelativePath);
+    const retirementReason = new Error('runtime generation retired');
+    const signal = {
+      get aborted() {
+        return existsSync(firstPath);
+      },
+      reason: retirementReason,
+      throwIfAborted() {
+        if (this.aborted) throw this.reason;
+      },
+    } as AbortSignal;
+
+    const handoffSurface: AgentRuntimeHandoffSurface = codexHandoffSurface;
+    const result = await handoffSurface.importBundle({
+      targetDirectory: '/repo',
+      bundle: {
+        agentId: 'codex',
+        remoteSessionId,
+        files: [
+          {
+            relativePath: firstRelativePath,
+            contentBase64: Buffer.from('{"event":"first"}\n', 'utf8').toString('base64'),
+          },
+          {
+            relativePath: secondRelativePath,
+            contentBase64: Buffer.from('{"event":"second"}\n', 'utf8').toString('base64'),
+          },
+        ],
+      },
+    }, { signal } as import('@happier-dev/plugin-sdk').PluginInvocationContext);
+
+    expect(signal.aborted).toBe(true);
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'target_import_failed',
+      message: 'runtime generation retired',
+    });
+    await expect(readFile(firstPath, 'utf8')).resolves.toBe('{"event":"first"}\n');
+    await expect(access(secondPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('rejects retired top-level runtime affinity fields before writing bundle files', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-provider-invalid-'));
     vi.stubEnv('CODEX_HOME', codexHome);
@@ -106,7 +160,7 @@ describe('codex handoff provider surface', () => {
           contentBase64: Buffer.from('{"event":"invalid"}\n', 'utf8').toString('base64'),
         }],
       },
-    });
+    }, handoffContext());
 
     expect(result).toMatchObject({
       ok: false,
@@ -141,7 +195,7 @@ describe('codex handoff provider surface', () => {
           },
         ],
       },
-    });
+    }, handoffContext());
 
     expect(result).toMatchObject({
       ok: false,
@@ -189,7 +243,7 @@ describe('codex handoff provider surface', () => {
           remoteSessionId,
           files: toBundleFiles(firstFiles),
         },
-      }),
+      }, handoffContext()),
       codexHandoffSurface.importBundle({
         targetDirectory: '/repo',
         bundle: {
@@ -197,7 +251,7 @@ describe('codex handoff provider surface', () => {
           remoteSessionId,
           files: toBundleFiles(secondFiles),
         },
-      }),
+      }, handoffContext()),
     ]);
 
     expect(results.filter((result) => result.ok)).toHaveLength(1);

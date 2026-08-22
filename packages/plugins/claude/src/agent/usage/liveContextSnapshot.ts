@@ -1,4 +1,4 @@
-import type { SessionContextUsageSnapshotV1 } from '@happier-dev/plugin-sdk/experimental/usage';
+import type { SessionContextUsageSnapshotV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return value !== null && typeof value === 'object' && !Array.isArray(value)

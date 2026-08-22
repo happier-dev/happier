@@ -21,7 +21,15 @@ describe('Codex external session source validation policy', () => {
     });
   });
 
-  it('rejects user-home source overrides outside the configured Codex home path', () => {
+  /**
+   * Whether a requested home is one the machine environment or the account's
+   * settings authorized is decided by the host admission boundary
+   * (`admitCallerChosenExternalSessionSourceFields`), which compares the
+   * canonical forms this policy produces. The policy canonicalizes and owns only
+   * the connected-service identifier rule below, so both sides of that
+   * comparison come from one implementation.
+   */
+  it('keeps a requested user home canonical instead of deciding whether it is allowed', () => {
     const result = validateCodexExternalSessionsSourcePolicy({
       source: { kind: 'codexHome', home: 'user', homePath: '/tmp/other-codex-home' },
       configuredCodexHomePath: '/Users/alice/.codex',
@@ -30,8 +38,12 @@ describe('Codex external session source validation policy', () => {
     });
 
     expect(result).toEqual({
-      ok: false,
-      error: 'source homePath override is not allowed',
+      ok: true,
+      source: {
+        kind: 'codexHome',
+        home: 'user',
+        homePath: '/tmp/other-codex-home',
+      },
     });
   });
 

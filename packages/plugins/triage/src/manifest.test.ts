@@ -11,10 +11,43 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PLUGIN_MANIFEST,
+  TRIAGE_PLUGIN,
   TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
 } from './manifest.js';
+import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 } from './actions/listEntriesProtocol.js';
+import { TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1 } from './composer/attachmentValue.js';
+import { TRIAGE_LIST_PAGE_RENDERER_ID_V1 } from './ui/contributions.js';
+import { TRIAGE_UI_TRANSLATIONS } from './ui/translations.js';
 
 describe('Triage plugin manifest', () => {
+  it('projects its prior cold identity and declared contribution families through one definePlugin value', () => {
+    const normalized = parsePluginManifest(TRIAGE_PLUGIN.manifest);
+
+    expect(normalized.ok).toBe(true);
+    if (!normalized.ok) throw new Error('Expected the Triage definePlugin manifest to normalize');
+    expect(TRIAGE_PLUGIN.manifest).toBe(PLUGIN_MANIFEST);
+    expect({
+      id: normalized.manifest.id,
+      version: normalized.manifest.version,
+      displayName: normalized.manifest.displayName,
+      entrypoints: normalized.manifest.entrypoints,
+    }).toEqual({
+      id: 'happier.triage',
+      version: '0.0.0',
+      displayName: 'PRs & Issues',
+      entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    });
+    expect(Object.keys(TRIAGE_PLUGIN.manifest.contributes).sort()).toEqual([
+      'accountCollections',
+      'actions',
+      'composerAttachments',
+      'composerControls',
+      'pluginContributionPoints',
+      'settings',
+      'ui',
+    ]);
+  });
+
   it('keeps Protocol available only to test support', () => {
     const packageJson = JSON.parse(
       readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
@@ -53,11 +86,28 @@ describe('Triage plugin manifest', () => {
 
     expect(PLUGIN_MANIFEST.contributes?.pluginContributionPoints).toHaveLength(1);
     expect(PLUGIN_MANIFEST.contributes?.pluginContributionPoints?.[0]).toMatchObject(expectedPoint);
-    expect(TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1).toEqual({
+    // The public target reference may also carry the Protocol-owned semantic
+    // decoder. This assertion owns only the stable routing identity.
+    expect(TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1).toMatchObject({
       targetPluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
       id: expectedPoint.id,
       protocol: expectedPoint.protocols[0],
     });
+  });
+
+  it('offers the entries control only in the scopes that can carry an attachment', () => {
+    // `core/COMPOSER.md` §1 fixes the set. The host reads an ABSENT `scopes` as
+    // EVERY scope (`pluginContributedActionComposerChips.tsx`
+    // `qualifiesForComposerScope`), so leaving it undeclared is not "no policy
+    // yet" — it is the widest possible one. `automationAuthoring` has no
+    // Message-attachment capability at all, so the control would open a picker
+    // whose attachment nothing could ever hold; `participantMessage` has no
+    // approved V1 journey.
+    const control = PLUGIN_MANIFEST.contributes.composerControls?.find(
+      (candidate) => candidate.id === TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1,
+    );
+
+    expect(control?.scopes).toEqual(['session', 'newSession', 'pendingMessage']);
   });
 
   it('names the product, not the program, everywhere a user can read it', () => {
@@ -67,5 +117,59 @@ describe('Triage plugin manifest', () => {
 
   it('carries the daemon entrypoint the bundled activation source resolves', () => {
     expect(PLUGIN_MANIFEST.entrypoints.daemon).toBe('./dist/index.js');
+  });
+
+  it('offers one existing safe list read to Voice through its canonical daemon Action', () => {
+    const action = PLUGIN_MANIFEST.contributes.actions.find(
+      (candidate) => candidate.id === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
+    );
+
+    // This is deliberately a pre-existing bounded list read, not a new GitHub
+    // mutation. The Action declaration has one daemon implementation and adds
+    // Voice only as an invocation surface; no Triage-specific Voice handler or
+    // router is involved.
+    expect(action).toMatchObject({
+      id: TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
+      surfaces: ['plugin', 'voice'],
+      execution: { target: 'daemon' },
+    });
+    expect(PLUGIN_MANIFEST.contributes.actions
+      .filter((candidate) => candidate.id !== TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1)
+      .some((candidate) => candidate.surfaces.includes('voice'))).toBe(false);
+  });
+
+  it('declares localized Voice Action presentation in every shipped Triage bundle', () => {
+    const action = PLUGIN_MANIFEST.contributes.actions.find(
+      (candidate) => candidate.id === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
+    );
+
+    expect(action).toMatchObject({
+      title: {
+        key: 'plugins.triage.action.listEntries.title',
+        fallback: 'Read the current list window',
+      },
+      description: {
+        key: 'plugins.triage.action.listEntries.description',
+        fallback: 'Reads one bounded ordered window of pull requests, issues and error groups from the configured sources.',
+      },
+    });
+    for (const messages of Object.values(TRIAGE_UI_TRANSLATIONS)) {
+      expect(messages['plugins.triage.action.listEntries.title']).toEqual(expect.any(String));
+      expect(messages['plugins.triage.action.listEntries.description']).toEqual(expect.any(String));
+    }
+  });
+
+  it('requires current-context publication only for the list-page renderer', () => {
+    const renderers = PLUGIN_MANIFEST.contributes.ui?.renderers ?? [];
+    const listPage = renderers.find((candidate) => candidate.id === TRIAGE_LIST_PAGE_RENDERER_ID_V1);
+
+    expect(listPage?.requiredHostMethods).toEqual([
+      'executeAction',
+      'publishCurrentUiContext',
+    ]);
+    expect(renderers
+      .filter((candidate) => candidate.id !== TRIAGE_LIST_PAGE_RENDERER_ID_V1)
+      .some((candidate) => candidate.requiredHostMethods?.includes('publishCurrentUiContext')))
+      .toBe(false);
   });
 });

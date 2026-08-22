@@ -55,12 +55,21 @@ function resolveCanonicalCodexHandoffBackendMode(
   return normalized === 'acp' || normalized === 'appServer' ? normalized : null;
 }
 
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : new Error('Codex handoff export was cancelled');
+}
+
 export async function exportCodexSessionBundle(params: Readonly<{
   metadata: HandoffExportSessionMetadata;
   remoteSessionId: string;
   env: NodeJS.ProcessEnv;
   activeServerDir: string;
+  signal?: AbortSignal;
 }>): Promise<CodexSessionHandoffBundle> {
+  throwIfAborted(params.signal);
   const backendMode = resolveCanonicalCodexHandoffBackendMode(params.metadata.codexBackendMode);
   const codexSource = resolveCodexSource(params.metadata);
   const source = projectCodexExternalSessionSourceToHandoff(codexSource);
@@ -76,12 +85,15 @@ export async function exportCodexSessionBundle(params: Readonly<{
     })
     : null;
   const candidateHomes = await resolvePreferredCodexHomes(params);
+  throwIfAborted(params.signal);
   let rollouts = [] as Awaited<ReturnType<typeof collectCodexSessionRolloutFiles>>;
   for (const codexHome of candidateHomes) {
+    throwIfAborted(params.signal);
     rollouts = await collectCodexSessionRolloutFiles({
       codexHome,
       remoteSessionId: params.remoteSessionId,
     });
+    throwIfAborted(params.signal);
     if (rollouts.length > 0) break;
   }
 
@@ -90,11 +102,17 @@ export async function exportCodexSessionBundle(params: Readonly<{
   }
 
   const files = await Promise.all(
-    rollouts.map(async (rollout) => ({
-      relativePath: normalizeCodexHandoffBundleRelativePath(rollout.fileRelPath),
-      contentBase64: (await readFile(rollout.filePath)).toString('base64'),
-    })),
+    rollouts.map(async (rollout) => {
+      throwIfAborted(params.signal);
+      const content = await readFile(rollout.filePath);
+      throwIfAborted(params.signal);
+      return {
+        relativePath: normalizeCodexHandoffBundleRelativePath(rollout.fileRelPath),
+        contentBase64: content.toString('base64'),
+      };
+    }),
   );
+  throwIfAborted(params.signal);
 
   return {
     agentId: 'codex',

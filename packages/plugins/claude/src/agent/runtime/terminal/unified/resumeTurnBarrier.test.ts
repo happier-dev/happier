@@ -76,7 +76,7 @@ describe('createClaudeUnifiedResumeTurnBarrier', () => {
     expect(barrier.observePromptStart()).toBe(false);
   });
 
-  it('releases the provisional barrier when an explicit resume falls back to a fresh provider session', async () => {
+  it('releases the provisional barrier while the enclosing runtime rejects a non-resume SessionStart', async () => {
     vi.useFakeTimers();
     const begin = vi.fn();
     const cancel = vi.fn();

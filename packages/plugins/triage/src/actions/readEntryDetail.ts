@@ -15,21 +15,29 @@ import {
 import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
 import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
 import { findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
+import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { deriveSessionLinkEntryTag } from '../corpus/identity/tags.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { isTriageSelfCaller } from './callerSource.js';
 import type {
     TriageReadEntryDetailInputV1,
     TriageReadEntryDetailResultV1,
 } from './entryDetailProtocol.js';
+import {
+    indexTriageAdmittedSourcesV1,
+    type TriageAdmittedSourceV1,
+} from './listEntries.js';
 
 /**
  * The durable half of one mounted detail input.
  *
  * Everything a source detail body needs that the reader's own device-local
  * projection does not already hold: the exact configured instance the selected
- * row was observed through, and that entry's Session links. It writes nothing
- * and reaches no provider.
+ * row was observed through, that entry's Session links, and — for the aggregate
+ * header above the body — the entry source's own declared descriptor, taken
+ * from the admitted snapshot exactly as the host already parsed it. It writes
+ * nothing and reaches no provider.
  *
  * It is caller-bound to this target's own surfaces. The configured instance
  * carries the owning source's account binding and its source-private
@@ -59,6 +67,24 @@ export type TriageReadEntryDetailDepsV1 = Readonly<{
     sourceInstances: Pick<CorpusCollectionHandleV1, 'query'>;
     sessionLinks: Pick<CorpusCollectionHandleV1, 'query' | 'identityTag'>;
     readSessionSummary: TriageLinkedSessionSummaryReaderV1;
+    /**
+     * The current admitted view of this target's own sources point.
+     *
+     * The entry's source declared its own name, and its own name for this entry
+     * kind, in the descriptor the host already parsed with this target's
+     * schema. Reading it here is what lets the one aggregate detail header say
+     * both in the source's words instead of leaving them out; nothing in this
+     * Action decodes that value, and nothing re-derives the kind vocabulary the
+     * scan pass admits entries against.
+     *
+     * It holds no invalidation watch and never refuses on a moved admitted
+     * view: these two strings are display, and a name one pass out of date is
+     * advisory. What must fail closed on currentness is execution and mounting,
+     * and both already do at their own owners.
+     */
+    readAdmittedSources: (
+        options?: PluginCancellationOptions,
+    ) => Promise<readonly TriageAdmittedSourceV1[]>;
     signal?: AbortSignal;
 }>;
 
@@ -129,10 +155,26 @@ export async function readTriageEntryDetail(
         return UNAVAILABLE;
     }
 
+    const [linkedSessions, admitted] = await Promise.all([
+        readLinkedSessions(input.entryRef, deps, options),
+        deps.readAdmittedSources(options),
+    ]);
+    // Keyed on the entry's own source, never on the configured row's. The
+    // refusal above proves the two equal, and reading the other one would make
+    // a later relaxation of that refusal name the wrong source on screen
+    // instead of failing where the check lives.
+    const contribution = indexTriageAdmittedSourcesV1(admitted)
+        .get(renderSourceQualifiedId(input.entryRef.source));
+
     return Object.freeze({
         kind: 'read',
         instance: configured,
-        linkedSessions: await readLinkedSessions(input.entryRef, deps, options),
+        linkedSessions,
+        // A source with no currently admitted contribution loses the two names
+        // rather than gaining an invented one.
+        ...(contribution?.descriptor === undefined
+            ? {}
+            : { sourceDescriptor: contribution.descriptor }),
     });
 }
 
@@ -151,6 +193,17 @@ export function createTriageReadEntryDetailActionHandler(): ActionHandler<
             readSessionSummary: async (sessionId, options) => {
                 const handle = await context.services.sessions.get(sessionId, options);
                 return handle === null ? null : await handle.summary(options);
+            },
+            readAdmittedSources: async (options) => {
+                const observation = context.services.targetedContributions.observeForSelf(
+                    TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
+                    { onInvalidated: () => {} },
+                );
+                try {
+                    return (await observation.readCurrent(options)).contributions;
+                } finally {
+                    observation.dispose();
+                }
             },
             ...(context.signal ? { signal: context.signal } : {}),
         });

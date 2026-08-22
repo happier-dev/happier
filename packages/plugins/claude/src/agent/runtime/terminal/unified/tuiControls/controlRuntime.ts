@@ -1,7 +1,7 @@
 import type {
   TerminalControlPort,
   TerminalControlSendResult,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { parseClaudeScreenState, type ClaudeScreenState } from '../screenState.js';
 import type { ControlAttemptResult } from './outcome.js';

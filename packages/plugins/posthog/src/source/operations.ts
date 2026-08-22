@@ -15,7 +15,11 @@
  */
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import type {
+    ConnectedAccountMetadataList,
+    ConnectedAccountRef,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 import {
     MAX_TRIAGE_INSTANCE_DRAFTS_V1,
     MAX_TRIAGE_ROW_FACTS_V1,
@@ -31,6 +35,8 @@ import {
     type TriageSourceInstanceDraftV1,
     type TriageSourceScanEvidenceV1,
     type TriageSourceScanObservationV1,
+    decodeTriagePagingTokenV1,
+    encodeTriagePagingTokenV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -100,6 +106,7 @@ export const POSTHOG_FAILURE_CODES = {
     instanceKeyUnreadable: 'posthog/instance-key-unreadable',
     instanceScopeMismatch: 'posthog/instance-scope-mismatch',
     continuationUnreadable: 'posthog/scan-continuation-unreadable',
+    continuationUnmintable: 'posthog/scan-continuation-unmintable',
     paginationNonAdvancing: 'posthog/pagination-non-advancing',
     walkInProgress: 'posthog/walk-in-progress',
     malformedRows: 'posthog/malformed-provider-rows',
@@ -110,6 +117,9 @@ export const POSTHOG_FAILURE_CODES = {
     instanceCapReached: 'posthog/instance-cap-reached',
     entryIdMalformed: 'posthog/entry-id-malformed',
     responseUnreadable: 'posthog/response-unreadable',
+    serverError: 'posthog/server-error',
+    timedOut: 'posthog/request-timed-out',
+    unexpectedStatus: 'posthog/unexpected-status',
     requestInvalid: 'posthog/request-invalid',
     transport: 'posthog/transport-failed',
     cancelled: 'posthog/cancelled',
@@ -149,6 +159,20 @@ function sourceFailure(
  * `retryNotBeforeMs` is carried only when the client actually derived it from provider
  * evidence; this module never invents a deadline, because a guessed reset would make the
  * aggregate defer a read the provider never asked it to defer.
+ *
+ * `unexpectedStatus` is the fall-through for `400`, `409`, `410` and `422` — statuses
+ * PostHog's published Error Tracking contract gives no meaning to. It is `unknown`, not
+ * `transient`: `transient` is the aggregate's claim that the identical request would
+ * succeed on its own later, and it is what `composer/resolveForDispatch.ts` reports to
+ * its caller as `retryable: true`. `unknown` is the honest answer and still paces the
+ * retry, because `refresh/refreshEligibility.ts` backs the same three classes off.
+ * GitHub, GitLab, Bitbucket and Sentry all settle their equivalent fall-through the same
+ * way; PostHog was the one source that did not.
+ *
+ * The codes are four, not one. `response-unreadable` is true of a body that would not
+ * parse and false of a readable `503`, a deadline that returned no body at all, and a
+ * status this source simply cannot interpret — and `code`, not `class`, is the value a
+ * reader keys on.
  */
 export function toTriageSourceFailure(failure: PosthogFailure): TriageSourceFailureV1 {
     switch (failure.kind) {
@@ -169,9 +193,11 @@ export function toTriageSourceFailure(failure: PosthogFailure): TriageSourceFail
         case 'redirected':
             return sourceFailure('unsupportedContract', POSTHOG_FAILURE_CODES.redirected);
         case 'server':
+            return sourceFailure('transient', POSTHOG_FAILURE_CODES.serverError);
         case 'timeout':
+            return sourceFailure('transient', POSTHOG_FAILURE_CODES.timedOut);
         case 'unexpectedStatus':
-            return sourceFailure('transient', POSTHOG_FAILURE_CODES.responseUnreadable);
+            return sourceFailure('unknown', POSTHOG_FAILURE_CODES.unexpectedStatus);
         case 'transport':
             return sourceFailure('transient', POSTHOG_FAILURE_CODES.transport);
         case 'cancelled':
@@ -290,10 +316,20 @@ export async function listPosthogInstances(
 ): Promise<TriageListInstancesResultV1> {
     TriageListInstancesInputV1Schema.parse(input);
 
-    const listed = await context.services.connectedAccounts.listAccounts({
+    // A purpose with no selected account has an empty authorized set: the host
+    // declines to list it, and calling that a PostHog failure would accuse a
+    // provider this source never contacted while hiding the one thing the reader
+    // can act on. Every other refusal keeps propagating exactly as before.
+    const outcome = await readTriageSourceAccountListingV1({
+        connectedAccounts: context.services.connectedAccounts,
         purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
         limit: MAX_TRIAGE_INSTANCE_DRAFTS_V1,
-    }, { signal: context.signal });
+        signal: context.signal,
+    });
+    if (outcome.kind === 'failed') throw outcome.error;
+    const listed: ConnectedAccountMetadataList = outcome.kind === 'unbound'
+        ? { status: 'complete', accounts: [] }
+        : outcome.listing;
 
     const candidates: TriageSourceInstanceDraftV1[] = [];
     const failures: PosthogInstanceFailure[] = [];
@@ -472,16 +508,12 @@ type PosthogScanGeometry = Readonly<{
 }>;
 
 function decodeScanGeometry(token: string, environmentCount: number): PosthogScanGeometry | null {
-    let decoded: unknown;
-    try {
-        decoded = JSON.parse(token);
-    } catch {
+    // The bounded JSON envelope has one owner across every source; only the frontier
+    // fields below are PostHog's, and they are still validated here.
+    const raw = decodeTriagePagingTokenV1(token);
+    if (raw === null) {
         return null;
     }
-    if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
-        return null;
-    }
-    const raw = decoded as Readonly<Record<string, unknown>>;
     const environmentIndex = raw['environmentIndex'];
     const offset = raw['offset'];
     const from = raw['from'];
@@ -603,20 +635,25 @@ export async function scanPosthogSource(
             ? { ...geometry, environmentIndex: geometry.environmentIndex + 1, offset: 0 }
             : null;
 
+    // A token wider than the protocol admits is not a token: it is a member of a closed
+    // result object, so emitting it would fail validation of the WHOLE page and discard
+    // every row above. The walk therefore ends here and says why.
+    const token = next === null ? null : encodeTriagePagingTokenV1(next);
     const evidence = resolvePageEvidence({
         malformedRowCount: page.malformedRowCount,
         nonAdvancing,
+        unresumable: next !== null && token === null,
         finished: next === null,
     });
 
-    if (next === null) {
+    if (token === null) {
         return Object.freeze({ kind: 'complete' as const, observations, evidence });
     }
     return Object.freeze({
         kind: 'page' as const,
         observations,
         evidence,
-        continuation: Object.freeze({ v: 1 as const, token: JSON.stringify(next) }),
+        continuation: Object.freeze({ v: 1 as const, token }),
     });
 }
 
@@ -624,13 +661,15 @@ export async function scanPosthogSource(
  * Health for one accepted page.
  *
  * Only a walk that actually reached the provider-reported end of every selected
- * environment may claim `walkFinished`. A page still in flight, a skipped row, or a
- * provider offset that refused to advance is a known gap and says so; none of them is
- * ever absence or proof that the stored projection is complete.
+ * environment may claim `walkFinished`. A page still in flight, a skipped row, a
+ * provider offset that refused to advance, or a next position too wide to travel in the
+ * protocol's token is a known gap and says so; none of them is ever absence or proof
+ * that the stored projection is complete.
  */
 function resolvePageEvidence(input: Readonly<{
     malformedRowCount: number;
     nonAdvancing: boolean;
+    unresumable: boolean;
     finished: boolean;
 }>): TriageSourceScanEvidenceV1 {
     if (input.malformedRowCount > 0) {
@@ -644,6 +683,12 @@ function resolvePageEvidence(input: Readonly<{
         return Object.freeze({
             kind: 'partial' as const,
             reason: POSTHOG_FAILURE_CODES.paginationNonAdvancing,
+        });
+    }
+    if (input.unresumable) {
+        return Object.freeze({
+            kind: 'partial' as const,
+            reason: POSTHOG_FAILURE_CODES.continuationUnmintable,
         });
     }
     if (!input.finished) {
@@ -835,6 +880,13 @@ export async function getPosthogSourceEntry(
     });
 }
 
+/**
+ * The `get` plane's half of the same projection, kept in step with
+ * `toTriageSourceFailure` above: one provider condition has one class and one code
+ * whichever operation observed it. Both switches are total, so a new reason fails to
+ * compile here rather than silently falling through to a code that describes something
+ * else.
+ */
 function triageFailureClassForReason(
     reason: PosthogUnresolvedReason,
 ): TriageSourceFailureV1['class'] {
@@ -845,18 +897,18 @@ function triageFailureClassForReason(
             return 'permission';
         case 'rateLimited':
             return 'rateLimit';
-        case 'transient':
+        case 'server':
+        case 'timeout':
         case 'transport':
         case 'cancelled':
             return 'transient';
         case 'plainNotFound':
+        case 'unexpectedStatus':
             return 'unknown';
         case 'malformedResponse':
         case 'redirected':
         case 'configuration':
             return 'unsupportedContract';
-        default:
-            return 'unknown';
     }
 }
 
@@ -872,6 +924,12 @@ function failureCodeForReason(reason: PosthogUnresolvedReason): string {
             return POSTHOG_FAILURE_CODES.throttled;
         case 'redirected':
             return POSTHOG_FAILURE_CODES.redirected;
+        case 'server':
+            return POSTHOG_FAILURE_CODES.serverError;
+        case 'timeout':
+            return POSTHOG_FAILURE_CODES.timedOut;
+        case 'unexpectedStatus':
+            return POSTHOG_FAILURE_CODES.unexpectedStatus;
         case 'transport':
             return POSTHOG_FAILURE_CODES.transport;
         case 'cancelled':
@@ -880,8 +938,6 @@ function failureCodeForReason(reason: PosthogUnresolvedReason): string {
             return POSTHOG_FAILURE_CODES.responseUnreadable;
         case 'configuration':
             return POSTHOG_FAILURE_CODES.requestInvalid;
-        default:
-            return POSTHOG_FAILURE_CODES.responseUnreadable;
     }
 }
 

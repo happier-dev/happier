@@ -97,11 +97,9 @@ describe('Claude native transcript semantic projection', () => {
       raw: {
         role: 'agent',
         content: {
-          type: 'output',
-          data: {
-            type: 'assistant',
-            isSidechain: true,
-          },
+          type: 'acp',
+          agentId: 'claude',
+          data: { type: 'message', message: 'subagent done' },
         },
       },
     });
@@ -197,10 +195,9 @@ describe('Claude native transcript semantic projection', () => {
     })[0]).toMatchObject({
       raw: {
         content: {
-          data: {
-            type: 'claude_compact_summary',
-            text: 'A compact summary',
-          },
+          type: 'acp',
+          agentId: 'claude',
+          data: { type: 'message', message: 'A compact summary' },
         },
       },
     });
@@ -336,10 +333,9 @@ describe('Claude native transcript semantic projection', () => {
     })[0]).toMatchObject({
       raw: {
         content: {
-          data: {
-            type: 'claude_compact_summary',
-            text: 'Sidechain compact summary',
-          },
+          type: 'acp',
+          agentId: 'claude',
+          data: { type: 'message', message: 'Sidechain compact summary' },
         },
       },
     });
@@ -382,10 +378,9 @@ describe('Claude native transcript semantic projection', () => {
     })[0]).toMatchObject({
       raw: {
         content: {
-          data: {
-            type: 'claude_local_command_output',
-            text: 'sidechain output',
-          },
+          type: 'acp',
+          agentId: 'claude',
+          data: { type: 'message', message: 'sidechain output' },
         },
       },
     });

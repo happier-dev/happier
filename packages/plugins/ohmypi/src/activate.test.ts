@@ -24,6 +24,19 @@ function createUnboundConnectedAccounts() {
 }
 
 describe('OhMyPi plugin activation', () => {
+  it('reexports the activation compiled by its canonical public plugin definition', async () => {
+    expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
+      'agents',
+      'hooks',
+      'settings',
+      'systemTools',
+      'ui',
+    ]);
+    expect(await import('./manifest.js')).toEqual(expect.objectContaining({
+      OH_MY_PI_PLUGIN: expect.objectContaining({ manifest: PLUGIN_MANIFEST, activate }),
+    }));
+  });
+
   it('registers the native primary runtime and auxiliary External Sessions independently', async () => {
     const fixture = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const agent = fixture.registration('agents', 'ohmypi');

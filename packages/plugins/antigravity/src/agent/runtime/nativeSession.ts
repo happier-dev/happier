@@ -1,6 +1,6 @@
 import type {
   AgentRuntimeContext,
-  AgentSessionMcpService,
+  AgentSessionMcpServer,
   AgentSessionOpenRequest,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
@@ -27,11 +27,17 @@ function composeLaunchEnvironment(request: AgentSessionOpenRequest): Readonly<Re
   return environment;
 }
 
-function readBoundSessionMcpService(context: AgentRuntimeContext): AgentSessionMcpService | null {
-  const session = context.session;
-  if (!session || !('services' in session)) return null;
-  return (session as AgentSessionRuntimeContext['session']).services.mcp;
-}
+type AntigravityNativeRuntimeInput<TContext extends AgentRuntimeContext> = Readonly<{
+  mode: ConcreteAntigravityRuntimeMode;
+  request: AgentSessionOpenRequest;
+  context: TContext;
+  connectedAccountEnv?: Readonly<Record<string, string>>;
+  materializeAuthEnv?: () => Promise<Readonly<Record<string, string>> | null>;
+}>;
+
+type AntigravityMcpServerResolver = () => Promise<readonly AgentSessionMcpServer[]>;
+
+const NO_SESSION_MCP_SERVERS: readonly AgentSessionMcpServer[] = Object.freeze([]);
 
 function createPermissionRequester(
   context: AgentRuntimeContext,
@@ -101,13 +107,10 @@ function createElicitation(context: AgentRuntimeContext): AntigravityLocalharnes
   };
 }
 
-export function createAntigravityNativeSessionRuntime(input: Readonly<{
-  mode: ConcreteAntigravityRuntimeMode;
-  request: AgentSessionOpenRequest;
-  context: AgentRuntimeContext;
-  connectedAccountEnv?: Readonly<Record<string, string>>;
-  materializeAuthEnv?: () => Promise<Readonly<Record<string, string>> | null>;
-}>): AgentSessionRuntime {
+function createAntigravityNativeRuntimeWithMcp(
+  input: AntigravityNativeRuntimeInput<AgentRuntimeContext>,
+  resolveMcpServers: AntigravityMcpServerResolver,
+): AgentSessionRuntime {
   const env = composeLaunchEnvironment(input.request);
   if (input.mode === 'cliPrint') {
     const providerSessionId = input.request.kind === 'resume'
@@ -148,11 +151,31 @@ export function createAntigravityNativeSessionRuntime(input: Readonly<{
         ? { materializeAuthEnv: input.materializeAuthEnv }
         : {}),
     }),
-    resolveMcpServers: () => {
-      const mcp = readBoundSessionMcpService(input.context);
-      return mcp
-        ? mcp.resolveServers({ signal: input.context.signal })
-        : Promise.resolve([]);
-    },
+    resolveMcpServers,
   });
+}
+
+export function createAntigravityNativeSessionRuntime(
+  input: AntigravityNativeRuntimeInput<AgentSessionRuntimeContext>,
+): AgentSessionRuntime {
+  return createAntigravityNativeRuntimeWithMcp(
+    input,
+    () => input.context.session.services.mcp.resolveServers({
+      signal: input.context.signal,
+    }),
+  );
+}
+
+/**
+ * PEP-EXECUTION detached runs have no Session scope. They deliberately receive
+ * no native-session MCP launch servers; generic invocation MCP is not a
+ * substitute and no Session is fabricated.
+ */
+export function createAntigravityNativeExecutionRunRuntime(
+  input: AntigravityNativeRuntimeInput<AgentRuntimeContext>,
+): AgentSessionRuntime {
+  return createAntigravityNativeRuntimeWithMcp(
+    input,
+    async () => NO_SESSION_MCP_SERVERS,
+  );
 }

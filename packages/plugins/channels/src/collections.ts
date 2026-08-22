@@ -1,13 +1,9 @@
-import type {
-  JsonValue,
-  PluginAccountCollectionMigrationRuntimeProjection,
-} from '@happier-dev/plugin-sdk';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
   defineAccountCollection,
   PluginMachineExecutionOriginV1JsonSchema,
 } from '@happier-dev/plugin-sdk/collections';
-import type { PluginAccountCollectionContributionV1 } from '@happier-dev/plugin-sdk/collections';
 import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
   PluginContributionIdentityV1JsonSchema,
@@ -1968,50 +1964,16 @@ export const CHANNEL_DELIVERIES_COLLECTION = defineAccountCollection({
 });
 
 /**
- * The two declared Account Collections, in one place, so the manifest and the
- * executable migration projection below cannot name different sets.
+ * The two declared Account Collections, in one place, for the checks that
+ * reason about the set rather than about one Collection.
+ *
+ * The manifest does not compose this array and no second function projects it
+ * into a manifest declaration: `definePlugin` names each definition under its
+ * own local id and derives both the static declaration — migration identities
+ * without their callbacks — and the candidate-local migration projection from
+ * it, so the two halves have one owner.
  */
 export const CHANNEL_ACCOUNT_COLLECTIONS = [
   CHANNEL_STATE_COLLECTION,
   CHANNEL_DELIVERIES_COLLECTION,
 ] as const;
-
-/**
- * Public manifest half of the same Collection declarations. Migration
- * identities are JSON-only here; their callbacks remain exclusively in the
- * candidate-local runtime projection below.
- */
-function projectChannelAccountCollectionDeclaration(
-  collection: (typeof CHANNEL_ACCOUNT_COLLECTIONS)[number],
-) {
-  const { migrations = [], ...declaration } = collection;
-  return {
-    ...declaration,
-    migrations: migrations.map(({ id, fromSchemaVersion, toSchemaVersion }) => ({
-      id,
-      fromSchemaVersion,
-      toSchemaVersion,
-    })),
-  };
-}
-
-export const CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS = Object.freeze(
-  CHANNEL_ACCOUNT_COLLECTIONS.map(projectChannelAccountCollectionDeclaration),
-) satisfies readonly PluginAccountCollectionContributionV1[];
-
-/**
- * Executable half of `contributes.accountCollections`.
- *
- * The host rejects an author module whose projection does not name every
- * declared Collection, and whose per-Collection `migrate` callbacks are not the
- * ordered adjacent readable-schema-version edges the manifest declares. The
- * static projection above carries only those edge identities; this runtime map
- * keeps the exact callback beside the same source declaration.
- */
-export const CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS:
-PluginAccountCollectionMigrationRuntimeProjection = Object.freeze(Object.fromEntries(
-  CHANNEL_ACCOUNT_COLLECTIONS.map((collection) => [
-    collection.id,
-    Object.freeze([...collection.migrations ?? []]),
-  ]),
-));

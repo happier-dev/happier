@@ -2,6 +2,7 @@ import type { ComposerAttachmentAuthorPresentationV1 } from '@happier-dev/plugin
 import type { ComposerHandle, ComposerRequestOptions } from '@happier-dev/plugin-ui';
 import type { TriageEntryRefV1, TriageSourceInstanceRefV1 } from '@happier-dev/triage-protocol/v1';
 
+import { isHostCancellation } from '../hostCancellation.js';
 import { planTriageEntryAttachmentMutation } from './mutationPlan.js';
 
 /**
@@ -20,6 +21,14 @@ import { planTriageEntryAttachmentMutation } from './mutationPlan.js';
  * attachment the user just removed. A second conflict is reported rather than
  * looped, because a draft changing under two rapid writers is a fact the user
  * should see, not one to retry against forever.
+ *
+ * The returned outcome is TOTAL: every trip that starts here ends in one of
+ * these three answers. `read` and `apply` are host calls that reject rather
+ * than answer when the mounted scope's method is not currently negotiated — a
+ * daemon reconnect is enough — and a rejection that escapes this function never
+ * reaches the caller's outcome branch at all. The control it was invoked from
+ * then stays pending forever, with no error and no way back to idle, which is
+ * the one failure this round trip must never produce.
  */
 
 export type TriageEntryMutationOutcomeV1 =
@@ -48,6 +57,11 @@ const REFUSAL_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
     notEditable: 'The composer cannot be edited right now.',
     conflict: 'The draft changed while this was applied. Try again.',
     unavailable: 'The composer is no longer open.',
+    // Deliberately not 'nothing changed': a rejected `apply` may have landed
+    // before the answer was lost. The picker re-reads the draft after every
+    // outcome, so the canonical snapshot -- not this sentence -- settles what
+    // the row actually holds.
+    unreachable: 'The composer could not be reached. Try again.',
 });
 
 function refused(reason: string): TriageEntryMutationOutcomeV1 {
@@ -92,8 +106,23 @@ async function attempt(
 export async function applyTriageEntryMutation(
     request: TriageEntryMutationRequestV1,
 ): Promise<TriageEntryMutationOutcomeV1> {
-    const first = await attempt(request);
-    if (first.kind !== 'conflict') return first;
-    const replay = await attempt(request);
-    return replay.kind === 'conflict' ? refused('conflict') : replay;
+    try {
+        const first = await attempt(request);
+        if (first.kind !== 'conflict') return first;
+        const replay = await attempt(request);
+        return replay.kind === 'conflict' ? refused('conflict') : replay;
+    } catch (error) {
+        // A CANCELLED call is not a refusal and must not be settled as one.
+        // `hostCancellation.ts` owns that distinction and states why: the
+        // caller stopped asking and learned nothing, so reporting "the composer
+        // could not be reached" invents an answer nobody received — and hides
+        // it behind the exact sentence a real transport failure produces. The
+        // two sibling consumers already route through this helper.
+        if (isHostCancellation(error, request.options?.signal)) throw error;
+        // Both attempts are covered: the replay reaches the same boundary a
+        // second time, and its rejection has to settle through the same answer
+        // rather than escaping the outcome the first attempt already committed
+        // this call to producing.
+        return refused('unreachable');
+    }
 }

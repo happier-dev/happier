@@ -4,8 +4,11 @@ import { compilePluginJsonSchema } from '@happier-dev/plugin-sdk/manifest';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
+  ElevenLabsAgentIdSchema,
   ELEVENLABS_VOICE_PROVIDER_SETTINGS_DECLARATION,
   ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
+  buildElevenLabsConversationAuthAudience,
+  parseElevenLabsConversationAuthAudience,
   ElevenLabsProvisionRequestSchema,
   ElevenLabsProvisionToolSchema,
   ElevenLabsVoiceProviderSettingsLegacySchema,
@@ -70,6 +73,34 @@ describe('ElevenLabs versioned credential boundary', () => {
       agentId: 'agent_1',
       tts: { voiceId: 'voice_1', modelId: 'model_1' },
     });
+  });
+
+  it('accepts every Agent id the plugin\'s own update-agent operation accepts', () => {
+    /*
+     * `update-agent` declares `agentId` as `{ type: 'string', minLength: 1, maxLength: 256 }` and
+     * maps it to a `uri_component`-encoded path placeholder, so the request boundary — not this
+     * schema — owns URL safety. A narrower local rule here refuses ids ElevenLabs itself issues
+     * and hands back through list/create, and the whole provider response then fails as
+     * `provider_response_invalid`.
+     */
+    for (const opaque of ['agent_1', 'agent.01JW', 'agent:01/v2', 'agent 01', 'ぼいす', 'a'.repeat(256)]) {
+      expect(ElevenLabsAgentIdSchema.safeParse(opaque).success).toBe(true);
+    }
+    expect(ElevenLabsAgentIdSchema.safeParse('').success).toBe(false);
+    expect(ElevenLabsAgentIdSchema.safeParse('   ').success).toBe(false);
+    expect(ElevenLabsAgentIdSchema.safeParse('a'.repeat(257)).success).toBe(false);
+    expect(ElevenLabsAgentIdSchema.parse('  agent_1  ')).toBe('agent_1');
+  });
+
+  it('round-trips an opaque Agent id through the conversation auth audience', () => {
+    const agentId = 'agent:01/v2';
+    for (const textOnly of [true, false]) {
+      const audience = buildElevenLabsConversationAuthAudience({ agentId, textOnly });
+      expect(parseElevenLabsConversationAuthAudience(audience)).toEqual({
+        kind: textOnly ? 'signed_url' : 'conversation_token',
+        agentId,
+      });
+    }
   });
 
   it('keeps v1 secrets migration-readable while the current canonical schema rejects them', () => {

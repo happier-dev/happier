@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -26,6 +28,11 @@ const GEN_ACCEPT = [
   '╭─────╮', '│ >   │', '╰─────╯',
   '  ⏵⏵ accept edits on (shift+tab to cycle)',
 ].join('\n');
+const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), '__fixtures__');
+const USAGE_LIMIT_DIALOG = readFileSync(
+  join(fixturesDir, 'incident-89861-ratelimit-resume.ansi'),
+  'utf8',
+);
 
 const FAST_TIMINGS = {
   slashPickerSettleMs: 1,
@@ -64,7 +71,8 @@ function buildRuntime(params: Readonly<{
   featureEnabled: boolean;
   controlPortCaptures?: readonly string[] | null;
   configDir: string;
-  sessionSend?: ReturnType<typeof vi.fn>;
+  initialModelId?: string;
+  publishSessionEvent?: ReturnType<typeof vi.fn>;
   sessionWriteAgentState?: ReturnType<typeof vi.fn>;
 }>) {
   const terminalHost = createTerminalHostFixture();
@@ -78,7 +86,7 @@ function buildRuntime(params: Readonly<{
       'agents.claude.unifiedTerminal',
       ...(params.featureEnabled ? [CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL_FEATURE_ID] : []),
     ],
-    ...(params.sessionSend ? { sessionSend: params.sessionSend } : {}),
+    ...(params.publishSessionEvent ? { publishSessionEvent: params.publishSessionEvent } : {}),
     ...(params.sessionWriteAgentState ? { sessionWriteAgentState: params.sessionWriteAgentState } : {}),
   });
   const envelope = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
@@ -89,6 +97,7 @@ function buildRuntime(params: Readonly<{
     hostPreference: 'zellij',
     launchEnv: { CLAUDE_CONFIG_DIR: params.configDir },
     permissionMode: 'default',
+    ...(params.initialModelId ? { initialModelId: params.initialModelId } : {}),
     tuiControl: { timings: FAST_TIMINGS },
   }));
   return { envelope, runtime: envelope.operations, fakePort, terminalHost };
@@ -104,6 +113,10 @@ type ComposerClearNativeRuntime = Readonly<{
     sessionId?: string;
     error?: string;
   }>>;
+}>;
+
+type ConnectedServiceApplicationNativeRuntime = Readonly<{
+  releaseConnectedServiceUsageLimitDialog?: () => Promise<void>;
 }>;
 
 describe('Claude Unified TUI runtime control integration (updateSessionRuntimeConfig)', () => {
@@ -281,12 +294,13 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
 
   it('applies a post-launch effort override through the verified TUI control when the feature is ON', async () => {
     const configDir = await makeConfigDir();
-    const sessionSend = vi.fn(async () => ({ ok: true }));
+    const publishSessionEvent = vi.fn(async () => ({ status: 'custodied' as const }));
     const { runtime, fakePort } = buildRuntime({
       featureEnabled: true,
       controlPortCaptures: [IDLE, IDLE, EFFORT_OK],
       configDir,
-      sessionSend,
+      initialModelId: 'claude-sonnet-4-6',
+      publishSessionEvent,
     });
     try {
       await runtime.startProviderSession();
@@ -296,14 +310,11 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
       expect(outcome).toMatchObject({ status: 'applied' });
       expect(fakePort?.sentLiteral).toContain('/effort high');
       // Outcome events ride the runtime-config-outcome session-event contract.
-      expect(sessionSend).toHaveBeenCalledWith(expect.objectContaining({
-        kind: 'sessionEvent',
-        event: expect.objectContaining({
-          type: 'runtime-config-outcome',
-          runtime: 'claude-unified-terminal',
-          status: 'applied',
-          changes: [expect.objectContaining({ key: 'reasoningEffort', effective: 'high' })],
-        }),
+      expect(publishSessionEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'runtime-config-outcome',
+        runtime: 'claude-unified-terminal',
+        status: 'applied',
+        changes: [expect.objectContaining({ key: 'reasoningEffort', effective: 'high' })],
       }));
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
@@ -312,12 +323,12 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
 
   it('applies a metadata-only permission-mode override through verified TUI mode cycling', async () => {
     const configDir = await makeConfigDir();
-    const sessionSend = vi.fn(async () => ({ ok: true }));
+    const publishSessionEvent = vi.fn(async () => ({ status: 'custodied' as const }));
     const { runtime, fakePort } = buildRuntime({
       featureEnabled: true,
       controlPortCaptures: [IDLE, ACCEPT_EDITS_IDLE],
       configDir,
-      sessionSend,
+      publishSessionEvent,
     });
     try {
       await runtime.startProviderSession();
@@ -328,14 +339,11 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
       expect(outcome).toMatchObject({ status: 'applied' });
       expect(fakePort?.sentKeys).toEqual(['ShiftTab']);
       expect(fakePort?.sentLiteral.some((text) => text.startsWith('/permissions'))).toBe(false);
-      expect(sessionSend).toHaveBeenCalledWith(expect.objectContaining({
-        kind: 'sessionEvent',
-        event: expect.objectContaining({
-          type: 'runtime-config-outcome',
-          runtime: 'claude-unified-terminal',
-          status: 'applied',
-          changes: [expect.objectContaining({ key: 'permissionMode', effective: 'acceptEdits' })],
-        }),
+      expect(publishSessionEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'runtime-config-outcome',
+        runtime: 'claude-unified-terminal',
+        status: 'applied',
+        changes: [expect.objectContaining({ key: 'permissionMode', effective: 'acceptEdits' })],
       }));
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
@@ -344,12 +352,12 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
 
   it('applies a metadata-only mode-only permission change during generation through the mode-cycle window', async () => {
     const configDir = await makeConfigDir();
-    const sessionSend = vi.fn(async () => ({ ok: true }));
+    const publishSessionEvent = vi.fn(async () => ({ status: 'custodied' as const }));
     const { runtime, fakePort } = buildRuntime({
       featureEnabled: true,
       controlPortCaptures: [GENERATING, GEN_ACCEPT],
       configDir,
-      sessionSend,
+      publishSessionEvent,
     });
     try {
       await runtime.startProviderSession();
@@ -359,14 +367,11 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
 
       expect(outcome).toMatchObject({ status: 'applied' });
       expect(fakePort?.sentKeys).toEqual(['ShiftTab']);
-      expect(sessionSend).toHaveBeenCalledWith(expect.objectContaining({
-        kind: 'sessionEvent',
-        event: expect.objectContaining({
-          type: 'runtime-config-outcome',
-          runtime: 'claude-unified-terminal',
-          status: 'applied',
-          changes: [expect.objectContaining({ key: 'permissionMode', effective: 'acceptEdits' })],
-        }),
+      expect(publishSessionEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'runtime-config-outcome',
+        runtime: 'claude-unified-terminal',
+        status: 'applied',
+        changes: [expect.objectContaining({ key: 'permissionMode', effective: 'acceptEdits' })],
       }));
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
@@ -552,6 +557,46 @@ describe('Claude Unified terminal composer clear runtime control', () => {
         expect.anything(),
         expect.objectContaining({ text: 'queued after draft' }),
       );
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+});
+
+describe('Claude Unified connected-service application settlement', () => {
+  it('dismisses only the stale usage-limit dialog after exact account application', async () => {
+    const configDir = await makeConfigDir();
+    const { envelope, runtime, fakePort } = buildRuntime({
+      featureEnabled: false,
+      controlPortCaptures: [USAGE_LIMIT_DIALOG, IDLE],
+      configDir,
+    });
+    try {
+      await runtime.startProviderSession();
+      const nativeRuntime = envelope.nativeRuntime as ConnectedServiceApplicationNativeRuntime;
+
+      await nativeRuntime.releaseConnectedServiceUsageLimitDialog?.();
+
+      expect(fakePort?.sentKeys).toEqual(['Escape']);
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
+  it('does not touch a healthy provider screen after exact account application', async () => {
+    const configDir = await makeConfigDir();
+    const { envelope, runtime, fakePort } = buildRuntime({
+      featureEnabled: true,
+      controlPortCaptures: [IDLE],
+      configDir,
+    });
+    try {
+      await runtime.startProviderSession();
+      const nativeRuntime = envelope.nativeRuntime as ConnectedServiceApplicationNativeRuntime;
+
+      await nativeRuntime.releaseConnectedServiceUsageLimitDialog?.();
+
+      expect(fakePort?.sentKeys).toEqual([]);
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }

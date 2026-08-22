@@ -57,7 +57,7 @@ describe('bindClaudeUnifiedTerminalSession', () => {
     const writeSystemRecord = vi.fn(async () => undefined);
     const ctx = createPluginContextFixture(terminalHost.service, events.service, {
       sessionWriteSystemRecord: writeSystemRecord,
-      sessionWriteMetadata: vi.fn(async () => undefined),
+      sessionPublishWorkflowHeadline: vi.fn(async () => undefined),
     });
     const credentials = {
       token: 'host-token',

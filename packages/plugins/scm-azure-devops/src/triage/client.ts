@@ -2,6 +2,7 @@ import {
   classifyAzureDevOpsResponse,
   classifyAzureDevOpsTransportFailure,
   createAzureDevOpsFailure,
+  isAzureDevOpsDeadlineAbort,
 } from './failures.js';
 import { buildAzureDevOpsRequestUrl } from './requestUrls.js';
 import type {
@@ -31,11 +32,17 @@ export function createAzureDevOpsApiClient(
       const { route, query, method = 'GET', body, signal } = input;
 
       if (signal.aborted) {
+        // A multi-request read whose deadline elapsed between two of its calls
+        // reaches here rather than the transport, and must still say which of
+        // the two aborts happened.
+        const timedOut = isAzureDevOpsDeadlineAbort(signal);
         return {
           ok: false,
           failure: createAzureDevOpsFailure({
-            failureClass: 'cancelled',
-            detail: 'The Azure DevOps request was cancelled before it was sent.',
+            failureClass: timedOut ? 'timedOut' : 'cancelled',
+            detail: timedOut
+              ? 'The Azure DevOps request was not sent because its deadline had already passed.'
+              : 'The Azure DevOps request was cancelled before it was sent.',
           }),
         };
       }

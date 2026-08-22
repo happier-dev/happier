@@ -1,11 +1,87 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
+  resolveClaudeLaunchSettingsOverlayArgs,
   resolveClaudeNativeBaseLaunchEnvironment,
   resolveClaudeNativeLaunchSettings,
 } from './launchSettings.js';
 
 describe('resolveClaudeNativeLaunchSettings', () => {
+  it('acknowledges bypass mode only for interactive terminal launches', () => {
+    expect(resolveClaudeLaunchSettingsOverlayArgs({
+      args: ['--model', 'sonnet'],
+      interactionKind: 'interactive_terminal',
+      permissionMode: 'bypassPermissions',
+      launchSettings: {},
+    })).toEqual([
+      '--model',
+      'sonnet',
+      '--settings',
+      JSON.stringify({ skipDangerousModePermissionPrompt: true }),
+    ]);
+
+    expect(resolveClaudeLaunchSettingsOverlayArgs({
+      args: ['--model', 'sonnet'],
+      interactionKind: 'interactive_terminal',
+      permissionMode: 'default',
+      launchSettings: {},
+    })).toEqual(['--model', 'sonnet']);
+
+    expect(resolveClaudeLaunchSettingsOverlayArgs({
+      args: ['--model', 'sonnet'],
+      interactionKind: 'noninteractive_sdk',
+      permissionMode: 'bypassPermissions',
+      launchSettings: {},
+    })).toEqual(['--model', 'sonnet']);
+  });
+
+  it('merges the interactive acknowledgement into the single existing launch overlay', () => {
+    expect(resolveClaudeLaunchSettingsOverlayArgs({
+      args: ['--settings', JSON.stringify({ ultracode: true })],
+      interactionKind: 'interactive_terminal',
+      permissionMode: 'bypassPermissions',
+      launchSettings: {
+        statusLine: { type: 'command', command: 'status-forwarder' },
+      },
+    })).toEqual([
+      '--settings',
+      JSON.stringify({
+        ultracode: true,
+        statusLine: { type: 'command', command: 'status-forwarder' },
+        skipDangerousModePermissionPrompt: true,
+      }),
+    ]);
+  });
+
+  it('reads file-backed settings into the inline launch overlay without creating a sibling file', async () => {
+    const settingsDir = await mkdtemp(join(tmpdir(), 'happier-claude-launch-settings-'));
+    const settingsPath = join(settingsDir, 'settings.json');
+    const sourceSettings = { permissions: { allow: ['mcp__happier__change_title'] } };
+    await writeFile(settingsPath, JSON.stringify(sourceSettings));
+
+    try {
+      expect(resolveClaudeLaunchSettingsOverlayArgs({
+        args: ['--settings', settingsPath],
+        interactionKind: 'interactive_terminal',
+        permissionMode: 'bypassPermissions',
+        launchSettings: {},
+      })).toEqual([
+        '--settings',
+        JSON.stringify({
+          ...sourceSettings,
+          skipDangerousModePermissionPrompt: true,
+        }),
+      ]);
+      expect(JSON.parse(await readFile(settingsPath, 'utf8'))).toEqual(sourceSettings);
+      expect(await readdir(settingsDir)).toEqual(['settings.json']);
+    } finally {
+      await rm(settingsDir, { recursive: true, force: true });
+    }
+  });
+
   it('inherits the host user identity required by local Claude auth unless explicitly unset', () => {
     expect(resolveClaudeNativeBaseLaunchEnvironment({
       launchEnvironment: {

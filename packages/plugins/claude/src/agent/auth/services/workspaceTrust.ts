@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
+
+import { resolveClaudeConfigDir } from '../../environment.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -53,21 +54,16 @@ function resolveHomeDir(env: NodeJS.ProcessEnv): string {
 }
 
 function resolveClaudeRootConfigPathCandidates(env: NodeJS.ProcessEnv): ClaudeRootConfigPathCandidate[] {
-    const explicitConfigDir = readString(env.CLAUDE_CONFIG_DIR);
+    const configuredConfigDir = resolveClaudeConfigDir(env);
     const homeDir = resolveHomeDir(env);
-    const configuredConfigDir = readString(env[HAPPIER_CLAUDE_CONFIG_DIR_ENV]) ?? join(homeDir, '.claude');
     return dedupeRootConfigPathCandidates([
-        ...(explicitConfigDir ? [{
-            rootDir: explicitConfigDir,
-            path: join(explicitConfigDir, '.claude.json'),
-        }] : []),
-        {
-            rootDir: homeDir,
-            path: join(homeDir, '.claude.json'),
-        },
         {
             rootDir: configuredConfigDir,
             path: join(configuredConfigDir, '.claude.json'),
+        },
+        {
+            rootDir: homeDir,
+            path: join(homeDir, '.claude.json'),
         },
     ]);
 }

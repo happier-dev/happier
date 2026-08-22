@@ -12,11 +12,19 @@
  * scope, account binding and instance id are already owned by the selected
  * configured instance, and repeating them would create a second authority that
  * can go stale after a reconfiguration. No host clock reading is carried either.
+ *
+ * The bounded JSON envelope is the protocol's (`encodeTriagePagingTokenV1` /
+ * `decodeTriagePagingTokenV1`); what stays here is the frontier record inside it
+ * and every field check that decides what this walk may resume from.
  */
 
 import {
+  decodeTriagePagingTokenV1,
+  encodeTriagePagingTokenV1,
+} from '@happier-dev/triage-protocol/v1';
+
+import {
   SENTRY_MAX_NATIVE_ISSUE_PAGE_LIMIT,
-  SENTRY_MAX_PAGING_TOKEN_UTF8_BYTES,
   SENTRY_MAX_SCAN_PAGE_ENTRIES,
   SENTRY_SCAN_STATS_PERIOD,
 } from '../sentryContracts.js';
@@ -40,6 +48,18 @@ export type SentryScanContinuationResultV1 =
   | Readonly<{ ok: true; continuation: SentryScanContinuationV1 }>
   | Readonly<{ ok: false }>;
 
+/**
+ * The health reason a walk settles on when its frontier cannot be minted.
+ *
+ * It is emphatically **not** a cursor verdict. The provider's cursor can be
+ * perfectly well formed and still not fit the protocol's bounded paging token,
+ * and reporting that as `sentry-pagination-cursor-malformed` blames the
+ * provider for a bound this side owns. The truthful claim is the one the other
+ * sources already make for the same condition: this page is the last one this
+ * pass can hand back.
+ */
+export const SENTRY_CONTINUATION_UNAVAILABLE_REASON = 'sentry-continuation-unavailable';
+
 const REJECTED = Object.freeze({ ok: false as const });
 
 export function resolveSentryNativeLimit(scanLimit: number): number {
@@ -54,28 +74,29 @@ function isValidGeometry(scanLimit: unknown, nativeLimit: unknown): boolean {
     && nativeLimit === resolveSentryNativeLimit(scanLimit);
 }
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export function encodeSentryScanContinuation(continuation: SentryScanContinuationV1): string {
-  if (continuation.v !== 1) {
-    throw new Error('Only version 1 Sentry scan continuations can be encoded.');
-  }
-  if (!isValidGeometry(continuation.scanLimit, continuation.nativeLimit)) {
-    throw new Error('A Sentry scan continuation must freeze nativeLimit at min(scanLimit, 100).');
-  }
-  if (continuation.cursor === '') {
-    throw new Error('A Sentry scan continuation requires the provider cursor.');
-  }
+/**
+ * Projects this pass's frozen facts into the protocol's bounded token.
+ *
+ * `null` means no continuation can be minted — the record does not describe the
+ * geometry this pass froze, or it does not fit the bound. The caller then
+ * settles a truthful partial rather than presenting a truncated walk as a
+ * finished one, and never emits an over-bound token that would discard the page
+ * it belongs to.
+ */
+export function encodeSentryScanContinuation(
+  continuation: SentryScanContinuationV1,
+): string | null {
+  if (continuation.v !== 1) return null;
+  if (!isValidGeometry(continuation.scanLimit, continuation.nativeLimit)) return null;
+  if (continuation.cursor === '') return null;
   if (
     continuation.query !== SENTRY_SCAN_QUERY
     || continuation.statsPeriod !== SENTRY_SCAN_STATS_PERIOD
     || continuation.sort !== SENTRY_SCAN_SORT
   ) {
-    throw new Error('A Sentry scan continuation must carry the frozen full-pass query facts.');
+    return null;
   }
-  const token = JSON.stringify({
+  return encodeTriagePagingTokenV1({
     v: 1,
     scanLimit: continuation.scanLimit,
     nativeLimit: continuation.nativeLimit,
@@ -84,24 +105,12 @@ export function encodeSentryScanContinuation(continuation: SentryScanContinuatio
     statsPeriod: continuation.statsPeriod,
     sort: continuation.sort,
   });
-  if (new TextEncoder().encode(token).byteLength > SENTRY_MAX_PAGING_TOKEN_UTF8_BYTES) {
-    throw new Error('The Sentry scan continuation exceeds the bounded paging token size.');
-  }
-  return token;
 }
 
 export function decodeSentryScanContinuation(token: string): SentryScanContinuationResultV1 {
-  if (new TextEncoder().encode(token).byteLength > SENTRY_MAX_PAGING_TOKEN_UTF8_BYTES) {
-    return REJECTED;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(token);
-  } catch {
-    return REJECTED;
-  }
-  if (!isRecord(parsed) || parsed.v !== 1) return REJECTED;
-  const { scanLimit, nativeLimit, cursor, query, statsPeriod, sort } = parsed;
+  const record = decodeTriagePagingTokenV1(token);
+  if (record === null || record.v !== 1) return REJECTED;
+  const { scanLimit, nativeLimit, cursor, query, statsPeriod, sort } = record;
   if (!isValidGeometry(scanLimit, nativeLimit)) return REJECTED;
   if (typeof cursor !== 'string' || cursor === '') return REJECTED;
   if (query !== SENTRY_SCAN_QUERY) return REJECTED;

@@ -7,7 +7,13 @@ const TELEGRAM_MAX_UPDATE_OFFSET = TELEGRAM_MAX_UPDATE_ID + 1;
 const TELEGRAM_API_REQUEST_TIMEOUT_MS = 15_000;
 export const TELEGRAM_MAX_LONG_POLL_TIMEOUT_SECONDS = 50;
 const TELEGRAM_LONG_POLL_DEADLINE_OVERHEAD_MS = 10_000;
-const TELEGRAM_MAX_MESSAGE_CODE_POINTS = 4_096;
+/**
+ * Telegram's per-message ceiling. The send path chunks against it and the
+ * setup fact publishes it to the Channels core as this connection's
+ * `outboundTextLimit`, so both read this one constant: a core that chunked to
+ * a different size than the send path enforces would fail at the provider.
+ */
+export const TELEGRAM_MAX_MESSAGE_CODE_POINTS = 4_096;
 const TELEGRAM_BOT_USERNAME = /^[A-Za-z0-9_]{5,32}$/;
 const NORMALIZED_CROCKFORD_TOKEN = /^[0-9A-HJKMNP-TV-Z]{8}$/;
 

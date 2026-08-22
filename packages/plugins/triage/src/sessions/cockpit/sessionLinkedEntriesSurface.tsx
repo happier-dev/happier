@@ -10,10 +10,11 @@ import {
     Screen,
     Stack,
     defineUiSurface,
+    usePluginTranslation,
     useSurfaceContext,
 } from '@happier-dev/plugin-ui';
 
-import { TRIAGE_DISPLAY_NAME } from '../../manifest.js';
+import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
 import type { TriageSessionLinkedEntryRowV1 } from './linkedEntryRows.js';
 import { useTriageSessionLinkedEntries } from './useSessionLinkedEntries.js';
 
@@ -34,16 +35,19 @@ import { useTriageSessionLinkedEntries } from './useSessionLinkedEntries.js';
  * focused Session, or a value taken out of a Message.
  */
 
-function rowTitle(row: TriageSessionLinkedEntryRowV1): string {
+function rowTitle(
+    row: TriageSessionLinkedEntryRowV1,
+    text: (key: string, fallback?: string) => string,
+): string {
     switch (row.presentation.kind) {
         case 'linked':
             return row.presentation.displayPath;
         case 'reading':
-            return 'Reading this link…';
+            return text('plugins.triage.sessionLinks.reading', 'Reading this link…');
         case 'unlinked':
-            return 'This link was removed.';
+            return text('plugins.triage.sessionLinks.removed', 'This link was removed.');
         default:
-            return 'This link could not be read.';
+            return text('plugins.triage.sessionLinks.unreadable', 'This link could not be read.');
     }
 }
 
@@ -60,9 +64,10 @@ function rowTone(row: TriageSessionLinkedEntryRowV1): 'neutral' | 'muted' | 'war
 
 function LinkedEntryRow(props: Readonly<{ row: TriageSessionLinkedEntryRowV1 }>): React.ReactElement {
     const { row } = props;
+    const text = usePluginTranslation();
     return (
         <List.Item
-            title={rowTitle(row)}
+            title={rowTitle(row, text)}
             tone={rowTone(row)}
             busy={row.presentation.kind === 'reading'}
         />
@@ -72,6 +77,7 @@ function LinkedEntryRow(props: Readonly<{ row: TriageSessionLinkedEntryRowV1 }>)
 function TriageSessionLinkedEntriesPanel(
     props: Readonly<{ sessionId: string }>,
 ): React.ReactElement {
+    const text = usePluginTranslation();
     const { view, refresh } = useTriageSessionLinkedEntries(props.sessionId);
     const onRefresh = React.useCallback(() => { void refresh(); }, [refresh]);
     const renderRow = React.useCallback(
@@ -82,7 +88,12 @@ function TriageSessionLinkedEntriesPanel(
     if (view.kind === 'loading') {
         return (
             <Screen safeArea>
-                <LoadingState title={`Reading linked ${TRIAGE_DISPLAY_NAME}`} />
+                <LoadingState
+                    title={text(
+                        'plugins.triage.sessionLinks.loading',
+                        `Reading linked ${TRIAGE_DISPLAY_NAME}`,
+                    )}
+                />
             </Screen>
         );
     }
@@ -91,9 +102,18 @@ function TriageSessionLinkedEntriesPanel(
         return (
             <Screen safeArea>
                 <ErrorState
-                    title="Linked entries could not be read"
+                    title={text(
+                        'plugins.triage.sessionLinks.unavailable',
+                        'Linked entries could not be read',
+                    )}
                     description={view.message}
-                    action={<Button title="Refresh" variant="secondary" onPress={onRefresh} />}
+                    action={(
+                        <Button
+                            title={text('plugins.triage.surface.refresh', 'Refresh')}
+                            variant="secondary"
+                            onPress={onRefresh}
+                        />
+                    )}
                 />
             </Screen>
         );
@@ -103,8 +123,11 @@ function TriageSessionLinkedEntriesPanel(
         return (
             <Screen safeArea>
                 <EmptyState
-                    title="Nothing is linked yet"
-                    description={`Start a session from a pull request or issue and it appears here.`}
+                    title={text('plugins.triage.sessionLinks.empty.title', 'Nothing is linked yet')}
+                    description={text(
+                        'plugins.triage.sessionLinks.empty.description',
+                        'Start a session from a pull request or issue and it appears here.',
+                    )}
                 />
             </Screen>
         );
@@ -122,22 +145,41 @@ function TriageSessionLinkedEntriesPanel(
                 {view.notice === null ? null : (
                     <Banner
                         tone="warning"
-                        title="These may not be current"
+                        title={text(
+                            'plugins.triage.sessionLinks.stale.title',
+                            'These may not be current',
+                        )}
                         description={view.notice}
-                        action={<Button title="Refresh" variant="secondary" onPress={onRefresh} />}
+                        action={(
+                            <Button
+                                title={text('plugins.triage.surface.refresh', 'Refresh')}
+                                variant="secondary"
+                                onPress={onRefresh}
+                            />
+                        )}
                     />
                 )}
 
                 {view.more ? (
                     <Banner
                         tone="info"
-                        title="More entries are linked"
-                        description="This panel shows the most recently linked; the rest are still linked."
+                        title={text(
+                            'plugins.triage.sessionLinks.more.title',
+                            'More entries are linked',
+                        )}
+                        description={text(
+                            'plugins.triage.sessionLinks.more.description',
+                            'This panel shows the most recently linked; the rest are still linked.',
+                        )}
                     />
                 ) : null}
 
                 <List<TriageSessionLinkedEntryRowV1>
-                    accessibilityLabel={`Linked ${TRIAGE_DISPLAY_NAME}`}
+                    accessibilityLabel={text(
+                        'plugins.triage.sessionLinks.label',
+                        'Linked {name}',
+                        { name: TRIAGE_DISPLAY_NAME },
+                    )}
                     density="compact"
                     items={view.rows}
                     keyForItem={(row) => row.key}
@@ -149,6 +191,7 @@ function TriageSessionLinkedEntriesPanel(
 }
 
 export function TriageSessionLinkedEntries(_context: RenderContext): React.ReactElement {
+    const text = usePluginTranslation();
     const target = useSurfaceContext().target;
 
     // The one thing this surface refuses is a mount it cannot address. It does
@@ -157,8 +200,14 @@ export function TriageSessionLinkedEntries(_context: RenderContext): React.React
         return (
             <Screen safeArea>
                 <ErrorState
-                    title="No session for this panel"
-                    description={`This panel shows the ${TRIAGE_DISPLAY_NAME} linked to one session.`}
+                    title={text(
+                        'plugins.triage.sessionLinks.noSession.title',
+                        'No session for this panel',
+                    )}
+                    description={text(
+                        'plugins.triage.sessionLinks.noSession.description',
+                        `This panel shows the ${TRIAGE_DISPLAY_NAME} linked to one session.`,
+                    )}
                 />
             </Screen>
         );

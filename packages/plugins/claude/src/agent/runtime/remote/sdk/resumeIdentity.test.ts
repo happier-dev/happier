@@ -1,6 +1,6 @@
 import type {
     AgentTranscriptFileFollowInput as TranscriptFileFollowInputV1,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import {

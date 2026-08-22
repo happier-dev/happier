@@ -74,6 +74,9 @@
     "voiceProviders": [
       {
         "capabilities": {
+          "tools": {
+            "effectCalls": "stable_ids"
+          },
           "turn": {
             "bargeIn": true,
             "cancelResponse": true
@@ -82,7 +85,7 @@
         "client": {
           "artifactId": "voice-runtime-web",
           "exportName": "activate",
-          "modulePath": "./voiceRuntime"
+          "modulePath": "./ui/voice"
         },
         "credentials": {
           "hostMediated": {
@@ -380,7 +383,7 @@
     "happier": "^0.0.0"
   },
   "entrypoints": {
-    "daemon": "./dist/index.js"
+    "daemon": "./.happier-plugin/daemon.js"
   },
   "hostAccess": {
     "optional": [],

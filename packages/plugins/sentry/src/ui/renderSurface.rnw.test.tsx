@@ -146,6 +146,7 @@ type Invocation = Readonly<{ localId: string; input: unknown }>;
 function createHarness(options: Readonly<{
   event?: JsonValue;
   events?: JsonValue;
+  tags?: JsonValue;
 }> = {}) {
   const invocations: Invocation[] = [];
 
@@ -157,7 +158,7 @@ function createHarness(options: Readonly<{
     invocations.push({ localId, input });
     if (localId === SENTRY_ACTION_IDS.readIssue) {
       const projection = (input as Readonly<{ projection?: string }>).projection;
-      if (projection === 'tags') return TAGS_BODY;
+      if (projection === 'tags') return options.tags ?? TAGS_BODY;
       if (projection === 'activity') return ACTIVITY_BODY;
       return ISSUE_BODY;
     }
@@ -240,6 +241,52 @@ describe('the mounted Sentry issue detail body', () => {
     expect(harness.invocations.find((entry) => entry.localId === SENTRY_ACTION_IDS.readEvent)?.input)
       .toMatchObject({ selector: { kind: 'representative' } });
     await expect(page.getByText('ChargeDeclined: card was declined')).resolves.toBeDefined();
+  });
+
+  it('discloses a provider-scrubbed value on the default tab, not only inside the panels', async () => {
+    const harness = createHarness({
+      event: eventProjection({
+        redactions: [{ path: 'exception.values.0.value', reason: 'providerScrubbed' }],
+      }),
+    });
+    const page = await mountDetail(harness);
+
+    // Overview is the DEFAULT tab and renders the exception value itself. The
+    // other two Tier-B/C regions already carry this notice, and
+    // `RedactionNotice`'s own doc calls it "the redaction disclosure every
+    // Tier-B/C region owes its reader" (`SENTRY.md` §8.2). Without it here a
+    // reader sees a value this organization's own Sentry rules already scrubbed
+    // with nothing on screen saying so — indistinguishable from a value that
+    // was never touched.
+    await expect(page.getByText('Sentry redacted some values')).resolves.toBeDefined();
+  });
+
+  it('keeps every issue tag and discloses that their values are unclassified', async () => {
+    const harness = createHarness({
+      tags: {
+        kind: 'tags',
+        tags: [{
+          key: 'checkout_session',
+          name: 'checkout_session',
+          totalValues: 3,
+          topValues: [{ value: 'sess_9f3a1c', count: 12 }],
+        }],
+        omittedTagCount: 0,
+        projectionTruncated: false,
+      },
+    });
+    const page = await mountDetail(harness);
+
+    // The gate on this plane is `isSentryRoutableTagKey`, a path-segment safety
+    // test — not a privacy allow-list — and the row subtitle and drill-down both
+    // render the tag's VALUE. Keeping the customer's own key is the product
+    // decision (`SENTRY.md` §7.3a): applying the event allow-list here would
+    // delete the custom-tag distribution teams rely on most. So the honesty this
+    // plane owes its reader is a disclosure, and without it a value nobody
+    // classified reads exactly like one that was.
+    const rows = await page.getAllByRole('button');
+    expect(rows.some((candidate) => candidate.name?.includes('sess_9f3a1c') === true)).toBe(true);
+    await expect(page.getByText('These tag values are unclassified')).resolves.toBeDefined();
   });
 
   it('gives Stack Trace the projection Overview already has, without a second read', async () => {

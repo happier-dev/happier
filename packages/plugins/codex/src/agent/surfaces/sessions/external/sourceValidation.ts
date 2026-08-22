@@ -26,6 +26,14 @@ export function inferCodexExternalSessionsActiveServerDir(
   return markerIndex > 0 ? normalized.slice(0, markerIndex) : null;
 }
 
+/**
+ * Canonicalizes a Codex source and enforces the one rule this leaf owns: a
+ * connected-service identifier is a name inside a host-owned home namespace, so
+ * it must be a safe segment. Whether a requested `homePath` is one the machine
+ * environment or the account's settings authorized is decided once, by the host
+ * admission boundary, for every Agent; this leaf only produces the canonical
+ * form both sides of that comparison use.
+ */
 export function validateCodexExternalSessionsSourcePolicy(params: Readonly<{
   source: CodexExternalSessionSource;
   configuredCodexHomePath: string;
@@ -38,14 +46,11 @@ export function validateCodexExternalSessionsSourcePolicy(params: Readonly<{
     return { ok: false, error: 'invalid connectedServiceId' };
   }
   if (source.home === 'user') {
-    if (params.canonicalRequestedHomePath && params.canonicalRequestedHomePath !== params.configuredCodexHomePath) {
-      return { ok: false, error: 'source homePath override is not allowed' };
-    }
     return {
       ok: true,
       source: {
         ...source,
-        homePath: params.configuredCodexHomePath,
+        homePath: params.canonicalRequestedHomePath ?? params.configuredCodexHomePath,
       },
     };
   }

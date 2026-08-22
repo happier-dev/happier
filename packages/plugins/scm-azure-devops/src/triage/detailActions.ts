@@ -66,6 +66,48 @@ export const AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS = Object.freeze({
 const TEXT_DECODER = new TextDecoder('utf-8', { fatal: false });
 
 /**
+ * How long one mounted detail read may take before this source stops waiting.
+ *
+ * The resource it protects is a panel a person is looking at. Azure accepts a
+ * request and then, on a stalled connection, neither answers nor fails, so
+ * without a bound of our own the tab shows its loading state until the mount is
+ * torn down — an outcome the reader cannot retry, cannot report, and cannot
+ * distinguish from a very slow provider. `CONTRACT.md` §5.2 puts that bound on
+ * the source: Triage owns deadlines only for the `listInstances`, `scan` and
+ * `get` invocations it starts, and it neither supplies nor decides this one.
+ *
+ * It bounds the whole invocation rather than each request, because that is what
+ * the reader experiences: `readPolicies` makes several calls behind one panel,
+ * and three separately-bounded calls would let the panel wait three times as
+ * long as the number here.
+ */
+export const AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS = 20_000;
+
+/**
+ * The caller's signal, additionally bounded by this source's own deadline.
+ *
+ * The deadline aborts with a `TimeoutError` so the failure owner can tell it
+ * apart from a caller cancellation (`failures.ts`); `AbortSignal.any` carries
+ * whichever reason fired first through to every provider boundary below.
+ *
+ * The timer is dropped as soon as the caller's own signal aborts — the common
+ * exit, since a detail read is cancelled with its mount — and is unreferenced so
+ * a read nobody is waiting for cannot hold the daemon open.
+ */
+function boundDetailRead(callerSignal: AbortSignal, deadlineMs: number): AbortSignal {
+  const deadline = new AbortController();
+  const timer = setTimeout(() => {
+    deadline.abort(new DOMException(
+      'Azure DevOps did not answer this detail read within its deadline.',
+      'TimeoutError',
+    ));
+  }, deadlineMs);
+  (timer as unknown as Readonly<{ unref?: () => void }>).unref?.();
+  callerSignal.addEventListener('abort', () => { clearTimeout(timer); }, { once: true });
+  return AbortSignal.any([callerSignal, deadline.signal]);
+}
+
+/**
  * Adapt the host HTTP service to this source's one transport seam.
  *
  * `redirect: 'error'` is deliberate: Azure answers an unusable credential with a
@@ -162,15 +204,21 @@ async function admitAzureDetailInvocation(
   // on top of it is deliberately not repeated here: no detail plane consumes
   // provider account identity, so paying for it per mounted panel read would buy
   // nothing.
+  // One bound for the whole invocation, installed before the first provider
+  // boundary so account materialization is inside it too: a connection that
+  // hangs while the credential is being materialized strands the panel exactly
+  // as a hanging read does.
+  const signal = boundDetailRead(context.signal, AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS);
+
   const authorized = await authorizeClient({
     services: {
       connectedAccounts: context.services.connectedAccounts,
-      transport: toTransport(context.services.http, context.signal),
+      transport: toTransport(context.services.http, signal),
       now: () => Date.now(),
     },
     instance: request.instance,
     origin,
-    signal: context.signal,
+    signal,
   });
   if (!authorized.ok) return { ok: false, failure: authorized.failure };
 
@@ -178,7 +226,7 @@ async function admitAzureDetailInvocation(
     ok: true,
     address,
     client: authorized.client,
-    dependencies: Object.freeze({ client: authorized.client, signal: context.signal }),
+    dependencies: Object.freeze({ client: authorized.client, signal }),
   };
 }
 

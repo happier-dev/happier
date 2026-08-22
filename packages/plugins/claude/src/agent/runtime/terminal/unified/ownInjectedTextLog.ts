@@ -4,10 +4,10 @@
  * OWN injection leftover (safe to clear) apart from a genuine user draft (NEVER cleared).
  *
  * Match semantics are deliberately strict: the trimmed full text, the whitespace-collapsed form
- * of the full text, a collapsed-paste marker for a recent multiline injection, or a bounded recent
- * prefix residue from an interrupted injection. Individual prompt lines are not clearable
- * ownership evidence; short/old prefixes are rejected so a genuine user draft does not classify as
- * ours.
+ * of the full text, a collapsed-paste marker for a recent multiline injection, or a long visible
+ * window from an interrupted injection while its bounded entry remains recorded. Individual prompt
+ * lines are not clearable ownership evidence; short windows require explicit recent possible-write
+ * evidence so a genuine user draft does not classify as ours.
  */
 
 import {
@@ -16,13 +16,17 @@ import {
   parseExactClaudePastedTextMarkerLineCount,
 } from './pastedTextMarker.js';
 
-import { normalizeClaudeUnifiedPromptIdentityText } from './promptIdentity.js';
+import {
+  CLAUDE_UNIFIED_LONG_COMPOSER_RESIDUE_MIN_CHARS,
+  isClaudeUnifiedComposerTextMatch,
+  normalizeClaudeUnifiedComposerRenderingText,
+  normalizeClaudeUnifiedPromptIdentityText,
+} from './promptIdentity.js';
 
 const DEFAULT_OWN_INJECTED_TEXT_LOG_LIMIT = 32;
 const DEFAULT_PREFIX_RESIDUE_WINDOW_MS = 2 * 60_000;
 const DEFAULT_LARGE_COLLAPSED_PASTE_MARKER_WINDOW_MS = 10 * 60_000;
 const LARGE_COLLAPSED_PASTE_MARKER_MIN_LINES = 200;
-const MIN_PREFIX_RESIDUE_CHARS = 256;
 const MIN_CONTEXTUAL_PREFIX_RESIDUE_CHARS = 32;
 
 export type ClaudeUnifiedOwnInjectedTextLog = Readonly<{
@@ -30,7 +34,7 @@ export type ClaudeUnifiedOwnInjectedTextLog = Readonly<{
   /**
    * Mark a text whose terminal write failed after bytes may already have reached the composer.
    * This enables a short-prefix match for the same bounded residue window; ordinary records keep
-   * rejecting short prefixes so genuine user drafts remain protected.
+   * rejecting short windows so genuine user drafts remain protected.
    */
   recordPossiblePartialResidue(text: string, opts?: Readonly<{ minPrefixChars?: number | undefined }>): void;
   matches(candidate: string | null | undefined): boolean;
@@ -40,10 +44,6 @@ export type ClaudeUnifiedOwnInjectedTextLog = Readonly<{
    */
   snapshot(): readonly string[];
 }>;
-
-function collapseWhitespace(value: string): string {
-  return value.replace(/\s+/g, ' ');
-}
 
 type OwnInjectedTextLogEntry = Readonly<{
   text: string;
@@ -55,26 +55,26 @@ type OwnInjectedTextLogEntry = Readonly<{
   minShortPrefixResidueChars: number;
 }>;
 
-function entryHasPrefix(entry: OwnInjectedTextLogEntry, draft: string): boolean {
-  return (
-    (entry.text.length > draft.length && entry.text.startsWith(draft))
-    || (entry.collapsedText.length > draft.length && entry.collapsedText.startsWith(draft))
-  );
-}
-
-function isRecentPrefixResidue(params: Readonly<{
+function isRecordedComposerWindow(params: Readonly<{
   entry: OwnInjectedTextLogEntry;
   normalizedDraft: string;
   nowMs: number;
-  prefixResidueWindowMs: number;
 }>): boolean {
-  const longPrefixResidue = params.normalizedDraft.length >= MIN_PREFIX_RESIDUE_CHARS
-    && params.nowMs - params.entry.recordedAtMs <= params.prefixResidueWindowMs;
+  // A long exact window carries the same content identity as the full recorded text. Keep it valid
+  // for as long as that bounded entry remains recorded: a failed Enter can leave Claude's viewport
+  // parked on the tail for hours. Only weak, short possible-write evidence expires by time.
+  const longRecordedWindow = params.normalizedDraft.length >= CLAUDE_UNIFIED_LONG_COMPOSER_RESIDUE_MIN_CHARS;
   const contextualShortPrefixResidue = params.normalizedDraft.length >= params.entry.minShortPrefixResidueChars
     && params.entry.shortPrefixResidueUntilMs !== undefined
     && params.nowMs <= params.entry.shortPrefixResidueUntilMs;
-  return (longPrefixResidue || contextualShortPrefixResidue)
-    && entryHasPrefix(params.entry, params.normalizedDraft);
+  if (!longRecordedWindow && !contextualShortPrefixResidue) return false;
+  return isClaudeUnifiedComposerTextMatch({
+    promptText: params.entry.text,
+    composerText: params.normalizedDraft,
+    minPrefixChars: contextualShortPrefixResidue
+      ? params.entry.minShortPrefixResidueChars
+      : CLAUDE_UNIFIED_LONG_COMPOSER_RESIDUE_MIN_CHARS,
+  });
 }
 
 function isCollapsedPasteMarkerMatch(params: Readonly<{
@@ -123,7 +123,7 @@ export function createClaudeUnifiedOwnInjectedTextLog(
     shortPrefixResidueUntilMs?: number | undefined,
     minShortPrefixResidueChars = MIN_CONTEXTUAL_PREFIX_RESIDUE_CHARS,
   ): OwnInjectedTextLogEntry => {
-    const collapsedText = collapseWhitespace(trimmed);
+    const collapsedText = normalizeClaudeUnifiedComposerRenderingText(trimmed);
     const clearableCandidates = new Set<string>([trimmed, collapsedText]);
     const newlineCount = countPromptNewlines(trimmed);
     return {
@@ -179,7 +179,7 @@ export function createClaudeUnifiedOwnInjectedTextLog(
         ? normalizeClaudeUnifiedPromptIdentityText(candidate)
         : '';
       if (!trimmed) return false;
-      const collapsed = collapseWhitespace(trimmed);
+      const collapsed = normalizeClaudeUnifiedComposerRenderingText(trimmed);
       const referenceMs = nowMs();
       const collapsedPasteLineCount = parseExactClaudePastedTextMarkerLineCount(trimmed);
       return entries.some((entry) => (
@@ -192,17 +192,15 @@ export function createClaudeUnifiedOwnInjectedTextLog(
           prefixResidueWindowMs,
           largeCollapsedPasteMarkerWindowMs,
         })
-        || isRecentPrefixResidue({
+        || isRecordedComposerWindow({
           entry,
           normalizedDraft: trimmed,
           nowMs: referenceMs,
-          prefixResidueWindowMs,
         })
-        || (collapsed !== trimmed && isRecentPrefixResidue({
+        || (collapsed !== trimmed && isRecordedComposerWindow({
           entry,
           normalizedDraft: collapsed,
           nowMs: referenceMs,
-          prefixResidueWindowMs,
         }))
       ));
     },

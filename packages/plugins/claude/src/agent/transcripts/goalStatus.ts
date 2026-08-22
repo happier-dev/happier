@@ -3,7 +3,7 @@ import {
   type SessionWorkStateGoalCapabilitiesV1,
   type SessionWorkStateItemV1,
   type SessionWorkStateV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+} from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import { createClaudeGoalControlEpochTracker, type ClaudeGoalControlIntent } from './goalControlState.js';
 

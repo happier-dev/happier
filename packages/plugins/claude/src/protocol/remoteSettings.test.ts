@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES,
   normalizeClaudeUnifiedTerminalResumeChoice,
+  normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy,
   parseClaudeRemoteAdvancedOptionsJson,
 } from './remoteSettings.js';
 
@@ -19,6 +20,18 @@ describe('normalizeClaudeUnifiedTerminalResumeChoice', () => {
     expect(normalizeClaudeUnifiedTerminalResumeChoice('resume_full_session')).toBe('resume_full_session');
     expect(normalizeClaudeUnifiedTerminalResumeChoice('summary')).toBeNull();
     expect(normalizeClaudeUnifiedTerminalResumeChoice(null)).toBeNull();
+  });
+});
+
+describe('normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy', () => {
+  it('accepts only canonical Claude unified terminal workspace trust policies', () => {
+    expect(normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy('ask_every_time')).toBe('ask_every_time');
+    expect(normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy('always_trust_happier_workspaces'))
+      .toBe('always_trust_happier_workspaces');
+    expect(normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy('always_reject_happier_workspaces'))
+      .toBe('always_reject_happier_workspaces');
+    expect(normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy(true)).toBeNull();
+    expect(normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy('trust')).toBeNull();
   });
 });
 

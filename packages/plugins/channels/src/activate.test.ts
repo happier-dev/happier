@@ -43,6 +43,21 @@ import {
   PLUGIN_MANIFEST,
 } from './manifest.js';
 import { createConversationOutwardDeliveryCollectionStore } from './outwardDelivery.js';
+import { declaredResourceMaxBytes, resourceText } from './testkit/resourceContract.js';
+import { isChannelStateJsonRecord } from './accountLocalBindingPolicy.js';
+
+/**
+ * A contributed Action may legitimately answer nothing. These composition
+ * cases forward the two projections they read, so require a real JSON answer
+ * rather than widening the handler contract to accept `void`.
+ */
+function requiredActionResult(value: JsonValue | void, localId: string): JsonValue {
+  if (value === undefined) {
+    throw new Error(`Expected ${localId} to answer a JSON projection.`);
+  }
+  return value;
+}
+
 import {
   createCurrentConversationConnectionFixture,
   createCurrentConversationPendingOldTransportStopFixture,
@@ -85,6 +100,7 @@ const { manifest: PROVIDER_SOCKET_SETUP_TEST_MANIFEST } = definePlugin({
   actions: {
     [SOCKET_PROVIDER_ACTION_ID.setup]: {
       title: 'Set up Channels socket test provider',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       inputSchema: SOCKET_PROVIDER_SETUP_INPUT_SCHEMA,
       resultSchema: socketProviderOperations.setup.declaration.resultSchema.jsonSchema,
@@ -106,6 +122,7 @@ const { manifest: PROVIDER_SOCKET_SETUP_TEST_MANIFEST } = definePlugin({
     },
     [SOCKET_PROVIDER_ACTION_ID.connectionTest]: {
       title: 'Test Channels socket provider connection',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       inputSchema: socketProviderOperations.connectionTest.declaration.input.schema.jsonSchema,
       resultSchema: socketProviderOperations.connectionTest.declaration.resultSchema.jsonSchema,
@@ -115,6 +132,7 @@ const { manifest: PROVIDER_SOCKET_SETUP_TEST_MANIFEST } = definePlugin({
     },
     [SOCKET_PROVIDER_ACTION_ID.messageDeliver]: {
       title: 'Deliver a Channels socket test message',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       inputSchema: socketProviderOperations.messageDeliver.declaration.input.schema.jsonSchema,
       resultSchema: socketProviderOperations.messageDeliver.declaration.resultSchema.jsonSchema,
@@ -124,6 +142,7 @@ const { manifest: PROVIDER_SOCKET_SETUP_TEST_MANIFEST } = definePlugin({
     },
     [SOCKET_PROVIDER_ACTION_ID.connectionStop]: {
       title: 'Stop Channels socket test provider connection',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       inputSchema: socketProviderOperations.connectionStop.declaration.input.schema.jsonSchema,
       resultSchema: socketProviderOperations.connectionStop.declaration.resultSchema.jsonSchema,
@@ -180,6 +199,7 @@ const PROVIDER_SOCKET_RECONCILIATION_TEST_MANIFEST = {
     actions: [{
       id: SOCKET_PROVIDER_RECONCILIATION_ACTION_ID,
       title: 'Read current Channels socket connections',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: ['cli'],
       placementBindings: ['commandPalette'],
@@ -224,6 +244,7 @@ const PROVIDER_RECONCILIATION_TEST_MANIFEST = {
     actions: [{
       id: 'reconcile',
       title: 'Reconcile Channels core state',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: ['cli'],
       placementBindings: ['commandPalette'],
@@ -243,6 +264,7 @@ const PROVIDER_TRANSPORT_REPORT_TEST_MANIFEST = {
     actions: [{
       id: 'report-stop',
       title: 'Report a transport stop fact',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: ['plugin'],
       placementBindings: ['commandPalette'],
@@ -563,6 +585,7 @@ const NO_OUTWARD_DELIVERY_ATTENTION = {
   notDelivered: false,
   partial: false,
   outcomeUnknown: false,
+  archiveRecovery: false,
 } as const;
 
 function storageWithEmptyChannelDeliveries(
@@ -651,43 +674,41 @@ describe('Channels core activation', () => {
     }
   });
 
-  it('registers connection management alongside the strict caller-filtered reconciliation Actions', async () => {
+  it('registers exactly the daemon contributions the manifest declares, in declaration order', async () => {
+    // Generated activation binds one implementation per declaration, so the
+    // registration list IS the manifest read back: a declaration whose handler,
+    // Resource runtime or runner went missing cannot activate at all, and a
+    // registration the manifest never declared has no declaration to come from.
+    // Spelling the ids again here would only restate the manifest a second
+    // time — what has to hold is that the two agree, family for family.
+    const contributes = PLUGIN_MANIFEST.contributes ?? {};
+    const expected = [
+      ...(contributes.actions ?? []).map((action) => ({
+        family: 'actions',
+        localId: action.id,
+      })),
+      ...(contributes.backgroundServices ?? []).map((service) => ({
+        family: 'backgroundServices',
+        localId: service.id,
+      })),
+      ...(contributes.resources ?? [])
+        .filter((resource) => resource.source === 'dynamic')
+        .map((resource) => ({ family: 'resources', localId: resource.id })),
+    ];
+
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {
-      expect(activation.registrations()).toEqual([
-        { family: 'actions', localId: 'connection/create-v1' },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionTransfer },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionSetEnabled },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamBaselineAccept },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPollRetry },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCreate },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingFinalize },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCancel },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingCreate },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingSetEnabled },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingDelete },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingTargetRotate },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressRetry },
-        { family: 'actions', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.deliveryResolve },
-        { family: 'actions', localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.observationIngest },
-        { family: 'actions', localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList },
-        { family: 'actions', localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead },
-        { family: 'actions', localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport },
-        { family: 'actions', localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.automationResultDeliver },
-        { family: 'resources', localId: 'connections-v1' },
-        { family: 'resources', localId: 'bindings-v1' },
-        { family: 'resources', localId: 'pairing-v1' },
-        { family: 'resources', localId: 'outward-delivery-activities-v1' },
-        { family: 'backgroundServices', localId: 'ingress-supervisor' },
-        { family: 'backgroundServices', localId: 'outward-delivery-supervisor' },
-      ]);
+      // The four Resources and two supervisors are the ones this package owns;
+      // asserting the counts keeps the derived list from passing vacuously if a
+      // whole family disappeared from the manifest.
+      expect(expected.filter((entry) => entry.family === 'actions')).toHaveLength(26);
+      expect(expected.filter((entry) => entry.family === 'resources')).toHaveLength(4);
+      expect(expected.filter((entry) => entry.family === 'backgroundServices')).toHaveLength(2);
+      expect(activation.registrations()).toEqual(expected);
+      expect(activation.registration('actions', CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList))
+        .toBeDefined();
+      expect(activation.registration('actions', CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCreate))
+        .toBeDefined();
     } finally {
       await activation.dispose();
     }
@@ -747,10 +768,8 @@ describe('Channels core activation', () => {
       actionTargets: [core],
       module: {
         activate(api) {
-          api.actions.register(SOCKET_PROVIDER_RECONCILIATION_ACTION_ID, async (input, context) => {
-            const connectionId = input !== null
-              && typeof input === 'object'
-              && !Array.isArray(input)
+          api.actions.register(SOCKET_PROVIDER_RECONCILIATION_ACTION_ID, async (input, context): Promise<JsonValue> => {
+            const connectionId = isChannelStateJsonRecord(input)
               && typeof input.connectionId === 'string'
               ? input.connectionId
               : 'unresolved-before-create';
@@ -770,7 +789,10 @@ describe('Channels core activation', () => {
                 { connectionId },
               ),
             ]);
-            return { list, read };
+            return {
+              list: requiredActionResult(list, 'connectionsList'),
+              read: requiredActionResult(read, 'connectionRead'),
+            };
           });
         },
       },
@@ -1205,7 +1227,7 @@ describe('Channels core activation', () => {
       actionTargets: [core],
       module: {
         activate(api) {
-          api.actions.register('reconcile', async (_input, context) => {
+          api.actions.register('reconcile', async (_input, context): Promise<JsonValue> => {
             const list = await context.services.actions.execute(
               { pluginId: PLUGIN_MANIFEST.id, localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList },
               {},
@@ -1214,7 +1236,10 @@ describe('Channels core activation', () => {
               { pluginId: PLUGIN_MANIFEST.id, localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead },
               { connectionId },
             );
-            return { list, read };
+            return {
+              list: requiredActionResult(list, 'connectionsList'),
+              read: requiredActionResult(read, 'connectionRead'),
+            };
           });
         },
       },
@@ -1264,7 +1289,11 @@ describe('Channels core activation', () => {
       const updated = collection.rows.get(connectionId);
       expect(updated?.revision).toBe(5);
       expect(updated?.value['updated-at']).toBeGreaterThan(1);
-      const observationAgeExpansionFloorOccurredAt = updated?.value.payload.observationAgeExpansionFloorOccurredAt;
+      const updatedPayload = updated?.value.payload;
+      if (!isChannelStateJsonRecord(updatedPayload)) {
+        throw new Error('Expected the updated connection row to carry a payload record.');
+      }
+      const observationAgeExpansionFloorOccurredAt = updatedPayload.observationAgeExpansionFloorOccurredAt;
       expect(observationAgeExpansionFloorOccurredAt).toEqual(expect.any(Number));
       expect(updated?.value.payload).toEqual({
         ...initialPayload,
@@ -1346,7 +1375,7 @@ describe('Channels core activation', () => {
         maximumObservationAgeMs: 120_000,
       })).rejects.toMatchObject({
         code: 'channels_connection_update_conflict',
-        retryable: false,
+        retryable: true,
       });
       await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
         connectionId,
@@ -1377,7 +1406,7 @@ describe('Channels core activation', () => {
         maximumObservationAgeMs: 120_000,
       })).rejects.toMatchObject({
         code: 'channels_connection_update_conflict',
-        retryable: false,
+        retryable: true,
       });
       expect(updatedBatches).toHaveLength(writeCountAfterSuccess);
       expect(collection.rows.get(connectionId)?.revision).toBe(6);
@@ -1785,11 +1814,11 @@ describe('Channels core activation', () => {
 
       const resource = core.registration('resources', 'connections-v1');
       if (resource === undefined) throw new Error('Expected the connections-v1 dynamic Resource registration.');
-      const pendingResource = await resource.read({
+      const pendingResource = resourceText(await resource.read({
         signal: new AbortController().signal,
         context: { kind: 'global' },
         accountStorage: storage.account as PluginAccountStorageScope,
-      });
+      }));
       expect(JSON.parse(pendingResource)).toEqual({
         connections: [expect.objectContaining({
           connectionId,
@@ -1826,11 +1855,11 @@ describe('Channels core activation', () => {
           },
         },
       });
-      const acceptedResource = await resource.read({
+      const acceptedResource = resourceText(await resource.read({
         signal: new AbortController().signal,
         context: { kind: 'global' },
         accountStorage: storage.account as PluginAccountStorageScope,
-      });
+      }));
       expect(JSON.parse(acceptedResource)).toEqual({
         connections: [expect.objectContaining({
           connectionId,
@@ -1922,11 +1951,11 @@ describe('Channels core activation', () => {
 
       const resource = core.registration('resources', 'connections-v1');
       if (resource === undefined) throw new Error('Expected the connections-v1 dynamic Resource registration.');
-      const acceptedResource = await resource.read({
+      const acceptedResource = resourceText(await resource.read({
         signal: new AbortController().signal,
         context: { kind: 'global' },
         accountStorage: storage.account as PluginAccountStorageScope,
-      });
+      }));
       expect(JSON.parse(acceptedResource)).toEqual({
         connections: [expect.objectContaining({
           connectionId,
@@ -2045,14 +2074,18 @@ describe('Channels core activation', () => {
       authorityEpoch: 5,
       stopAuthorityEpoch: 4,
     });
+    const differentBaseStop = differentBase.payload.pendingOldTransportStop;
+    if (differentBaseStop === null) {
+      throw new Error('Expected the pending-transfer fixture to carry an accepted stop marker.');
+    }
     const different = {
       ...differentBase,
       payload: {
         ...differentBase.payload,
         pendingOldTransportStop: {
-          ...differentBase.payload.pendingOldTransportStop,
+          ...differentBaseStop,
           stopRequest: {
-            ...differentBase.payload.pendingOldTransportStop.stopRequest,
+            ...differentBaseStop.stopRequest,
             connectionId: 'connection-other',
           },
         },
@@ -2477,7 +2510,7 @@ describe('Channels core activation', () => {
         enabled: true,
       })).rejects.toMatchObject({
         code: 'channels_connection_set_enabled_conflict',
-        retryable: false,
+        retryable: true,
       });
       await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionSetEnabled, {
         connectionId,
@@ -2695,7 +2728,7 @@ describe('Channels core activation', () => {
         enabled: true,
       })).rejects.toMatchObject({
         code: 'channels_binding_set_enabled_conflict',
-        retryable: false,
+        retryable: true,
       });
       supersedeConnectionDuringBindingBatch = true;
       await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingSetEnabled, {
@@ -2704,7 +2737,7 @@ describe('Channels core activation', () => {
         enabled: true,
       })).rejects.toMatchObject({
         code: 'channels_binding_set_enabled_conflict',
-        retryable: false,
+        retryable: true,
       });
       expect(collection.rows.get(bindingId)?.revision).toBe(7);
       expect(collection.rows.get(connectionId)?.revision).toBe(5);
@@ -2875,11 +2908,11 @@ describe('Channels core activation', () => {
     try {
       const resource = core.registration('resources', 'connections-v1');
       if (resource === undefined) throw new Error('Expected the connections-v1 dynamic Resource registration.');
-      const serialized = await resource.read({
+      const serialized = resourceText(await resource.read({
         signal: new AbortController().signal,
         context: { kind: 'global' },
         accountStorage: storage.account as PluginAccountStorageScope,
-      });
+      }));
       expect(JSON.parse(serialized)).toEqual({
         connections: [
           {
@@ -3023,11 +3056,11 @@ describe('Channels core activation', () => {
     try {
       const resource = core.registration('resources', 'connections-v1');
       if (resource === undefined) throw new Error('Expected the connections-v1 dynamic Resource registration.');
-      const serialized = await resource.read({
+      const serialized = resourceText(await resource.read({
         signal: new AbortController().signal,
         context: { kind: 'global' },
         accountStorage: storage.account as PluginAccountStorageScope,
-      });
+      }));
       expect(JSON.parse(serialized)).toEqual({
         connections: connectionsInResourceOrder.map((connection) => ({
           connectionId: connection.id,
@@ -3059,12 +3092,8 @@ describe('Channels core activation', () => {
       expect(serialized).not.toContain(hiddenCredentialAccountId);
       expect(serialized).not.toContain(hiddenProviderConnectionKey);
       expect(serialized).not.toContain(hiddenProviderConfigMarker);
-      const declaredResource = PLUGIN_MANIFEST.contributes.resources.find(
-        (resource) => resource.id === 'connections-v1',
-      );
-      if (declaredResource === undefined) throw new Error('Expected the connections-v1 Resource declaration.');
       const serializedBytes = new TextEncoder().encode(serialized).byteLength;
-      expect(serializedBytes).toBeLessThanOrEqual(declaredResource.maxBytes);
+      expect(serializedBytes).toBeLessThanOrEqual(declaredResourceMaxBytes('connections-v1'));
     } finally {
       await core.dispose();
     }
@@ -3440,7 +3469,7 @@ describe('Channels core activation', () => {
       actionTargets: [core],
       module: {
         activate(api) {
-          api.actions.register('reconcile', async (_input, context) => {
+          api.actions.register('reconcile', async (_input, context): Promise<JsonValue> => {
             const [list, read] = await Promise.all([
               context.services.actions.execute(
                 {
@@ -3457,7 +3486,10 @@ describe('Channels core activation', () => {
                 { connectionId: connection.id },
               ),
             ]);
-            return { list, read };
+            return {
+              list: requiredActionResult(list, 'connectionsList'),
+              read: requiredActionResult(read, 'connectionRead'),
+            };
           });
         },
       },

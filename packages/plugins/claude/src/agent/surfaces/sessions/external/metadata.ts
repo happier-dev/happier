@@ -1,14 +1,13 @@
-import type {
-    ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
 import {
-    isRecord,
+    isRecord } from '@happier-dev/plugin-sdk';
+import {
     readJsonlFileBackwardPage,
     readJsonlFileForward,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { basename, dirname, join } from 'node:path';
 
 import { resolveClaudeJsonlSessionFile } from './files.js';
+import type { ClaudeExternalSessionSource } from './source.js';
 
 const TITLE_SCAN_CHUNK_MAX_BYTES = 128 * 1024;
 const TITLE_SCAN_CHUNK_MAX_ITEMS = 64;
@@ -168,7 +167,7 @@ export async function readClaudeJsonlSessionTitle(filePath: string): Promise<str
 }
 
 export async function readClaudeJsonlSessionWorkingDirectory(params: Readonly<{
-    source: ExternalSessionsSource;
+    source: ClaudeExternalSessionSource;
     remoteSessionId: string;
     env: NodeJS.ProcessEnv;
 }>): Promise<string | null> {

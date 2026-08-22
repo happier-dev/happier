@@ -1,5 +1,6 @@
 import {
-  MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
+  decodeTriagePagingTokenV1,
+  encodeTriagePagingTokenV1,
   type TriageScanContinuationV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -21,6 +22,9 @@ import { readBitbucketBracedUuid } from './identity.js';
  * enumeration cursor, and the lanes of the one repository currently being walked. It carries no
  * credential, no account ref, no viewer identity, no origin, no delivered-id history, no
  * accumulated row array, and no target timestamp.
+ *
+ * The bounded JSON envelope is the protocol's; the frontier record inside it and every
+ * field check on the way back in stay here.
  */
 const CONTINUATION_VERSION = 1;
 
@@ -119,7 +123,7 @@ function countOpenLanes(frontier: BitbucketScanFrontierRecord): number {
 export function encodeBitbucketScanContinuation(
   frontier: BitbucketScanFrontierRecord,
 ): TriageScanContinuationV1 | null {
-  const token = JSON.stringify({
+  const token = encodeTriagePagingTokenV1({
     v: CONTINUATION_VERSION,
     l: frontier.scanLimit,
     n: frontier.nativePageSize,
@@ -136,10 +140,7 @@ export function encodeBitbucketScanContinuation(
         )),
       ],
   });
-  if (new TextEncoder().encode(token).byteLength > MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1) {
-    return null;
-  }
-  return { v: 1, token };
+  return token === null ? null : { v: 1, token };
 }
 
 /**
@@ -155,13 +156,7 @@ export function encodeBitbucketScanContinuation(
 export function decodeBitbucketScanContinuation(
   continuation: TriageScanContinuationV1,
 ): BitbucketScanFrontierRecord | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(continuation.token);
-  } catch {
-    return null;
-  }
-  const record = readRecord(parsed);
+  const record = decodeTriagePagingTokenV1(continuation.token);
   if (record === null || record.v !== CONTINUATION_VERSION) return null;
 
   const scanLimit = readCount(record.l, 1);
@@ -240,11 +235,6 @@ function readCurrentRepository(
     lanes.push({ laneId: BITBUCKET_REPOSITORY_ROUTE_ID, ...lane });
   }
   return { repositoryUuid, lanes };
-}
-
-function readRecord(raw: unknown): Readonly<Record<string, unknown>> | null {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
-  return raw as Readonly<Record<string, unknown>>;
 }
 
 function readCount(raw: unknown, minimum: number): number | null {

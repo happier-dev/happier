@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  projectGrokModel,
   projectGrokModelOptions,
   projectGrokSetModelResponse,
   resolveGrokReasoningEffortUpdate,
@@ -31,10 +32,45 @@ describe('Grok model controls', () => {
     expect(projectGrokModelOptions({ id: 'unknown' }, [])).toEqual([]);
   });
 
+  it('uses Grok fallback effort choices and projects its context window metadata', () => {
+    expect(projectGrokModel({
+      id: 'grok-4',
+      _meta: {
+        supportsReasoningEffort: true,
+        reasoningEffort: 'high',
+        totalContextTokens: 256_000,
+      },
+    }, {
+      id: 'grok-4',
+      name: 'Grok 4',
+    })).toEqual({
+      id: 'grok-4',
+      name: 'Grok 4',
+      contextWindowTokens: 256_000,
+      modelOptions: [{
+        id: 'reasoning_effort',
+        name: 'Reasoning effort',
+        type: 'select',
+        currentValue: 'high',
+        options: [
+          { value: 'xhigh', name: 'XHigh', description: 'Extended reasoning' },
+          { value: 'high', name: 'High', description: 'Heavy reasoning' },
+          { value: 'medium', name: 'Medium', description: 'Balanced reasoning' },
+          { value: 'low', name: 'Low', description: 'Faster, lighter reasoning' },
+        ],
+      }],
+    });
+  });
+
   it('rejects malformed metadata and unadvertised updates', () => {
-    expect(projectGrokModelOptions({ ...rawModel, _meta: { ...rawModel._meta, reasoningEfforts: [{ value: 'high' }, { value: 'high' }] } }, [])).toEqual([]);
+    expect(projectGrokModelOptions({ ...rawModel, _meta: { ...rawModel._meta, reasoningEfforts: [{ value: 'high' }, { value: 'high' }] } }, [])[0]?.options).toEqual([
+      { value: 'xhigh', name: 'XHigh', description: 'Extended reasoning' },
+      { value: 'high', name: 'High', description: 'Heavy reasoning' },
+      { value: 'medium', name: 'Medium', description: 'Balanced reasoning' },
+      { value: 'low', name: 'Low', description: 'Faster, lighter reasoning' },
+    ]);
     expect(() => resolveGrokReasoningEffortUpdate({
-      configId: 'reasoning_effort', value: 'xhigh', currentModel: { id: 'grok-4', modelOptions: projectGrokModelOptions(rawModel, []) },
+      configId: 'reasoning_effort', value: 'max', currentModel: { id: 'grok-4', modelOptions: projectGrokModelOptions(rawModel, []) },
     })).toThrow('not advertised');
     expect(resolveGrokReasoningEffortUpdate({
       configId: 'reasoning_effort', value: 'high', currentModel: { id: 'grok-4', modelOptions: projectGrokModelOptions(rawModel, []) },

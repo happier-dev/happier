@@ -8,6 +8,7 @@ import {
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
 import { CONNECTIONS_RESOURCE_RUNTIME } from './connectionsResource.js';
+import { resourceText } from './testkit/resourceContract.js';
 import {
   createConversationOutwardDeliveryCollectionStore,
   type ConversationOutwardDeliveryObligation,
@@ -218,7 +219,7 @@ describe('Channels connections Resource invalidation', () => {
       accountStorage,
     });
 
-    expect(JSON.parse(serialized)).toEqual({
+    expect(JSON.parse(resourceText(serialized))).toEqual({
       connections: [expect.objectContaining({
         connectionId: 'connection-1',
         authorityEpoch: 7,
@@ -235,6 +236,7 @@ describe('Channels connections Resource invalidation', () => {
             notDelivered: false,
             partial: true,
             outcomeUnknown: true,
+            archiveRecovery: false,
           },
         }),
       })],

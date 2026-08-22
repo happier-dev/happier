@@ -6,6 +6,8 @@ import {
     type ClaudeEffortLevel,
 } from '@happier-dev/agents/providers/claude-model-options';
 
+import { CLAUDE_FLAGSHIP_MODEL_ID } from '../flagshipModel.js';
+
 export {
     CLAUDE_EFFORT_LEVELS,
     formatClaudeEffortLevelLabel,
@@ -14,13 +16,13 @@ export {
 
 type ClaudeProviderModel = AgentSessionProviderBinding['model'];
 
-export const CURRENT_FLAGSHIP_CLAUDE_MODEL_ID = 'claude-opus-5';
-
 const CLAUDE_EFFORT_LEVEL_PRIORITY: readonly ClaudeEffortLevel[] = CLAUDE_EFFORT_LEVELS;
 
 const CLAUDE_EFFORT_LEVELS_BY_MODEL_ID: ReadonlyMap<string, readonly ClaudeEffortLevel[]> = new Map([
     ['claude-opus-5', ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['claude-sonnet-5', ['low', 'medium', 'high', 'xhigh', 'max']],
     ['claude-fable-5', ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['claude-mythos-5', ['low', 'medium', 'high', 'xhigh', 'max']],
     ['claude-opus-4-8', ['low', 'medium', 'high', 'xhigh', 'max']],
     ['claude-opus-4-7', ['low', 'medium', 'high', 'xhigh', 'max']],
     ['claude-opus-4-6', ['low', 'medium', 'high', 'max']],
@@ -82,7 +84,7 @@ function resolveClaudeEffortLevelsForKnownAliasOrModel(modelIdRaw: unknown): rea
         return resolveClaudeEffortLevelsForModelId('claude-opus-5');
     }
     if (modelId === 'opus') {
-        return resolveClaudeEffortLevelsForModelId(CURRENT_FLAGSHIP_CLAUDE_MODEL_ID);
+        return resolveClaudeEffortLevelsForModelId(CLAUDE_FLAGSHIP_MODEL_ID);
     }
     if (modelId.includes('opus-4-8')) {
         return resolveClaudeEffortLevelsForModelId('claude-opus-4-8');
@@ -123,7 +125,7 @@ export function resolveClaudeDefaultEffortForKnownAliasOrModel(modelIdRaw: unkno
         return resolveClaudeDefaultEffortLevelForModelId('claude-opus-5');
     }
     if (modelId === 'opus') {
-        return resolveClaudeDefaultEffortLevelForModelId(CURRENT_FLAGSHIP_CLAUDE_MODEL_ID);
+        return resolveClaudeDefaultEffortLevelForModelId(CLAUDE_FLAGSHIP_MODEL_ID);
     }
     if (modelId.includes('opus-4-8')) {
         return resolveClaudeDefaultEffortLevelForModelId('claude-opus-4-8');

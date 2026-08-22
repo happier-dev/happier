@@ -11,13 +11,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isStringArray(value: unknown): value is readonly string[] {
+    return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
 export function normalizeAskUserQuestionAnswers(value: unknown): Record<string, string> | null {
     if (!isPlainObject(value)) return null;
 
     const answers: Record<string, string> = {};
     for (const [question, answer] of Object.entries(value)) {
-        if (question && typeof answer === 'string') {
-            answers[question] = answer;
+        if (question && isStringArray(answer)) {
+            answers[question] = answer.join(', ');
         }
     }
 

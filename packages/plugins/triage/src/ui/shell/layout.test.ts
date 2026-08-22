@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  resolveTriageRowGeometryV1,
-  type TriageScaledTypeMetricsV1,
-} from '../list/geometry.js';
-import {
   TRIAGE_SPLIT_LIST_RATIO_PREFERENCE_V1,
   resolveTriageDetailPaneMinimumWidthV1,
   resolveTriageLayoutV1,
   resolveTriageListPaneMinimumWidthV1,
+  type TriageScaledTypeMetricsV1,
 } from './layout.js';
 
 const TYPE_AT_100_PERCENT: TriageScaledTypeMetricsV1 = {
@@ -27,19 +24,11 @@ const TYPE_AT_200_PERCENT: TriageScaledTypeMetricsV1 = {
 
 const SPACING = { xsmall: 4, small: 8, medium: 12 } as const;
 
-const ROW_GEOMETRY = resolveTriageRowGeometryV1({
-  type: TYPE_AT_100_PERCENT,
-  spacing: SPACING,
-  density: 'compact',
-  minimumInteractiveTargetSize: 44,
-});
-
 function layout(overrides: Partial<Parameters<typeof resolveTriageLayoutV1>[0]> = {}) {
   return resolveTriageLayoutV1({
     availableWidth: 1280,
     type: TYPE_AT_100_PERCENT,
     spacing: SPACING,
-    rowGeometry: ROW_GEOMETRY,
     ...overrides,
   });
 }
@@ -56,8 +45,8 @@ describe('Triage shell layout', () => {
     // A drag handle, separator role, persisted pane width or restoration path is
     // explicitly not built in V1 (`core/SURFACE.md` §2.1). A smuggled width or
     // `resizable` field is how that gets built by accident.
-    expect(Object.keys(layout()).sort()).toEqual(['listRatio', 'mode', 'rowGeometry']);
-    expect(Object.keys(layout({ availableWidth: 320 })).sort()).toEqual(['mode', 'rowGeometry']);
+    expect(Object.keys(layout()).sort()).toEqual(['listRatio', 'mode']);
+    expect(Object.keys(layout({ availableWidth: 320 })).sort()).toEqual(['mode']);
   });
 
   it('splits exactly when the measured width can honour both pane minima, not at a device breakpoint', () => {
@@ -112,11 +101,6 @@ describe('Triage shell layout', () => {
     }
 
     expect(starved).toEqual([]);
-  });
-
-  it('carries the one resolved row geometry into both compositions rather than re-deriving it', () => {
-    expect(layout().rowGeometry).toBe(ROW_GEOMETRY);
-    expect(layout({ availableWidth: 320 }).rowGeometry).toBe(ROW_GEOMETRY);
   });
 
   it('is a pure projection: repeated calls carry no retained pane state', () => {

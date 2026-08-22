@@ -1,23 +1,77 @@
-import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
+import { definePlugin } from '@happier-dev/plugin-sdk';
 import {
-  HAPPIER_CLAUDE_CONFIG_DIR_ENV,
+  CLAUDE_SUBSCRIPTION_OAUTH_PROFILE,
   HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV,
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV,
-} from '@happier-dev/plugin-sdk/experimental/envConstants';
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
+import type {
+  McpDiscoveredEndpoint as PluginMcpDiscoveredEndpoint,
+} from '@happier-dev/plugin-sdk/mcp';
 
-import { CLAUDE_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
+import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES } from './agent/auth/services/native/scopes.js';
+import { AGENT_DEFINITION } from './agent/definition.js';
+import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from './agent/environment.js';
+import {
+  augmentClaudeDaemonSpawnEnv,
+  resolveClaudeDaemonSpawnPrerequisites,
+} from './agent/lifecycle/spawnHooks.js';
+import { readClaudeMcpConfigServers } from './agent/mcp/configServers.js';
+import {
+  CLAUDE_PROVIDER_BINDING_ADAPTER_V1,
+  CLAUDE_PROVIDER_OWNED_ENV_KEYS,
+} from './agent/providerBinding/adapter.js';
+import { createClaudeAgentRuntime } from './agent/runtime/nativeRuntime.js';
+import { claudeExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
+import { claudeExternalSessionHooksContribution } from './agent/surfaces/sessions/external/hooks.js';
+import { claudeExternalSessionObservationContribution } from './agent/surfaces/sessions/external/observation.js';
+import { claudeExternalSessionTakeoverContribution } from './agent/surfaces/sessions/external/takeover.js';
 import { CLAUDE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
-import { CLAUDE_UI_TRANSLATIONS } from './ui/translations.js';
+import { anthropicConnectedAccountRuntime } from './connectedAccounts/anthropicRuntime.js';
+import {
+  claudeSubscriptionConnectedAccountRuntime,
+} from './connectedAccounts/claudeSubscriptionRuntime.js';
+import { CLAUDE_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 import { ANTHROPIC_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
 
-export const PLUGIN_MANIFEST = {
-  schemaVersion: 2,
+const resolveClaudeDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
+  resolveClaudeDaemonSpawnPrerequisites(event, context);
+
+const augmentClaudeDaemonSpawnEnvHook: HookHandler = (event) =>
+  augmentClaudeDaemonSpawnEnv(event);
+
+function toClaudeMcpEndpoint(
+  server: Awaited<ReturnType<typeof readClaudeMcpConfigServers>>['servers'][number],
+): PluginMcpDiscoveredEndpoint | null {
+  if ((server.transport === 'http' || server.transport === 'sse') && server.remote) {
+    return {
+      id: `claude.config.${server.name}`,
+      name: server.name,
+      kind: server.transport,
+      url: server.remote.url,
+    };
+  }
+  return null;
+}
+
+const {
+  id: ANTHROPIC_PROVIDER_CONTRIBUTION_ID,
+  managedRuntime: _anthropicProviderManagedRuntime,
+  ...ANTHROPIC_PROVIDER_DECLARATION
+} = ANTHROPIC_PROVIDER_CONTRIBUTION;
+const {
+  id: CLAUDE_AGENT_SETTINGS_CONTRIBUTION_ID,
+  ...CLAUDE_AGENT_SETTINGS_DECLARATION
+} = CLAUDE_AGENT_SETTINGS_CONTRIBUTION;
+
+export const CLAUDE_PLUGIN = definePlugin({
   id: 'happier.agent.claude',
   version: '0.0.0',
   displayName: 'Claude',
   description: 'Claude Code coding agent.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [
       {
@@ -86,227 +140,271 @@ export const PLUGIN_MANIFEST = {
     ],
     optional: [],
   },
-  contributes: {
-    providers: [ANTHROPIC_PROVIDER_CONTRIBUTION],
-    connectedAccountDescriptors: [{
-      id: 'claude-subscription',
-      title: 'Claude',
-      authentication: {
-        defaultModeId: 'setup-token',
-        modes: [{
-          id: 'setup-token',
-          kind: 'manual',
-          title: 'Setup token',
-          outcomeReconciliation: 'none',
-          fields: [{
-            id: 'token',
-            title: 'Claude setup token',
-            schema: { type: 'string', minLength: 1 },
-            secret: true,
+  providers: {
+    [ANTHROPIC_PROVIDER_CONTRIBUTION_ID]: {
+      declaration: ANTHROPIC_PROVIDER_DECLARATION,
+    },
+  },
+  connectedAccountDescriptors: {
+    'claude-subscription': {
+      declaration: {
+        title: 'Claude',
+        authentication: {
+          defaultModeId: 'setup-token',
+          modes: [{
+            id: 'setup-token',
+            kind: 'manual',
+            title: 'Setup token',
+            outcomeReconciliation: 'none',
+            fields: [{
+              id: 'token',
+              title: 'Claude setup token',
+              schema: { type: 'string', minLength: 1 },
+              secret: true,
+            }],
+          }, {
+            id: 'oauth',
+            kind: 'oauthAuthorizationCode',
+            callbackUrl: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.callbackUrl,
+            scopes: [...CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES],
+            pkce: 'required',
+            outcomeReconciliation: 'none',
           }],
+        },
+      },
+      runtime: claudeSubscriptionConnectedAccountRuntime,
+    },
+    anthropic: {
+      declaration: {
+        title: 'Anthropic API key',
+        authentication: {
+          defaultModeId: 'api-key',
+          modes: [{
+            id: 'api-key',
+            kind: 'manual',
+            outcomeReconciliation: 'none',
+            fields: [{
+              id: 'token',
+              title: 'Anthropic API key',
+              schema: { type: 'string', minLength: 1 },
+              secret: true,
+            }],
+          }],
+        },
+      },
+      runtime: anthropicConnectedAccountRuntime,
+    },
+  },
+  agents: {
+    claude: {
+      declaration: {
+        title: 'Claude',
+        runtime: { kind: 'custom' },
+        cli: {
+          displayName: 'Claude Code CLI',
+          executable: {
+            binaryName: 'claude',
+            knownUserBinDirSuffixes: ['.local/bin'],
+            sourcePreference: 'system-first',
+            acceptsJavaScriptFileOverride: true,
+            systemCommandResolutionStrategy: 'known-user-first-runnable',
+          },
+          install: {
+            managed: null,
+            manual: {
+              kind: 'vendor_recipe',
+              recipes: {
+                darwin: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://claude.ai/install.sh | bash'] }],
+                linux: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://claude.ai/install.sh | bash'] }],
+                win32: [{
+                  cmd: 'powershell',
+                  args: [
+                    '-NoProfile',
+                    '-ExecutionPolicy',
+                    'Bypass',
+                    '-Command',
+                    'irm https://claude.ai/install.ps1 | iex',
+                  ],
+                }],
+              },
+            },
+            recommendationOrder: 10,
+            guideUrl: 'https://code.claude.com/docs/en/setup',
+            docsUrl: 'https://claude.ai',
+          },
+          auth: {
+            support: 'login_terminal',
+            machineLoginKey: 'claude-code',
+            probe: {
+              parser: 'claudeCredentialsFile',
+              backgroundChecks: 'safe',
+              statusArgs: null,
+              envVars: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
+              credentialPaths: ['~/.claude/.credentials.json', '~/.claude/.claude.json'],
+            },
+            loginLaunches: [{ kind: 'primary', args: [], initialInput: '/login\r' }],
+          },
+        },
+        primary: 'sessions',
+        connectedAccounts: [{
+          purpose: 'model_upstream',
+          service: 'claude-subscription',
+          required: false,
+          materializationKinds: ['environment', 'files', 'httpHeaders'],
         }, {
-          id: 'oauth',
-          kind: 'oauthAuthorizationCode',
-          scopes: [
-            'user:inference',
-            'user:profile',
-            'user:sessions:claude_code',
-            'user:mcp_servers',
-            'user:file_upload',
-          ],
-          pkce: 'required',
-          outcomeReconciliation: 'none',
+          purpose: 'model_upstream_api_key',
+          service: 'anthropic',
+          required: false,
+          materializationKinds: ['environment'],
         }],
-      },
-    }, {
-      id: 'anthropic',
-      title: 'Anthropic API key',
-      authentication: {
-        defaultModeId: 'api-key',
-        modes: [{
-          id: 'api-key',
-          kind: 'manual',
-          outcomeReconciliation: 'none',
-          fields: [{
-            id: 'token',
-            title: 'Anthropic API key',
-            schema: { type: 'string', minLength: 1 },
-            secret: true,
+        capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
+          surfaces: ['externalSessions'],
+          sessions: {
+            open: ['create', 'resume'],
+            delivery: ['newTurn', 'steer', 'followUp'],
+            cancel: true,
+            configuration: true,
+            goals: {
+              active: {
+                clear: true,
+                set: { fields: ['objective'] },
+              },
+              inactive: {
+                get: true,
+                clear: true,
+                set: { fields: ['objective'] },
+              },
+              source: 'goals',
+            },
+            runtimeActivitySnapshots: true,
+            workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
+          },
+          executionRuns: { open: ['create'], checkpoint: true, stop: true },
+        }),
+        providerRequirements: {
+          acceptsProtocols: ['anthropic'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: {
+            supportsNoAuth: true,
+            apiKeyTransports: [
+              {
+                protocol: 'anthropic',
+                destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] },
+              },
+              {
+                protocol: 'anthropic',
+                destination: { kind: 'httpHeader', names: ['x-api-key'], formats: ['raw'] },
+              },
+            ],
+          },
+          authIsolation: {
+            suppressConnectedServiceIds: ['claude-subscription', 'anthropic'],
+            ownedEnvKeys: [
+              'ANTHROPIC_BASE_URL',
+              'ANTHROPIC_CUSTOM_HEADERS',
+              'ANTHROPIC_API_KEY',
+              'ANTHROPIC_AUTH_TOKEN',
+              'ANTHROPIC_OAUTH_TOKEN',
+              'CLAUDE_CODE_OAUTH_TOKEN',
+              'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
+              'CLAUDE_CODE_OAUTH_SCOPES',
+              'CLAUDE_CODE_SETUP_TOKEN',
+              'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
+            ],
+          },
+          materialization: 'spawnEnv',
+          applyPolicy: 'live',
+          supportsFreeformModelIds: true,
+        },
+        surfaces: { externalSession: {
+          externalLinkedTakeover: { writerSafety: 'unsupported' },
+          sources: [{
+            sourceKind: 'claudeConfig',
+            schema: { fields: [
+              { name: 'kind', kind: 'literal', value: 'claudeConfig' },
+              { name: 'configDir', kind: 'string', min: 1, max: 10_000, nullish: true },
+              { name: 'projectId', kind: 'string', min: 1, max: 2_000, nullish: true },
+            ] },
+            key: { segments: [
+              { kind: 'literal', value: 'claudeConfig' },
+              { kind: 'field', field: 'configDir' },
+              { kind: 'field', field: 'projectId' },
+            ] },
+            instances: [{ kind: 'default', constants: {} }],
           }],
-        }],
+        } },
       },
-    }],
-    agents: [{
-      id: 'claude',
-      title: 'Claude',
-      runtime: { kind: 'custom' },
-      cli: {
-        displayName: 'Claude Code CLI',
-        executable: {
-          binaryName: 'claude',
-          knownUserBinDirSuffixes: ['.local/bin'],
-          sourcePreference: 'system-first',
-          acceptsJavaScriptFileOverride: true,
-          systemCommandResolutionStrategy: 'known-user-first-runnable',
-        },
-        install: {
-          managed: null,
-          manual: {
-            kind: 'vendor_recipe',
-            recipes: {
-              darwin: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://claude.ai/install.sh | bash'] }],
-              linux: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://claude.ai/install.sh | bash'] }],
-              win32: [{
-                cmd: 'powershell',
-                args: [
-                  '-NoProfile',
-                  '-ExecutionPolicy',
-                  'Bypass',
-                  '-Command',
-                  'irm https://claude.ai/install.ps1 | iex',
-                ],
-              }],
-            },
-          },
-          recommendationOrder: 10,
-          guideUrl: 'https://code.claude.com/docs/en/setup',
-          docsUrl: 'https://claude.ai',
-        },
-        auth: {
-          support: 'login_terminal',
-          machineLoginKey: 'claude-code',
-          probe: {
-            parser: 'claudeCredentialsFile',
-            backgroundChecks: 'safe',
-            statusArgs: null,
-            envVars: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
-            credentialPaths: ['~/.claude/.credentials.json', '~/.claude/.claude.json'],
-          },
-          loginLaunches: [{ kind: 'primary', args: [], initialInput: '/login\r' }],
-        },
+      factory: createClaudeAgentRuntime,
+      providerBinding: CLAUDE_PROVIDER_BINDING_ADAPTER_V1,
+      sessionRunnerFactory: {
+        module: './agent/runtime/nativeRuntime',
+        export: 'createClaudeAgentRuntime',
+        runtimeApiVersion: 1,
+        externalSessionsExport: 'claudeExternalSessionsContribution',
       },
-      primary: 'sessions',
-      connectedAccounts: [{
-        purpose: 'model_upstream',
-        service: 'claude-subscription',
-        required: false,
-        materializationKinds: ['environment', 'files', 'httpHeaders'],
-      }, {
-        purpose: 'model_upstream_api_key',
-        service: 'anthropic',
-        required: false,
-        materializationKinds: ['environment'],
-      }],
-      capabilities: {
-        surfaces: ['terminal', 'externalSessions'],
-        sessions: {
-          open: ['create', 'resume'],
-          delivery: ['newTurn', 'steer', 'followUp'],
-          cancel: true,
-          configuration: true,
-          goals: {
-            active: {
-              clear: true,
-              set: { fields: ['objective'] },
-            },
-            inactive: {
-              get: true,
-              clear: true,
-              set: { fields: ['objective'] },
-            },
-            source: 'goals',
-          },
-          runtimeActivitySnapshots: true,
-          workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
-        },
-        executionRuns: { open: ['create'], checkpoint: true, stop: true },
-      },
-      providerRequirements: {
-        acceptsProtocols: ['anthropic'],
-        required: { streaming: true, toolRoundTrips: true },
-        credentialSupport: {
-          supportsNoAuth: true,
-          apiKeyTransports: [
-            {
-              protocol: 'anthropic',
-              destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] },
-            },
-            {
-              protocol: 'anthropic',
-              destination: { kind: 'httpHeader', names: ['x-api-key'], formats: ['raw'] },
-            },
-          ],
-        },
-        authIsolation: {
-          suppressConnectedServiceIds: ['claude-subscription', 'anthropic'],
-          ownedEnvKeys: [
-            'ANTHROPIC_BASE_URL',
-            'ANTHROPIC_CUSTOM_HEADERS',
-            'ANTHROPIC_API_KEY',
-            'ANTHROPIC_AUTH_TOKEN',
-            'ANTHROPIC_OAUTH_TOKEN',
-            'CLAUDE_CODE_OAUTH_TOKEN',
-            'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
-            'CLAUDE_CODE_OAUTH_SCOPES',
-            'CLAUDE_CODE_SETUP_TOKEN',
-            'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
-          ],
-        },
-        materialization: 'spawnEnv',
-        applyPolicy: 'live',
-        supportsFreeformModelIds: true,
-      },
-      surfaces: { externalSession: {
-        externalLinkedTakeover: { writerSafety: 'unsupported' },
-        sources: [{
-        sourceKind: 'claudeConfig',
-        schema: { passthrough: true, fields: [
-          { name: 'kind', kind: 'literal', value: 'claudeConfig' },
-          { name: 'configDir', kind: 'string', min: 1, max: 10_000, nullish: true },
-          { name: 'projectId', kind: 'string', min: 1, max: 2_000, nullish: true },
-        ] },
-        key: { segments: [
-          { kind: 'literal', value: 'claudeConfig' },
-          { kind: 'field', field: 'configDir' },
-          { kind: 'field', field: 'projectId' },
-        ] },
-        instances: [{ kind: 'default', constants: {} }],
-      }],
-      } },
-    }],
-    systemTools: [
-      { id: 'claude-cli', title: 'Claude Code CLI', executableNames: ['claude'] },
-      { id: 'macos-security', title: 'macOS Keychain security', executableNames: ['security'] },
-    ],
-    hooks: [
-      {
-        id: 'resolve-prerequisites',
+      externalSessions: claudeExternalSessionsContribution,
+      externalSessionTakeover: claudeExternalSessionTakeoverContribution,
+      externalSessionHooks: claudeExternalSessionHooksContribution,
+      externalSessionObservation: claudeExternalSessionObservationContribution,
+    },
+  },
+  systemTools: {
+    'claude-cli': { title: 'Claude Code CLI', executableNames: ['claude'] },
+    'macos-security': { title: 'macOS Keychain security', executableNames: ['security'] },
+  },
+  hooks: {
+    'resolve-prerequisites': {
+      declaration: {
         on: 'agent.resolvePrerequisites',
+        hookApiVersion: 1,
         category: 'decision',
         scope: 'agent',
         filters: { agentId: 'claude' },
         executionKind: 'decide',
       },
-      {
-        id: 'augment-spawn-env',
+      handler: resolveClaudeDaemonSpawnPrerequisitesHook,
+    },
+    'augment-spawn-env': {
+      declaration: {
         on: 'agent.spawnEnv.augment',
+        hookApiVersion: 1,
         category: 'augmentation',
         scope: 'daemon',
         filters: { agentId: 'claude' },
         executionKind: 'augment',
       },
-    ],
-    mcp: {
-      servers: [],
-      discoveryProviders: [{
-        id: 'config',
-        title: 'Claude MCP configuration',
-        metadata: { agentId: 'claude' },
-      }],
+      handler: augmentClaudeDaemonSpawnEnvHook,
     },
-    ui: {
-      translations: [{ locale: 'en', messages: CLAUDE_UI_TRANSLATIONS.en }],
-    },
-    settings: [CLAUDE_AGENT_SETTINGS_CONTRIBUTION],
   },
-} satisfies PluginManifest;
+  mcp: {
+    servers: {},
+    discoverySources: {
+      config: {
+        declaration: {
+          title: 'Claude MCP configuration',
+          metadata: { agentId: 'claude' },
+        },
+        discover: async (input) => {
+          const detected = await readClaudeMcpConfigServers({
+            directory: input?.directory ?? null,
+          });
+          return {
+            items: [],
+            endpoints: detected.servers
+              .map(toClaudeMcpEndpoint)
+              .filter((endpoint): endpoint is PluginMcpDiscoveredEndpoint => endpoint !== null),
+            warnings: detected.warnings,
+          };
+        },
+      },
+    },
+  },
+  ui: {
+    translations: CLAUDE_UI_TRANSLATION_BUNDLES,
+  },
+  settings: {
+    [CLAUDE_AGENT_SETTINGS_CONTRIBUTION_ID]: CLAUDE_AGENT_SETTINGS_DECLARATION,
+  },
+});
+
+export const PLUGIN_MANIFEST = CLAUDE_PLUGIN.manifest;

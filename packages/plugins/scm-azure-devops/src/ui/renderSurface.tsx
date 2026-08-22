@@ -51,6 +51,7 @@ import {
   Tabs,
   Text,
   defineUiSurface,
+  usePluginTranslation,
   useSurfaceContext,
   type MetadataEntry,
 } from '@happier-dev/plugin-ui';
@@ -58,6 +59,16 @@ import {
   TriageDetailSurfaceInputV1Schema,
   type TriageDetailSurfaceInputV1,
   type TriageSourceFailureV1,
+} from '@happier-dev/triage-protocol/v1';
+// The presentation rules used below are projections of the Triage contract's own
+// closed fact and failure vocabularies, so they are consumed from the one published
+// owner rather than re-spelled here: six copies is how one declared `compact` number
+// could start meaning two things in one list. They are aliased to this file's local
+// vocabulary so the call sites read as the panel language they already are.
+import {
+  describeTriageSourceFailureV1 as failureDescription,
+  formatTriageTimestampV1 as formatTimestamp,
+  projectTriageDetailFieldTextV1 as fieldValueText,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -90,75 +101,21 @@ import {
   type AzureDetailTabIdV1,
 } from './detail/tabDeclarations.js';
 
-const RELATIVE_UNITS: readonly (readonly [Intl.RelativeTimeFormatUnit, number])[] = Object.freeze([
-  ['year', 365 * 24 * 60 * 60 * 1000],
-  ['month', 30 * 24 * 60 * 60 * 1000],
-  ['day', 24 * 60 * 60 * 1000],
-  ['hour', 60 * 60 * 1000],
-  ['minute', 60 * 1000],
-] as const);
-
-/**
- * `relative` is relative to the reader's present, which is what a triage reader means by "updated
- * 4 minutes ago". `nowMs` is passed in rather than read here so the value is a render input and
- * not a hidden clock read.
- */
-function formatTimestamp(
-  locale: string,
-  atMs: number,
-  format: 'relative' | 'absolute',
-  nowMs: number,
-): string {
-  if (format === 'absolute') {
-    return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
-      .format(new Date(atMs));
-  }
-  const deltaMs = atMs - nowMs;
-  const relative = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
-  for (const [unit, unitMs] of RELATIVE_UNITS) {
-    if (Math.abs(deltaMs) >= unitMs) return relative.format(Math.round(deltaMs / unitMs), unit);
-  }
-  return relative.format(Math.round(deltaMs / 1000), 'second');
-}
-
-function fieldValueText(
-  field: AzureDetailFieldV1,
-  locale: string,
-  nowMs: number,
-): string | null {
-  switch (field.kind) {
-    case 'text':
-    case 'status':
-      return field.value;
-    case 'number': {
-      const formatted = new Intl.NumberFormat(
-        locale,
-        field.format === 'compact' ? { notation: 'compact', maximumFractionDigits: 1 } : {},
-      ).format(field.value);
-      // A count the source could not promise as exact is never presented as a total.
-      return field.approximate ? `~${formatted}` : formatted;
-    }
-    case 'timestamp':
-      return formatTimestamp(locale, field.atMs, field.format, nowMs);
-    default:
-      return null;
-  }
-}
-
-/** The one sentence every failed read owes its reader, without echoing a provider body. */
-function failureDescription(failure: TriageSourceFailureV1 | null, fallback: string): string {
-  return failure === null ? fallback : `${fallback} (${failure.code})`;
-}
 
 function PageFailureBanner({
   state,
 }: Readonly<{ state: AzurePagedStateV1<unknown> }>): React.ReactElement | null {
+  const text = usePluginTranslation();
   if (state.failure === null) return null;
   return (
     <Banner
       tone="warning"
       title="Showing what was read so far"
-      description={failureDescription(state.failure, 'The next page could not be read.')}
+      titleKey="plugins.azureDevops.ui.partial"
+      description={failureDescription(
+        state.failure,
+        text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'),
+      )}
     />
   );
 }
@@ -171,6 +128,8 @@ function PagedFooter({
   onRefresh,
   refreshLabel,
   summary,
+  summaryKey,
+  summaryValues,
 }: Readonly<{
   state: AzurePagedStateV1<unknown>;
   loadMoreTitle: string;
@@ -178,14 +137,23 @@ function PagedFooter({
   onRefresh: () => void;
   refreshLabel: string;
   summary: string;
+  summaryKey: string;
+  summaryValues: Readonly<Record<string, string | number>>;
 }>): React.ReactElement {
   return (
     <Stack gap="small">
-      <Text variant="caption" tone="neutral">
-        {state.omittedRowCount === 0
-          ? summary
-          : `${summary} ${String(state.omittedRowCount)} row(s) on the pages read could not be understood.`}
-      </Text>
+      <Text variant="caption" tone="neutral" valueKey={summaryKey} fallback={summary} values={summaryValues} />
+      {state.omittedRowCount === 0
+        ? null
+        : (
+          <Text
+            variant="caption"
+            tone="neutral"
+            valueKey="plugins.azureDevops.ui.rowsUnreadable"
+            fallback="{count} row(s) on the pages read could not be understood."
+            values={{ count: state.omittedRowCount }}
+          />
+        )}
       {state.canLoadMore
         ? (
           <Button
@@ -238,7 +206,9 @@ function OverviewPanel({
           <Banner
             tone="neutral"
             title="Some details were shortened"
+            titleKey="plugins.azureDevops.ui.shortened"
             description="Open the pull request in Azure DevOps to read the complete text."
+            descriptionKey="plugins.azureDevops.ui.shortened.description"
           />
         )}
         {statusFields.length === 0 ? null : (
@@ -249,13 +219,16 @@ function OverviewPanel({
           </Row>
         )}
         {entries.length === 0
-          ? <EmptyState title="No projected facts" description="This observation carried no displayable facts." />
-          : <Metadata title="Facts" entries={entries} />}
+          ? <EmptyState title="No projected facts" titleKey="plugins.azureDevops.ui.noFacts" description="This observation carried no displayable facts." descriptionKey="plugins.azureDevops.ui.noFacts.description" />
+          : <Metadata title="Facts" titleKey="plugins.azureDevops.ui.facts" entries={entries} />}
         {pendingFields.length === 0 ? null : (
           <Stack gap="small">
-            <Text variant="caption" tone="neutral">
-              {'Answered in the panels beside this one, not on the list row:'}
-            </Text>
+            <Text
+              variant="caption"
+              tone="neutral"
+              valueKey="plugins.azureDevops.ui.pendingPanels.description"
+              fallback="Answered in the panels beside this one, not on the list row:"
+            />
             <Row gap="small">
               {pendingFields.map((field) => <Badge key={field.id} value={field.label} />)}
             </Row>
@@ -264,6 +237,7 @@ function OverviewPanel({
         <Divider />
         <Metadata
           title="Observation"
+          titleKey="plugins.azureDevops.ui.observation"
           entries={[
             {
               label: 'Observed',
@@ -315,19 +289,21 @@ function ActivityPanel({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const controller = useAzureCommits(input);
   const { state } = controller;
 
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading the commits from Azure DevOps" />;
+    return <LoadingState title="Reading the commits from Azure DevOps" titleKey="plugins.azureDevops.ui.readingCommits" />;
   }
   if (state.kind === 'unavailable') {
     return (
       <ErrorState
         title="The activity is unavailable"
+        titleKey="plugins.azureDevops.ui.activityUnavailable"
         description={failureDescription(
           state.failure,
-          'Azure DevOps did not return the commits of this pull request.',
+          text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'),
         )}
       />
     );
@@ -345,6 +321,7 @@ function ActivityPanel({
   return (
     <List
       accessibilityLabel="Commits and iterations of this Azure DevOps pull request"
+      accessibilityLabelKey="plugins.azureDevops.ui.activityLabel"
       items={state.rows}
       keyForItem={(row) => row.commitId}
       header={(
@@ -355,18 +332,24 @@ function ActivityPanel({
               <Banner
                 tone="warning"
                 title="The iterations could not be read"
-                description={failureDescription(iterations.failure, 'Azure DevOps did not answer.')}
+                titleKey="plugins.azureDevops.ui.iterationsUnavailable"
+        description={failureDescription(
+          iterations.failure,
+          text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'),
+        )}
               />
             )
             : iterationEntries.length === 0
               ? null
-              : <Metadata title="Iterations" entries={iterationEntries} />}
+              : <Metadata title="Iterations" titleKey="plugins.azureDevops.ui.iterations" entries={iterationEntries} />}
         </Stack>
       )}
       empty={(
         <EmptyState
           title="No commits"
+          titleKey="plugins.azureDevops.ui.noCommits"
           description="Azure DevOps reports no commit on this pull request yet."
+          descriptionKey="plugins.azureDevops.ui.noCommits.description"
         />
       )}
       footer={(
@@ -377,6 +360,8 @@ function ActivityPanel({
           onRefresh={controller.refresh}
           refreshLabel="Re-read the commits from Azure DevOps"
           summary={`${String(state.rows.length)} commit(s) read.`}
+          summaryKey="plugins.azureDevops.ui.commitsRead"
+          summaryValues={{ count: state.rows.length }}
         />
       )}
       renderItem={(row) => (
@@ -393,7 +378,11 @@ function ActivityPanel({
                 <Action.OpenExternal
                   url={row.url}
                   variant="plain"
-                  accessibilityLabel={`Open commit ${row.commitId.slice(0, 8)}`}
+                  accessibilityLabel={text(
+                    'plugins.azureDevops.ui.openValue',
+                    'Open {item}',
+                    { item: row.commitId.slice(0, 8) },
+                  )}
                 />
               ),
             })}
@@ -416,6 +405,7 @@ function FilesPanel({
   input: TriageDetailSurfaceInputV1;
   iterations: AzureReadStateV1<AzureIterationsViewV1>;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const currentIterationId = iterations.kind === 'ready'
     ? iterations.value.currentIterationId
     : undefined;
@@ -423,20 +413,19 @@ function FilesPanel({
   const { state } = controller;
 
   if (iterations.kind === 'loading') {
-    return <LoadingState title="Reading the iterations from Azure DevOps" />;
+    return <LoadingState title="Reading the iterations from Azure DevOps" titleKey="plugins.azureDevops.ui.readingIterations" />;
   }
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading the changed files from Azure DevOps" />;
+    return <LoadingState title="Reading the changed files from Azure DevOps" titleKey="plugins.azureDevops.ui.readingFiles" />;
   }
   if (state.kind === 'unavailable') {
     return (
       <ErrorState
         title="The changed files are unavailable"
+        titleKey="plugins.azureDevops.ui.filesUnavailable"
         description={failureDescription(
           state.failure,
-          currentIterationId === undefined
-            ? 'Azure DevOps returned no iteration to compare this pull request against.'
-            : 'Azure DevOps did not return the files this iteration changes.',
+          text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'),
         )}
       />
     );
@@ -445,22 +434,31 @@ function FilesPanel({
   return (
     <List
       accessibilityLabel="Files this Azure DevOps pull-request iteration changes"
+      accessibilityLabelKey="plugins.azureDevops.ui.filesLabel"
       items={state.rows}
       keyForItem={(row) => row.path}
       header={(
         <Stack gap="small">
           <PageFailureBanner state={state} />
-          <Text variant="caption" tone="neutral">
-            {currentIterationId === undefined
+          <Text
+            variant="caption"
+            tone="neutral"
+            valueKey={currentIterationId === undefined
+              ? 'plugins.azureDevops.ui.noComparisonIteration'
+              : 'plugins.azureDevops.ui.comparingIteration'}
+            fallback={currentIterationId === undefined
               ? 'No iteration to compare against.'
-              : `Comparing iteration ${String(currentIterationId)} against the pull request's base.`}
-          </Text>
+              : "Comparing iteration {iteration} against the pull request's base."}
+            values={{ iteration: currentIterationId ?? '' }}
+          />
         </Stack>
       )}
       empty={(
         <EmptyState
           title="No changed files"
+          titleKey="plugins.azureDevops.ui.noFiles"
           description="Azure DevOps reports that this iteration changes no files."
+          descriptionKey="plugins.azureDevops.ui.noFiles.description"
         />
       )}
       footer={(
@@ -471,6 +469,8 @@ function FilesPanel({
           onRefresh={controller.refresh}
           refreshLabel="Re-read the changed files from Azure DevOps"
           summary={`${String(state.rows.length)} file(s) read.`}
+          summaryKey="plugins.azureDevops.ui.filesRead"
+          summaryValues={{ count: state.rows.length }}
         />
       )}
       renderItem={(row) => (
@@ -481,7 +481,9 @@ function FilesPanel({
             <Action.Copy
               value={row.path}
               variant="plain"
-              accessibilityLabel={`Copy the path ${row.path}`}
+              accessibilityLabel={text('plugins.azureDevops.ui.copyValue', 'Copy {item}', {
+                item: row.path,
+              })}
             />
           )}
         />
@@ -493,19 +495,21 @@ function FilesPanel({
 /* -------------------------------------------------------------------- Policies */
 
 function PoliciesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const controller = useAzurePolicies(input);
   const state: AzureReadStateV1<AzurePoliciesViewV1> = controller.state;
 
   if (state.kind === 'loading') {
-    return <LoadingState title="Reading the policies from Azure DevOps" />;
+    return <LoadingState title="Reading the policies from Azure DevOps" titleKey="plugins.azureDevops.ui.readingPolicies" />;
   }
   if (state.kind === 'unavailable') {
     return (
       <ErrorState
         title="The policies are unavailable"
+        titleKey="plugins.azureDevops.ui.policiesUnavailable"
         description={failureDescription(
           state.failure,
-          'Azure DevOps did not return the policy state of this pull request.',
+          text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'),
         )}
       />
     );
@@ -522,11 +526,14 @@ function PoliciesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }
           <Banner
             tone="warning"
             title="The policy evaluations could not be read"
+            titleKey="plugins.azureDevops.ui.policyEvaluationsUnavailable"
             description="The statuses below are real. Whether any of them is enforced is unknown."
+            descriptionKey="plugins.azureDevops.ui.policyEvaluationsUnavailable.description"
           />
         )}
         <Metadata
           title="Policy evaluations"
+          titleKey="plugins.azureDevops.ui.policyEvaluations"
           entries={view.evaluations.length === 0
             ? [{ label: 'Evaluations', value: view.evaluationsPartial ? 'Unknown' : 'None' }]
             : [
@@ -538,6 +545,7 @@ function PoliciesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }
         {view.evaluations.length === 0 ? null : (
           <List
             accessibilityLabel="Policy evaluations for this Azure DevOps pull request"
+            accessibilityLabelKey="plugins.azureDevops.ui.policyEvaluationsLabel"
             items={view.evaluations}
             keyForItem={(row) => row.evaluationId}
             renderItem={(row) => (
@@ -553,18 +561,24 @@ function PoliciesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }
         <Divider />
         <List
           accessibilityLabel="Statuses reported against this Azure DevOps pull request"
+          accessibilityLabelKey="plugins.azureDevops.ui.statusesLabel"
           items={view.statuses}
           keyForItem={(row) => row.id}
           empty={(
             <EmptyState
               title="No statuses"
+              titleKey="plugins.azureDevops.ui.noStatuses"
               description="Nothing has reported a status against this pull request."
+              descriptionKey="plugins.azureDevops.ui.noStatuses.description"
             />
           )}
           header={(
-            <Text variant="caption" tone="neutral">
-              {'A status is informational unless a policy evaluation above marks it required.'}
-            </Text>
+            <Text
+              variant="caption"
+              tone="neutral"
+              valueKey="plugins.azureDevops.ui.statusInformational.description"
+              fallback="A status is informational unless a policy evaluation above marks it required."
+            />
           )}
           renderItem={(row) => (
             <Item
@@ -578,6 +592,7 @@ function PoliciesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }
                       url={row.targetUrl}
                       variant="plain"
                       accessibilityLabel="Open this status"
+                      accessibilityLabelKey="plugins.azureDevops.ui.openStatus"
                     />
                   ),
                 })}
@@ -589,6 +604,7 @@ function PoliciesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }
             onRefresh={controller.refresh}
             variant="plain"
             accessibilityLabel="Re-read the policies from Azure DevOps"
+            accessibilityLabelKey="plugins.azureDevops.ui.rereadPolicies"
           />
         </Row>
       </Stack>
@@ -627,18 +643,23 @@ function threadSubtitle(row: AzureProjectedThreadRowV1): string {
 }
 
 function ThreadsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const controller = useAzureThreads(input);
   const state: AzureReadStateV1<AzureThreadsViewV1> = controller.state;
   const [window, setWindow] = React.useState(AZURE_THREAD_WINDOW_V1);
 
   if (state.kind === 'loading') {
-    return <LoadingState title="Reading the threads from Azure DevOps" />;
+    return <LoadingState title="Reading the threads from Azure DevOps" titleKey="plugins.azureDevops.ui.readingThreads" />;
   }
   if (state.kind === 'unavailable') {
     return (
       <ErrorState
         title="The threads are unavailable"
-        description={failureDescription(state.failure, 'Azure DevOps did not return these threads.')}
+        titleKey="plugins.azureDevops.ui.threadsUnavailable"
+        description={failureDescription(
+          state.failure,
+          text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'),
+        )}
       />
     );
   }
@@ -650,23 +671,34 @@ function ThreadsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
   return (
     <List
       accessibilityLabel="Review threads on this Azure DevOps pull request"
+      accessibilityLabelKey="plugins.azureDevops.ui.threadsLabel"
       items={shown}
       keyForItem={(row) => row.id}
       empty={(
         <EmptyState
           title="No threads"
+          titleKey="plugins.azureDevops.ui.noThreads"
           description="Nobody has opened a review thread on this pull request yet."
+          descriptionKey="plugins.azureDevops.ui.noThreads.description"
         />
       )}
       footer={(
         <Stack gap="small">
-          <Text variant="caption" tone="neutral">
-            {`${String(shown.length)} of ${String(rows.length)} thread(s) shown.`}
-          </Text>
+          <Text
+            variant="caption"
+            tone="neutral"
+            valueKey="plugins.azureDevops.ui.threadsShown"
+            fallback="{shown} of {total} thread(s) shown."
+            values={{ shown: shown.length, total: rows.length }}
+          />
           {remaining > 0
             ? (
               <Button
-                title={`Show ${String(Math.min(remaining, AZURE_THREAD_WINDOW_V1))} more threads`}
+              title={text(
+                'plugins.azureDevops.ui.showMoreThreads',
+                'Show {count} more threads',
+                { count: Math.min(remaining, AZURE_THREAD_WINDOW_V1) },
+              )}
                 variant="secondary"
                 // No request: the rows are already here, and this only widens
                 // the slice the panel renders.
@@ -679,6 +711,7 @@ function ThreadsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
               onRefresh={controller.refresh}
               variant="plain"
               accessibilityLabel="Re-read the threads from Azure DevOps"
+              accessibilityLabelKey="plugins.azureDevops.ui.rereadThreads"
             />
           </Row>
         </Stack>
@@ -765,7 +798,9 @@ function AzureDetailSurface(context: RenderContext): React.ReactElement {
       <Screen safeArea>
         <ErrorState
           title="This pull request cannot be shown"
+          titleKey="plugins.azureDevops.ui.invalidInput"
           description="Triage supplied a detail input this Azure DevOps build does not accept."
+          descriptionKey="plugins.azureDevops.ui.invalidInput.description"
         />
       </Screen>
     );

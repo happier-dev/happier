@@ -837,6 +837,48 @@ describe('Antigravity external-session pure leaf', () => {
     });
   });
 
+  it('declares an older page incomplete instead of finalizing history past an unknown record', async () => {
+    const home = await mkdir(
+      join(tmpdir(), `antigravity-external-page-unknown-${Date.now()}-`),
+      { recursive: true },
+    );
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    await createConversation(brainDir, 'conversation-page-unknown', [
+      '{"step_index":1,"type":"USER_INPUT","text":"oldest visible"}',
+      '{"step_index":2,"type":"FUTURE_RECORD_KIND","payload":{"turn":"unreadable"}}',
+      '{"step_index":3,"type":"PLANNER_RESPONSE","text":"newest visible"}',
+    ]);
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+    const identity = await contribution.resolveLinkIdentity({
+      ...invocation(),
+      source: { kind: 'antigravityCliPrint' },
+      remoteSessionId: 'conversation-page-unknown',
+    });
+    if (!identity.ok) throw new Error('identity unexpectedly failed');
+
+    // A page has no diagnostics channel, so an unreadable record can only be
+    // reported by declaring the page incomplete. Returning the older rows as an
+    // ordinary success would finalize a history with a hole the user can never
+    // recover, and would hand back a cursor that walks straight past it.
+    const page = await contribution.pageTranscript({
+      ...invocation(),
+      source: identity.value.source,
+      remoteSessionId: 'conversation-page-unknown',
+      direction: 'older',
+      maxItems: 10,
+    });
+
+    expect(page).toMatchObject({
+      ok: true,
+      value: {
+        items: [{ raw: agentMessageRaw('newest visible') }],
+        nextCursor: null,
+        hasMore: false,
+        truncated: true,
+      },
+    });
+  });
+
   it('reports skipped native records while advancing visible items', async () => {
     const home = await mkdir(join(tmpdir(), `antigravity-external-read-after-skips-${Date.now()}-`), { recursive: true });
     const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
@@ -878,6 +920,61 @@ describe('Antigravity external-session pure leaf', () => {
         items: [{ raw: agentMessageRaw('visible') }],
         diagnostics: [{
           code: 'unsupported_record_skipped',
+          count: 1,
+          positions: [expect.any(Number)],
+        }],
+      },
+    });
+  });
+
+  it('separates a recognized non-transcript record from one this build cannot read', async () => {
+    const home = await mkdir(
+      join(tmpdir(), `antigravity-external-read-after-known-skips-${Date.now()}-`),
+      { recursive: true },
+    );
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    const transcriptPath = await createConversation(brainDir, 'conversation-known-skips', [
+      '{"step_index":1,"type":"USER_INPUT","text":"start"}',
+    ]);
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+    const identity = await contribution.resolveLinkIdentity({
+      ...invocation(),
+      source: { kind: 'antigravityCliPrint' },
+      remoteSessionId: 'conversation-known-skips',
+    });
+    if (!identity.ok) throw new Error('identity unexpectedly failed');
+    const initial = await contribution.pageTranscript({
+      ...invocation(),
+      source: identity.value.source,
+      remoteSessionId: 'conversation-known-skips',
+      direction: 'older',
+      maxItems: 10,
+    });
+    if (!initial.ok || !initial.value.tailCursor) throw new Error('tail cursor missing');
+
+    await appendFile(transcriptPath, [
+      '{"step_index":2,"type":"CHECKPOINT","checkpointId":"cp-1"}',
+      '{"step_index":3,"type":"PLANNER_RESPONSE","text":"visible"}',
+      '',
+    ].join('\n'));
+
+    // A checkpoint is a record this build reads and deliberately does not
+    // project. The host counts every other skip code as a REQUIRED item
+    // failure, so reporting an omission as unreadable history is wrong in the
+    // direction that matters.
+    await expect(contribution.readAfterTranscript({
+      ...invocation(),
+      source: identity.value.source,
+      remoteSessionId: 'conversation-known-skips',
+      cursor: initial.value.tailCursor,
+      maxItems: 10,
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        outcome: 'advanced',
+        items: [{ raw: agentMessageRaw('visible') }],
+        diagnostics: [{
+          code: 'non_transcript_record_skipped',
           count: 1,
           positions: [expect.any(Number)],
         }],

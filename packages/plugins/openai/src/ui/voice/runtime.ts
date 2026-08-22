@@ -7,7 +7,7 @@ import type {
 } from '@happier-dev/plugin-sdk/voice';
 
 import { OpenAiRealtimeSettingsV1Schema } from '../../protocol/voice/settings.js';
-import { PLUGIN_MANIFEST } from '../../manifest.js';
+import { OPENAI_VOICE_PROVIDER_CONTRIBUTION_ID } from '../../constants.js';
 import {
   createOpenAiWebRtcSignaling,
   OPENAI_CLIENT_AUTH_EXPIRY_SAFETY_WINDOW_MS,
@@ -239,7 +239,7 @@ function toOpenAiToolDefinitions(
 /** Public executable Voice runtime entry named by the provider declaration. */
 export function activate(api: Pick<PluginApi, 'voiceProviders'>): void {
   api.voiceProviders.register(
-    PLUGIN_MANIFEST.contributes.voiceProviders[0].id,
+    OPENAI_VOICE_PROVIDER_CONTRIBUTION_ID,
     createOpenAiRealtimeProviderRuntime(),
   );
 }

@@ -136,11 +136,11 @@ describe('mapApplyOutcomeToUpdateOutcome', () => {
 });
 
 describe('createClaudeUnifiedRuntimeConfigOutcomeEmitter', () => {
-  it('groups changes per public status and emits one accurate event per group', () => {
-    const sendSessionEvent = vi.fn();
+  it('groups changes per public status and emits one accurate event per group', async () => {
+    const sendSessionEvent = vi.fn(async () => ({ status: 'custodied' as const }));
     const emitter = createClaudeUnifiedRuntimeConfigOutcomeEmitter({ sendSessionEvent });
 
-    emitter.emit(aggregateApplyOutcome([
+    await emitter.emit(aggregateApplyOutcome([
       { key: 'model', status: 'applied', timing: 'before_next_prompt', requested: 'sonnet', effective: 'Sonnet 4.6' },
       { key: 'reasoningEffort', status: 'applied', timing: 'before_next_prompt', requested: 'high', effective: 'high' },
       { key: 'maxThinkingTokens', status: 'unsupported', requested: 4096, reason: 'no_tui_control' },
@@ -165,11 +165,11 @@ describe('createClaudeUnifiedRuntimeConfigOutcomeEmitter', () => {
     }));
   });
 
-  it('emits the sessionMode change key directly (frozen contract includes it)', () => {
-    const sendSessionEvent = vi.fn();
+  it('emits the sessionMode change key directly (frozen contract includes it)', async () => {
+    const sendSessionEvent = vi.fn(async () => ({ status: 'custodied' as const }));
     const emitter = createClaudeUnifiedRuntimeConfigOutcomeEmitter({ sendSessionEvent });
 
-    emitter.emit(aggregateApplyOutcome([
+    await emitter.emit(aggregateApplyOutcome([
       { key: 'sessionMode', status: 'applied', timing: 'current_window', requested: 'plan', effective: 'plan' },
     ]));
 
@@ -179,21 +179,37 @@ describe('createClaudeUnifiedRuntimeConfigOutcomeEmitter', () => {
     }));
   });
 
-  it('dedups unchanged (status,timing,reason) signatures and re-emits only on transitions', () => {
-    const sendSessionEvent = vi.fn();
+  it('dedups unchanged (status,timing,reason) signatures and re-emits only on transitions', async () => {
+    const sendSessionEvent = vi.fn(async () => ({ status: 'custodied' as const }));
     const emitter = createClaudeUnifiedRuntimeConfigOutcomeEmitter({ sendSessionEvent });
     const blocked = aggregateApplyOutcome([
       { key: 'reasoningEffort', status: 'applied', timing: 'queued_until_safe_window', requested: 'high', reason: 'unsafe_overlay' },
     ]);
 
-    emitter.emit(blocked);
-    emitter.emit(blocked);
-    emitter.emit(blocked);
+    await emitter.emit(blocked);
+    await emitter.emit(blocked);
+    await emitter.emit(blocked);
     expect(sendSessionEvent).toHaveBeenCalledTimes(1);
 
-    emitter.emit(aggregateApplyOutcome([
+    await emitter.emit(aggregateApplyOutcome([
       { key: 'reasoningEffort', status: 'applied', timing: 'before_next_prompt', requested: 'high', effective: 'high' },
     ]));
+    expect(sendSessionEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not commit transition dedupe until durable transcript custody is accepted', async () => {
+    const sendSessionEvent = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('durable custody unavailable'))
+      .mockResolvedValueOnce({ status: 'custodied' as const });
+    const emitter = createClaudeUnifiedRuntimeConfigOutcomeEmitter({ sendSessionEvent });
+    const outcome = aggregateApplyOutcome([
+      { key: 'model', status: 'applied', timing: 'current_window', requested: 'sonnet', effective: 'sonnet' },
+    ]);
+
+    await expect(emitter.emit(outcome)).rejects.toThrow('durable custody unavailable');
+    await expect(emitter.emit(outcome)).resolves.toBeUndefined();
+
     expect(sendSessionEvent).toHaveBeenCalledTimes(2);
   });
 });

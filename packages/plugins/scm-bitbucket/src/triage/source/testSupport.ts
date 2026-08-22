@@ -62,9 +62,16 @@ export function createConnectedAccountsStub(
     accounts: readonly StubAccount[];
     status?: 'complete' | 'truncated';
     listError?: unknown;
+    /** `null` is a purpose the host holds no selection for. */
+    binding?: Readonly<{ purpose: string }> | null;
   }>,
-): Readonly<{ connectedAccounts: ConnectedAccountsService; materializations: string[] }> {
+): Readonly<{
+  connectedAccounts: ConnectedAccountsService;
+  materializations: string[];
+  bindingReads: string[];
+}> {
   const materializations: string[] = [];
+  const bindingReads: string[] = [];
   const connectedAccounts = {
     async listAccounts() {
       if (input.listError !== undefined) throw input.listError;
@@ -79,6 +86,10 @@ export function createConnectedAccountsStub(
         })),
       };
     },
+    async getBinding(purpose: string) {
+      bindingReads.push(purpose);
+      return input.binding === undefined ? { purpose } : input.binding;
+    },
     async materializeListedAccount(request: Readonly<{ account: QualifiedConnectedAccountRef }>) {
       const account = input.accounts.find(
         (candidate) => candidate.accountId === request.account.accountId,
@@ -91,7 +102,7 @@ export function createConnectedAccountsStub(
       };
     },
   } as unknown as ConnectedAccountsService;
-  return { connectedAccounts, materializations };
+  return { connectedAccounts, materializations, bindingReads };
 }
 
 export function createRuntime(
@@ -116,8 +127,8 @@ export function createInvocationContext(
   return {
     plugin: { id: TEST_SERVICE_REF.pluginId, version: '0.0.0' },
     contribution: {
-      id: 'bitbucket-cloud',
-      qualifiedId: `${TEST_SERVICE_REF.pluginId}/contributions/bitbucket-cloud`,
+      id: 'bitbucket-forge',
+      qualifiedId: `${TEST_SERVICE_REF.pluginId}/contributions/bitbucket-forge`,
     },
     surface: 'background',
     caller: {

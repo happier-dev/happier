@@ -54,9 +54,7 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
         { idSuffix: 'gpt-5.4-mini', tokens: 272_000 },
       ],
     },
-    mcpServers: { supportsDetectedConfigScan: true },
     externalSessions: {
-      supportsBackgroundFollow: true,
       browse: {
         order: 10,
         sourceOptions: [

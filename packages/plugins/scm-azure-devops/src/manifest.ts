@@ -29,6 +29,7 @@ import {
   AZURE_DEVOPS_SCM_HOSTING_PROVIDER_LOCAL_ID,
 } from './azureDevopsContracts.js';
 import { azureDevopsOperationsAdapter } from './operations/azureDevopsAdapter.js';
+import { AZURE_DEVOPS_UI_TRANSLATIONS } from './ui/translations.js';
 import {
   AZURE_DEVOPS_TRIAGE_ACTION_IDS,
   getAzureDevOpsSourceEntryAction,
@@ -150,7 +151,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
     + ' and brings its pull requests into PRs & Issues.',
   engines: { happier: '^0.0.0' },
   runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
       id: AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID,
@@ -161,9 +162,13 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
           { kind: 'scmProviderOrigin', provider: 'azure-devops' },
           { kind: 'connectedAccountOrigin', service: AZURE_DEVOPS_CONNECTED_ACCOUNT_ID },
         ],
-        // The Triage vertical is read-only; the write verbs belong to the incumbent hosting-provider
-        // operations this plugin already ships.
-        methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+        // Read-only. The Triage vertical reads through `triage/client.ts`, whose `method`
+        // defaults to `GET` and which no production caller overrides, and the incumbent
+        // hosting-provider pull-request operations run through the declared Azure CLI process
+        // capability below rather than through this grant — so the write verbs this scope used
+        // to carry were authority nothing exercised. One is added back only together with the
+        // exact human-confirmed mutation Action that needs it.
+        methods: ['GET'],
       },
     }, {
       id: AZURE_DEVOPS_TRIAGE_PURPOSE,
@@ -221,15 +226,19 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       defaultRank: 10,
       renderer: AZURE_DEVOPS_TRIAGE_SETTINGS_RENDERER_ID,
     }],
-    translations: [{
-      locale: 'en',
-      messages: {
-        'plugins.azureDevops.settings.group': 'Azure DevOps',
-        'plugins.azureDevops.settings.sources': 'PRs & Issues',
-        'plugins.azureDevops.settings.sources.subtitle':
-          'Choose which Azure DevOps accounts and projects appear in PRs & Issues.',
-      },
-    }],
+    translations: [
+      { locale: 'en', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.en, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PRs & Issues', 'plugins.azureDevops.settings.sources.subtitle': 'Choose which Azure DevOps accounts and projects appear in PRs & Issues.' } },
+      { locale: 'ru', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.ru, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR и задачи', 'plugins.azureDevops.settings.sources.subtitle': 'Выберите учетные записи и проекты Azure DevOps, которые будут отображаться в разделе PR и задач.' } },
+      { locale: 'pl', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.pl, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR-y i zgłoszenia', 'plugins.azureDevops.settings.sources.subtitle': 'Wybierz konta i projekty Azure DevOps wyświetlane w sekcji PR-ów i zgłoszeń.' } },
+      { locale: 'es', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.es, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR e incidencias', 'plugins.azureDevops.settings.sources.subtitle': 'Elige qué cuentas y proyectos de Azure DevOps aparecen en PR e incidencias.' } },
+      { locale: 'fr', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.fr, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR et tickets', 'plugins.azureDevops.settings.sources.subtitle': 'Choisissez les comptes et projets Azure DevOps affichés dans PR et tickets.' } },
+      { locale: 'it', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.it, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR e segnalazioni', 'plugins.azureDevops.settings.sources.subtitle': 'Scegli gli account e i progetti Azure DevOps da mostrare in PR e segnalazioni.' } },
+      { locale: 'pt', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.pt, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PRs e problemas', 'plugins.azureDevops.settings.sources.subtitle': 'Escolha as contas e os projetos Azure DevOps apresentados em PRs e problemas.' } },
+      { locale: 'ca', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.ca, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR i incidències', 'plugins.azureDevops.settings.sources.subtitle': 'Tria els comptes i projectes d’Azure DevOps que es mostren a PR i incidències.' } },
+      { locale: 'zh-Hans', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS['zh-Hans'], 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR 和问题', 'plugins.azureDevops.settings.sources.subtitle': '选择要在 PR 和问题中显示的 Azure DevOps 帐户和项目。' } },
+      { locale: 'zh-Hant', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS['zh-Hant'], 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR 與問題', 'plugins.azureDevops.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 Azure DevOps 帳戶和專案。' } },
+      { locale: 'ja', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.ja, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR と課題', 'plugins.azureDevops.settings.sources.subtitle': 'PR と課題に表示する Azure DevOps アカウントとプロジェクトを選択します。' } },
+    ],
   },
   actions: {
     [AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances]: {
@@ -237,6 +246,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       description: 'Lists the Azure DevOps deployments each connected account can reach.',
       scopes: ['global'],
       surfaces: sources.operations.listInstances.declaration.surfaces,
+      execution: { target: 'daemon' },
       dangerLevel: sources.operations.listInstances.declaration.dangerLevel,
       inputSchema: sources.operations.listInstances.declaration.input.schema.jsonSchema,
       resultSchema: sources.operations.listInstances.declaration.resultSchema.jsonSchema,
@@ -248,6 +258,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       description: 'Reads one bounded page of the configured Azure DevOps pull-request walk.',
       scopes: ['global'],
       surfaces: sources.operations.scan.declaration.surfaces,
+      execution: { target: 'daemon' },
       dangerLevel: sources.operations.scan.declaration.dangerLevel,
       inputSchema: sources.operations.scan.declaration.input.schema.jsonSchema,
       resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
@@ -260,6 +271,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       description: 'Reads one pull request authoritatively through its configured deployment.',
       scopes: ['global'],
       surfaces: sources.operations.get.declaration.surfaces,
+      execution: { target: 'daemon' },
       dangerLevel: sources.operations.get.declaration.dangerLevel,
       inputSchema: sources.operations.get.declaration.input.schema.jsonSchema,
       resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,
@@ -276,6 +288,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
         + ' current iteration the Files and Activity tabs both compare against.',
       scopes: ['global'],
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: AzureIterationsInputV1Schema.jsonSchema,
       resultSchema: AzureIterationsResultV1Schema.jsonSchema,
@@ -289,6 +302,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
         + ' by the continuation token Azure DevOps issued.',
       scopes: ['global'],
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: AzureCommitsInputV1Schema.jsonSchema,
       resultSchema: AzureCommitsResultV1Schema.jsonSchema,
@@ -302,6 +316,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
         + ' advancing only through the skip and top Azure DevOps issued.',
       scopes: ['global'],
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: AzureIterationChangesInputV1Schema.jsonSchema,
       resultSchema: AzureIterationChangesResultV1Schema.jsonSchema,
@@ -315,6 +330,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
         + ' enforcement taken only from a returned evaluation.',
       scopes: ['global'],
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: AzurePoliciesInputV1Schema.jsonSchema,
       resultSchema: AzurePoliciesResultV1Schema.jsonSchema,
@@ -328,6 +344,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
         + ' documented endpoint returns.',
       scopes: ['global'],
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: AzureThreadsInputV1Schema.jsonSchema,
       resultSchema: AzureThreadsResultV1Schema.jsonSchema,

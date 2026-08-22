@@ -1,7 +1,7 @@
 import type {
     AgentTranscriptFileFollowHandle,
     AgentTranscriptFileFollowService,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ClaudeRuntimeLogger } from '../../dependencies.js';
 
 import { isSidechainSessionHook } from '../../../hooks/sidechain.js';
@@ -43,8 +43,23 @@ export type ClaudeAgentSdkResumeIdentityOwner = Readonly<{
         providerSessionId: string,
         payload: Readonly<Record<string, unknown>>,
     ): Promise<void>;
+    validateSdkResultProviderSessionId(providerSessionId: unknown): ClaudeAgentSdkResumeIdentityMismatchError | null;
+    readExplicitResumeFailure(): ClaudeAgentSdkResumeIdentityMismatchError | null;
     dispose(): Promise<void>;
 }>;
+
+export class ClaudeAgentSdkResumeIdentityMismatchError extends Error {
+    readonly code = 'claude_agent_sdk_resume_identity_mismatch';
+
+    constructor(
+        readonly requestedProviderSessionId: string,
+        readonly observedProviderSessionId: string | null,
+        readonly observedSource: string | null,
+    ) {
+        super('Claude could not resume the requested provider session.');
+        this.name = 'ClaudeAgentSdkResumeIdentityMismatchError';
+    }
+}
 
 function readString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -135,6 +150,7 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
         transcriptPath: string;
     }>): void;
     onTranscriptPromoted(promotion: ClaudeAgentSdkResumeIdentityPromotion): Promise<void>;
+    expectedInitialProviderSessionId?: string | null;
     nowMs?: () => number;
     promptProofWindowMs?: number;
 }>): ClaudeAgentSdkResumeIdentityOwner {
@@ -149,8 +165,24 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
     const promotionOperations = new Set<Promise<void>>();
     let activeCandidate: ActiveTranscriptCandidate | null = null;
     let lastPublishedProviderSessionId: string | null = null;
+    let expectedInitialProviderSessionId = readString(params.expectedInitialProviderSessionId);
+    let explicitResumeFailure: ClaudeAgentSdkResumeIdentityMismatchError | null = null;
     let disposed = false;
     let disposePromise: Promise<void> | null = null;
+
+    function failExplicitResume(
+        observedProviderSessionId: string | null,
+        observedSource: string | null,
+    ): ClaudeAgentSdkResumeIdentityMismatchError | null {
+        if (explicitResumeFailure) return explicitResumeFailure;
+        if (!expectedInitialProviderSessionId) return null;
+        explicitResumeFailure = new ClaudeAgentSdkResumeIdentityMismatchError(
+            expectedInitialProviderSessionId,
+            observedProviderSessionId,
+            observedSource,
+        );
+        return explicitResumeFailure;
+    }
 
     function candidateKey(providerSessionId: string, transcriptPath: string): string {
         return `${providerSessionId}\u0000${transcriptPath}`;
@@ -275,6 +307,14 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
     ): Promise<void> {
         if (isSidechainSessionHook(payload)) return;
         const providerSessionId = readProviderSessionId(reportedProviderSessionId, payload);
+        if (expectedInitialProviderSessionId) {
+            const source = readString(payload.source);
+            if (source !== 'resume' || providerSessionId !== expectedInitialProviderSessionId) {
+                failExplicitResume(providerSessionId, source);
+                return;
+            }
+            expectedInitialProviderSessionId = null;
+        }
         if (!providerSessionId) return;
         const transcriptPath = readTranscriptPath(payload);
         const existing = activeCandidate;
@@ -394,6 +434,19 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
             } finally {
                 inFlightHookOperations.delete(operation);
             }
+        },
+        validateSdkResultProviderSessionId(value) {
+            if (explicitResumeFailure) return explicitResumeFailure;
+            if (!expectedInitialProviderSessionId) return null;
+            const providerSessionId = readString(value);
+            if (providerSessionId !== expectedInitialProviderSessionId) {
+                return failExplicitResume(providerSessionId, null);
+            }
+            expectedInitialProviderSessionId = null;
+            return null;
+        },
+        readExplicitResumeFailure() {
+            return explicitResumeFailure;
         },
         async dispose() {
             if (disposePromise) return await disposePromise;

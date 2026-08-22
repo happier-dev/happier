@@ -39,7 +39,6 @@ import {
 } from '../auth/services/home/sync/sessionFiles.js';
 import { codexPreflightSessionControlsProbeConfig } from '../lifecycle/preflight/sessionControls.js';
 import { resolveCodexSessionRuntimePreferences } from '../lifecycle/runtimePreferences.js';
-import { codexHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
 import {
   buildCodexAgentRuntimeDescriptorV1,
   readCanonicalCodexAgentRuntimeDescriptorV1,
@@ -58,6 +57,7 @@ import {
   homeEntries as resolveCodexHomeEntries,
   resolveConfiguredCodexHomePath,
 } from '../rollout/discovery/homeEntries.js';
+import { resolveCodexNativeSessionLogPath } from '../rollout/discovery/nativeSessionLog.js';
 import {
   CODEX_ACP_RUNTIME_INSTALLABLE_LAUNCH_HELPERS,
   hasCodexAcpRuntimeInstallableAdapterPolicy,
@@ -298,14 +298,23 @@ export const CODEX_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
         );
     },
   },
-  sessionHandoff: {
-    surface: () => codexHandoffSurface,
-  },
   codingPromptBehavior: {
     resolve: resolveCodexCodingPromptBehaviorBlocks,
   },
   vendorResumeSupport: {
     resolve: supportsCodexVendorResume,
+  },
+  sessionHandoff: {
+    /**
+     * Codex persists no transcript path, so the handoff brief can only name its
+     * log by deriving it from the vendor resume id the host already resolved.
+     * Declaring the derivation keeps that knowledge here instead of teaching the
+     * transition coordinator what a Codex rollout file is called.
+     */
+    nativeSessionLog: {
+      resolvePath: ({ vendorResumeId }: Readonly<{ vendorResumeId: string }>) =>
+        resolveCodexNativeSessionLogPath({ vendorResumeId }),
+    },
   },
   checklists: codexChecklists,
   petDiscovery: {

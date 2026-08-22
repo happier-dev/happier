@@ -300,15 +300,18 @@ describe('Conversation connection lifecycle', () => {
       },
     });
 
+    const acceptedStop = transfer.connection.pendingOldTransportStop;
+    if (acceptedStop === null || acceptedStop === undefined
+      || acceptedStop.stopRequest.reason !== 'transfer') {
+      throw new Error('Expected the accepted transfer to retain a transfer stop marker.');
+    }
     const disabledTransfer = startConversationConnectionTransfer({
       current: connection({ enabled: false, overlapSafety: 'destructive' }),
       pendingOldTransportStop: {
-        predecessorCheckpointedPollInvocation:
-          transfer.connection.pendingOldTransportStop!.predecessorCheckpointedPollInvocation,
-        transportOrigin: transfer.connection.pendingOldTransportStop!.transportOrigin,
-        providerContributionSelection:
-          transfer.connection.pendingOldTransportStop!.providerContributionSelection,
-        stopRequest: transfer.connection.pendingOldTransportStop!.stopRequest,
+        predecessorCheckpointedPollInvocation: acceptedStop.predecessorCheckpointedPollInvocation,
+        transportOrigin: acceptedStop.transportOrigin,
+        providerContributionSelection: acceptedStop.providerContributionSelection,
+        stopRequest: { ...acceptedStop.stopRequest, reason: 'transfer' as const },
       },
       replacement: {
         enabled: false,
@@ -519,6 +522,7 @@ describe('Conversation connection lifecycle', () => {
 
   it('rejects malformed accepted custody instead of treating it as a settled transfer marker', () => {
     const malformed = connection({
+      // @ts-expect-error - deliberately omits providerContributionSelection: these cases prove the lifecycle owner rejects an incomplete retained stop marker.
       pendingOldTransportStop: {
         predecessorCheckpointedPollInvocation: {
           connectionRevision: 1,
@@ -557,6 +561,7 @@ describe('Conversation connection lifecycle', () => {
     expect(abandonConversationConnectionStop({ current: malformed })).toEqual({ kind: 'staleAuthority' });
     expect(startConversationConnectionDelete({
       current: malformed,
+      // @ts-expect-error - deliberately omits providerContributionSelection: these cases prove the lifecycle owner rejects an incomplete retained stop marker.
       pendingOldTransportStop: {
         predecessorCheckpointedPollInvocation:
           malformed.pendingOldTransportStop!.predecessorCheckpointedPollInvocation,
@@ -573,6 +578,7 @@ describe('Conversation connection lifecycle', () => {
   it('does not let an accepted marker at its frozen transfer epoch unlock a new authority path', () => {
     const malformed = connection({
       authorityEpoch: 5,
+      // @ts-expect-error - deliberately omits providerContributionSelection: these cases prove the lifecycle owner rejects an incomplete retained stop marker.
       pendingOldTransportStop: {
         predecessorCheckpointedPollInvocation: {
           connectionRevision: 1,
@@ -627,6 +633,7 @@ describe('Conversation connection lifecycle', () => {
     })).toEqual({ kind: 'rejected', code: 'oldTransportStopPending' });
     expect(startConversationConnectionDelete({
       current: malformed,
+      // @ts-expect-error - deliberately omits providerContributionSelection: these cases prove the lifecycle owner rejects an incomplete retained stop marker.
       pendingOldTransportStop: {
         ...nextStop,
         stopRequest: { ...nextStop.stopRequest, reason: 'delete' },
@@ -634,6 +641,7 @@ describe('Conversation connection lifecycle', () => {
     })).toEqual({ kind: 'rejected', code: 'oldTransportStopPending' });
     expect(startConversationConnectionTransfer({
       current: malformed,
+      // @ts-expect-error - deliberately omits providerContributionSelection: these cases prove the lifecycle owner rejects an incomplete retained stop marker.
       pendingOldTransportStop: nextStop,
       replacement: { enabled: true, overlapSafety: 'safe', historyGap: null },
     })).toEqual({ kind: 'rejected', code: 'oldTransportStopPending' });

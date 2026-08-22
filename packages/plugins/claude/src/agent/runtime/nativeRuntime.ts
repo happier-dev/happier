@@ -14,6 +14,7 @@ import type {
   AgentSessionRuntimeContext,
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { claudeHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -56,9 +57,11 @@ import type {
   ClaudeUnifiedPromptDeliveryOutcome,
 } from './terminal/unified/turnOperations.js';
 import {
+  resolveClaudeLaunchSettingsOverlayArgs,
   resolveClaudeNativeBaseLaunchEnvironment,
   resolveClaudeNativeLaunchSettings,
 } from './launchSettings.js';
+import { mapToClaudePermissionMode } from './permissionMode.js';
 import type {
   ClaudeUsageObservation,
   ClaudeUsageObservationSubscription,
@@ -71,6 +74,10 @@ import {
 import { CLAUDE_AUTH_ENV_KEYS } from '../auth/services/runtime/env.js';
 import { prepareClaudeQualifiedPurposeRoot } from '../auth/services/qualifiedPurposeRoot.js';
 import { probeClaudeSupportsEffortRaw } from '../preflight/models.js';
+
+export {
+  claudeExternalSessionsContribution,
+} from '../surfaces/sessions/external/contribution.js';
 
 /**
  * Provider-local event codec only. Claude's SDK and terminal leaves still share this strict
@@ -141,6 +148,7 @@ export type ClaudeNativeSessionOperations = ClaudeRuntimeTurnOperations & Readon
   ) => () => void;
   isTurnInFlight?: () => boolean;
   canSteerPrompt?: () => boolean;
+  canInterruptForPendingInput?: () => boolean;
   notifyPromptQueuedDuringTurn?: () => void;
   applyConfigDeltaInFlight?: (
     delta: Readonly<{ permissionMode: AgentPermissionIntent }>,
@@ -162,6 +170,7 @@ export type ClaudeNativeSessionOperations = ClaudeRuntimeTurnOperations & Readon
         sessionId?: string;
       }
   >>;
+  releaseConnectedServiceUsageLimitDialog?: () => Promise<void>;
   interruptPendingInputAndRun?: (request: Readonly<{
     sessionId?: string;
     localId: string;
@@ -423,7 +432,7 @@ export function createClaudeNativeSessionOpener(openers: Readonly<{
     const selected = await isClaudeUnifiedTerminalSelected({
       context: {
         features: input.context.session.services.features,
-        settings: input.context.services.settings,
+        settings: input.context.services.settings.forScope({ kind: 'account' }),
       },
     });
     const operations = await (selected
@@ -537,7 +546,15 @@ function mapEvent(event: ClaudeProviderEvent): NativeSessionEventInput | null {
       const providerSessionId = typeof event.publishedSessionId === 'string'
         ? event.publishedSessionId.trim()
         : '';
-      return providerSessionId ? { kind: 'provider-session-id', providerSessionId } : null;
+      if (!providerSessionId) return null;
+      const nativeSessionLogPath = typeof event.nativeSessionLogPath === 'string'
+        ? event.nativeSessionLogPath.trim()
+        : '';
+      return {
+        kind: 'provider-session-id',
+        providerSessionId,
+        ...(nativeSessionLogPath ? { nativeSessionLogPath } : {}),
+      };
     }
     case 'transcript-agent-message-committed': {
       const message = committedMessage(event);
@@ -781,6 +798,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
   const activeInputBinding = context?.session.services.activeInput.bind({
     isTurnInFlight: () => operations.isTurnInFlight?.() === true,
     canSteer: () => operations.canSteerPrompt?.() === true,
+    canInterruptForPendingInput: () => operations.canInterruptForPendingInput?.() !== false,
     onPromptQueued: () => { operations.notifyPromptQueuedDuringTurn?.(); },
     applyPermissionIntentDuringTurn: async (permissionIntent) => {
       const apply = operations.applyConfigDeltaInFlight;
@@ -828,6 +846,9 @@ export function createClaudeNativeSessionRuntimeFromOperations(
   const initialProviderSessionId = operations.readProviderIdentity().sessionId?.trim();
 
   return {
+    async connectedServiceApplicationSettled() {
+      await operations.releaseConnectedServiceUsageLimitDialog?.();
+    },
     async send(nativeRequest) {
       if (disposed) return sendFailure('unavailable', 'Claude runtime is disposed.');
       bufferedEvents = createAgentSessionPreAdmissionBuffer();
@@ -1192,15 +1213,20 @@ function terminalSurface(): NonNullable<AgentRuntime['surfaces']>['terminal'] {
       const customSystemPrompt = readString(request.metadata.customSystemPrompt) ?? overrides.customSystemPrompt;
       const appendSystemPrompt = readString(request.metadata.appendSystemPrompt) ?? overrides.appendSystemPrompt;
       return {
-        argv: [
-          ...partition.flagArgs,
-          ...(model ? ['--model', model] : []),
-          ...(fallbackModel ? ['--fallback-model', fallbackModel] : []),
-          ...(customSystemPrompt ? ['--system-prompt', customSystemPrompt] : []),
-          ...(appendSystemPrompt ? ['--append-system-prompt', appendSystemPrompt] : []),
-          ...partition.positionalArgs,
-          ...partition.trailingPermissionFlagArgs,
-        ],
+        argv: resolveClaudeLaunchSettingsOverlayArgs({
+          args: [
+            ...partition.flagArgs,
+            ...(model ? ['--model', model] : []),
+            ...(fallbackModel ? ['--fallback-model', fallbackModel] : []),
+            ...(customSystemPrompt ? ['--system-prompt', customSystemPrompt] : []),
+            ...(appendSystemPrompt ? ['--append-system-prompt', appendSystemPrompt] : []),
+            ...partition.positionalArgs,
+            ...partition.trailingPermissionFlagArgs,
+          ],
+          interactionKind: 'interactive_terminal',
+          permissionMode: mapToClaudePermissionMode(partition.trailingPermissionFlagArgs[1]),
+          launchSettings: {},
+        }),
         process: { stdio: 'inherit', windowsHide: true },
         presentation: {
           onLaunch: { target: 'local', reason: 'claude_terminal_runtime_launcher_start' },
@@ -1286,7 +1312,7 @@ export function createClaudeNativeRuntime(
   const goals = createClaudeNativeGoalControl();
   const openSession = async (
     request: AgentSessionOpenRequest,
-    context: AgentSessionRuntimeContext
+    context: AgentSessionRuntimeContext,
   ): Promise<AgentSessionRuntime> => {
     const prepared = options.prepareLaunchEnvironment
       ? await options.prepareLaunchEnvironment({ request, context })
@@ -1335,6 +1361,7 @@ export function createClaudeNativeRuntime(
     }
   };
   const runtime: AgentRuntime = {
+    toolExecution: { capability: 'interceptable' },
     sessions: {
       goals: goals.control,
       async open(request, context) {
@@ -1408,6 +1435,7 @@ export function createClaudeNativeRuntime(
     },
     surfaces: {
       terminal: terminalSurface(),
+      handoff: claudeHandoffSurface,
     },
   };
   return runtime;
@@ -1424,9 +1452,12 @@ async function openClaudeNativeAgentSdkSession(input: Readonly<{
   context: AgentSessionRuntimeContext;
   supportsEffort?: boolean;
 }>): Promise<ClaudeNativeSessionOperations> {
-  const sdkContext = createClaudeNativeAgentSdkContext(input.context, input.context);
+  const sdkContext = createClaudeNativeAgentSdkContext(
+    input.context,
+    input.context,
+  );
   const launchSettings = await resolveClaudeNativeLaunchSettings({
-    settings: input.context.services.settings,
+    settings: input.context.services.settings.forScope({ kind: 'account' }),
     launchEnv: resolveClaudeNativeBaseLaunchEnvironment({
       launchEnvironment: input.request.launchEnvironment,
       processEnv: process.env,
@@ -1479,7 +1510,7 @@ async function openClaudeNativeExecutionSession(input: Readonly<{
 }>): Promise<ClaudeNativeSessionOperations> {
   const sdkContext = createClaudeNativeAgentSdkContext(input.context);
   const launchSettings = await resolveClaudeNativeLaunchSettings({
-    settings: input.context.services.settings,
+    settings: input.context.services.settings.forScope({ kind: 'account' }),
     launchEnv: resolveClaudeNativeBaseLaunchEnvironment({
       launchEnvironment: input.request.launchEnvironment,
       processEnv: process.env,

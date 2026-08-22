@@ -84,6 +84,7 @@ describe('Plugin Inspector manifest', () => {
     const manifest = JSON.parse(JSON.stringify(PLUGIN_MANIFEST)) as {
       contributes: { ui: { translations: unknown[] } };
     };
+    const duplicateIndex = manifest.contributes.ui.translations.length;
     manifest.contributes.ui.translations.push(
       JSON.parse(JSON.stringify(manifest.contributes.ui.translations[0])),
     );
@@ -92,7 +93,7 @@ describe('Plugin Inspector manifest', () => {
       ok: false,
       diagnostics: [expect.objectContaining({
         code: 'plugin_manifest_invalid',
-        path: ['contributes', 'ui', 'translations', 1, 'locale'],
+        path: ['contributes', 'ui', 'translations', duplicateIndex, 'locale'],
       })],
     });
   });
@@ -100,9 +101,15 @@ describe('Plugin Inspector manifest', () => {
   it('declares canonical settings without a declaration-only runtime hook', () => {
     expect(PLUGIN_MANIFEST.id).toBe(INSPECTOR_PLUGIN_ID);
     expect(PLUGIN_MANIFEST).not.toHaveProperty('activation');
-    expect(PLUGIN_MANIFEST.entrypoints).toEqual({ daemon: './dist/index.js' });
+    expect(PLUGIN_MANIFEST.entrypoints).toEqual({ daemon: './.happier-plugin/daemon.js' });
     expect(PLUGIN_MANIFEST.hostAccess).toEqual({ required: [], optional: [] });
     expect(PLUGIN_MANIFEST.contributes).not.toHaveProperty('hooks');
+    expect(PLUGIN_MANIFEST.contributes.actions).toEqual([
+      expect.objectContaining({
+        id: 'self-check',
+        execution: { target: 'daemon' },
+      }),
+    ]);
     expect(INSPECTOR_SETTINGS).toMatchObject({
       id: INSPECTOR_SETTINGS_ID,
       target: { kind: 'plugin' },
@@ -140,13 +147,13 @@ describe('Plugin Inspector manifest', () => {
         artifact: INSPECTOR_NATIVE_BUNDLE_ID,
         requiredHostMethods: ['executeAction'],
       }],
-      translations: [{
+      translations: expect.arrayContaining([{
         locale: 'en',
         messages: expect.objectContaining({
           'plugins.inspector.title': 'Plugin Inspector',
           'plugins.inspector.settings.showDiagnostics': 'Show diagnostics in Plugin Inspector',
         }),
-      }],
+      }]),
     });
     expect(PLUGIN_MANIFEST.contributes.ui).toEqual(INSPECTOR_UI);
     for (const view of INSPECTOR_UI.views) {

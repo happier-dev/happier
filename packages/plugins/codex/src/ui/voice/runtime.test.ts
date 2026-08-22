@@ -4,6 +4,7 @@ import type {
 } from '@happier-dev/plugin-sdk/voice';
 import type {
   RealtimeVoiceProviderRuntime,
+  VoiceClientToolDefinition,
   VoiceRealtimeConnection,
 } from '@happier-dev/plugin-sdk/voice/client';
 import type {
@@ -33,6 +34,17 @@ function createConnection(): VoiceRealtimeConnection {
     resolveOutputInterruptionCandidate: () => {},
   };
 }
+
+const SENTINEL_TOOL = {
+  name: 'readCurrentUiContext',
+  description: 'Read the privacy-qualified current UI context.',
+  parameters: {
+    type: 'object',
+    properties: {},
+    additionalProperties: false,
+  },
+  execute: async () => ({ ok: true }),
+} satisfies VoiceClientToolDefinition;
 
 function createHandle(): AgentSessionRealtimeHandle {
   return {
@@ -161,7 +173,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
         createWebRtcConnection,
         createPcmConnection: () => { throw new Error('unexpected PCM connection'); },
       },
-      tools: [],
+      tools: [SENTINEL_TOOL],
       ui: {} as never,
       signal,
       credentials: credentialAccess('connection'),
@@ -182,7 +194,48 @@ describe('Codex Agent-session realtime Voice leaf', () => {
     });
     const sendJson = vi.fn(async () => {});
     await negotiated?.control.onOpen({ sendJson });
-    expect(sendJson).not.toHaveBeenCalled();
+    expect(sendJson).toHaveBeenCalledWith({
+      type: 'session.update',
+      session: {
+        type: 'realtime',
+        tools: [{
+          type: 'function',
+          name: 'readCurrentUiContext',
+          description: 'Read the privacy-qualified current UI context.',
+          parameters: {
+            type: 'object',
+            properties: {},
+            additionalProperties: false,
+          },
+        }],
+        tool_choice: 'auto',
+      },
+    });
+    expect(runtime.encodeToolResults([{
+      v: 1,
+      responseId: 'response-1',
+      callId: 'call-1',
+      toolName: 'readCurrentUiContext',
+      order: 0,
+      status: 'success',
+      output: { ok: true },
+    }])).toEqual([{
+      type: 'conversation.item.create',
+      item: {
+        type: 'function_call_output',
+        call_id: 'call-1',
+        output: '{"ok":true}',
+      },
+    }]);
+    expect(runtime.encodeToolContinuation('response-1')).toEqual({ type: 'response.create' });
+    expect(runtime.encodeContextUpdate('Current UI: Triage issue')).toEqual([{
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'system',
+        content: [{ type: 'input_text', text: '[Context update]\nCurrent UI: Triage issue' }],
+      },
+    }]);
     expect(setMuted).not.toHaveBeenCalled();
     await expect(negotiated?.signaling.exchangeOffer({
       offerSdp: 'offer-sdp',

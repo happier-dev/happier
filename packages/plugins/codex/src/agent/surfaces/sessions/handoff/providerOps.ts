@@ -1,7 +1,7 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type {
+  AgentRuntimeHandoffSurface,
   AgentTerminalSessionStateUpdate,
-  HandoffSurfaceV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { CodexSessionHandoffBundleSchema } from './bundle.js';
@@ -9,7 +9,7 @@ import { exportCodexSessionBundle } from './export.js';
 import { importCodexSessionBundle } from './import.js';
 
 export const codexHandoffSurface = {
-  exportBundle: async (params) => {
+  exportBundle: async (params, context) => {
     const remoteSessionId = params.sessionId.trim() || null;
     if (!remoteSessionId) {
       return { ok: false, code: 'bundle_invalid', message: 'Codex handoff export requires a vendor session id' };
@@ -20,6 +20,7 @@ export const codexHandoffSurface = {
         remoteSessionId,
         env: process.env,
         activeServerDir: params.directory,
+        signal: context.signal,
       });
       return { ok: true, value: { bundle } };
     } catch (error) {
@@ -30,7 +31,7 @@ export const codexHandoffSurface = {
       };
     }
   },
-  importBundle: async (params) => {
+  importBundle: async (params, context) => {
     const parsedBundle = CodexSessionHandoffBundleSchema.safeParse(params.bundle);
     if (!parsedBundle.success) {
       return { ok: false, code: 'bundle_invalid', message: `Codex handoff import received unsupported bundle` };
@@ -40,6 +41,7 @@ export const codexHandoffSurface = {
         bundle: parsedBundle.data,
         targetPath: params.targetDirectory,
         env: process.env,
+        signal: context.signal,
       });
       const sessionStateUpdates: AgentTerminalSessionStateUpdate[] = [
         ...(imported.runtimeDescriptorV1
@@ -66,7 +68,7 @@ export const codexHandoffSurface = {
       };
     } catch (error) {
       if (
-        error instanceof PluginError
+        isPluginError(error)
         && (error.code === 'target_identity_conflict' || error.code === 'agent_version_unsupported')
       ) {
         return {
@@ -83,4 +85,4 @@ export const codexHandoffSurface = {
       };
     }
   },
-} satisfies HandoffSurfaceV1;
+} satisfies AgentRuntimeHandoffSurface;

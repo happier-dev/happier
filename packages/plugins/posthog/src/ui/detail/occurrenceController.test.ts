@@ -33,13 +33,26 @@ function settled(
 }
 
 describe('posthogSampleReducer', () => {
+    it('keeps Load more mounted and busy while the next page is in flight', () => {
+        // The shared owner's rule (`triage-protocol` pagedPanel.ts): "the affordance
+        // stays mounted in its busy state rather than vanishing". Dropping it for the
+        // whole in-flight page unmounts the control the reader just pressed and makes
+        // the Button's own `busy` prop unreachable.
+        const held = settled(started(posthogSampleInitialState(), 1), 1, [event('a')], 'c1');
+        const inFlight = started(held, 2);
+
+        expect(inFlight.canLoadMore).toBe(true);
+        expect(inFlight.pending).toBe(true);
+        expect(inFlight.kind).toBe('ready');
+    });
+
     it('selects the first sampled row of the first page and keeps it across an append', () => {
         let state = settled(started(posthogSampleInitialState(), 1), 1, [event('a'), event('b')], 'c1');
         expect(state.kind).toBe('ready');
         expect(state.selectedUuid).toBe('a');
 
         state = settled(started(state, 2), 2, [event('c')], null);
-        expect(state.events.map((row) => row.uuid)).toEqual(['a', 'b', 'c']);
+        expect(state.rows.map((row) => row.uuid)).toEqual(['a', 'b', 'c']);
         // Appending a page must not move the reader's selection; the Stack Trace panel
         // derives its frames from it.
         expect(state.selectedUuid).toBe('a');
@@ -52,7 +65,7 @@ describe('posthogSampleReducer', () => {
 
         // The late result belongs to a request this controller already replaced. Applying
         // it would show rows the reader's current selection was never measured against.
-        expect(superseded.events.map((row) => row.uuid)).toEqual(['a']);
+        expect(superseded.rows.map((row) => row.uuid)).toEqual(['a']);
         expect(superseded.pending).toBe(true);
     });
 
@@ -64,7 +77,7 @@ describe('posthogSampleReducer', () => {
             failure: FAILURE,
         });
 
-        expect(failed.events.map((row) => row.uuid)).toEqual(['a']);
+        expect(failed.rows.map((row) => row.uuid)).toEqual(['a']);
         expect(failed.failure).toEqual(FAILURE);
         expect(failed.pending).toBe(false);
         // The failed page's continuation is not consumed, so an explicit retry is still
@@ -79,7 +92,7 @@ describe('posthogSampleReducer', () => {
         );
 
         expect(failed.kind).toBe('unavailable');
-        expect(failed.events).toEqual([]);
+        expect(failed.rows).toEqual([]);
     });
 
     it('discards everything when the exact detail instance or entry changes', () => {
@@ -95,7 +108,12 @@ describe('posthogSampleReducer', () => {
 
         const more = settled(started(posthogSampleInitialState(), 1), 1, [event('a')], 'c1');
         expect(more.canLoadMore).toBe(true);
-        expect(started(more, 2).canLoadMore).toBe(false);
+        // CORRECTED: this asserted `false`, which was this controller's own drift from
+        // the canonical rule and is what unmounted the reader's Load more mid-flight.
+        // The affordance stays mounted and busy; `pending` is what says a page is in
+        // flight.
+        expect(started(more, 2).canLoadMore).toBe(true);
+        expect(started(more, 2).pending).toBe(true);
     });
 
     it('moves the selection only to a row this sample actually carries', () => {

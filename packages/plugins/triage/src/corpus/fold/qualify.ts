@@ -43,6 +43,32 @@ export type CorpusQualificationResultV1 =
     | Readonly<{ status: 'qualified'; observation: CorpusQualifiedObservationV1 }>
     | Readonly<{ status: 'rejected'; reason: CorpusQualificationRejectionV1 }>;
 
+/**
+ * Qualifying one local ref on its own.
+ *
+ * The `merged` arm names a successor that is a whole second entry, and the one
+ * durable effect of that observation addresses it by canonical ref. So the
+ * caller that accepts a merge qualifies that successor through this exact
+ * derivation rather than assembling a ref beside it — a second assembly would
+ * be a second identity owner for the concept `CONTRACT.md` §4 keeps singular.
+ */
+export type CorpusQualifiedEntryRefResultV1 =
+    | Readonly<{ status: 'qualified'; entryRef: TriageEntryRefV1 }>
+    | Readonly<{ status: 'rejected'; reason: CorpusQualificationRejectionV1 }>;
+
+export function qualifyEntryLocalRef(input: Readonly<{
+    /** The invoked source contribution identity. A source never supplies it. */
+    source: PluginContributionIdentity;
+    /** The kinds the invoked source descriptor declares. */
+    declaredKindIds: readonly string[];
+    localRef: TriageSourceEntryLocalRefV1;
+}>): CorpusQualifiedEntryRefResultV1 {
+    const entryRef = qualifyLocalRef(input.source, new Set(input.declaredKindIds), input.localRef);
+    return typeof entryRef === 'string'
+        ? { status: 'rejected', reason: entryRef }
+        : { status: 'qualified', entryRef };
+}
+
 function qualifyLocalRef(
     source: PluginContributionIdentity,
     declaredKindIds: ReadonlySet<string>,

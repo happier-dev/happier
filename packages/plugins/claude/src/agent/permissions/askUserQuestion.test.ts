@@ -62,12 +62,17 @@ describe('Claude AskUserQuestion permissions helpers', () => {
         });
     });
 
-    it('normalizes string answers only', () => {
+    it('projects canonical single- and multi-select arrays to Claude answer strings', () => {
         expect(normalizeAskUserQuestionAnswers({
+            'Question A': ['Answer A'],
+            'Question B': ['Answer B1', 'Answer B2'],
+            'Legacy scalar': 'Answer C',
+            'Invalid number': 123,
+            '': ['blank'],
+        })).toEqual({
             'Question A': 'Answer A',
-            'Question B': 123,
-            '': 'blank',
-        })).toEqual({ 'Question A': 'Answer A' });
+            'Question B': 'Answer B1, Answer B2',
+        });
         expect(normalizeAskUserQuestionAnswers({})).toBeNull();
         expect(normalizeAskUserQuestionAnswers(null)).toBeNull();
     });

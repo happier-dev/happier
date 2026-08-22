@@ -84,6 +84,35 @@ function createConnectedAccountsHarness(input: Readonly<{
 }
 
 describe('createOpenCodeAgentRuntime server dispatch', () => {
+  it('publishes handoff and replay leaves through AgentRuntime surfaces', async () => {
+    const runtime = createOpenCodeAgentRuntime({
+      plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
+      agent: { id: 'opencode' },
+      signal: new AbortController().signal,
+    });
+
+    expect(runtime.surfaces?.handoff).toEqual({
+      exportBundle: expect.any(Function),
+      importBundle: expect.any(Function),
+    });
+    await expect(runtime.surfaces?.fork?.resolveReplayChildLaunch?.({
+      parentSessionId: 'parent-session',
+      parentMetadata: {
+        opencodeBackendMode: 'server',
+        opencodeServerBaseUrl: 'http://127.0.0.1:49196',
+        opencodeServerBaseUrlExplicit: true,
+      },
+      directory: '/repo',
+      forkPoint: { kind: 'latest' },
+    }, {} as never)).resolves.toEqual({
+      environmentVariables: {
+        HAPPIER_OPENCODE_BACKEND_MODE: 'server',
+        HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:49196/',
+        HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1',
+      },
+    });
+  });
+
   it('declares its externally executed Agent tools as observable', () => {
     const runtime = createOpenCodeAgentRuntime({
       plugin: { id: 'happier.agent.opencode', version: '0.0.0' },

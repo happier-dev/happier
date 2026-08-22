@@ -1,5 +1,5 @@
-import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
-import { createCoalescedScheduler } from '@happier-dev/plugin-sdk/experimental/runtime/coalescedScheduler';
+import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/plugin-sdk/sessions/work-state';
+import { createCoalescedScheduler } from '@happier-dev/plugin-sdk/async';
 
 import type { WorkflowActivityObservationLike } from './workflowActivityObservation.js';
 import type { WorkflowActivityPublisher } from './publishWorkflowActivitySnapshot.js';

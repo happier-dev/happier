@@ -1,8 +1,9 @@
-import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { isPluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { CorpusCollectionsV1 } from '../collections/bindCorpusCollections.js';
-import { fromCorpusStoredRow, toCorpusStoredValue } from '../collections/rowCodec.js';
+import { putCorpusRowOnce } from '../collections/putRowOnce.js';
+import { fromCorpusStoredRow } from '../collections/rowCodec.js';
 import type { CorpusUserMarkDisplayV1, CorpusUserMarkRowV1 } from '../collections/rows.js';
 import { deriveUserMarkTag } from '../identity/tags.js';
 
@@ -31,8 +32,15 @@ import { deriveUserMarkTag } from '../identity/tags.js';
 export type CorpusSetPinnedResultV1 =
     | Readonly<{ status: 'pinned'; markTag: string }>
     | Readonly<{ status: 'unpinned'; markTag: string }>
-    /** Another writer won; the caller reads current state rather than forcing one. */
+    /**
+     * Another writer won, as the store itself said; the caller reads current
+     * state rather than forcing one. It is never a store failure wearing this
+     * word — those are raised.
+     */
     | Readonly<{ status: 'conflict'; markTag: string }>;
+
+/** The one store code that means a competing writer, not a broken write. */
+const COLLECTION_CONFLICT_CODE = 'plugin_collection_conflict';
 
 type MarkCollections = Pick<CorpusCollectionsV1, 'userMarks'>;
 
@@ -64,31 +72,6 @@ async function readLiveMark(
     return row ? fromCorpusStoredRow<CorpusUserMarkRowV1>(row) : null;
 }
 
-async function putMark(
-    collections: MarkCollections,
-    mark: CorpusUserMarkRowV1,
-    options?: PluginCancellationOptions,
-): Promise<'written' | 'conflict'> {
-    const value = toCorpusStoredValue(mark);
-    const first = await collections.userMarks.batch(
-        [{ kind: 'put', value, expectedRevision: 'absent' }],
-        options,
-    );
-    if (first.status === 'updated') return 'written';
-
-    const conflict = first.conflicts[0];
-    // The one conditional resurrection this design allows: an explicit tombstone
-    // carries no competing live content, so the same intent may be written once
-    // against that exact revision. An `absent` put alone would lose the row
-    // forever, while a general conflict retry could overwrite newer live state.
-    if (!conflict || !conflict.deleted || conflict.revision === null) return 'conflict';
-    const second = await collections.userMarks.batch(
-        [{ kind: 'put', value, expectedRevision: conflict.revision }],
-        options,
-    );
-    return second.status === 'updated' ? 'written' : 'conflict';
-}
-
 export async function setPinned(input: CorpusSetPinnedInputV1): Promise<CorpusSetPinnedResultV1> {
     const { collections, entryRef, nowMs } = input;
     const options = input.signal ? { signal: input.signal } : undefined;
@@ -105,8 +88,18 @@ export async function setPinned(input: CorpusSetPinnedInputV1): Promise<CorpusSe
                 expectedRevision: existing.revision,
                 ...(input.signal ? { signal: input.signal } : {}),
             });
-        } catch {
-            return { status: 'conflict', markTag };
+        } catch (error) {
+            // `conflict` means exactly one thing — the store refused this delete
+            // because another writer moved the mark's revision. Every other
+            // refusal, and an abort or an unreachable store, surfaces as itself:
+            // folding them all into `conflict` tells the reader their pin changed
+            // somewhere else and to retry, when the write is in fact refused for
+            // a reason retrying cannot resolve. The mounted control already reads
+            // a rejection as "your account could not be reached" and says so.
+            if (isPluginError(error) && error.code === COLLECTION_CONFLICT_CODE) {
+                return { status: 'conflict', markTag };
+            }
+            throw error;
         }
         return { status: 'unpinned', markTag };
     }
@@ -116,14 +109,28 @@ export async function setPinned(input: CorpusSetPinnedInputV1): Promise<CorpusSe
     // and never overwrites the user's own mark with a later pass's rendering.
     if (existing?.value.pinned === true) return { status: 'pinned', markTag };
 
-    const written = await putMark(collections, {
-        markTag,
-        pinned: true,
-        markedAtMs: nowMs,
-        entryRef,
-        displayAtMark: input.displayAtMark,
-    }, options);
-    return written === 'written'
-        ? { status: 'pinned', markTag }
-        : { status: 'conflict', markTag };
+    const written = await putCorpusRowOnce<CorpusUserMarkRowV1>({
+        collection: collections.userMarks,
+        rowId: markTag,
+        row: {
+            markTag,
+            pinned: true,
+            markedAtMs: nowMs,
+            entryRef,
+            displayAtMark: input.displayAtMark,
+        },
+        ...(input.signal ? { signal: input.signal } : {}),
+    });
+    if (written.status === 'written') return { status: 'pinned', markTag };
+    // Another device pinned the same entry inside this call's window. The mark it
+    // committed is the one this call wanted, so reporting a conflict would tell
+    // the reader their Pin failed while the pin is on screen. Only a live row
+    // that is not a pin is a real conflict — a live mark is always pinned, so
+    // that is a contract check rather than a second unpinned state.
+    if (written.status === 'live') {
+        return written.row.value.pinned === true
+            ? { status: 'pinned', markTag }
+            : { status: 'conflict', markTag };
+    }
+    return { status: 'conflict', markTag };
 }

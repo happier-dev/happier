@@ -9,11 +9,10 @@
  * There is no published `X-RateLimit-Remaining`, no reset header, and no documented `Retry-After`
  * on the pull-request routes. Those three headers are therefore advisory telemetry, never a
  * deadline: a throttle without a real `Retry-After` is reported with no deadline at all rather than
- * with an invented one. The one published quantitative fact this module derives a bound from is the
- * "one-hour rolling window" the same page states.
+ * with an invented one.
  */
 
-export const BITBUCKET_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
 export type BitbucketRateLimitTelemetry = Readonly<{
   limit: number | null;
@@ -27,29 +26,15 @@ export const EMPTY_BITBUCKET_RATE_LIMIT_TELEMETRY: BitbucketRateLimitTelemetry =
   nearLimit: null,
 });
 
-function readHeader(
-  headers: Readonly<Record<string, string>>,
-  name: string,
-): string | null {
-  const wanted = name.toLowerCase();
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === wanted && typeof value === 'string') {
-      const trimmed = value.trim();
-      return trimmed.length > 0 ? trimmed : null;
-    }
-  }
-  return null;
-}
-
 export function readBitbucketRateLimitTelemetry(
   headers: Readonly<Record<string, string>>,
 ): BitbucketRateLimitTelemetry {
-  const rawLimit = readHeader(headers, 'x-ratelimit-limit');
+  const rawLimit = readTriageResponseHeaderV1(headers, 'x-ratelimit-limit');
   const parsedLimit = rawLimit === null ? Number.NaN : Number(rawLimit);
-  const rawNearLimit = readHeader(headers, 'x-ratelimit-nearlimit');
+  const rawNearLimit = readTriageResponseHeaderV1(headers, 'x-ratelimit-nearlimit');
   return {
     limit: Number.isSafeInteger(parsedLimit) && parsedLimit >= 0 ? parsedLimit : null,
-    resource: readHeader(headers, 'x-ratelimit-resource'),
+    resource: readTriageResponseHeaderV1(headers, 'x-ratelimit-resource'),
     nearLimit: rawNearLimit === null ? null : rawNearLimit.toLowerCase() === 'true',
   };
 }
@@ -58,23 +43,23 @@ export function readBitbucketRateLimitTelemetry(
  * Returns an absolute epoch-millisecond deadline derived only from a real `Retry-After`, converted
  * through the injected clock. Both documented spellings are accepted: delta-seconds and an
  * HTTP-date. Anything else — including the advisory scaled-limit telemetry — yields `null`.
+ *
+ * The deadline is Bitbucket's own and is not bounded here. How far ahead a provider statement may
+ * push our pacing is one policy owned by the single consumer that honours it (`plugins/triage`
+ * `refresh/refreshEligibility.ts`); a private ceiling here would be one of five owners of it and
+ * would hide a rewritten header from the one place that can bound it for every source.
  */
 export function readBitbucketRetryNotBeforeMs(
   headers: Readonly<Record<string, string>>,
   nowMs: number,
 ): number | null {
-  const raw = readHeader(headers, 'retry-after');
+  const raw = readTriageResponseHeaderV1(headers, 'retry-after');
   if (raw === null) return null;
-
-  const clamp = (deadlineMs: number): number => Math.min(
-    deadlineMs,
-    nowMs + BITBUCKET_RATE_LIMIT_WINDOW_MS,
-  );
 
   if (/^\d+$/.test(raw)) {
     const seconds = Number(raw);
     if (!Number.isSafeInteger(seconds)) return null;
-    return clamp(nowMs + seconds * 1_000);
+    return nowMs + seconds * 1_000;
   }
 
   // Every HTTP-date form begins with a day name, so anything else is not a deadline. Handing an
@@ -83,7 +68,7 @@ export function readBitbucketRetryNotBeforeMs(
 
   const parsed = Date.parse(raw);
   if (!Number.isFinite(parsed) || parsed <= nowMs) return null;
-  return clamp(parsed);
+  return parsed;
 }
 
 export function isBitbucketRateLimitedStatus(status: number): boolean {

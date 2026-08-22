@@ -18,10 +18,10 @@ import { resolveTriageSourceDetailContributionV1 } from './sourceSurface.js';
  * composed case cannot reach without an unlikely fixture — a snapshot at a
  * protocol epoch this contract does not speak.
  *
- * It also pins the deliberate absence: the lookup returns the admitted surface
- * and NOTHING else, because the contributor's descriptor is the cold UI
- * semantic value `SDK-EU-26` reserves and a shell-local decoder for it is
- * forbidden by `PLAN.md` §5.2.
+ * The lookup stays a pure identity match. The contributor's descriptor reaches
+ * this mount already parsed by the host with this target's own schema, and the
+ * one Action that needs it — `entries/read-detail-v1` — carries it typed out of
+ * the admitted snapshot, so nothing here decodes a snapshot value.
  */
 
 const SOURCE = Object.freeze({ pluginId: 'happier.example.source', localId: 'example-forge' });
@@ -83,7 +83,7 @@ describe('the source detail contribution lookup', () => {
         )).toEqual({ kind: 'absent' });
     });
 
-    it('returns the admitted surface and decodes no descriptor', () => {
+    it('returns the exact admitted surface of the entry\'s own source', () => {
         const lookup = resolveTriageSourceDetailContributionV1(
             snapshot({ descriptor: VALID_DESCRIPTOR }),
             SOURCE,
@@ -93,8 +93,6 @@ describe('the source detail contribution lookup', () => {
         if (lookup.kind !== 'admitted') return;
         expect(lookup.surface.role).toBe(TRIAGE_SOURCE_DETAIL_SURFACE_ROLE_V1);
         expect(lookup.surface.contributor.pluginId).toBe(SOURCE.pluginId);
-        // The descriptor stays where the host put it. Nothing this shell returns
-        // carries a decoded source name, kind name, or purpose.
-        expect(Object.keys(lookup)).toEqual(['kind', 'surface']);
+        expect(lookup.surface.contributor.contributionId).toBe(SOURCE.localId);
     });
 });

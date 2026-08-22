@@ -1,6 +1,8 @@
-import type { HandoffSurfaceV1, SessionStateUpdateV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
-import { PluginError } from '@happier-dev/plugin-sdk';
-import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/plugin-sdk/experimental/sessions';
+import type {
+    AgentRuntimeHandoffSurface,
+    AgentTerminalSessionStateUpdate,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import {
     exportClaudeSessionBundle,
@@ -9,17 +11,17 @@ import {
 import { ClaudeSessionBundleSchema } from './types.js';
 
 export const claudeHandoffSurface = {
-    exportBundle: async (params) => {
-        const metadata = params.metadata as Record<string, unknown>;
-        const remoteSessionId = resolveVendorResumeIdFromSessionMetadata('claude', metadata);
+    exportBundle: async (params, context) => {
+        const remoteSessionId = params.sessionId.trim() || null;
         if (!remoteSessionId) {
             return { ok: false, code: 'bundle_invalid', message: 'Claude handoff export requires a vendor session id' };
         }
         try {
             const bundle = await exportClaudeSessionBundle({
-                metadata,
+                metadata: params.metadata,
                 remoteSessionId,
                 env: process.env,
+                signal: context.signal,
             });
             return { ok: true, value: { bundle } };
         } catch (error) {
@@ -30,7 +32,7 @@ export const claudeHandoffSurface = {
             };
         }
     },
-    importBundle: async (params) => {
+    importBundle: async (params, context) => {
         const parsedBundle = ClaudeSessionBundleSchema.safeParse(params.bundle);
         if (!parsedBundle.success) {
             return { ok: false, code: 'bundle_invalid', message: 'Invalid Claude session handoff bundle' };
@@ -40,27 +42,27 @@ export const claudeHandoffSurface = {
                 bundle: parsedBundle.data,
                 targetPath: params.targetDirectory,
                 env: process.env,
+                signal: context.signal,
             });
-            const sessionStateUpdates: SessionStateUpdateV1[] = [
+            const sessionStateUpdates: AgentTerminalSessionStateUpdate[] = [
                 {
                     fieldId: 'identity.providerSessionId',
-                    value: imported.remoteSessionId,
+                    value: imported.providerSessionId,
                 },
             ];
             return {
                 ok: true,
                 value: {
-                    providerSessionId: imported.remoteSessionId,
+                    providerSessionId: imported.providerSessionId,
                     source: imported.directSource,
                     launch: {
-                        directory: imported.resume.directory,
-                        ...(imported.resume.environmentVariables ? { environmentVariables: imported.resume.environmentVariables } : {}),
+                        ...imported.launch,
                         sessionStateUpdates,
                     },
                 },
             };
         } catch (error) {
-            if (error instanceof PluginError && error.code === 'target_identity_conflict') {
+            if (isPluginError(error) && error.code === 'target_identity_conflict') {
                 return {
                     ok: false,
                     code: 'target_identity_conflict',
@@ -75,4 +77,4 @@ export const claudeHandoffSurface = {
             };
         }
     },
-} satisfies HandoffSurfaceV1;
+} satisfies AgentRuntimeHandoffSurface;

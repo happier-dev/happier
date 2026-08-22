@@ -3,6 +3,7 @@
   "tiers": {
     "smoke": ["bash_echo_trace_ok"],
     "extended": [
+      "daemon_runner_continuity_a_to_b_to_c",
       "read_known_file",
       "permission_surface_outside_workspace",
       "permission_deny_outside_workspace",
@@ -16,6 +17,7 @@
     "host": {
       "smoke": ["bash_echo_trace_ok"],
       "extended": [
+        "daemon_runner_continuity_a_to_b_to_c",
         "mcp_merge_preserves_user_tools",
         "read_known_file",
         "agent_sdk_read_known_file",
@@ -36,6 +38,7 @@
     "env": {
       "smoke": ["bash_echo_trace_ok"],
       "extended": [
+        "daemon_runner_continuity_a_to_b_to_c",
         "mcp_merge_preserves_user_tools",
         "read_known_file",
         "agent_sdk_read_known_file",

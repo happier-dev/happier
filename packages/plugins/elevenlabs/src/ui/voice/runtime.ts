@@ -1,4 +1,5 @@
 import type { PluginApi } from '@happier-dev/plugin-sdk';
+import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import type {
   PluginSettingsActionInput,
   PluginSettingsActionRuntime,
@@ -18,7 +19,7 @@ import {
   type VoiceRealtimeJsonValue,
 } from '@happier-dev/plugin-sdk/voice';
 
-import { PLUGIN_MANIFEST } from '../../manifest.js';
+import { ELEVENLABS_VOICE_PROVIDER_CONTRIBUTION_ID } from '../../constants.js';
 import {
   DEFAULT_ELEVENLABS_VOICE_ID,
   ElevenLabsAgentIdSchema,
@@ -36,7 +37,7 @@ import { createElevenLabsSdkConnection } from './runtime/sdkConnection.js';
 import { createElevenLabsSessionLifecycle } from './runtime/sessionLifecycle.js';
 import { createElevenLabsSessionPreparationService } from './runtime/sessionPreparation.js';
 
-const PROVIDER_ID = PLUGIN_MANIFEST.contributes.voiceProviders[0].id;
+const PROVIDER_ID = ELEVENLABS_VOICE_PROVIDER_CONTRIBUTION_ID;
 const EXISTING_AGENT_ACTION_QUESTION_ID = 'existing-agent-action';
 
 function settingsActionInteractionError(code: string): Error {
@@ -122,13 +123,13 @@ RealtimeVoiceProviderRuntime & Readonly<{
   let disposed = false;
   const settingsOperations: RealtimeVoiceProviderSettingsOperations = Object.freeze({
     async listCatalog({ catalog, credentials, signal }) {
-      signal.throwIfAborted();
+      throwIfAborted(signal);
       if (catalog !== 'voices') throw new Error('unsupported_voice_catalog');
       const voices = await listElevenLabsVoicesWithAccountOperations({
         accountOperations: requireMediatedCredentials(credentials),
         signal,
       });
-      signal.throwIfAborted();
+      throwIfAborted(signal);
       return Object.freeze(voices.map((voice) => VoiceRealtimeJsonValueSchema.parse(voice)));
     },
   });
@@ -137,7 +138,7 @@ RealtimeVoiceProviderRuntime & Readonly<{
       input: PluginSettingsActionInput,
       context: VoiceSettingsActionContext,
     ) {
-      context.signal.throwIfAborted();
+      throwIfAborted(context.signal);
       const config = parseSettingsSnapshot(input);
       const accountOperations = requireMediatedCredentials(context.credentials);
       const autoprovision = createElevenLabsAutoprovision({
@@ -184,7 +185,7 @@ RealtimeVoiceProviderRuntime & Readonly<{
               choices,
             })],
           }, { signal: context.signal });
-          context.signal.throwIfAborted();
+          throwIfAborted(context.signal);
           if (interaction.status !== 'answered') {
             throw settingsActionInteractionError(
               interaction.status === 'unavailable'

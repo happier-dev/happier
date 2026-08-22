@@ -8,7 +8,7 @@ import type {
     AgentExternalSessionHookMapEventRequest,
     AgentExternalSessionHookResolveInstallationRequest,
     AgentExternalSessionsInvocation,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
     CLAUDE_CLEAN_STOP_FIXTURE,

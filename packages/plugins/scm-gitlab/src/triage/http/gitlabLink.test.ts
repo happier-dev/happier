@@ -15,7 +15,7 @@ const KEYSET_LINK =
 
 /**
  * The RFC 8288 grammar itself is owned and exhaustively covered by
- * `@happier-dev/scm-forge-adapter`. What stays here is what GitLab's own contract
+ * `@happier-dev/triage-sources`. What stays here is what GitLab's own contract
  * requires of the selected `next`.
  */
 describe('selectGitlabNextPageUrl', () => {

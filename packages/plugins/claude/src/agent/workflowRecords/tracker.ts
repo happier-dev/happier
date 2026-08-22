@@ -7,17 +7,19 @@ import {
   type SessionWorkflowRunSnapshotV1,
   type SessionWorkflowRunStatusReasonV1,
   type SessionWorkflowRunStatusV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+} from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import type { ClaudeProviderTaskActivity } from '../runtime/remote/sdk/providerActivity.js';
 import {
   parseClaudeWorkflowFact,
+  type ClaudeWorkflowShapeDriftReporter,
   type SubagentStartFact,
   type TaskLifecycleFact,
   type WorkflowJournalFact,
   type WorkflowJournalAgentSpecFact,
   type WorkflowLaunchFact,
   type WorkflowProgressAgentFact,
+  type WorkflowRunRecordFact,
   type WorkflowStartFact,
 } from './correlation.js';
 import {
@@ -90,6 +92,14 @@ type MutableRun = {
   timeUsedSeconds?: number;
   phasesByIndex: Map<number, MutablePhase>;
   agentsById: Map<string, MutableAgent>;
+  /**
+   * The other name each agent row answers to.
+   *
+   * The live `task_progress` stream keys an agent by position while the sidecar journal keys the
+   * same agent by its concrete hex id, and both feed this one tracker. This map is what lets the
+   * second source find the row the first source already filed instead of opening a second one.
+   */
+  agentIdByVendorRef: Map<string, string>;
   /** Arrival order of agent ids, so snapshot agent order is stable/deterministic. */
   agentOrder: string[];
   journalAgentSpecs: WorkflowJournalAgentSpecFact[];
@@ -106,6 +116,15 @@ type MutableRun = {
   updatedAt: number;
 };
 
+/** One agent a dead process published as running, named by the roster it left behind. */
+export type WorkflowInterruptedAgentSeed = Readonly<{
+  agentId: string;
+  title: string;
+  /** The agent's own last observed instant — never the moment recovery ran. */
+  updatedAt: number;
+  startedAt?: number;
+}>;
+
 export type WorkflowInterruptedRunSeed = Readonly<{
   runId: string;
   title: string;
@@ -114,6 +133,14 @@ export type WorkflowInterruptedRunSeed = Readonly<{
   completedAgents: number;
   failedAgents?: number;
   blockedAgents?: number;
+  /**
+   * The agents that run left behind, when the evidence names them.
+   *
+   * The workflow headline is count-only, so a run rebuilt from it alone can name no agent at all.
+   * The agent-activity headline published beside it DOES carry identities, and carrying them here is
+   * the whole reason crash recovery can reach an agent-scoped surface.
+   */
+  orphanAgents?: readonly WorkflowInterruptedAgentSeed[];
 }>;
 
 export type ClaudeWorkflowActivityTracker = Readonly<{
@@ -122,6 +149,16 @@ export type ClaudeWorkflowActivityTracker = Readonly<{
   /** Materialize one stale persisted headline as a terminal run after startup replay missed it. */
   reconcileInterruptedRunFromHeadline(
     run: WorkflowInterruptedRunSeed,
+    params: Readonly<{ updatedAt: number }>,
+  ): WorkflowActivityObservation;
+  /**
+   * Resolve every non-terminal run and agent because the process that owned them is going away.
+   *
+   * Called from an OBSERVED death — a graceful query teardown — never from a timer or a silence
+   * threshold. Runs, their agents and their `Task` children all live INSIDE the Claude query, so its
+   * teardown IS the evidence that they are over. A run that already terminalized keeps its outcome.
+   */
+  finalizeInterruptedActivityOnShutdown(
     params: Readonly<{ updatedAt: number }>,
   ): WorkflowActivityObservation;
   /** Current projected snapshot for one run, or null if unknown. */
@@ -180,6 +217,14 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
    * differs are rejected (mirrors the goal source's cross-session guard). Null/absent => accept all.
    */
   getCurrentClaudeSessionId?: () => string | null;
+  /**
+   * Report that a Claude-native shape this tracker folds is no longer readable.
+   *
+   * This tracker is the only reader that folds the WHOLE live stream, so it is where an undeclared
+   * provider field going away becomes visible at all. Absent, the drift is simply not reported —
+   * parsing is unchanged either way.
+   */
+  reportShapeDrift?: ClaudeWorkflowShapeDriftReporter;
 }>): ClaudeWorkflowActivityTracker {
   const runs = new Map<string, MutableRun>();
   const runIdByWorkflowToolUseId = new Map<string, string>();
@@ -218,6 +263,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       title: init.title,
       phasesByIndex: new Map(),
       agentsById: new Map(),
+      agentIdByVendorRef: new Map(),
       agentOrder: [],
       journalAgentSpecs: [],
       journalSpecIndexByKey: new Map(),
@@ -260,6 +306,32 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     }
   }
 
+  /**
+   * Resolve the ONE roster row an incoming agent fact belongs to.
+   *
+   * Two sources are active at once on the journal-backed path and they name the same agent
+   * differently: the live `task_progress` stream keys by POSITION (it can emit an agent before that
+   * agent has a concrete id at all), while the sidecar journal keys by the concrete hex id. Left
+   * alone that files `workflow-agent:1` BESIDE `ada15d97cdea9c7fd` — two rows, one agent, on every
+   * agent of every journal-backed run.
+   *
+   * Whichever source named the agent FIRST owns the row identity, and the other name joins it as
+   * `vendorRef`. The id is not rewritten, because this id is what `buildAgentActivityEntryId`
+   * publishes into the agent-activity headline and what the client merges its local entries onto —
+   * renaming a row that is already on screen would remount it and split its handle. Addressability
+   * by either name is preserved separately, through `childToolUseIds` / `runIdByChildToolUseId`,
+   * which already register both.
+   */
+  function resolveAgentRowId(run: MutableRun, id: string, vendorRef: string | undefined): string {
+    if (run.agentsById.has(id)) return id;
+    if (vendorRef) {
+      const joined = run.agentIdByVendorRef.get(vendorRef);
+      if (joined !== undefined && run.agentsById.has(joined)) return joined;
+      if (run.agentsById.has(vendorRef)) return vendorRef;
+    }
+    return id;
+  }
+
   function upsertAgent(run: MutableRun, agent: Readonly<{
     id: string;
     vendorRef?: string;
@@ -279,11 +351,14 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     completedAt?: number;
     updatedAt: number;
   }>): void {
-    const existing = run.agentsById.get(agent.id);
+    const rowId = resolveAgentRowId(run, agent.id, agent.vendorRef);
+    if (agent.vendorRef) run.agentIdByVendorRef.set(agent.vendorRef, rowId);
+    const vendorRef = agent.vendorRef && agent.vendorRef !== rowId ? agent.vendorRef : undefined;
+    const existing = run.agentsById.get(rowId);
     if (!existing) {
       const created: MutableAgent = {
-        id: agent.id,
-        ...(agent.vendorRef ? { vendorRef: agent.vendorRef } : {}),
+        id: rowId,
+        ...(vendorRef ? { vendorRef } : {}),
         title: agent.title,
         status: agent.status,
         ...(agent.attempt !== undefined ? { attempt: agent.attempt } : {}),
@@ -300,9 +375,9 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
         ...(agent.startedAt !== undefined ? { startedAt: agent.startedAt } : {}),
         ...(agent.completedAt !== undefined ? { completedAt: agent.completedAt } : {}),
       };
-      run.agentsById.set(agent.id, created);
-      run.agentOrder.push(agent.id);
-      assignAgentToPhase(run, agent.id, agent.phaseIndex);
+      run.agentsById.set(rowId, created);
+      run.agentOrder.push(rowId);
+      assignAgentToPhase(run, rowId, agent.phaseIndex);
       return;
     }
     const existingAttempt = existing.attempt;
@@ -316,7 +391,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     // Latest-wins merge for identity/detail fields; terminal status is sticky unless Claude reports
     // a strictly newer retry attempt. This suppresses stale progress replay after a done/failed row.
     existing.title = agent.title || existing.title;
-    if (agent.vendorRef) existing.vendorRef = agent.vendorRef;
+    if (vendorRef) existing.vendorRef = vendorRef;
     if (incomingAttempt !== undefined && (existingAttempt === undefined || incomingAttempt >= existingAttempt)) {
       existing.attempt = incomingAttempt;
     }
@@ -340,7 +415,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     if (agent.timeUsedSeconds !== undefined) existing.timeUsedSeconds = agent.timeUsedSeconds;
     if (agent.startedAt !== undefined) existing.startedAt = agent.startedAt;
     if (agent.completedAt !== undefined) existing.completedAt = agent.completedAt;
-    assignAgentToPhase(run, agent.id, agent.phaseIndex);
+    assignAgentToPhase(run, rowId, agent.phaseIndex);
   }
 
   /** Migrate an agent and its child tool-use routing off the implicit run onto an explicit run. */
@@ -613,6 +688,35 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     return spec;
   }
 
+  /**
+   * Apply the run's durable record: the same structure the live stream reports, from the artifact
+   * that outlived the process.
+   *
+   * Never synthesizes a run — the record is discovered from a run we already observed launching —
+   * and never restates the run's ending: the record is written at terminal state, so a run whose
+   * outcome the transcript already decided keeps it. Only phases and agents are filled in.
+   *
+   * The record's agents reach the SAME rows the journal filed: it carries both `index` and
+   * `agentId`, and `resolveAgentRowId` joins on the second whichever name the row already answers
+   * to.
+   */
+  function applyWorkflowRunRecord(fact: WorkflowRunRecordFact, updatedAt: number): string | null {
+    if (isForeignSource(fact.sourceSessionId)) return null;
+    const workflowRunId = runIdByWorkflowToolUseId.get(fact.workflowToolUseId) ?? fact.workflowToolUseId;
+    const run = runs.get(workflowRunId);
+    if (!run) return null;
+    if (fact.sourceSessionId && !run.sourceSessionId) run.sourceSessionId = fact.sourceSessionId;
+    for (const entry of fact.workflowProgress) {
+      if (entry.kind === 'phase') {
+        upsertPhase(run, entry.index, entry.title);
+        continue;
+      }
+      applyWorkflowProgressAgent(run, entry, updatedAt);
+    }
+    run.updatedAt = updatedAt;
+    return run.runId;
+  }
+
   function applyWorkflowJournal(fact: WorkflowJournalFact, updatedAt: number): string | null {
     if (isForeignSource(fact.sourceSessionId)) return null;
     const workflowRunId = runIdByWorkflowToolUseId.get(fact.workflowToolUseId)
@@ -631,6 +735,9 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     const phaseIndex = resolveJournalPhaseIndex(run, effectiveFact);
     upsertAgent(run, {
       id: effectiveFact.agentId,
+      // The journal's own key IS the concrete id, so it is also the join key: if the live stream
+      // already filed this agent by position, the row is found rather than duplicated.
+      vendorRef: effectiveFact.agentId,
       title: effectiveFact.title,
       status: effectiveFact.status,
       updatedAt,
@@ -817,6 +924,11 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       return { changedRunIds: [], startedRunIds: [], terminalRunIds: [], statusChangedRunIds: [] };
     }
     if (existing && isTerminalRunStatus(existing.status)) {
+      // A finished run can still owe the roster rows: the previous process published agents that
+      // never reported, and this process rebuilt the run from a transcript that closed it without
+      // ever naming them. They are re-attached here so the republish REPLACES those rows rather
+      // than leaving the metadata roster's copy of them spinning.
+      materializeInterruptedAgents(existing, seed, reconcileParams.updatedAt);
       projectRun(existing);
       return {
         changedRunIds: [existing.runId],
@@ -837,6 +949,13 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     run.statusReason = 'interrupted';
     run.completedAt = reconcileParams.updatedAt;
     run.updatedAt = reconcileParams.updatedAt;
+    // Attached BEFORE the sweep, so the agents the previous process left running are resolved by the
+    // same rule as any other agent inside a finished run instead of quietly vanishing from the
+    // roster.
+    materializeInterruptedAgents(run, seed, reconcileParams.updatedAt);
+    // The run is resolved, so its agents are too. Without this a run rebuilt by transcript replay
+    // publishes `active` agents underneath a `stopped` run — one card contradicting itself.
+    terminalizeRunAgents(run, reconcileParams.updatedAt);
     if (run.agentsById.size === 0) {
       run.reconciledCounts = {
         totalAgents: seed.totalAgents,
@@ -855,11 +974,102 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     };
   }
 
+  /**
+   * Re-attach the agents a dead process published as running but this process never observed.
+   *
+   * The counterpart to `terminalizeRunAgents`, and the reason crash recovery can reach an
+   * agent-scoped surface at all. A restarted process rebuilds a run from evidence that outlived it —
+   * a transcript, or a headline seed — and that evidence names agents only when it happens to.
+   * Everything else the previous process had already published about them lives in the roster it
+   * left behind, and the seed carries it back so those rows are REPLACED with a truthful ending
+   * instead of either spinning forever or disappearing from the session's history.
+   *
+   * Only agents this process has no record of are added: an agent already held here has been
+   * observed by something with better evidence than a headline, and the sweep resolves it.
+   */
+  function materializeInterruptedAgents(
+    run: MutableRun,
+    seed: WorkflowInterruptedRunSeed,
+    updatedAt: number,
+  ): void {
+    let touched = false;
+    for (const orphan of seed.orphanAgents ?? []) {
+      if (run.agentsById.has(orphan.agentId)) continue;
+      upsertAgent(run, {
+        id: orphan.agentId,
+        title: orphan.title,
+        status: 'cancelled',
+        // The agent's own last evidence, not the moment recovery ran: stamping the sweep clock here
+        // would inflate every rebuilt row's elapsed time by however long the session was down.
+        updatedAt: orphan.updatedAt,
+        completedAt: orphan.updatedAt,
+        ...(run.workflowToolUseId ? { parentId: run.workflowToolUseId } : {}),
+        ...(orphan.startedAt !== undefined ? { startedAt: orphan.startedAt } : {}),
+      });
+      run.childToolUseIds.add(orphan.agentId);
+      runIdByChildToolUseId.set(orphan.agentId, run.runId);
+      touched = true;
+    }
+    if (touched) run.updatedAt = updatedAt;
+  }
+
+  /**
+   * Resolve one run's still-running agents because the process that owned them is going away.
+   *
+   * `cancelled`, never `failed`: the agents did not fail, their host went away. A completion instant
+   * that was never observed is dated at the agent's last observed instant rather than at the sweep's
+   * — the teardown proves the agent stopped, not when it stopped doing work.
+   */
+  function terminalizeRunAgents(run: MutableRun, updatedAt: number): boolean {
+    let touched = false;
+    for (const agent of run.agentsById.values()) {
+      if (isTerminalAgentStatus(agent.status)) continue;
+      agent.status = 'cancelled';
+      if (agent.completedAt === undefined) agent.completedAt = agent.updatedAt;
+      agent.updatedAt = updatedAt;
+      touched = true;
+    }
+    return touched;
+  }
+
+  function finalizeInterruptedActivityOnShutdown(
+    finalizeParams: Readonly<{ updatedAt: number }>,
+  ): WorkflowActivityObservation {
+    const changedRunIds: string[] = [];
+    const terminalRunIds: string[] = [];
+    const statusChangedRunIds: string[] = [];
+
+    for (const run of runs.values()) {
+      const priorStatus = run.status;
+      // A run that already terminalized normally has nothing left here; what this still catches is
+      // an agent whose journal `started` landed during the follower's post-completion grace drain.
+      let touched = terminalizeRunAgents(run, finalizeParams.updatedAt);
+
+      if (!isTerminalRunStatus(run.status)) {
+        run.status = 'stopped';
+        run.statusReason = 'interrupted';
+        run.completedAt = finalizeParams.updatedAt;
+        touched = true;
+      }
+
+      if (!touched) continue;
+      run.updatedAt = finalizeParams.updatedAt;
+      const { material } = projectRun(run);
+      if (material) changedRunIds.push(run.runId);
+      if (run.status !== priorStatus) {
+        statusChangedRunIds.push(run.runId);
+        if (isTerminalRunStatus(run.status)) terminalRunIds.push(run.runId);
+      }
+    }
+
+    return { changedRunIds, startedRunIds: [], terminalRunIds, statusChangedRunIds };
+  }
+
   function observe(
     value: unknown,
     observeParams: Readonly<{ updatedAt: number; live?: boolean }>,
   ): WorkflowActivityObservation {
-    const fact = parseClaudeWorkflowFact(value);
+    const fact = parseClaudeWorkflowFact(value, params.reportShapeDrift);
     if (!fact) {
       return { changedRunIds: [], startedRunIds: [], terminalRunIds: [], statusChangedRunIds: [] };
     }
@@ -876,6 +1086,8 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       touchedRunId = applyWorkflowLaunch(fact, observeParams.updatedAt, providerTaskActivities);
     } else if (fact.kind === 'task-lifecycle') {
       touchedRunId = applyTaskLifecycle(fact, observeParams.updatedAt, providerTaskActivities);
+    } else if (fact.kind === 'workflow-run-record') {
+      touchedRunId = applyWorkflowRunRecord(fact, observeParams.updatedAt);
     } else if (fact.kind === 'workflow-journal') {
       touchedRunId = applyWorkflowJournal(fact, observeParams.updatedAt);
     } else {
@@ -954,6 +1166,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
   return {
     observe,
     reconcileInterruptedRunFromHeadline,
+    finalizeInterruptedActivityOnShutdown,
     getRunSnapshot,
     getRunSnapshotMap,
     getWorkflowOwnedAgentToolUseIds,

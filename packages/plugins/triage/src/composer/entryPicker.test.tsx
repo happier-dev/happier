@@ -10,6 +10,7 @@ import {
     type TriageConfiguredSourceInstanceV1,
     type TriageScanInputV1,
     type TriageScanResultV1,
+    type TriageSourceFailureV1,
     type TriageSourceScanObservationV1,
 } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -87,7 +88,7 @@ function observation(entryId: string, title: string): TriageSourceScanObservatio
 type ApplyCall = Readonly<{ ref: unknown; transaction: unknown }>;
 type OpenCall = Readonly<{ view: unknown; input: unknown }>;
 
-function createHarness() {
+function createHarness(options: Readonly<{ scanFailure?: TriageSourceFailureV1 }> = {}) {
     const { collections, control } = createTestkitCorpusCollections();
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
 
@@ -97,6 +98,9 @@ function createHarness() {
     const scan = async (input: TriageScanInputV1): Promise<TriageScanResultV1> => {
         void input;
         scanCalls.count += 1;
+        if (options.scanFailure !== undefined) {
+            return { kind: 'failed', failure: options.scanFailure };
+        }
         return {
             kind: 'complete',
             observations: [
@@ -336,11 +340,58 @@ describe('the mounted Composer entry picker', () => {
                     entryId: '42',
                 },
                 sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_ID },
+                // The address of the draft this reader was writing in — THIS
+                // picker's stamped mount, not "the" composer. With two live
+                // drafts the other one is one wrong resolution away, so the
+                // exact ref is what travels, inside the closed launch input.
+                originComposer: COMPOSER_A,
             },
         }]);
         // Independent actions: View details is not a second way to attach, and
-        // an attach is not a navigation.
+        // an attach is not a navigation. Carrying an address is not a write:
+        // no draft operation followed.
         expect(harness.applyCalls).toEqual([]);
+    });
+
+    it('carries its own mount address, never the other live composer', async () => {
+        const harness = createHarness();
+        const pickerB = await mountPicker(harness, COMPOSER_B, 'triage-picker-details-b');
+
+        await pickerB.press(await pickerB.getByRole('button', {
+            name: 'View details Older change',
+        }));
+        await act(async () => { await Promise.resolve(); });
+
+        expect(harness.openCalls.map((call) => (call.input as { originComposer?: unknown }).originComposer))
+            .toEqual([COMPOSER_B]);
+    });
+
+    it('paces Refresh when every configured connection failed with a stated deadline', async () => {
+        const harness = createHarness({
+            scanFailure: {
+                class: 'rateLimit',
+                code: 'rate_limited',
+                retryNotBeforeMs: Date.now() + 600_000,
+            },
+        });
+        const picker = await mountPicker(harness, COMPOSER_A, 'triage-picker-unreadable');
+
+        // The failure is named beside the picker's own chrome rather than
+        // replacing it. `resolveState` puts freshness ahead of source health for
+        // exactly this reason, and the ordering is why the `sourcesUnavailable`
+        // arm below cannot fire: a lane that failed also makes the window stale.
+        await expect(picker.getByText('example/repository'))
+            .resolves.toEqual({ content: 'example/repository' });
+        expect(await picker.queryByText('No source could be read')).toBeUndefined();
+        // The only connection stated its own retry deadline, so the press this
+        // control offers is already refused by the one pacing owner. An enabled
+        // Refresh here is a press that does nothing and says nothing — exactly
+        // what the pacing model exists to end.
+        const refresh = await picker.getByRole('button', { name: 'Refresh' });
+        expect(refresh.state?.disabled ?? false).toBe(true);
+        // And the wait is stated, in the source's own reason.
+        await expect(picker.getByText('A source asked us to wait before reading it again.'))
+            .resolves.toEqual({ content: 'A source asked us to wait before reading it again.' });
     });
 
     it('offers both row actions for every row, in order, without a row-wide press target', async () => {

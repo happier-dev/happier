@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
+
 import {
   decodeSentryScanContinuation,
   encodeSentryScanContinuation,
@@ -17,7 +19,7 @@ describe('encodeSentryScanContinuation', () => {
       sort: 'date',
     });
 
-    const decoded = decodeSentryScanContinuation(token);
+    const decoded = decodeSentryScanContinuation(token ?? '');
     expect(decoded.ok).toBe(true);
     if (!decoded.ok) return;
     expect(decoded.continuation.nativeLimit).toBe(37);
@@ -26,7 +28,7 @@ describe('encodeSentryScanContinuation', () => {
   });
 
   it('rejects encoded geometry whose nativeLimit is not min(scanLimit, 100)', () => {
-    expect(() => encodeSentryScanContinuation({
+    expect(encodeSentryScanContinuation({
       v: 1,
       scanLimit: 37,
       nativeLimit: 100,
@@ -34,7 +36,7 @@ describe('encodeSentryScanContinuation', () => {
       query: '',
       statsPeriod: '90d',
       sort: 'date',
-    })).toThrow();
+    })).toBeNull();
 
     expect(decodeSentryScanContinuation(JSON.stringify({
       v: 1,
@@ -82,6 +84,31 @@ describe('encodeSentryScanContinuation', () => {
     expect(decodeSentryScanContinuation('not-json').ok).toBe(false);
   });
 
+  it('refuses a frontier the protocol paging bound cannot carry, without claiming a bad cursor', () => {
+    const fits = encodeSentryScanContinuation({
+      v: 1,
+      scanLimit: 20,
+      nativeLimit: 20,
+      cursor: 'c'.repeat(1024),
+      query: '',
+      statsPeriod: '90d',
+      sort: 'date',
+    });
+    expect(fits).not.toBeNull();
+
+    // Same well-formed frontier, one cursor too wide for the bounded envelope:
+    // the walk cannot be continued, which is not a statement about the cursor.
+    expect(encodeSentryScanContinuation({
+      v: 1,
+      scanLimit: 20,
+      nativeLimit: 20,
+      cursor: 'c'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1),
+      query: '',
+      statsPeriod: '90d',
+      sort: 'date',
+    })).toBeNull();
+  });
+
   it('carries no route state, credential, host clock or durable resume fact', () => {
     const token = encodeSentryScanContinuation({
       v: 1,
@@ -93,7 +120,8 @@ describe('encodeSentryScanContinuation', () => {
       sort: 'date',
     });
 
-    const parsed = JSON.parse(token) as Record<string, unknown>;
+    expect(token).not.toBeNull();
+    const parsed = JSON.parse(token ?? '') as Record<string, unknown>;
     expect(Object.keys(parsed).sort()).toEqual([
       'cursor',
       'nativeLimit',

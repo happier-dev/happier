@@ -17,8 +17,14 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { useExecutePluginAction } from '@happier-dev/plugin-ui';
+import {
+    triagePagedPanelInitialState,
+    triagePagedPanelReducer,
+} from '@happier-dev/triage-protocol/v1';
 import type {
     TriageDetailSurfaceInputV1,
+    TriagePagedPanelEventV1,
+    TriagePagedPanelStateV1,
     TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -33,20 +39,18 @@ import type { PosthogProjectedIssueEvent } from './issueEventProjection.js';
 /** The page size one detail session asks for; the provider ceiling is the only bound. */
 export const POSTHOG_DETAIL_SAMPLE_PAGE_SIZE = POSTHOG_ISSUE_EVENTS_MAX_LIMIT;
 
-export type PosthogSampleStateV1 = Readonly<{
-    kind: 'idle' | 'loading' | 'ready' | 'unavailable';
-    events: readonly PosthogProjectedIssueEvent[];
-    omittedRowCount: number;
-    selectedUuid: string | null;
-    /** A request is in flight for this exact detail instance. */
-    pending: boolean;
-    /** The source-minted position of the next page, or `null` when the sample ended. */
-    continuation: string | null;
-    canLoadMore: boolean;
-    failure: TriageSourceFailureV1 | null;
-    /** Identifies the request whose result this state will accept. */
-    token: number;
-}>;
+/**
+ * The sampled-occurrence state.
+ *
+ * The four-outcome paged rule is one product contract for every Triage source and
+ * lives at `@happier-dev/triage-protocol` (`REQ-04`); this controller held a copy
+ * of it, and the copy had already drifted on a user-visible rule. What is
+ * genuinely this controller's own is the reader's selection, which is carried
+ * beside the reduced state rather than inside it.
+ */
+export type PosthogSampleStateV1 =
+    TriagePagedPanelStateV1<PosthogProjectedIssueEvent, TriageSourceFailureV1>
+    & Readonly<{ selectedUuid: string | null }>;
 
 export type PosthogSampleEventV1 =
     | Readonly<{ kind: 'requestStarted'; token: number }>
@@ -62,78 +66,65 @@ export type PosthogSampleEventV1 =
     | Readonly<{ kind: 'identityChanged' }>;
 
 const INITIAL: PosthogSampleStateV1 = Object.freeze({
-    kind: 'idle' as const,
-    events: Object.freeze([]),
-    omittedRowCount: 0,
+    ...triagePagedPanelInitialState<PosthogProjectedIssueEvent, TriageSourceFailureV1>(),
     selectedUuid: null,
-    pending: false,
-    continuation: null,
-    canLoadMore: false,
-    failure: null,
-    token: 0,
 });
 
 export function posthogSampleInitialState(): PosthogSampleStateV1 {
     return INITIAL;
 }
 
+/** Translates this controller's flat event into the shared reducer's page envelope. */
+function toPagedEvent(
+    event: PosthogSampleEventV1,
+): TriagePagedPanelEventV1<PosthogProjectedIssueEvent, TriageSourceFailureV1> | null {
+    switch (event.kind) {
+        case 'pageSettled':
+            return {
+                kind: 'pageSettled',
+                token: event.token,
+                page: {
+                    rows: event.events,
+                    omittedRowCount: event.omittedRowCount,
+                    // This controller shortens no content of its own.
+                    projectionTruncated: false,
+                    continuation: event.continuation,
+                    incomplete: null,
+                },
+            };
+        case 'identityChanged':
+            // A different entry or instance is a different detail session: its rows,
+            // selection and position are not this one's to keep.
+            return { kind: 'panelLeft' };
+        case 'selected':
+            return null;
+        default:
+            return event;
+    }
+}
+
 export function posthogSampleReducer(
     state: PosthogSampleStateV1,
     event: PosthogSampleEventV1,
 ): PosthogSampleStateV1 {
-    switch (event.kind) {
-        case 'identityChanged':
-            // A different entry or instance is a different detail session: its rows,
-            // selection and position are not this one's to keep.
-            return INITIAL;
-        case 'requestStarted':
-            return {
-                ...state,
-                kind: state.events.length === 0 ? 'loading' : state.kind,
-                pending: true,
-                canLoadMore: false,
-                failure: null,
-                token: event.token,
-            };
-        case 'pageSettled': {
-            if (event.token !== state.token) {
-                // The result belongs to a request this controller already replaced.
-                return state;
-            }
-            const events = [...state.events, ...event.events];
-            return {
-                kind: 'ready',
-                events,
-                omittedRowCount: state.omittedRowCount + event.omittedRowCount,
-                selectedUuid: state.selectedUuid ?? events[0]?.uuid ?? null,
-                pending: false,
-                continuation: event.continuation,
-                canLoadMore: event.continuation !== null,
-                failure: null,
-                token: state.token,
-            };
-        }
-        case 'pageFailed': {
-            if (event.token !== state.token) {
-                return state;
-            }
-            // Rows a reader already had survive a later failure. Only a first page that
-            // never arrived leaves the panel with nothing to show.
-            return {
-                ...state,
-                kind: state.events.length === 0 ? 'unavailable' : 'ready',
-                pending: false,
-                canLoadMore: state.continuation !== null,
-                failure: event.failure,
-            };
-        }
-        case 'selected': {
-            const exists = state.events.some((candidate) => candidate.uuid === event.uuid);
-            return exists ? { ...state, selectedUuid: event.uuid } : state;
-        }
-        default:
-            return state;
+    if (event.kind === 'selected') {
+        const exists = state.rows.some((candidate) => candidate.uuid === event.uuid);
+        return exists ? { ...state, selectedUuid: event.uuid } : state;
     }
+    if (event.kind === 'identityChanged') return INITIAL;
+    const paged = triagePagedPanelReducer<
+        PosthogProjectedIssueEvent,
+        TriageSourceFailureV1
+    >(state, toPagedEvent(event) as TriagePagedPanelEventV1<
+        PosthogProjectedIssueEvent,
+        TriageSourceFailureV1
+    >);
+    if (paged === state) return state;
+    // The reader's selection survives an append; only a first page supplies one.
+    return {
+        ...paged,
+        selectedUuid: state.selectedUuid ?? paged.rows[0]?.uuid ?? null,
+    };
 }
 
 export type PosthogOccurrenceControllerV1 = Readonly<{
@@ -265,8 +256,8 @@ export function usePosthogOccurrenceController(
     }, [readPage, state.canLoadMore, state.continuation, state.token]);
 
     const selectedEvent = useMemo(
-        () => state.events.find((candidate) => candidate.uuid === state.selectedUuid),
-        [state.events, state.selectedUuid],
+        () => state.rows.find((candidate) => candidate.uuid === state.selectedUuid),
+        [state.rows, state.selectedUuid],
     );
 
     return useMemo(

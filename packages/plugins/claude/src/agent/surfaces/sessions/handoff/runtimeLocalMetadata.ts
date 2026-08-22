@@ -1,12 +1,6 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-
-import {
-    buildProviderSessionIdSessionMetadata,
-    type ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
-
-import { resolveClaudeConfigDirOverride, resolveClaudeProjectId } from './path.js';
+import { resolveClaudeConfigDir } from '../../../environment.js';
+import type { ClaudeExternalSessionSource } from '../external/source.js';
+import { resolveClaudeProjectId } from './path.js';
 
 export type ClaudeRuntimeLocalHandoffSession = Readonly<{
     vendorResumeId?: string | null;
@@ -24,7 +18,7 @@ export type ClaudeRuntimeLocalHandoffMetadata = Readonly<Partial<{
         agentId: 'claude';
         machineId: string;
         remoteSessionId: string;
-        source: ExternalSessionsSource;
+        source: ClaudeExternalSessionSource;
         linkedAtMs: number;
     }>;
 }>>;
@@ -40,10 +34,6 @@ function normalizeOptionalString(value: unknown): string | null {
     }
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
-}
-
-function resolveClaudeConfigDir(env: NodeJS.ProcessEnv): string {
-    return resolveClaudeConfigDirOverride(env) ?? join(homedir(), '.claude');
 }
 
 export function buildClaudeRuntimeLocalHandoffMetadata(params: Readonly<{
@@ -63,13 +53,7 @@ export function buildClaudeRuntimeLocalHandoffMetadata(params: Readonly<{
         return runtimeLocalMetadata;
     }
 
-    Object.assign(
-        runtimeLocalMetadata,
-        buildProviderSessionIdSessionMetadata({
-            metadataKey: 'claudeSessionId',
-            value: vendorResumeId,
-        }),
-    );
+    runtimeLocalMetadata.claudeSessionId = vendorResumeId;
 
     if (params.session.spawnOptions?.transcriptStorage !== 'direct') {
         return runtimeLocalMetadata;

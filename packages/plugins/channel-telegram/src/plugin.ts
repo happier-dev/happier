@@ -2,25 +2,48 @@ import {
   ConversationProvidersContributionProtocolV1,
 } from '@happier-dev/channels-protocol/v1';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { telegramConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
 import {
+  TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
   TELEGRAM_BOT_CONNECTED_ACCOUNT_ID,
   TELEGRAM_BOT_CREDENTIAL_PURPOSE,
   TELEGRAM_CHANNEL_ACTION_IDS,
   TELEGRAM_CHANNEL_PROVIDER_CONTRIBUTION_ID,
 } from './constants.js';
 import {
+  TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
+  TELEGRAM_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,
+} from './automationEvents.js';
+import {
   deliverTelegramMessage,
   pollTelegramObservations,
+  setupTelegramChatEventSource,
   remediateTelegramWebhook,
   resolveTelegramEndpoint,
   setupTelegramChannels,
   testTelegramConnection,
 } from './channelActions.js';
+import { TELEGRAM_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
 const providers = ConversationProvidersContributionProtocolV1;
+
+/**
+ * The Channels provider protocol leaves `setup` and `setupRemediation` input
+ * contributor-defined, so this plugin — not the host — declares and validates
+ * the shape. Both roles need exactly the selected bot account, so they share
+ * one declaration rather than two literals that can drift apart.
+ */
+const TELEGRAM_CREDENTIAL_REF_INPUT_SCHEMA: PluginJsonSchema = {
+  type: 'object',
+  properties: {
+    credentialRef: QualifiedConnectedAccountRefJsonSchema,
+  },
+  required: ['credentialRef'],
+  additionalProperties: false,
+};
 
 export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: 'happier.channel.telegram',
@@ -29,7 +52,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   description: 'Connects Telegram bot conversations to Happier Channels.',
   engines: { happier: '^0.0.0' },
   runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [
       {
@@ -53,6 +76,9 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       },
     ],
     optional: [],
+  },
+  ui: {
+    translations: TELEGRAM_UI_TRANSLATION_BUNDLES,
   },
   connectedAccountDescriptors: {
     [TELEGRAM_BOT_CONNECTED_ACCOUNT_ID]: {
@@ -86,14 +112,8 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   actions: {
     [TELEGRAM_CHANNEL_ACTION_IDS.setup]: {
       title: 'Set up Telegram Channels',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          credentialRef: QualifiedConnectedAccountRefJsonSchema,
-        },
-        required: ['credentialRef'],
-        additionalProperties: false,
-      },
+      execution: { target: 'daemon' },
+      inputSchema: TELEGRAM_CREDENTIAL_REF_INPUT_SCHEMA,
       resultSchema: providers.operations.setup.declaration.resultSchema.jsonSchema,
       scopes: ['global'],
       // Core owns the present-user setup flow and persistence. This provider
@@ -130,15 +150,9 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     },
     [TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation]: {
       title: 'Remove Telegram webhook',
+      execution: { target: 'daemon' },
       description: 'Remove the selected bot’s webhook so Happier can use checkpointed polling.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          credentialRef: QualifiedConnectedAccountRefJsonSchema,
-        },
-        required: ['credentialRef'],
-        additionalProperties: false,
-      },
+      inputSchema: TELEGRAM_CREDENTIAL_REF_INPUT_SCHEMA,
       resultSchema: providers.operations.setupRemediation.declaration.resultSchema.jsonSchema,
       scopes: ['global'],
       surfaces: providers.operations.setupRemediation.declaration.surfaces,
@@ -178,6 +192,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     },
     [TELEGRAM_CHANNEL_ACTION_IDS.connectionTest]: {
       title: 'Test Telegram Channel connection',
+      execution: { target: 'daemon' },
       inputSchema: providers.operations.connectionTest.declaration.input.schema.jsonSchema,
       resultSchema: providers.operations.connectionTest.declaration.resultSchema.jsonSchema,
       scopes: ['global'],
@@ -192,6 +207,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     },
     [TELEGRAM_CHANNEL_ACTION_IDS.endpointResolve]: {
       title: 'Resolve Telegram Channel destination',
+      execution: { target: 'daemon' },
       inputSchema: providers.operations.endpointResolve.declaration.input.schema.jsonSchema,
       resultSchema: providers.operations.endpointResolve.declaration.resultSchema.jsonSchema,
       scopes: ['global'],
@@ -206,6 +222,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     },
     [TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll]: {
       title: 'Poll Telegram Channel observations',
+      execution: { target: 'daemon' },
       inputSchema: providers.operations.observationsPoll.declaration.input.schema.jsonSchema,
       resultSchema: providers.operations.observationsPoll.declaration.resultSchema.jsonSchema,
       scopes: ['global'],
@@ -220,6 +237,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     },
     [TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver]: {
       title: 'Deliver a Telegram Channel message',
+      execution: { target: 'daemon' },
       inputSchema: providers.operations.messageDeliver.declaration.input.schema.jsonSchema,
       resultSchema: providers.operations.messageDeliver.declaration.resultSchema.jsonSchema,
       scopes: ['global'],
@@ -232,7 +250,76 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       dangerLevel: providers.operations.messageDeliver.declaration.dangerLevel,
       run: deliverTelegramMessage,
     },
+    // The Automation Event this Action resolves a source for is WITHHELD from
+    // this manifest; the withheld-declaration note below owns why and what a
+    // durable observation needs. The Action stays declared so the retained
+    // admission work keeps its one registered entry point, and it is reachable
+    // only from the `plugin` surface — the composer reaches a setup Action only
+    // through an eligible Event, so nothing user-facing offers an Automation
+    // that cannot exist.
+    [TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID]: {
+      title: 'Choose a Telegram chat to watch',
+      description: 'Resolves a Telegram chat to immutable source facts for an Automation Event.',
+      execution: { target: 'daemon' },
+      scopes: ['global'],
+      surfaces: ['plugin'],
+      dangerLevel: 'safe',
+      inputSchema: TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
+      resultSchema: TELEGRAM_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,
+      hostAccess: ['telegram-bot-api', TELEGRAM_BOT_CREDENTIAL_PURPOSE],
+      connectedAccountPurposeBindings: [{
+        path: 'credentialRef',
+        purpose: TELEGRAM_BOT_CREDENTIAL_PURPOSE,
+      }],
+      inputHints: {
+        title: { key: 'channels.telegram.automation.setup.title', fallback: 'Choose a Telegram chat to watch' },
+        description: {
+          key: 'channels.telegram.automation.setup.description',
+          fallback: 'Pick the Telegram bot and the chat whose messages should start this Automation.',
+        },
+        submitLabel: { key: 'channels.telegram.automation.setup.submit', fallback: 'Use this chat' },
+        fields: [
+          {
+            path: 'credentialRef',
+            title: { key: 'channels.telegram.automation.setup.credential', fallback: 'Telegram bot account' },
+            widget: 'select',
+            connectedAccountOptions: true,
+            required: true,
+          },
+          {
+            path: 'chatId',
+            title: { key: 'channels.telegram.automation.setup.chat', fallback: 'Chat ID' },
+            widget: 'text',
+            description: {
+              key: 'channels.telegram.automation.setup.chat.description',
+              fallback: 'The numeric Telegram chat id, or an @channelusername the bot can reach.',
+            },
+            required: true,
+          },
+        ],
+      },
+      run: setupTelegramChatEventSource,
+    },
   },
+  // This provider declares no Event. Its `automation/chat-message-v1` Automation
+  // Event declaration is WITHHELD (product decision, 2026-08-20), so no
+  // Automation can arm a Telegram chat source.
+  //
+  // Telegram `getUpdates` is single-consumer: one `offset` confirms and
+  // discards every earlier update for every reader of the bot. The admission in
+  // `automationEvents.ts` runs inline inside that shared cycle with no durable
+  // obligation, so a catalog or admission outage can only choose between losing
+  // occurrences and stalling Channel delivery for every user of the bot.
+  //
+  // Before this is declared, the occurrence must become a durable obligation in
+  // the SAME ingress store the canonical Channels owner already uses
+  // (`packages/plugins/channels/src/ingress.ts`: `retryDueIngressObligationValue`,
+  // `blockedIngressObligationValue`, `MAX_CONVERSATION_DELIVERY_ATTEMPTS`,
+  // `unsettled`/`checkpointSafe`), persisted BEFORE the shared offset advances —
+  // one shared single-consumer lifecycle, no second `getUpdates` consumer, no
+  // provider-local replay ledger, no new store. The implementation stays on
+  // disk in `automationEvents.ts` and is still exercised end to end through
+  // `pollTelegramObservations`.
   contributesTo: {
     'happier.channels': {
       providers: {

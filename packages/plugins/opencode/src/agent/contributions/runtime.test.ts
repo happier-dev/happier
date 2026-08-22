@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { OPENCODE_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
 
@@ -77,26 +77,15 @@ describe('OPENCODE_AGENT_RUNTIME_CONTRIBUTION', () => {
     expect(adapter).toBe(false);
   });
 
-  it('projects the host-private handoff surface and replay-child launch resolver', async () => {
+  it('keeps only provider-bundle metadata in the catalog contribution', () => {
     const handoff = OPENCODE_AGENT_RUNTIME_CONTRIBUTION.sessionHandoff;
-    const run = vi.fn();
 
-    expect(handoff.surface({ exec: { run } })).toEqual(expect.objectContaining({
-      exportBundle: expect.any(Function),
-      importBundle: expect.any(Function),
-    }));
-    await expect(handoff.resolveReplayChildLaunch({
-      parentMetadata: {
-        opencodeBackendMode: 'server',
-        opencodeServerBaseUrl: 'http://127.0.0.1:49196',
-        opencodeServerBaseUrlExplicit: true,
-      },
-    })).resolves.toEqual({
-      environmentVariables: {
-        HAPPIER_OPENCODE_BACKEND_MODE: 'server',
-        HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:49196/',
-        HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1',
+    expect(handoff).toEqual({
+      agentBundleRecords: {
+        extract: expect.any(Function),
       },
     });
+    expect(handoff).not.toHaveProperty('surface');
+    expect(handoff).not.toHaveProperty('resolveReplayChildLaunch');
   });
 });

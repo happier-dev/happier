@@ -31,7 +31,7 @@ describe('Channels UI build configuration', () => {
         platforms: ['web', 'ios', 'android'],
       }],
     });
-    expect(PLUGIN_MANIFEST.contributes.ui.renderers[0]).toMatchObject({
+    expect(PLUGIN_MANIFEST.contributes?.ui?.renderers?.[0]).toMatchObject({
       kind: 'reactNative',
       artifact: config.targets[0]?.rendererId,
     });

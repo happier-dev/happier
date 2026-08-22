@@ -5,7 +5,8 @@ import type { TriageSurfaceStateV1 } from './surface.js';
 export type TriageActionTargetV1 =
   | Readonly<{
       kind: 'entry';
-      sectionId: string;
+      /** `null` when the selected entry has no row on this page; see the reducer's own selection type. */
+      sectionId: string | null;
       entryRef: TriageEntryRefV1;
       sourceInstanceId: TriageSourceInstanceIdV1;
     }>

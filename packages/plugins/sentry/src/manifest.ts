@@ -29,6 +29,7 @@ import {
   SENTRY_SELF_HOSTED_MODE_ID,
   sentryConnectedAccountRuntime,
 } from './auth/connectedAccountRuntime.js';
+import { SENTRY_UI_TRANSLATIONS } from './ui/translations.js';
 import {
   SentryIssueEventsInputV1Schema,
   SentryIssueEventsResultV1Schema,
@@ -180,7 +181,7 @@ export const SENTRY_PLUGIN = definePlugin({
   description: 'Brings Sentry error issues into PRs & Issues with their own detail body.',
   engines: { happier: '^0.0.0' },
   runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
       id: SENTRY_CLOUD_NETWORK_HOST_ACCESS_ID,
@@ -194,10 +195,15 @@ export const SENTRY_PLUGIN = definePlugin({
         // V1 is read-only. `event:admin` is never requested and no mutation
         // route exists, so no other method is admitted.
         methods: ['GET'],
-        // No `privateNetwork` here, deliberately. Cloud is public by
-        // definition, and a fixed public origin that resolves to an RFC1918
-        // address is the rebinding case the flag exists to refuse. The flag is
-        // scope-level, so this separation is the only way to hold it.
+        // No `privateNetwork` here, deliberately: the Cloud origins are public
+        // by definition and must not widen when a self-hosted user grants their
+        // own deployment private reach. The flag is scope-level, so a separate
+        // grant is the only way to hold that line.
+        //
+        // It does NOT refuse a public name that RESOLVES to a private address —
+        // the check reads the host as written and never resolves it. See
+        // `sentryContracts.ts` for the full residual; this separation is about
+        // which origins may be private, not about DNS.
       },
     }, {
       id: SENTRY_ACCOUNT_NETWORK_HOST_ACCESS_ID,
@@ -271,15 +277,19 @@ export const SENTRY_PLUGIN = definePlugin({
       defaultRank: 10,
       renderer: SENTRY_TRIAGE_SETTINGS_RENDERER_ID,
     }],
-    translations: [{
-      locale: 'en',
-      messages: {
-        'plugins.sentry.settings.group': 'Sentry',
-        'plugins.sentry.settings.sources': 'PRs & Issues',
-        'plugins.sentry.settings.sources.subtitle':
-          'Choose which Sentry organizations appear in PRs & Issues.',
-      },
-    }],
+    translations: [
+      { locale: 'en', messages: { ...SENTRY_UI_TRANSLATIONS.en, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PRs & Issues', 'plugins.sentry.settings.sources.subtitle': 'Choose which Sentry organizations appear in PRs & Issues.' } },
+      { locale: 'ru', messages: { ...SENTRY_UI_TRANSLATIONS.ru, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR и задачи', 'plugins.sentry.settings.sources.subtitle': 'Выберите организации Sentry, которые будут отображаться в разделе PR и задач.' } },
+      { locale: 'pl', messages: { ...SENTRY_UI_TRANSLATIONS.pl, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR-y i zgłoszenia', 'plugins.sentry.settings.sources.subtitle': 'Wybierz organizacje Sentry wyświetlane w sekcji PR-ów i zgłoszeń.' } },
+      { locale: 'es', messages: { ...SENTRY_UI_TRANSLATIONS.es, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR e incidencias', 'plugins.sentry.settings.sources.subtitle': 'Elige qué organizaciones de Sentry aparecen en PR e incidencias.' } },
+      { locale: 'fr', messages: { ...SENTRY_UI_TRANSLATIONS.fr, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR et tickets', 'plugins.sentry.settings.sources.subtitle': 'Choisissez les organisations Sentry affichées dans PR et tickets.' } },
+      { locale: 'it', messages: { ...SENTRY_UI_TRANSLATIONS.it, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR e segnalazioni', 'plugins.sentry.settings.sources.subtitle': 'Scegli le organizzazioni Sentry da mostrare in PR e segnalazioni.' } },
+      { locale: 'pt', messages: { ...SENTRY_UI_TRANSLATIONS.pt, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PRs e problemas', 'plugins.sentry.settings.sources.subtitle': 'Escolha as organizações Sentry apresentadas em PRs e problemas.' } },
+      { locale: 'ca', messages: { ...SENTRY_UI_TRANSLATIONS.ca, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR i incidències', 'plugins.sentry.settings.sources.subtitle': 'Tria les organitzacions de Sentry que es mostren a PR i incidències.' } },
+      { locale: 'zh-Hans', messages: { ...SENTRY_UI_TRANSLATIONS['zh-Hans'], 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR 和问题', 'plugins.sentry.settings.sources.subtitle': '选择要在 PR 和问题中显示的 Sentry 组织。' } },
+      { locale: 'zh-Hant', messages: { ...SENTRY_UI_TRANSLATIONS['zh-Hant'], 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR 與問題', 'plugins.sentry.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 Sentry 組織。' } },
+      { locale: 'ja', messages: { ...SENTRY_UI_TRANSLATIONS.ja, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR と課題', 'plugins.sentry.settings.sources.subtitle': 'PR と課題に表示する Sentry 組織を選択します。' } },
+    ],
   },
   actions: {
     [SENTRY_ACTION_IDS.listInstances]: {
@@ -287,6 +297,7 @@ export const SENTRY_PLUGIN = definePlugin({
       description: 'Lists the Sentry organizations each connected Sentry account can reach.',
       scopes: ['global'],
       surfaces: sources.operations.listInstances.declaration.surfaces,
+      execution: { target: 'daemon' },
       dangerLevel: sources.operations.listInstances.declaration.dangerLevel,
       inputSchema: sources.operations.listInstances.declaration.input.schema.jsonSchema,
       resultSchema: sources.operations.listInstances.declaration.resultSchema.jsonSchema,
@@ -298,6 +309,7 @@ export const SENTRY_PLUGIN = definePlugin({
       description: 'Reads one page of the configured Sentry organization issue walk.',
       scopes: ['global'],
       surfaces: sources.operations.scan.declaration.surfaces,
+      execution: { target: 'daemon' },
       dangerLevel: sources.operations.scan.declaration.dangerLevel,
       inputSchema: sources.operations.scan.declaration.input.schema.jsonSchema,
       resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
@@ -314,6 +326,7 @@ export const SENTRY_PLUGIN = definePlugin({
       // source-native reads are invoked the same way, by this source's own
       // mounted detail body.
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: SentryReadIssueInputV1Schema.jsonSchema,
       resultSchema: SentryReadIssueResultV1Schema.jsonSchema,
@@ -327,6 +340,7 @@ export const SENTRY_PLUGIN = definePlugin({
         + ' window.',
       scopes: ['global'],
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: SentryIssueEventsInputV1Schema.jsonSchema,
       resultSchema: SentryIssueEventsResultV1Schema.jsonSchema,
@@ -340,6 +354,7 @@ export const SENTRY_PLUGIN = definePlugin({
         + ' redacted projection.',
       scopes: ['global'],
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: SentryReadEventInputV1Schema.jsonSchema,
       resultSchema: SentryReadEventResultV1Schema.jsonSchema,
@@ -352,6 +367,7 @@ export const SENTRY_PLUGIN = definePlugin({
       description: 'Reads one page of the value distribution of a single tag key on one issue.',
       scopes: ['global'],
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: SentryTagValuesInputV1Schema.jsonSchema,
       resultSchema: SentryTagValuesResultV1Schema.jsonSchema,
@@ -364,6 +380,7 @@ export const SENTRY_PLUGIN = definePlugin({
       description: 'Reads one Sentry issue authoritatively through its configured organization.',
       scopes: ['global'],
       surfaces: sources.operations.get.declaration.surfaces,
+      execution: { target: 'daemon' },
       dangerLevel: sources.operations.get.declaration.dangerLevel,
       inputSchema: sources.operations.get.declaration.input.schema.jsonSchema,
       resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,

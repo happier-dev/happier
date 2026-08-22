@@ -54,6 +54,12 @@ describe('Bitbucket Triage source contribution conformance', () => {
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
     const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
 
+    // The contribution's local id is the forge-spelled one the shared source contract fixes for
+    // this plugin. It is load-bearing identity — it composes the qualified contribution id the
+    // host admits under, and the `source.localId` every entry, configured instance and detail
+    // mount addresses this source by — so it is asserted as the literal contract value rather
+    // than against this package's own constant, which could drift with it.
+    expect(contribution?.id).toBe('bitbucket-forge');
     expect(contribution?.target).toEqual({ pluginId: 'happier.triage', pointId: 'sources' });
     expect(contribution?.protocol).toEqual({ id: 'happier.triage/sources', version: 1 });
     for (const actionId of Object.values(contribution?.operations ?? {})) {
@@ -118,7 +124,7 @@ describe('Bitbucket Triage source contribution conformance', () => {
       description: 'Declaration-time check of the union-input purpose binding.',
       engines: { happier: '^0.0.0' },
       runtime: { apiVersion: 1 },
-      entrypoints: { daemon: './dist/index.js' },
+      entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: { required: [], optional: [] },
       actions: {
         [BITBUCKET_TRIAGE_ACTION_IDS.scan]: {
@@ -126,6 +132,7 @@ describe('Bitbucket Triage source contribution conformance', () => {
           description: 'Reads one bounded page of pull requests for one configured workspace.',
           scopes: ['global'],
           surfaces: sources.operations.scan.declaration.surfaces,
+          execution: { target: 'daemon' },
           dangerLevel: sources.operations.scan.declaration.dangerLevel,
           inputSchema: sources.operations.scan.declaration.input.schema.jsonSchema,
           resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,

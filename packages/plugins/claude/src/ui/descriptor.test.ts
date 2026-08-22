@@ -78,7 +78,6 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
       behavior: expect.objectContaining({
         descriptorId: 'claude.uiBehavior.v1',
         externalSessions: expect.objectContaining({
-          supportsBackgroundFollow: true,
           browse: {
             order: 20,
             sourceOptions: [

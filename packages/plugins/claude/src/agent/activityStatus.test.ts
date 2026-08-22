@@ -19,6 +19,14 @@ describe('Claude activity status helpers', () => {
     expect(normalizeClaudeActivityStatusSignal('succeeded')).toBe('unknown');
   });
 
+  it('classifies a just-launched agent as active, not unknown', () => {
+    // OBSERVED: a Dynamic Workflow agent carries `state: 'start'` from launch until its first
+    // progress tick. Missing from the vocabulary, every launching agent read `unknown` — a live
+    // agent rendered as a status the roster has no tone for.
+    expect(normalizeClaudeActivityStatusSignal('start')).toBe('active');
+    expect(normalizeClaudeActivityStatusSignal('started')).toBe('active');
+  });
+
   it('centralizes Agent SDK provider task id/status normalization and terminal vocabulary', () => {
     expect(normalizeClaudeAgentSdkProviderTaskId(' task-1 ')).toBe('task-1');
     expect(normalizeClaudeAgentSdkProviderTaskId('   ')).toBeNull();

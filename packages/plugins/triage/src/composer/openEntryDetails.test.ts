@@ -63,6 +63,35 @@ describe('opening the Triage entry detail from a Composer mount', () => {
         }]);
     });
 
+    it('carries the exact mounted Composer ref as the launch address', async () => {
+        // The picker knows which draft the reader was writing in. Nothing
+        // downstream can recover that from the entry, so it travels inside the
+        // strict launch input — the only carrier PEP `03d1` §17.8 allows — and
+        // the navigation owner passes it through without inspecting it.
+        const host = createHost();
+        const originComposer = { kind: 'pendingMessage', sessionId: 'session-1', localId: 'pending-1' } as const;
+
+        const outcome = await openTriageEntryDetails({
+            hostApi: host.hostApi,
+            entryRef: ENTRY_REF,
+            sourceInstance: SOURCE_INSTANCE,
+            originComposer,
+        });
+
+        expect(outcome).toEqual({ kind: 'opened' });
+        expect(host.calls).toEqual([{
+            view: { pluginId: 'happier.triage', localId: 'triage' },
+            input: {
+                v: 1,
+                kind: 'entryDetail',
+                entryRef: ENTRY_REF,
+                sourceInstance: SOURCE_INSTANCE,
+                originComposer,
+            },
+            options: { subPath: '' },
+        }]);
+    });
+
     it('refuses a selection its own parser rejects, before navigating anywhere', async () => {
         const host = createHost();
 

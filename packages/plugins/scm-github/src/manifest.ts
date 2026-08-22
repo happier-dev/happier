@@ -19,6 +19,8 @@ import {
   PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
 } from '@happier-dev/plugin-sdk/events';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import { GITHUB_RENDER_UI_TRANSLATIONS } from './ui/renderTranslations.js';
+import { GITHUB_ADDITIONAL_UI_TRANSLATIONS } from './ui/additionalTranslations.js';
 import {
   defineProtocolArray,
   defineProtocolLiteral,
@@ -421,7 +423,7 @@ function createGithubPlugin() {
   description: 'Detects GitHub remotes and provides GitHub repository operations.',
   brand: { iconResourceId: GITHUB_BRAND_RESOURCE_ID },
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
       id: 'github-api',
@@ -504,15 +506,19 @@ function createGithubPlugin() {
       defaultRank: 10,
       renderer: GITHUB_TRIAGE_SETTINGS_RENDERER_ID_V1,
     }],
-    translations: [{
-      locale: 'en',
-      messages: {
-        'plugins.github.settings.group': 'GitHub',
-        'plugins.github.settings.sources': 'PRs & Issues',
-        'plugins.github.settings.sources.subtitle':
-          'Choose which GitHub accounts and repositories appear in PRs & Issues.',
-      },
-    }],
+    translations: [
+      { locale: 'en', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["en"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["en"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PRs & Issues', 'plugins.github.settings.sources.subtitle': 'Choose which GitHub accounts and repositories appear in PRs & Issues.', 'github.automation.historyGapReset.confirmation.title': 'Start a new baseline', 'github.automation.historyGapReset.confirmation.body': 'Events in the history gap are not replayed.' } },
+      { locale: 'ru', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["ru"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["ru"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR и задачи', 'plugins.github.settings.sources.subtitle': 'Выберите учетные записи и репозитории GitHub, которые будут отображаться в разделе PR и задач.', 'github.automation.historyGapReset.confirmation.title': 'Начать с новой базовой точки', 'github.automation.historyGapReset.confirmation.body': 'События из пропуска в истории не воспроизводятся.' } },
+      { locale: 'pl', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["pl"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["pl"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR-y i zgłoszenia', 'plugins.github.settings.sources.subtitle': 'Wybierz konta i repozytoria GitHub wyświetlane w sekcji PR-ów i zgłoszeń.', 'github.automation.historyGapReset.confirmation.title': 'Rozpocznij od nowej linii bazowej', 'github.automation.historyGapReset.confirmation.body': 'Zdarzenia z luki w historii nie zostaną odtworzone.' } },
+      { locale: 'es', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["es"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["es"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR e incidencias', 'plugins.github.settings.sources.subtitle': 'Elige qué cuentas y repositorios de GitHub aparecen en PR e incidencias.', 'github.automation.historyGapReset.confirmation.title': 'Iniciar una nueva referencia', 'github.automation.historyGapReset.confirmation.body': 'Los eventos del intervalo perdido del historial no se reproducirán.' } },
+      { locale: 'fr', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["fr"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["fr"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR et tickets', 'plugins.github.settings.sources.subtitle': 'Choisissez les comptes et dépôts GitHub affichés dans PR et tickets.', 'github.automation.historyGapReset.confirmation.title': 'Démarrer une nouvelle référence', 'github.automation.historyGapReset.confirmation.body': 'Les événements manquants dans l’historique ne sont pas rejoués.' } },
+      { locale: 'it', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["it"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["it"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR e segnalazioni', 'plugins.github.settings.sources.subtitle': 'Scegli gli account e i repository GitHub da mostrare in PR e segnalazioni.', 'github.automation.historyGapReset.confirmation.title': 'Avvia un nuovo riferimento', 'github.automation.historyGapReset.confirmation.body': 'Gli eventi mancanti nella cronologia non vengono riprodotti.' } },
+      { locale: 'pt', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["pt"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["pt"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PRs e problemas', 'plugins.github.settings.sources.subtitle': 'Escolha as contas e os repositórios GitHub apresentados em PRs e problemas.', 'github.automation.historyGapReset.confirmation.title': 'Iniciar uma nova referência', 'github.automation.historyGapReset.confirmation.body': 'Os eventos em falta no histórico não são reproduzidos.' } },
+      { locale: 'ca', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["ca"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["ca"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR i incidències', 'plugins.github.settings.sources.subtitle': 'Tria els comptes i repositoris de GitHub que es mostren a PR i incidències.', 'github.automation.historyGapReset.confirmation.title': 'Inicia una referència nova', 'github.automation.historyGapReset.confirmation.body': 'Els esdeveniments del buit de l’historial no es tornen a reproduir.' } },
+      { locale: 'zh-Hans', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["zh-Hans"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["zh-Hans"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR 和问题', 'plugins.github.settings.sources.subtitle': '选择要在 PR 和问题中显示的 GitHub 帐户和仓库。', 'github.automation.historyGapReset.confirmation.title': '开始新的基准', 'github.automation.historyGapReset.confirmation.body': '不会重放历史缺口中的事件。' } },
+      { locale: 'zh-Hant', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["zh-Hant"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["zh-Hant"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR 與問題', 'plugins.github.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 GitHub 帳戶和儲存庫。', 'github.automation.historyGapReset.confirmation.title': '開始新的基準', 'github.automation.historyGapReset.confirmation.body': '不會重播歷史缺口中的事件。' } },
+      { locale: 'ja', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["ja"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["ja"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR と課題', 'plugins.github.settings.sources.subtitle': 'PR と課題に表示する GitHub アカウントとリポジトリを選択します。', 'github.automation.historyGapReset.confirmation.title': '新しい基準点を開始', 'github.automation.historyGapReset.confirmation.body': '履歴の欠落区間にあるイベントは再実行されません。' } },
+    ],
   },
   actions: {
     [GITHUB_TRIAGE_ACTION_IDS_V1.listInstances]: {
@@ -521,6 +527,7 @@ function createGithubPlugin() {
       scopes: ['global'],
       surfaces: sources.operations.listInstances.declaration.surfaces,
       dangerLevel: sources.operations.listInstances.declaration.dangerLevel,
+      execution: { target: 'daemon' },
       inputSchema: sources.operations.listInstances.declaration.input.schema.jsonSchema,
       resultSchema: sources.operations.listInstances.declaration.resultSchema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
@@ -532,6 +539,7 @@ function createGithubPlugin() {
       scopes: ['global'],
       surfaces: sources.operations.scan.declaration.surfaces,
       dangerLevel: sources.operations.scan.declaration.dangerLevel,
+      execution: { target: 'daemon' },
       inputSchema: sources.operations.scan.declaration.input.schema.jsonSchema,
       resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
@@ -544,6 +552,7 @@ function createGithubPlugin() {
       scopes: ['global'],
       surfaces: sources.operations.get.declaration.surfaces,
       dangerLevel: sources.operations.get.declaration.dangerLevel,
+      execution: { target: 'daemon' },
       inputSchema: sources.operations.get.declaration.input.schema.jsonSchema,
       resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
@@ -559,6 +568,7 @@ function createGithubPlugin() {
       scopes: ['global'],
       surfaces: ['plugin'],
       dangerLevel: 'safe',
+      execution: { target: 'daemon' },
       inputSchema: GithubTimelineInputV1Schema.jsonSchema,
       resultSchema: GithubTimelineResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
@@ -572,6 +582,7 @@ function createGithubPlugin() {
       scopes: ['global'],
       surfaces: ['plugin'],
       dangerLevel: 'safe',
+      execution: { target: 'daemon' },
       inputSchema: GithubChangedFilesInputV1Schema.jsonSchema,
       resultSchema: GithubChangedFilesResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
@@ -585,6 +596,7 @@ function createGithubPlugin() {
       scopes: ['global'],
       surfaces: ['plugin'],
       dangerLevel: 'safe',
+      execution: { target: 'daemon' },
       inputSchema: GithubCommentsInputV1Schema.jsonSchema,
       resultSchema: GithubCommentsResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
@@ -598,6 +610,7 @@ function createGithubPlugin() {
       scopes: ['global'],
       surfaces: ['plugin'],
       dangerLevel: 'safe',
+      execution: { target: 'daemon' },
       inputSchema: GithubChecksInputV1Schema.jsonSchema,
       resultSchema: GithubChecksResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
@@ -609,6 +622,7 @@ function createGithubPlugin() {
       scopes: ['global'],
       surfaces: ['plugin'],
       dangerLevel: 'safe',
+      execution: { target: 'daemon' },
       inputSchema: GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_INPUT_SCHEMA,
       resultSchema: GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_RESULT_SCHEMA,
       hostAccess: [
@@ -629,6 +643,7 @@ function createGithubPlugin() {
       resultSchema: GITHUB_WEBHOOK_ACTION_RESULT_SCHEMA,
       surfaces: ['plugin'],
       dangerLevel: 'safe',
+      execution: { target: 'daemon' },
       run: receiveGithubWebhook,
     },
     [GITHUB_CHANNEL_ACTION_IDS.setup]: {
@@ -652,6 +667,7 @@ function createGithubPlugin() {
         purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
       }],
       dangerLevel: providers.operations.setup.declaration.dangerLevel,
+      execution: { target: 'daemon' },
       run: setupGithubChannels,
     },
     [GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID]: {
@@ -676,6 +692,7 @@ function createGithubPlugin() {
         purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
       }],
       dangerLevel: 'safe',
+      execution: { target: 'daemon' },
       run: setupGithubRepositoryEventSource,
     },
     [GITHUB_AUTOMATION_REPOSITORY_BASELINE_RESET_ACTION_ID]: {
@@ -697,6 +714,7 @@ function createGithubPlugin() {
       resultSchema: PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
       hostAccess: ['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE, 'automation-event-checkpoint-storage'],
       dangerLevel: 'writesLocal',
+      execution: { target: 'daemon' },
       run: resetGithubRepositoryEventHistoryGap,
     },
     [GITHUB_CHANNEL_ACTION_IDS.connectionTest]: {
@@ -711,6 +729,7 @@ function createGithubPlugin() {
         purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
       }],
       dangerLevel: providers.operations.connectionTest.declaration.dangerLevel,
+      execution: { target: 'daemon' },
       run: testGithubChannelConnection,
     },
     [GITHUB_CHANNEL_ACTION_IDS.endpointResolve]: {
@@ -725,6 +744,7 @@ function createGithubPlugin() {
         purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
       }],
       dangerLevel: providers.operations.endpointResolve.declaration.dangerLevel,
+      execution: { target: 'daemon' },
       run: resolveGithubChannelEndpoint,
     },
     [GITHUB_CHANNEL_ACTION_IDS.principalResolve]: {
@@ -739,6 +759,7 @@ function createGithubPlugin() {
         purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
       }],
       dangerLevel: providers.operations.principalResolve.declaration.dangerLevel,
+      execution: { target: 'daemon' },
       run: resolveGithubChannelPrincipal,
     },
     [GITHUB_CHANNEL_ACTION_IDS.observationsPoll]: {
@@ -753,6 +774,7 @@ function createGithubPlugin() {
         purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
       }],
       dangerLevel: providers.operations.observationsPoll.declaration.dangerLevel,
+      execution: { target: 'daemon' },
       run: pollGithubChannelObservations,
     },
     [GITHUB_CHANNEL_ACTION_IDS.messageDeliver]: {
@@ -767,6 +789,7 @@ function createGithubPlugin() {
         purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
       }],
       dangerLevel: providers.operations.messageDeliver.declaration.dangerLevel,
+      execution: { target: 'daemon' },
       run: deliverGithubChannelMessage,
     },
   },

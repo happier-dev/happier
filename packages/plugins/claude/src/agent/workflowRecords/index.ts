@@ -9,6 +9,7 @@ export {
   createClaudeWorkflowJournalWrapper,
   parseClaudeWorkflowFact,
   type ClaudeWorkflowFact,
+  type ClaudeWorkflowShapeDriftReporter,
   type SubagentStartFact,
   type TaskLifecycleFact,
   type WorkflowJournalAgentSpecFact,
@@ -25,13 +26,9 @@ export {
 } from './tracker.js';
 export { filterWorkflowOwnedWorkStateItems } from './ownedWorkState.js';
 export {
-  registerClaudeWorkflowOwnedToolUseIds,
-  resolveClaudeWorkflowOwnedToolUseIds,
-} from './ownedWorkStateRegistry.js';
-export {
   createClaudeUnifiedWorkflowRuntime,
   type ClaudeUnifiedWorkflowRuntime,
-  type ClaudeWorkflowMetadataWriter,
+  type ClaudeWorkflowHeadlinePublisher,
   type ClaudeWorkflowSystemRecordReader,
   type ClaudeWorkflowSystemRecordWriter,
 } from './workflowRuntime.js';

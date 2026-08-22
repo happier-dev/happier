@@ -76,6 +76,11 @@ export function validateOhMyPiExternalSessionSource(params: Readonly<{
     typeof source.agentDir === 'string' && source.agentDir.trim().length > 0
       ? canonicalizeOhMyPiExternalSessionsPath(source.agentDir)
       : null;
+  // Canonicalization only. Oh My Pi declares an `agentSettingOverride` agent
+  // directory, so this machine's ambient root is not the only authorized one and
+  // pinning here would delete the account setting a user configured. Whether a
+  // requested directory is one the environment or the account's settings
+  // authorized is decided once, by the host admission boundary, for every Agent.
   const configuredAgentDir = resolveConfiguredOhMyPiAgentDir(env);
   const agentDir = requestedAgentDir ?? configuredAgentDir;
   return {

@@ -181,3 +181,53 @@ describe('GitLab listInstances', () => {
     expect(result.failures[1]).not.toHaveProperty('localInstanceKey');
   });
 });
+
+/**
+ * The host declines to list a purpose it holds no selection for. Reporting that
+ * decline as `account-listing-failed` tells a reader who has connected nothing
+ * that GitLab could not be read, when GitLab was never asked.
+ */
+describe('GitLab listInstances with no connected account', () => {
+  function refusedListing(binding: unknown) {
+    const listAccounts = vi.fn(async () => {
+      throw Object.assign(new Error('resource not selected'), {
+        code: 'plugin_host_access_resource_not_selected',
+      });
+    });
+    const getBinding = vi.fn(async () => binding);
+    return {
+      seam: { listAccounts, getBinding } as unknown as GitlabConnectedAccounts,
+      listAccounts,
+      getBinding,
+    };
+  }
+
+  it('reports an unbound purpose as a complete empty candidate set', async () => {
+    const stub = refusedListing(null);
+
+    const result = await listGitlabTriageInstances({
+      connectedAccounts: stub.seam,
+      signal: new AbortController().signal,
+    });
+
+    expect(() => TriageListInstancesResultV1Schema.parse(result)).not.toThrow();
+    expect(result).toEqual({ kind: 'complete', candidates: [], failures: [] });
+    expect(stub.getBinding).toHaveBeenCalledWith(
+      GITLAB_CONNECTED_ACCOUNT_PURPOSE,
+      { signal: expect.anything() },
+    );
+  });
+
+  it('still fails a refused listing while the purpose is bound', async () => {
+    const stub = refusedListing({ purpose: GITLAB_CONNECTED_ACCOUNT_PURPOSE });
+
+    const result = await listGitlabTriageInstances({
+      connectedAccounts: stub.seam,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.kind).toBe('failed');
+    if (result.kind !== 'failed') throw new Error('unreachable');
+    expect(result.failure.code).toBe('account-listing-failed');
+  });
+});

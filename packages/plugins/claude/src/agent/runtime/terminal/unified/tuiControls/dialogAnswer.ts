@@ -1,4 +1,4 @@
-import type { TerminalControlPort } from '@happier-dev/agents';
+import type { TerminalControlPort } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { captureScreenState, sendResultToFailure } from './controlRuntime.js';
 import {
@@ -7,6 +7,7 @@ import {
   type ClaudeUnifiedDialogId,
   type ClaudeUnifiedDialogOption,
 } from './dialogRegistry.js';
+import { DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS } from './types.js';
 
 /**
  * The ONE recipe-driven answerer for every recognized Claude Unified dialog. It replaces the
@@ -85,16 +86,20 @@ export async function answerClaudeUnifiedRegisteredDialog(params: Readonly<{
   });
   if (submission.status === 'failed') return failed(submission.reason);
 
-  await params.wait(params.settleMs);
-  const after = await captureScreenState(params.port);
-  if (after.kind !== 'state') return failed(captureFailureReason(after));
+  const { verifyPollIntervalMs, verifyPollTimeoutMs } = DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS;
+  const maxVerifyPolls = Math.max(1, Math.ceil(verifyPollTimeoutMs / verifyPollIntervalMs));
+  for (let poll = 0; poll < maxVerifyPolls; poll += 1) {
+    await params.wait(poll === 0 ? params.settleMs : verifyPollIntervalMs);
+    const after = await captureScreenState(params.port);
+    if (after.kind !== 'state') return failed(captureFailureReason(after));
 
-  const afterDialog = resolveClaudeUnifiedVisibleDialog(after.state);
-  return afterDialog && (
-    params.expectedIdentity === undefined
-      ? afterDialog.dialogId === params.dialogId
-      : getClaudeUnifiedDialogIdentity(afterDialog) === params.expectedIdentity
-  )
-    ? failed('dialog_still_visible')
-    : { status: 'answered' };
+    const afterDialog = resolveClaudeUnifiedVisibleDialog(after.state);
+    const sameDialog = afterDialog && (
+      params.expectedIdentity === undefined
+        ? afterDialog.dialogId === params.dialogId
+        : getClaudeUnifiedDialogIdentity(afterDialog) === params.expectedIdentity
+    );
+    if (!sameDialog) return { status: 'answered' };
+  }
+  return failed('dialog_still_visible');
 }

@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { writeClaudeCodeCredentialsFile } from './credentials.js';
@@ -28,13 +28,13 @@ async function writeCredentials(expiresAt: number | undefined): Promise<string> 
   return claudeConfigDir;
 }
 
-function createExecFixture(): PluginExecService {
+function createExecFixture(): ExecService {
     return {
     systemTools: {
       resolve: vi.fn(),
     },
     run: vi.fn(),
-  } as unknown as PluginExecService;
+  } as unknown as ExecService;
 }
 
 describe('verifyClaudeCodeNativeAuth', () => {

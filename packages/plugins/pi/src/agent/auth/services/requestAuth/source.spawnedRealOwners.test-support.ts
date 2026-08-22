@@ -356,7 +356,7 @@ describe('Pi request-auth strict spawned real-owner composition', () => {
       purpose: 'Prove invalid override refusal',
       cwd: root,
     })).rejects.toMatchObject({
-      code: 'PLUGIN_EXEC_SYSTEM_TOOL_UNAVAILABLE',
+      code: 'plugin_exec_system_tool_unavailable',
     });
 
     const missingSystemTools = createAgentCliSystemToolService({
@@ -381,7 +381,7 @@ describe('Pi request-auth strict spawned real-owner composition', () => {
       purpose: 'Prove missing executable refusal',
       cwd: root,
     })).rejects.toMatchObject({
-      code: 'PLUGIN_EXEC_SYSTEM_TOOL_UNAVAILABLE',
+      code: 'plugin_exec_system_tool_unavailable',
     });
   });
 

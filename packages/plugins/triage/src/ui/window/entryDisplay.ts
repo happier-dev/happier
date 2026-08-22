@@ -1,7 +1,4 @@
-import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
-
-import type { ProjectedObservationV1 } from '../../corpus/fold/projectedObservation.js';
-import type { TriageListRowV1 } from '../../projection/listWindow.js';
+import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
 
 /**
  * The one display projection of a window row.
@@ -11,11 +8,14 @@ import type { TriageListRowV1 } from '../../projection/listWindow.js';
  * projection would let one surface show a title the other does not, which is
  * exactly the divergence one shared window exists to prevent.
  *
- * It decides no winner of its own. Which connection speaks for a row is already
- * decided by `selectObservationInstance`, and this module reads that decision
- * (`core/CORPUS.md` §6.1); only when the selected instance has retired does it
- * fall back to the newest present observation, so a retired row still shows the
- * entry the user recognizes instead of a bare identifier.
+ * It decides no winner of its own, and that is the whole point of the row's
+ * `content` member: which observation speaks for a row is decided once by the
+ * fold, under `core/CORPUS.md` §3.2's stable-id rule, and read here. This module
+ * previously picked the *selected* connection and fell back to whichever
+ * connection answered last, while the fold picked the newest answer for the lane
+ * and the ordinal — so one row could carry an open entry's title while filing
+ * itself under Done, and an `observedAtMs` tie flipped the answer with array
+ * order. There is one winner now, and no reader chooses again.
  */
 
 export type TriageEntryDisplayV1 = Readonly<{
@@ -23,6 +23,8 @@ export type TriageEntryDisplayV1 = Readonly<{
   key: string;
   title: string;
   scopeLabel: string;
+  /** The source's bounded semantic summary, independent of the row status line. */
+  summary: string | null;
   /**
    * The row's quiet trailing line: why it needs the reader, or why it cannot
    * currently be shown. `null` is an ordinary row with nothing to add.
@@ -31,48 +33,6 @@ export type TriageEntryDisplayV1 = Readonly<{
   /** Whether the row's presence is a caution rather than ordinary content. */
   tone: 'neutral' | 'warning' | 'danger';
 }>;
-
-/**
- * The presentation key of one canonical entry reference.
- *
- * A JSON array encoding rather than a delimiter join, for the same reason the
- * fold in `projection/listWindow.ts` uses one: `U+001F` is representable inside
- * `collisionScope`, so a joined key can merge two contract-valid distinct
- * entries — and two merged rows would put keyboard focus and selection on an
- * entry the reader never chose. JSON string escaping is injective over the
- * ordered components, so this key cannot collide.
- */
-export function triageEntryRowKey(entryRef: TriageEntryRefV1): string {
-  return JSON.stringify([
-    entryRef.source.pluginId,
-    entryRef.source.localId,
-    entryRef.kindId,
-    entryRef.collisionScope,
-    entryRef.entryId,
-  ]);
-}
-
-type PresentOutcomeV1 = Extract<ProjectedObservationV1['outcome'], Readonly<{ kind: 'present' }>>;
-
-function selectedPresentOutcome(row: TriageListRowV1): PresentOutcomeV1 | null {
-  if (row.selected.kind !== 'selected') return null;
-  const selectedInstanceId = row.selected.sourceInstanceId;
-  for (const observation of row.observations) {
-    if (observation.sourceInstanceId !== selectedInstanceId) continue;
-    if (observation.outcome.kind === 'present') return observation.outcome;
-  }
-  return null;
-}
-
-function newestPresentOutcome(row: TriageListRowV1): PresentOutcomeV1 | null {
-  let newest: Readonly<{ observedAtMs: number; outcome: PresentOutcomeV1 }> | null = null;
-  for (const observation of row.observations) {
-    if (observation.outcome.kind !== 'present') continue;
-    if (newest !== null && observation.observedAtMs <= newest.observedAtMs) continue;
-    newest = { observedAtMs: observation.observedAtMs, outcome: observation.outcome };
-  }
-  return newest === null ? null : newest.outcome;
-}
 
 /**
  * `absent` and `unresolved` are said in words rather than by omission: a row
@@ -94,20 +54,21 @@ function presenceDetail(row: TriageListRowV1): Readonly<{
 }
 
 export function projectTriageEntryDisplay(row: TriageListRowV1): TriageEntryDisplayV1 {
-  const outcome = selectedPresentOutcome(row) ?? newestPresentOutcome(row);
+  const snapshot = row.content?.outcome.snapshot;
   const presence = presenceDetail(row);
   // Attention outranks a presence note only when the row is actually present:
   // "your review is requested" over an entry the source no longer reports would
   // send the reader somewhere that is not there.
-  const detail = presence.detail ?? row.attention?.reasonLabel ?? outcome?.snapshot.summary ?? null;
+  const detail = presence.detail ?? row.attention?.reasonLabel ?? snapshot?.summary ?? null;
 
   return Object.freeze({
     key: triageEntryRowKey(row.entryRef),
     // The identity-only fallback is deliberately the canonical reference rather
     // than an invented placeholder: with no present observation anywhere, the
     // entry id is the only true thing we know about this row.
-    title: outcome?.snapshot.title ?? row.entryRef.entryId,
-    scopeLabel: outcome?.snapshot.scopeLabel ?? row.entryRef.collisionScope,
+    title: snapshot?.title ?? row.entryRef.entryId,
+    scopeLabel: snapshot?.scopeLabel ?? row.entryRef.collisionScope,
+    summary: snapshot?.summary ?? null,
     detail,
     tone: presence.tone,
   });

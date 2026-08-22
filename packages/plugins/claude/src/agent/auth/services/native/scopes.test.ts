@@ -9,7 +9,7 @@ import {
 describe('claudeCodeCredentialScopes', () => {
     it('declares the complete Claude Code OAuth scope string', () => {
         expect(CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE).toBe(
-            'user:inference user:profile user:sessions:claude_code user:mcp_servers user:file_upload',
+            'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload',
         );
     });
 

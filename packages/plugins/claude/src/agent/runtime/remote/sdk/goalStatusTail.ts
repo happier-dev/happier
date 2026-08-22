@@ -1,7 +1,7 @@
 import type {
   AgentTranscriptFileFollowHandle,
   AgentTranscriptFileFollowService,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ClaudeRuntimeLogger } from '../../dependencies.js';
 
 /**

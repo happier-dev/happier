@@ -13,11 +13,15 @@
  * the origin THIS invocation was authorized against. A token that names a different
  * lane set, a different rotation, or a URL on another host is refused whole rather
  * than partially adopted, and the caller restarts at `page: 'initial'`.
+ *
+ * The bounded JSON envelope is the protocol's; the frontier record inside it and every
+ * field check on the way back in stay here.
  */
 
-import { admitForgeRequestUrl } from '@happier-dev/scm-forge-adapter';
+import { admitForgeRequestUrl } from '@happier-dev/triage-sources/runtime';
 import {
-  MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
+  decodeTriagePagingTokenV1,
+  encodeTriagePagingTokenV1,
   type TriageScanContinuationV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -44,7 +48,7 @@ function laneKey(request: GitlabLaneRequest): string {
 export function encodeGitlabScanContinuation(
   frontier: GitlabScanFrontier,
 ): TriageScanContinuationV1 | null {
-  const token = JSON.stringify({
+  const token = encodeTriagePagingTokenV1({
     v: CONTINUATION_VERSION,
     scanLimit: frontier.scanLimit,
     nativePageSize: frontier.nativePageSize,
@@ -58,8 +62,7 @@ export function encodeGitlabScanContinuation(
       ended: lane.ended,
     })),
   });
-  if (new TextEncoder().encode(token).length > MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1) return null;
-  return { v: 1, token };
+  return token === null ? null : { v: 1, token };
 }
 
 export type GitlabScanContinuationDecodeInput = Readonly<{
@@ -73,13 +76,7 @@ export type GitlabScanContinuationDecodeInput = Readonly<{
 export function decodeGitlabScanContinuation(
   input: GitlabScanContinuationDecodeInput,
 ): GitlabScanFrontier | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(input.continuation.token);
-  } catch {
-    return null;
-  }
-  const record = readRecord(parsed);
+  const record = decodeTriagePagingTokenV1(input.continuation.token);
   if (record === null || record.v !== CONTINUATION_VERSION) return null;
 
   const scanLimit = readCount(record.scanLimit, 1);

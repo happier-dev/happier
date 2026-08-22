@@ -29,14 +29,49 @@ import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
  */
 export const TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS = 30_000;
 
+/**
+ * The furthest ahead a source-stated `retryNotBeforeMs` may push our pacing.
+ *
+ * This is the one owner of that bound. It lives here, at the single consumer of
+ * the provider's deadline, rather than in each source: `TriageSourceFailureV1`
+ * publishes an unbounded absolute instant on purpose — a source reports what its
+ * provider said — and how long *we* are willing to wait on that statement is
+ * this module's pacing decision, exactly like the minimum interval above. Four
+ * sources previously clamped their own value with four private constants while
+ * two did not, so the same skewed header parked one source and not another, and
+ * a third-party source received no protection at all. Bounding it here covers
+ * every source, including ones this repository does not ship.
+ *
+ * An hour is the ceiling every documented forge quota window fits inside
+ * (GitLab approximates a differently configured period to "the nearest 60-minute
+ * period"; Bitbucket publishes a one-hour rolling window), so a deadline beyond
+ * it is a clock skew, a mis-scaled unit, or a rewriting intermediary rather than
+ * a real window. The deadline is honoured, never bypassed — `core/CORPUS.md`
+ * §4.2 requires surfacing the wait rather than overriding provider authority —
+ * but it can no longer outlive a plausible window and hold the reader's own
+ * **Refresh** press for days.
+ */
+const TRIAGE_SOURCE_RETRY_HORIZON_MS = 60 * 60 * 1_000;
+
 /** First aggregate backoff ceiling after a provider-pacing failure. */
 const TRIAGE_REFRESH_BACKOFF_BASE_MS = 5_000;
 
 /** Ceiling cap: a longer wait would read as "the source is gone", not "busy". */
 const TRIAGE_REFRESH_BACKOFF_CAP_MS = 300_000;
 
-/** The named refresh producers of `core/CORPUS.md` §4.1. */
-export type TriageRefreshTriggerV1 = 'sourceConfigured' | 'view' | 'manual';
+/**
+ * The named refresh producers of `core/CORPUS.md` §4.1 that a producer exists
+ * for: view demand, and the reader pressing **Refresh**.
+ *
+ * §4.1 also names explicit source configuration. That producer was removed with
+ * the post-configuration pass it drove — it read a provider whose observations
+ * reached no reader and paced them in a second coordinator — so the name is
+ * gone from here too rather than left as a member nothing can send. Nothing
+ * durable ever carried it: this vocabulary is process-local, reaches no Action
+ * input, no Collection row and no Settings value, so narrowing it is not a
+ * compatibility question.
+ */
+export type TriageRefreshTriggerV1 = 'view' | 'manual';
 
 /** Why a trigger may not read the provider yet. */
 export type TriageRefreshPacingReasonV1 =
@@ -44,13 +79,39 @@ export type TriageRefreshPacingReasonV1 =
     | 'sourceRetryDeadline'
     | 'failureBackoff';
 
+/**
+ * One refusal to read the provider yet, and the moment that refusal expires.
+ *
+ * It is a named shape rather than two loose members because it is what every
+ * surface must be able to say out loud: a Refresh press that silently does
+ * nothing is the failure `core/CORPUS.md` §4.2 requires surfacing ("surface that
+ * waiting health rather than bypassing provider authority"). The store publishes
+ * this value, the shell and the Composer picker read it, and no consumer derives
+ * a narrower second answer of its own.
+ */
+export type TriageRefreshPacingBlockV1 = Readonly<{
+    reason: TriageRefreshPacingReasonV1;
+    nextEligibleAtMs: number;
+}>;
+
+/**
+ * Whether a published pacing block is still running.
+ *
+ * One predicate, because both surfaces ask the same question of the same
+ * published value and the boundary is the part that drifts: a `<` where the
+ * other side has `<=` leaves one surface disabling a control the coordinator
+ * would already admit. The deadline itself is always the coordinator's.
+ */
+export function isTriageRefreshPacingBlockActiveV1(
+    block: TriageRefreshPacingBlockV1 | null | undefined,
+    nowMs: number,
+): block is TriageRefreshPacingBlockV1 {
+    return block !== null && block !== undefined && block.nextEligibleAtMs > nowMs;
+}
+
 export type TriageRefreshEligibilityV1 =
     | Readonly<{ kind: 'eligible' }>
-    | Readonly<{
-        kind: 'blocked';
-        reason: TriageRefreshPacingReasonV1;
-        nextEligibleAtMs: number;
-    }>;
+    | (Readonly<{ kind: 'blocked' }> & TriageRefreshPacingBlockV1);
 
 /**
  * Process-local pacing evidence for one configured source instance.
@@ -116,8 +177,8 @@ export function evaluateRefreshEligibility(input: Readonly<{
         ...(input.backoff.failureBackoffUntilMs === null
             ? []
             : [{ reason: 'failureBackoff' as const, deadlineMs: input.backoff.failureBackoffUntilMs }]),
-        // Only view demand is paced. Explicit configuration and manual Refresh
-        // are the user asking, and the user is never rate-limited by us.
+        // Only view demand is paced. Manual Refresh is the user asking, and the
+        // user is never rate-limited by us.
         ...(input.trigger === 'view' && input.lastReadStartedAtMs !== null
             ? [{
                 reason: 'minimumInterval' as const,
@@ -147,7 +208,10 @@ export function evaluateRefreshEligibility(input: Readonly<{
  * The source's own `retryNotBeforeMs` replaces ours because the latest provider
  * statement is the authoritative one; we never attempt before an outstanding
  * deadline, so there is no case where dropping an older deadline lets a trigger
- * through early.
+ * through early. It is bounded to `TRIAGE_SOURCE_RETRY_HORIZON_MS` on the way
+ * in, so every reader of this state — the coordinator, the shell, the Composer
+ * picker — sees the deadline that is actually honoured rather than a raw header
+ * value one of them would have to bound again.
  *
  * Full jitter — a uniform draw inside the exponential ceiling rather than the
  * ceiling itself — keeps two machines observing the same failing source from
@@ -160,7 +224,10 @@ export function recordRefreshFailure(input: Readonly<{
     nowMs: number;
     random: () => number;
 }>): TriageRefreshBackoffStateV1 {
-    const retryNotBeforeMs = input.failure.retryNotBeforeMs ?? null;
+    const stated = input.failure.retryNotBeforeMs ?? null;
+    const retryNotBeforeMs = stated === null
+        ? null
+        : Math.min(stated, input.nowMs + TRIAGE_SOURCE_RETRY_HORIZON_MS);
     if (!isProviderPacingFailure(input.failure)) {
         return {
             retryNotBeforeMs,

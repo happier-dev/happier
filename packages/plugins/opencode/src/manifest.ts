@@ -1,6 +1,11 @@
-import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import type {
+  McpDiscoveredEndpoint as PluginMcpDiscoveredEndpoint,
+} from '@happier-dev/plugin-sdk/mcp';
 
-import { OPENCODE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
+import { AGENT_DEFINITION } from './agent/definition.js';
+import { readOpenCodeMcpConfigServers } from './agent/mcp/discovery.js';
 import {
   OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
   OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
@@ -10,12 +15,53 @@ import {
 import {
   OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV,
 } from './agent/auth/services/requestAuth/env.js';
-import { OPENCODE_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
+import {
+  OPENCODE_PROVIDER_BINDING_ADAPTER_V1,
+  OPENCODE_PROVIDER_OWNED_ENV_KEYS,
+} from './agent/providerBinding/adapter.js';
+import { createOpenCodeAgentRuntime } from './agent/runtime/nativeRuntime.js';
+import { openCodeExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
+import { openCodeExternalSessionObservationContribution } from './agent/surfaces/sessions/external/observation.js';
+import { openCodeExternalSessionTakeoverContribution } from './agent/surfaces/sessions/external/provider.js';
 import { OPEN_CODE_SYSTEM_TOOL_ID } from './agent/systemTool.js';
+import { OPENCODE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
-export const PLUGIN_MANIFEST = {
-  schemaVersion: 2, id: 'happier.agent.opencode', version: '0.0.0', displayName: 'OpenCode',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './dist/index.js' },
+function normalizeOpenCodeMcpServerIdSegment(name: string): string | null {
+  const normalized = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/gu, '-')
+    .replace(/-+/gu, '-')
+    .replace(/^-|-$/gu, '');
+  return normalized.length > 0 ? normalized : null;
+}
+
+function toOpenCodeMcpEndpoint(server: Awaited<ReturnType<typeof readOpenCodeMcpConfigServers>>['servers'][number]): PluginMcpDiscoveredEndpoint | null {
+  if (server.enabled === false) return null;
+  const idSegment = normalizeOpenCodeMcpServerIdSegment(server.name);
+  if (!idSegment) return null;
+  const id = `opencode.config.${idSegment}`;
+  if ((server.transport === 'http' || server.transport === 'sse') && server.remote?.url) {
+    return {
+      id,
+      name: server.name,
+      kind: server.transport,
+      url: server.remote.url,
+    };
+  }
+  return null;
+}
+
+const {
+  id: OPENCODE_AGENT_SETTINGS_CONTRIBUTION_ID,
+  ...OPENCODE_AGENT_SETTINGS_DECLARATION
+} = OPENCODE_AGENT_SETTINGS_CONTRIBUTION;
+
+export const OPENCODE_PLUGIN = definePlugin({
+  id: 'happier.agent.opencode',
+  version: '0.0.0',
+  displayName: 'OpenCode',
+  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
       id: 'opencode-workspace',
@@ -42,146 +88,190 @@ export const PLUGIN_MANIFEST = {
     }],
     optional: [],
   },
-  contributes: {
-    agents: [{
-      id: 'opencode',
-      title: 'OpenCode',
-      runtime: { kind: 'custom' },
-      cli: {
-        displayName: 'OpenCode CLI',
-        executable: {
-          binaryName: 'opencode',
-          knownUserBinDirSuffixes: ['.opencode/bin', 'AppData/Roaming/npm'],
-          sourcePreference: 'system-first',
-        },
-        install: {
-          managed: {
-            kind: 'managed_package',
-            packageName: 'opencode-ai',
+  agents: {
+    opencode: {
+      declaration: {
+        title: 'OpenCode',
+        runtime: { kind: 'custom' },
+        cli: {
+          displayName: 'OpenCode CLI',
+          executable: {
             binaryName: 'opencode',
-            packageBinarySetup: { kind: 'opencode_platform_binary' },
+            knownUserBinDirSuffixes: ['.opencode/bin', 'AppData/Roaming/npm'],
+            sourcePreference: 'system-first',
           },
-          manual: { kind: 'command' },
-          recommendationOrder: 40,
-          guideUrl: 'https://opencode.ai/docs',
-          docsUrl: 'https://opencode.ai',
-        },
-        auth: {
-          support: 'login_terminal',
-          probe: {
-            parser: 'opencodeAuthList',
-            backgroundChecks: 'safe',
-            statusArgs: ['auth', 'list'],
-          },
-          loginLaunches: [{ kind: 'primary', args: ['auth', 'login'] }],
-        },
-      },
-      primary: 'sessions',
-      connectedAccounts: [{
-        purpose: OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
-        service: {
-          pluginId: 'happier.agent.claude',
-          localId: 'claude-subscription',
-        },
-        materializationKinds: ['environment', 'httpHeaders'],
-      }, {
-        purpose: OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-        service: {
-          pluginId: 'happier.agent.codex',
-          localId: 'openai-codex',
-        },
-        materializationKinds: ['httpHeaders'],
-      }, {
-        purpose: OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID,
-        service: {
-          pluginId: 'happier.voice.openai',
-          localId: 'openai',
-        },
-        materializationKinds: ['environment'],
-      }, {
-        purpose: OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
-        service: {
-          pluginId: 'happier.agent.claude',
-          localId: 'anthropic',
-        },
-        materializationKinds: ['environment'],
-      }],
-      capabilities: {
-        surfaces: ['externalSessions'],
-        sessions: {
-          open: ['create', 'resume', 'fork'],
-          delivery: ['newTurn', 'steer', 'followUp'],
-          cancel: true,
-          configuration: true,
-          compaction: { events: true, manual: true },
-          catalog: { active: ['skills'] },
-          usageLimitRecovery: {
-            active: ['checkNow'],
-            inactive: ['checkNow'],
-          },
-        },
-        executionRuns: { open: ['create'], checkpoint: true, stop: true },
-      },
-      providerRequirements: {
-        acceptsProtocols: ['openai-responses', 'openai-chat'],
-        required: { streaming: true, toolRoundTrips: true },
-        credentialSupport: {
-          supportsNoAuth: true,
-          apiKeyTransports: [
-            {
-              protocol: 'openai-responses',
-              destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
+          install: {
+            managed: {
+              kind: 'managed_package',
+              packageName: 'opencode-ai',
+              binaryName: 'opencode',
+              packageBinarySetup: { kind: 'opencode_platform_binary' },
             },
-            {
-              protocol: 'openai-chat',
-              destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
-            },
-          ],
-        },
-        authIsolation: {
-          suppressConnectedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic'],
-          ownedEnvKeys: [...OPENCODE_PROVIDER_OWNED_ENV_KEYS],
-        },
-        materialization: 'configFile',
-        applyPolicy: 'restart_session',
-        supportsFreeformModelIds: true,
-      },
-      surfaces: { externalSession: {
-        externalLinkedTakeover: { writerSafety: 'unsupported' },
-        sources: [{
-        sourceKind: 'opencodeServer',
-        schema: { fields: [
-          { name: 'kind', kind: 'literal', value: 'opencodeServer' },
-          { name: 'baseUrl', kind: 'unknown', optional: true },
-          { name: 'directory', kind: 'unknown', optional: true },
-          { name: 'managedEndpoint', kind: 'unknown', optional: true },
-        ] },
-        key: { segments: [
-          { kind: 'literal', value: 'opencodeServer' },
-          { kind: 'field', field: 'baseUrl' },
-          { kind: 'field', field: 'directory' },
-        ] },
-        instances: [
-          // Happier owns an OpenCode server by default…
-          { kind: 'default', constants: { managedEndpoint: true } },
-          // …and attaches to the user's own server when they configured one.
-          {
-            kind: 'agentSetting',
-            settingId: 'opencodeServerBaseUrl',
-            byServerIdSettingId: 'opencodeServerBaseUrlByServerIdV1',
-            field: 'baseUrl',
-            normalization: 'httpOrigin',
+            manual: { kind: 'command' },
+            recommendationOrder: 40,
+            guideUrl: 'https://opencode.ai/docs',
+            docsUrl: 'https://opencode.ai',
           },
-        ],
-      }],
-      } },
-    }],
-    mcp: { servers: [], discoverySources: [{ id: 'config', title: 'OpenCode MCP configuration', metadata: { agentId: 'opencode' } }] },
-    systemTools: [{
-      id: OPEN_CODE_SYSTEM_TOOL_ID,
+          auth: {
+            support: 'login_terminal',
+            probe: {
+              parser: 'opencodeAuthList',
+              backgroundChecks: 'safe',
+              statusArgs: ['auth', 'list'],
+            },
+            loginLaunches: [{ kind: 'primary', args: ['auth', 'login'] }],
+          },
+        },
+        primary: 'sessions',
+        connectedAccounts: [{
+          purpose: OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+          service: {
+            pluginId: 'happier.agent.claude',
+            localId: 'claude-subscription',
+          },
+          materializationKinds: ['environment', 'httpHeaders'],
+        }, {
+          purpose: OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+          service: {
+            pluginId: 'happier.agent.codex',
+            localId: 'openai-codex',
+          },
+          materializationKinds: ['httpHeaders'],
+        }, {
+          purpose: OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID,
+          service: {
+            pluginId: 'happier.voice.openai',
+            localId: 'openai',
+          },
+          materializationKinds: ['environment'],
+        }, {
+          purpose: OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
+          service: {
+            pluginId: 'happier.agent.claude',
+            localId: 'anthropic',
+          },
+          materializationKinds: ['environment'],
+        }],
+        capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
+          surfaces: ['externalSessions'],
+          sessions: {
+            open: ['create', 'resume'],
+            delivery: ['newTurn', 'steer', 'followUp'],
+            cancel: true,
+            configuration: true,
+            compaction: { events: true, manual: true },
+            catalog: { active: ['skills'] },
+            usageLimitRecovery: {
+              active: ['checkNow'],
+              inactive: ['checkNow'],
+            },
+          },
+          executionRuns: { open: ['create'], checkpoint: true, stop: true },
+        }),
+        providerRequirements: {
+          acceptsProtocols: ['openai-responses', 'openai-chat'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: {
+            supportsNoAuth: true,
+            apiKeyTransports: [
+              {
+                protocol: 'openai-responses',
+                destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
+              },
+              {
+                protocol: 'openai-chat',
+                destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
+              },
+            ],
+          },
+          authIsolation: {
+            suppressConnectedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic'],
+            ownedEnvKeys: [...OPENCODE_PROVIDER_OWNED_ENV_KEYS],
+          },
+          materialization: 'configFile',
+          applyPolicy: 'restart_session',
+          supportsFreeformModelIds: true,
+        },
+        surfaces: { externalSession: {
+          externalLinkedTakeover: { writerSafety: 'unsupported' },
+          sources: [{
+            sourceKind: 'opencodeServer',
+            schema: { fields: [
+              { name: 'kind', kind: 'literal', value: 'opencodeServer' },
+              { name: 'baseUrl', kind: 'unknown', optional: true },
+              { name: 'directory', kind: 'unknown', optional: true },
+              { name: 'managedEndpoint', kind: 'unknown', optional: true },
+            ] },
+            key: { segments: [
+              { kind: 'literal', value: 'opencodeServer' },
+              { kind: 'field', field: 'baseUrl' },
+              { kind: 'field', field: 'directory' },
+            ] },
+            instances: [
+              { kind: 'default', constants: { managedEndpoint: true } },
+              {
+                // OVERRIDE, not an addition: every configured source becomes a
+                // supervised attach target, so an admitted operator-configured
+                // server must REPLACE the managed default rather than run
+                // beside it. The shared materializer keeps the default whenever
+                // the setting is absent, blank, or rejected.
+                kind: 'agentSettingOverride',
+                settingId: 'opencodeServerBaseUrl',
+                byServerIdSettingId: 'opencodeServerBaseUrlByServerIdV1',
+                field: 'baseUrl',
+                normalization: 'httpOrigin',
+              },
+            ],
+          }],
+        } },
+      },
+      factory: createOpenCodeAgentRuntime,
+      providerBinding: OPENCODE_PROVIDER_BINDING_ADAPTER_V1,
+      sessionRunnerFactory: {
+        module: './agent/runtime/nativeRuntime',
+        export: 'createOpenCodeAgentRuntime',
+        runtimeApiVersion: 1,
+        externalSessionsExport: 'openCodeExternalSessionsContribution',
+      },
+      externalSessions: openCodeExternalSessionsContribution,
+      externalSessionTakeover: openCodeExternalSessionTakeoverContribution,
+      externalSessionObservation: openCodeExternalSessionObservationContribution,
+    },
+  },
+  mcp: {
+    servers: {},
+    discoverySources: {
+      config: {
+        declaration: { title: 'OpenCode MCP configuration', metadata: { agentId: 'opencode' } },
+        discover: async (input) => {
+          const detected = await readOpenCodeMcpConfigServers({
+            directory: input?.directory ?? null,
+          });
+          const endpoints = detected.servers
+            .map(toOpenCodeMcpEndpoint)
+            .filter((endpoint): endpoint is PluginMcpDiscoveredEndpoint => endpoint !== null);
+          const countsById = new Map<string, number>();
+          for (const endpoint of endpoints) {
+            countsById.set(endpoint.id, (countsById.get(endpoint.id) ?? 0) + 1);
+          }
+          return {
+            items: [],
+            endpoints: endpoints.filter((endpoint) => countsById.get(endpoint.id) === 1),
+            warnings: detected.warnings,
+          };
+        },
+      },
+    },
+  },
+  systemTools: {
+    [OPEN_CODE_SYSTEM_TOOL_ID]: {
       title: 'OpenCode CLI',
       executableNames: ['opencode'],
-    }],
-    settings: [OPENCODE_AGENT_SETTINGS_CONTRIBUTION],
+    },
   },
-} satisfies PluginManifest;
+  settings: {
+    [OPENCODE_AGENT_SETTINGS_CONTRIBUTION_ID]: OPENCODE_AGENT_SETTINGS_DECLARATION,
+  },
+});
+
+export const PLUGIN_MANIFEST = OPENCODE_PLUGIN.manifest;

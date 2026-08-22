@@ -1,10 +1,9 @@
 import type {
-  ExecService,
   PluginProcessResult,
 } from '@happier-dev/plugin-sdk/exec';
 import {
+  type AgentRuntimeHandoffSurface,
   type AgentTerminalSessionStateUpdate,
-  type HandoffSurfaceV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
@@ -135,7 +134,7 @@ function readProcessResult(result: PluginProcessResult): Readonly<{
 }
 
 async function resolveOpenCodeExecutable(
-  exec: ExecService,
+  exec: import('@happier-dev/plugin-sdk/exec').ExecService,
   purpose: string,
 ) {
   return (await exec.systemTools.resolve({
@@ -144,9 +143,9 @@ async function resolveOpenCodeExecutable(
   })).executable;
 }
 
-export function createOpenCodeHandoffSurfaceForExec(exec: ExecService): HandoffSurfaceV1 {
-  return {
-    exportBundle: async (params) => {
+export const openCodeHandoffSurface = {
+    exportBundle: async (params, context) => {
+      const exec = context.services.exec;
       const providerSessionId = readOpenCodeProviderSessionIdFromMetadata(params.metadata);
       if (!providerSessionId) {
         return {
@@ -158,11 +157,14 @@ export function createOpenCodeHandoffSurfaceForExec(exec: ExecService): HandoffS
 
       try {
         const executable = await resolveOpenCodeExecutable(exec, 'Export an OpenCode session for handoff');
-        const result = readProcessResult(await exec.run({
-          executable,
-          args: ['export', providerSessionId],
-          maxStdoutBytes: OPEN_CODE_EXPORT_MAX_BUFFER_BYTES,
-        }));
+        const result = readProcessResult(await exec.run(
+          {
+            executable,
+            args: ['export', providerSessionId],
+            maxStdoutBytes: OPEN_CODE_EXPORT_MAX_BUFFER_BYTES,
+          },
+          { signal: context.signal },
+        ));
         if (result.exitCode !== 0) {
           return {
             ok: false,
@@ -189,7 +191,8 @@ export function createOpenCodeHandoffSurfaceForExec(exec: ExecService): HandoffS
         };
       }
     },
-    importBundle: async (params) => {
+    importBundle: async (params, context) => {
+      const exec = context.services.exec;
       const bundle = params.bundle as Partial<OpenCodeSessionBundle>;
       if (bundle.agentId !== 'opencode' || typeof bundle.remoteSessionId !== 'string' || typeof bundle.exportJsonBase64 !== 'string') {
         return {
@@ -226,12 +229,15 @@ export function createOpenCodeHandoffSurfaceForExec(exec: ExecService): HandoffS
           };
         }
 
-        const existingExport = readProcessResult(await exec.run({
-          executable,
-          args: ['export', bundle.remoteSessionId],
-          cwd: { root: 'workspace', relativePath: '' },
-          maxStdoutBytes: OPEN_CODE_EXPORT_MAX_BUFFER_BYTES,
-        }));
+        const existingExport = readProcessResult(await exec.run(
+          {
+            executable,
+            args: ['export', bundle.remoteSessionId],
+            cwd: { root: 'workspace', relativePath: '' },
+            maxStdoutBytes: OPEN_CODE_EXPORT_MAX_BUFFER_BYTES,
+          },
+          { signal: context.signal },
+        ));
 
         if (existingExport.exitCode === 0) {
           const normalizedExisting = Buffer.byteLength(existingExport.stdout, 'utf8') <= OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES
@@ -261,11 +267,14 @@ export function createOpenCodeHandoffSurfaceForExec(exec: ExecService): HandoffS
           };
         }
 
-        const versionResult = readProcessResult(await exec.run({
-          executable,
-          args: ['--version'],
-          cwd: { root: 'workspace', relativePath: '' },
-        }));
+        const versionResult = readProcessResult(await exec.run(
+          {
+            executable,
+            args: ['--version'],
+            cwd: { root: 'workspace', relativePath: '' },
+          },
+          { signal: context.signal },
+        ));
         const version = versionResult.exitCode === 0 && versionResult.stdout.trim()
           ? versionResult.stdout.trim()
           : 'unknown version';
@@ -286,5 +295,4 @@ export function createOpenCodeHandoffSurfaceForExec(exec: ExecService): HandoffS
         };
       }
     },
-  };
-}
+} satisfies AgentRuntimeHandoffSurface;

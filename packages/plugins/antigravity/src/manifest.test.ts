@@ -16,7 +16,7 @@ describe('Antigravity plugin manifest', () => {
   it('declares one canonical custom agent while runtime implementation stays daemon-owned', () => {
     expect(PLUGIN_MANIFEST).toMatchObject({
       id: 'happier.agent.antigravity',
-      entrypoints: { daemon: './dist/index.js' },
+      entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: {
         required: expect.arrayContaining([expect.objectContaining({
           id: 'antigravity-external-session-transcripts',

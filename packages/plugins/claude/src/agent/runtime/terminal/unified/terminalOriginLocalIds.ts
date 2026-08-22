@@ -1,6 +1,6 @@
 import type {
-  PluginStorageScopeService,
-} from '@happier-dev/plugin-sdk/runtime';
+  StorageScopeService,
+} from '@happier-dev/plugin-sdk/storage';
 import type { ClaudeRuntimeLogger } from '../../dependencies.js';
 
 const CLAUDE_TERMINAL_ORIGIN_SEQUENCE_STORAGE_KEY = 'claude.unifiedTerminal.terminalOriginPromptSequence.v1';
@@ -25,7 +25,7 @@ function readStoredSequence(value: unknown): number {
 export function createClaudeUnifiedTerminalOriginLocalIdAllocator(params: Readonly<{
   ctx: Readonly<{
     logger: Pick<ClaudeRuntimeLogger, 'debug'>;
-    storage: Readonly<{ session: Pick<PluginStorageScopeService, 'get' | 'set'> }>;
+    storage: Readonly<{ daemonSession: Pick<StorageScopeService, 'get' | 'set'> }>;
   }>;
   sessionId: string;
 }>): Readonly<{
@@ -35,7 +35,7 @@ export function createClaudeUnifiedTerminalOriginLocalIdAllocator(params: Readon
 
   async function readLastNonce(): Promise<number> {
     try {
-      return readStoredSequence(await params.ctx.storage.session.get(CLAUDE_TERMINAL_ORIGIN_SEQUENCE_STORAGE_KEY));
+      return readStoredSequence(await params.ctx.storage.daemonSession.get(CLAUDE_TERMINAL_ORIGIN_SEQUENCE_STORAGE_KEY));
     } catch (error) {
       params.ctx.logger.debug('[ClaudeUnifiedTerminal] failed to read terminal-origin prompt sequence', { error });
       return inMemoryLastNonce;
@@ -44,7 +44,7 @@ export function createClaudeUnifiedTerminalOriginLocalIdAllocator(params: Readon
 
   async function writeLastNonce(lastNonce: number): Promise<void> {
     try {
-      await params.ctx.storage.session.set(CLAUDE_TERMINAL_ORIGIN_SEQUENCE_STORAGE_KEY, {
+      await params.ctx.storage.daemonSession.set(CLAUDE_TERMINAL_ORIGIN_SEQUENCE_STORAGE_KEY, {
         v: 1,
         lastNonce,
       });

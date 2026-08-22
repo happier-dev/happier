@@ -4,6 +4,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import { PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1 } from '@happier-dev/plugin-sdk/ui';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
@@ -12,10 +13,13 @@ import {
     TRIAGE_SOURCE_DETAIL_SURFACE_ROLE_V1,
     TriageConfiguredSourceInstanceV1Schema,
     TriageDetailSurfaceInputV1JsonSchema,
+    TriageEntryRefV1Schema,
     type TriageConfiguredSourceInstanceV1,
     type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
+
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 
 import { TriageReadEntryDetailInputV1Schema } from '../actions/entryDetailProtocol.js';
 import {
@@ -40,6 +44,11 @@ import {
     testkitSnapshot,
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
+import { buildTriageEntryDetailLaunchInput } from '../composer/entryDetailLaunchInput.js';
+import {
+    TRIAGE_ROUTE_DEFAULT_LENS_V1,
+    buildTriageRouteSubPathV1,
+} from './navigation/location.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 
@@ -64,10 +73,37 @@ import { renderSurface as renderShellSurface } from './surface.js';
 
 const SOURCE = Object.freeze({ pluginId: 'happier.example.source', localId: 'example-forge' });
 const INSTANCE = '11111111-1111-4111-8111-111111111111';
+/**
+ * A SECOND configured connection to the same source, sorted after the first.
+ *
+ * One entry observed by two of the reader's own accounts is ordinary — a public
+ * pull request both of them can see — and the corpus's instance selector breaks
+ * that tie deterministically by the smaller id. So the window's own answer for
+ * this entry is always `INSTANCE`, which is what makes "the launch's connection
+ * won" falsifiable: with one configured connection, honouring the launch and
+ * ignoring it are the same code.
+ */
+const SECOND_INSTANCE = '22222222-2222-4222-8222-222222222222';
 const CONTRIBUTOR_GENERATION = 'contributor-generation-a';
 const TARGET_GENERATION = 'target-generation-a';
 const DETAIL_RENDERER_ID = 'example-detail';
 const DETAIL_BODY_TEXT = 'The example forge detail body';
+/**
+ * One entry whose canonical reference is as large as the contract allows.
+ *
+ * `MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1` is 192 bytes and
+ * `MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1` is 128, and percent-encoding triples a
+ * non-Latin byte — so a perfectly ordinary entry from a non-Latin repository
+ * produces a selection segment of ~750 route bytes on its own. That is what
+ * makes §3.2's refusal reachable by a reader rather than only by a hand-edited
+ * URL, and it is why the fixture carries a real one instead of padding a short
+ * reference out with filler.
+ */
+const LONG_SCOPE = '設'.repeat(64);
+const LONG_ENTRY_ID = '9'.repeat(128);
+const LONG_REF_ROW_TITLE = 'An entry with a very long canonical reference';
+/** Long enough to pad a location to the bound; bounded by the wire's 512 bytes. */
+const SUMMARY_PADDING = 'x'.repeat(512);
 const PROTOCOL = Object.freeze({
     id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
@@ -247,36 +283,47 @@ function surfaceContext(options: Readonly<{ contributesDetail?: boolean }> = {})
     });
 }
 
-function configuredInstance(): TriageConfiguredSourceInstanceV1 {
+function configuredInstance(
+    sourceInstanceId: string = INSTANCE,
+): TriageConfiguredSourceInstanceV1 {
+    const second = sourceInstanceId === SECOND_INSTANCE;
     return TriageConfiguredSourceInstanceV1Schema.parse({
         v: 1,
-        instance: { source: SOURCE, sourceInstanceId: INSTANCE },
+        instance: { source: SOURCE, sourceInstanceId },
         binding: {
             purpose: 'triage-source',
-            account: { service: { pluginId: SOURCE.pluginId, localId: 'accounts' }, accountId: 'account-1' },
+            account: {
+                service: { pluginId: SOURCE.pluginId, localId: 'accounts' },
+                accountId: second ? 'account-2' : 'account-1',
+            },
         },
         localInstanceKey: 'example/repository',
         configuration: { v: 1, token: 'routing-token' },
         // Deliberately not the entry's scope label: the header renders both,
         // and a fixture where they read the same would let one stand in for the
         // other.
-        locator: { v: 1, displayLabel: 'Example account' },
+        locator: { v: 1, displayLabel: second ? 'Second account' : 'Example account' },
     });
 }
 
-function instanceRow(): CorpusSourceInstanceRowV1 {
+function instanceRow(sourceInstanceId: string = INSTANCE): CorpusSourceInstanceRowV1 {
     return {
-        instanceTag: `a${'0'.repeat(42)}`,
+        instanceTag: `${sourceInstanceId === SECOND_INSTANCE ? 'b' : 'a'}${'0'.repeat(42)}`,
         sourceQualifiedId: `${SOURCE.pluginId}/${SOURCE.localId}`,
         lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active,
         configuredAtMs: 1,
-        configured: configuredInstance(),
+        configured: configuredInstance(sourceInstanceId),
     };
 }
 
-function createHarness() {
+function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
+    if (options.secondInstance === true) {
+        control.sourceInstances.seed(toCorpusStoredValue(instanceRow(SECOND_INSTANCE)));
+    }
+    /** Every connection the mounted detail actually ran a read under. */
+    const readDetailInstanceIds: string[] = [];
     /** Flipped to make the next pass observe nothing, so the row leaves. */
     const observes = { current: true };
 
@@ -297,6 +344,23 @@ function createHarness() {
             snapshot: testkitSnapshot({ title: 'Replace the duplicated normalizer' }),
             viewer: testkitViewer(),
             sourceUpdatedAtMs: 3_000,
+        }, {
+            kind: 'present',
+            localRef: {
+                kindId: 'pull-request',
+                collisionScope: LONG_SCOPE,
+                entryId: LONG_ENTRY_ID,
+            },
+            locator: testkitLocator(),
+            snapshot: testkitSnapshot({
+                title: LONG_REF_ROW_TITLE,
+                // The one field long enough to hold the padding a near-full
+                // page location needs while still MATCHING this row, now that
+                // the query the location carries actually reaches the window.
+                summary: SUMMARY_PADDING,
+            }),
+            viewer: testkitViewer(),
+            sourceUpdatedAtMs: 2_000,
         }] : [],
         evidence: { kind: 'walkFinished' },
     } satisfies TriageScanResultV1);
@@ -312,12 +376,15 @@ function createHarness() {
         if (action === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) {
             // The real handler over the real Collections; only the invocation
             // context's caller stamp is the host's to supply.
+            const detailInput = TriageReadEntryDetailInputV1Schema.parse(request.input);
+            readDetailInstanceIds.push(detailInput.sourceInstanceId);
             return await readTriageEntryDetail(
-                TriageReadEntryDetailInputV1Schema.parse(request.input),
+                detailInput,
                 {
                     sourceInstances: collections.sourceInstances,
                     sessionLinks: collections.sessionLinks,
                     readSessionSummary: async () => null,
+                    readAdmittedSources: async () => admitted,
                 },
             );
         }
@@ -329,15 +396,34 @@ function createHarness() {
         });
     }
 
-    return { collections, executeAction, observes };
+    return { collections, executeAction, observes, readDetailInstanceIds };
 }
 
 const mounted: PluginUiTestkit[] = [];
 let currentHarness: ReturnType<typeof createHarness> | null = null;
+/**
+ * The last same-page replacement this mount asked the host for.
+ *
+ * The Back case below settles the page's OWN declared step rather than a
+ * hand-written location, so it cannot pass against a shell that declares no
+ * step, declares one that still names the selected entry, or spells the route
+ * differently than it parses it.
+ */
+let lastPageLocation: Readonly<{ subPath: string; backLocation: string | undefined }> | null = null;
 
-async function mountShell(options: Readonly<{ contributesDetail?: boolean }> = {}): Promise<PluginUiTestkit> {
-    const harness = createHarness();
+async function mountShell(
+    options: Readonly<{
+        contributesDetail?: boolean;
+        subPath?: string;
+        launchInput?: JsonValue;
+        secondInstance?: boolean;
+    }> = {},
+): Promise<PluginUiTestkit> {
+    const harness = createHarness(
+        options.secondInstance === undefined ? {} : { secondInstance: options.secondInstance },
+    );
     currentHarness = harness;
+    lastPageLocation = null;
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -347,6 +433,8 @@ async function mountShell(options: Readonly<{ contributesDetail?: boolean }> = {
                 viewId: 'triage',
                 generation: TARGET_GENERATION,
             },
+            ...(options.subPath === undefined ? {} : { subPath: options.subPath }),
+            ...(options.launchInput === undefined ? {} : { launchInput: options.launchInput }),
             surface: renderShellSurface,
             surfaceContext: surfaceContext(options),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({
@@ -360,8 +448,12 @@ async function mountShell(options: Readonly<{ contributesDetail?: boolean }> = {
                 },
             }),
             handlers: {
+                publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
-                replacePageLocation: ({ subPath }) => subPath,
+                replacePageLocation: ({ subPath, backLocation }) => {
+                    lastPageLocation = { subPath, backLocation };
+                    return subPath;
+                },
             },
         });
     });
@@ -411,12 +503,12 @@ describe('opening a row into the source detail', () => {
         // this detail is being read through.
         await expect(shell.getByText('example/repository')).resolves.toBeDefined();
         await expect(shell.getByText('Example account')).resolves.toBeDefined();
-        // The source's own name for itself and for this entry kind live only in
-        // its declared descriptor, which reaches this mount as raw JSON. They
-        // are absent on purpose: decoding them here is the cold UI semantic
-        // projection `SDK-EU-26` reserves (`PLAN.md` §5.2).
-        await expect(shell.queryByText('Example forge')).resolves.toBeUndefined();
-        await expect(shell.queryByText('Pull request')).resolves.toBeUndefined();
+        // §2.2's Source and Type: the source's own name for itself and for this
+        // entry kind, decoded by nothing in this shell — the host parsed the
+        // descriptor at admission and `entries/read-detail-v1` carries the typed
+        // value here out of the admitted snapshot.
+        await expect(shell.getByText('Example forge')).resolves.toBeDefined();
+        await expect(shell.getByText('Pull request')).resolves.toBeDefined();
     });
 
     it('returns to the list when the detail is closed', async () => {
@@ -429,6 +521,39 @@ describe('opening a row into the source detail', () => {
 
         await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
         await expect(shell.queryByText(DETAIL_BODY_TEXT)).resolves.toBeUndefined();
+    });
+
+    it('clears the stacked selection once when the host settles the declared Back step', async () => {
+        // `core/SURFACE.md` §3.3 precedence 3. The host consumes ONE system
+        // Back with the step this page declared, and the only thing that
+        // reaches a mounted surface is a new location — so a shell that read
+        // its location once, at construction, left the reader on a detail
+        // screen the system Back button appeared to do nothing to.
+        const shell = await mountShell();
+        await openTheRow(shell);
+        await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
+
+        const declared = lastPageLocation;
+        if (declared === null) throw new Error('the shell declared no page location for its selection');
+        const backLocation = declared.backLocation;
+        // A selection-free step, declared with the selection and not before it.
+        expect(backLocation).toBeDefined();
+        expect(backLocation).not.toBe(declared.subPath);
+
+        // The location the shell itself asked for, settled and delivered back.
+        // It must NOT close anything: the reader is looking at the entry it
+        // names, and a rule that fired here would slam the detail shut on the
+        // render after every press.
+        await act(async () => { await shell.updatePageLocation(declared.subPath); });
+        await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
+
+        // Now the host walks the declared step. The location names no entry.
+        await act(async () => { await shell.updatePageLocation(backLocation as string); });
+
+        await expect(shell.queryByText(DETAIL_BODY_TEXT)).resolves.toBeUndefined();
+        await expect(shell.getByRole('option', {
+            name: 'Replace the duplicated normalizer',
+        })).resolves.toBeDefined();
     });
 
     it('says the selected entry left the list rather than closing the detail by itself', async () => {
@@ -446,6 +571,302 @@ describe('opening a row into the source detail', () => {
         // Silently falling back to the list would read as the surface closing
         // the detail on its own, with no account of where the entry went.
         await expect(shell.queryByText(DETAIL_BODY_TEXT)).resolves.toBeUndefined();
+    });
+
+    it('refuses a selection whose route would not fit instead of dropping it silently', async () => {
+        // `core/SURFACE.md` §3.2. The 1,024-byte bound is real and fails closed
+        // in transport, but the page used to discard that refusal: the reducer
+        // had already opened the entry, so the reader ended up on a detail
+        // screen their URL did not name — unshareable, unreloadable, and
+        // silent about it. The preflight moves the refusal in front of the
+        // reducer, where it can still be shown and still preserves the lens.
+        const selection = TriageEntryRefV1Schema.parse({
+            source: SOURCE,
+            kindId: 'pull-request',
+            collisionScope: LONG_SCOPE,
+            entryId: LONG_ENTRY_ID,
+        });
+        const bytes = (value: string): number => new TextEncoder().encode(value).byteLength;
+        const selectionSegmentBytes = bytes(buildTriageRouteSubPathV1({
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query: 'x', selection,
+        })) - bytes(buildTriageRouteSubPathV1({
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query: 'x', selection: null,
+        }));
+        // The padding is the settled query, and the query now REACHES the
+        // window (`core/SURFACE.md` §6) — so it is a run the target row's own
+        // summary contains. A run nothing matched would empty the list, and the
+        // press this case is about would have nothing to press.
+        const query = SUMMARY_PADDING.slice(
+            0,
+            PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1 - selectionSegmentBytes - 1,
+        );
+        const openedAt = buildTriageRouteSubPathV1({
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query, selection: null,
+        });
+        // The page's own location is legal; only ADDING the selection is not.
+        expect(bytes(openedAt)).toBeLessThanOrEqual(PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1);
+        expect(bytes(openedAt) + selectionSegmentBytes)
+            .toBeGreaterThan(PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1);
+
+        const shell = await mountShell({ subPath: openedAt });
+        await act(async () => {
+            await shell.press(await shell.getByRole('option', { name: LONG_REF_ROW_TITLE }));
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        await expect(shell.queryByText(DETAIL_BODY_TEXT)).resolves.toBeUndefined();
+        await expect(shell.getByText('That entry could not be opened')).resolves.toBeDefined();
+        // The prior effective lens survives: the row is still listed under the
+        // same query the page was opened at.
+        await expect(shell.getByRole('option', { name: LONG_REF_ROW_TITLE }))
+            .resolves.toBeDefined();
+        // And the host was never asked, so no location moved either.
+        expect(lastPageLocation).toBeNull();
+    });
+
+    it('opens the entry a Composer launch named, over the route the page was mounted at', async () => {
+        // `core/SURFACE.md` §3.2's deciding direct-launch case, and `core/COMPOSER.md`
+        // §7's assignment of it to `ui/surface.tsx`. **View details** produces a
+        // complete strict launch input and the host carries it unchanged, so a
+        // surface that forwards only `subPath` reports `{ kind: 'opened' }` and
+        // silently drops the reader on the page's own prior location.
+        //
+        // The mounted route names A and the launch names B, so an entry read
+        // from the route cannot pass for one read from the launch.
+        const entryA = {
+            source: SOURCE,
+            kindId: 'pull-request',
+            collisionScope: LONG_SCOPE,
+            entryId: LONG_ENTRY_ID,
+        } as const;
+        const entryB = {
+            source: SOURCE,
+            kindId: 'pull-request',
+            collisionScope: 'example/repository',
+            entryId: '17',
+        } as const;
+        const shell = await mountShell({
+            subPath: buildTriageRouteSubPathV1({
+                ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+                selection: entryA,
+            }),
+            launchInput: buildTriageEntryDetailLaunchInput({
+                entryRef: entryB,
+                sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE },
+            }) as unknown as JsonValue,
+        });
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { await Promise.resolve(); });
+
+        // B is what the reader is looking at, not the route's A.
+        await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
+        await expect(shell.queryByText(LONG_REF_ROW_TITLE)).resolves.toBeUndefined();
+
+        // And acceptance is not complete at the reducer: the same location
+        // writer every other selection uses was asked to replace the page
+        // location, so the URL names B rather than the A it was opened at.
+        const settled = lastPageLocation;
+        if (settled === null) throw new Error('the launch selection wrote no page location');
+        expect(settled.subPath).toBe(buildTriageRouteSubPathV1({
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+            selection: entryB,
+        }));
+
+        // The launch is consumed once. A mount that re-read it on every render
+        // would reopen the detail the host's own Back step just closed.
+        const backLocation = settled.backLocation;
+        expect(backLocation).toBeDefined();
+        await act(async () => { await shell.updatePageLocation(backLocation as string); });
+        await act(async () => { await Promise.resolve(); });
+
+        await expect(shell.queryByText(DETAIL_BODY_TEXT)).resolves.toBeUndefined();
+        await expect(shell.getByRole('option', {
+            name: 'Replace the duplicated normalizer',
+        })).resolves.toBeDefined();
+    });
+
+    it('opens the launched connection, not the one the window qualified the row under', async () => {
+        // The authority half of the same rule `openEntryDetails` enforces on the
+        // way out: a launch names ONE exact connection, and the page that
+        // receives it must act under that one. The window makes its own
+        // qualification for every row it lists, and for an entry two of the
+        // reader's accounts both observe, that answer is the deterministic tie
+        // break — never the account the reader actually pressed **View details**
+        // on. Adopting a launch by entry identity alone therefore opens somebody
+        // else's connection while the page looks exactly right.
+        const entry = {
+            source: SOURCE,
+            kindId: 'pull-request',
+            collisionScope: 'example/repository',
+            entryId: '17',
+        } as const;
+        const shell = await mountShell({
+            secondInstance: true,
+            launchInput: buildTriageEntryDetailLaunchInput({
+                entryRef: entry,
+                sourceInstance: { source: SOURCE, sourceInstanceId: SECOND_INSTANCE },
+            }) as unknown as JsonValue,
+        });
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { await Promise.resolve(); });
+
+        const harness = currentHarness;
+        if (harness === null) throw new Error('the shell was not mounted');
+        // What the detail actually RAN under, read at the one Action every
+        // detail read goes through — not at the label beside it.
+        expect(harness.readDetailInstanceIds.length).toBeGreaterThan(0);
+        expect([...new Set(harness.readDetailInstanceIds)]).toEqual([SECOND_INSTANCE]);
+        // And the header names the same one, so a page cannot say one account
+        // while reading through another.
+        await expect(shell.getByText('Second account')).resolves.toBeDefined();
+        await expect(shell.queryByText('Example account')).resolves.toBeUndefined();
+    });
+
+    it('falls through to the page location when the launch input is not admitted', async () => {
+        // `openEntryDetails` admits the input through the SAME parser before it
+        // navigates, so an inadmissible one only reaches here from something
+        // else entirely. It is not a different page: the reader lands on the
+        // location the host routed them to, which is what an ordinary open is.
+        // The refused input names an entry that exists, under a connection to
+        // ANOTHER source — the parser's `sourceMismatch` — so a surface that
+        // forwarded it unvalidated would open the wrong entry rather than
+        // crash, and would still pass a shallower assertion.
+        const entryB = {
+            source: SOURCE,
+            kindId: 'pull-request',
+            collisionScope: 'example/repository',
+            entryId: '17',
+        } as const;
+        const shell = await mountShell({
+            subPath: buildTriageRouteSubPathV1({
+                ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+                selection: entryB,
+            }),
+            launchInput: {
+                v: 1,
+                kind: 'entryDetail',
+                entryRef: {
+                    source: SOURCE,
+                    kindId: 'pull-request',
+                    collisionScope: LONG_SCOPE,
+                    entryId: LONG_ENTRY_ID,
+                },
+                sourceInstance: { source: OTHER_SOURCE, sourceInstanceId: INSTANCE },
+            },
+        });
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { await Promise.resolve(); });
+
+        await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
+        await expect(shell.queryByText(LONG_REF_ROW_TITLE)).resolves.toBeUndefined();
+    });
+
+    it('refuses a Composer launch whose route would not fit, exactly as pressing that row is refused', async () => {
+        // `core/SURFACE.md` §3.2 has ONE preflight site for row activation, and
+        // `applyLensEdit` is it. The adoption used to dispatch `rowActivated`
+        // raw, so a launch onto a page whose lens is already near the subpath
+        // byte cap opened the detail with no location write and no refusal —
+        // while pressing that same row on that same page WAS refused. Two
+        // producers of one selection cannot disagree about whether it is legal.
+        const entry = TriageEntryRefV1Schema.parse({
+            source: SOURCE,
+            kindId: 'pull-request',
+            collisionScope: LONG_SCOPE,
+            entryId: LONG_ENTRY_ID,
+        });
+        const bytes = (value: string): number => new TextEncoder().encode(value).byteLength;
+        const selectionSegmentBytes = bytes(buildTriageRouteSubPathV1({
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query: 'x', selection: entry,
+        })) - bytes(buildTriageRouteSubPathV1({
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query: 'x', selection: null,
+        }));
+        const query = SUMMARY_PADDING.slice(
+            0,
+            PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1 - selectionSegmentBytes - 1,
+        );
+        const openedAt = buildTriageRouteSubPathV1({
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query, selection: null,
+        });
+        // The page's own location is legal; only ADDING the launched selection
+        // to it is not.
+        expect(bytes(openedAt)).toBeLessThanOrEqual(PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1);
+        expect(bytes(openedAt) + selectionSegmentBytes)
+            .toBeGreaterThan(PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1);
+
+        const shell = await mountShell({
+            subPath: openedAt,
+            launchInput: buildTriageEntryDetailLaunchInput({
+                entryRef: entry,
+                sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE },
+            }) as unknown as JsonValue,
+        });
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { await Promise.resolve(); });
+
+        await expect(shell.getByText('That entry could not be opened')).resolves.toBeDefined();
+        // Nothing opened, so there is no detail region and no Close beside it.
+        await expect(shell.queryByText('Close')).resolves.toBeUndefined();
+        // The prior effective lens survives: the row is still listed under the
+        // query the page was opened at.
+        await expect(shell.getByRole('option', { name: LONG_REF_ROW_TITLE })).resolves.toBeDefined();
+        // And the host was never asked, so no location moved either.
+        expect(lastPageLocation).toBeNull();
+    });
+
+    it('selects an entry the page lens excludes and says so rather than doing nothing', async () => {
+        // `core/SURFACE.md` §3.2 and `core/COMPOSER.md` §7: a ref the current
+        // projection has not materialized STILL selects, and the header says so
+        // rather than refusing. The adoption used to scan only the mounted
+        // window — already filtered by the page's own lens — and fall off the
+        // end with no else branch, so a launch onto a page carrying an ordinary
+        // query produced no detail, no header, no location write and no message
+        // at all, while the opener still reported `{ kind: 'opened' }`.
+        const entryB = {
+            source: SOURCE,
+            kindId: 'pull-request',
+            collisionScope: 'example/repository',
+            entryId: '17',
+        } as const;
+        // An ordinary reader state, not a bounded window: a settled query the
+        // OTHER row matches and the launched entry does not.
+        const query = 'canonical';
+        const openedAt = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query });
+        const shell = await mountShell({
+            subPath: openedAt,
+            launchInput: buildTriageEntryDetailLaunchInput({
+                entryRef: entryB,
+                sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE },
+            }) as unknown as JsonValue,
+        });
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { await Promise.resolve(); });
+
+        // The selection is real, and the header names THIS cause. The entry did
+        // not leave a window — this page's own query never listed it — so the
+        // "no longer in the list / may return on the next refresh" sentence
+        // would be false twice over: refreshing forever would not bring it back,
+        // clearing the query would.
+        await expect(shell.getByText('This entry is outside the current filter')).resolves.toBeDefined();
+        await expect(shell.queryByText('This entry is no longer in the list')).resolves.toBeUndefined();
+
+        // Acceptance is not complete at the reducer: the one route owner wrote
+        // the result, so a copied link, reload and Back name the launched entry.
+        const settled = lastPageLocation;
+        if (settled === null) throw new Error('the launch selection wrote no page location');
+        expect(settled.subPath).toBe(buildTriageRouteSubPathV1({
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query, selection: entryB,
+        }));
+
+        // Closing returns to the list the page's lens really does produce: the
+        // other row is listed and the launched entry is not. That exclusion is
+        // what made the old fall-through silent.
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Close' }));
+        });
+        await expect(shell.getByRole('option', { name: LONG_REF_ROW_TITLE })).resolves.toBeDefined();
+        await expect(shell.queryByRole('option', {
+            name: 'Replace the duplicated normalizer',
+        })).resolves.toBeUndefined();
     });
 
     it('says the source contributes no detail view rather than mounting nothing', async () => {

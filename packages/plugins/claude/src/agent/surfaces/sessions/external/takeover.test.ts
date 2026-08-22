@@ -71,6 +71,7 @@ describe('Claude External Sessions takeover launch derivation', () => {
                     projectId: 'project-1',
                 },
                 linkData: { projectId: 'project-1' },
+                targetDirectory: '/local/selected/workspace',
                 linkedDirectory: '/repo/project',
             }),
         )).resolves.toEqual({ ok: false, code: 'cancelled' });
@@ -86,12 +87,13 @@ describe('Claude External Sessions takeover launch derivation', () => {
             maxSerializedBytes: 262_144,
             linkedSessionId: 'happier-session-1',
             remoteSessionId: 'claude-session-current',
-            source: {
+                source: {
                 kind: 'claudeConfig',
                 configDir: '/home/user/.claude-current',
-                projectId: 'project-1',
-            },
-        } as const;
+                    projectId: 'project-1',
+                },
+                targetDirectory: '/local/selected/workspace',
+            } as const;
 
         await expect(Promise.resolve(
             claudeExternalSessionTakeoverContribution.resolveLaunch({

@@ -3,6 +3,7 @@ import {
   VoiceRealtimeJsonValueSchema,
   type VoiceClientAuthArtifact,
 } from '@happier-dev/plugin-sdk/voice/client';
+import { parseTimestampMs } from '@happier-dev/plugin-sdk';
 import {
   classifyVoiceProviderHttpFailure,
   type VoiceAccountOperationService,
@@ -42,7 +43,8 @@ function readBoundedJsonBytes(body: Uint8Array): unknown {
 
 function parseExpiryMs(value: unknown, now: number): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
-  const milliseconds = value < 10_000_000_000 ? Math.floor(value * 1_000) : Math.floor(value);
+  const milliseconds = parseTimestampMs(value);
+  if (milliseconds === null) return null;
   return milliseconds > now + 1_000 && milliseconds <= now + 10 * 60_000 ? milliseconds : null;
 }
 

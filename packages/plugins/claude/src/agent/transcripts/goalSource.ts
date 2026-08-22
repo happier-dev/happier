@@ -1,5 +1,5 @@
-import { isSlashCommandSupported } from '@happier-dev/plugin-sdk/experimental/sessions';
-import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+import { isSlashCommandSupported } from '@happier-dev/plugin-sdk/sessions';
+import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import {
   buildEmptyClaudeGoalWorkStateSnapshot,
@@ -110,10 +110,19 @@ const SYNTHETIC_NO_RESPONSE_TEXT = 'No response requested.';
  * deliberately excluding `cache_read_input_tokens` (re-reading the growing context each turn would
  * multiply-count it). The provider's authoritative `goal_status.tokens` WINS on completion, so this
  * mid-run figure is an honest estimate, not a precise accounting.
+ *
+ * MAIN-CHAIN ONLY. A subagent's assistant rows ride the SAME raw transcript channel as the parent's,
+ * distinguished by `isSidechain: true`, and their cost belongs to the CHILD. Refusing them as turn
+ * BOUNDARIES (`isCompletedTurnBoundaryRow`) is not enough on its own: without this guard their tokens
+ * still accrue into `pendingTurnTokens` and are folded at the next PARENT boundary, billing a
+ * subagent's budget to the parent goal's meter (measured on a real transcript: 42,277 sidechain
+ * tokens against 13,955 main-chain, a 3x overstatement). The two guards answer different questions —
+ * "is this a boundary?" and "whose tokens are these?" — and both are required.
  */
 function readAssistantTurnTokens(message: unknown): number {
   const record = asRecord(message);
   if (!record || record.type !== 'assistant') return 0;
+  if (record.isSidechain === true) return 0;
   const inner = asRecord(record.message);
   const usage = asRecord(inner?.usage);
   if (!usage) return 0;

@@ -1,12 +1,16 @@
 import type {
-    ConnectedServiceCredentialRecordV1,
-    ConnectedServiceId,
-    ConnectedServiceQuotaMeterV1,
-    ConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-import { ConnectedServiceQuotaFetchError } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+    AgentAccountUsageMeter,
+    AgentAccountUsageSnapshot,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type {
+    OauthCredentialRecord,
+    TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import { QuotaFetchError as ConnectedServiceQuotaFetchError } from '@happier-dev/plugin-sdk/connected-accounts';
 import { classifyClaudeCodeCredentialHealth } from '../native/health.js';
 import { parseClaudeUsageLimitReset } from '../runtime/reset.js';
+import { resolveClaudeUsageSubjectRef } from '../usage/identity.js';
+import { mapClaudeProviderHttpUsageSnapshot } from '../usage/snapshot.js';
 import { resolveClaudeCodeUsageUserAgent } from './userAgent.js';
 
 export const CLAUDE_DEFAULT_SUBSCRIPTION_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
@@ -35,12 +39,12 @@ type ClaudeRuntimeFetchResponse = Readonly<{
 type ClaudeRuntimeFetch = (request: ClaudeRuntimeFetchRequest) => Promise<ClaudeRuntimeFetchResponse>;
 
 type ClaudeQuotaFetcher = Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: string;
     loadQuota: (params: Readonly<{
-        record: ConnectedServiceCredentialRecordV1;
+        record: OauthCredentialRecord | TokenCredentialRecord;
         now: number;
         signal: AbortSignal;
-    }>) => Promise<ConnectedServiceQuotaSnapshotV1 | null>;
+    }>) => Promise<AgentAccountUsageSnapshot | null>;
 }>;
 
 export type ClaudeQuotaFetcherDescriptor = Readonly<{
@@ -75,7 +79,7 @@ function normalizeNonEmptyString(value: unknown): string | null {
     return trimmed ? trimmed : null;
 }
 
-function resolveConnectedServiceQuotaAccountLabel(record: ConnectedServiceCredentialRecordV1): string | null {
+function resolveConnectedServiceQuotaAccountLabel(record: OauthCredentialRecord | TokenCredentialRecord): string | null {
     if (record.kind === 'oauth') {
         return normalizeNonEmptyString(record.oauth.providerEmail)
             ?? normalizeNonEmptyString(record.oauth.providerAccountId);
@@ -87,7 +91,7 @@ function resolveConnectedServiceQuotaAccountLabel(record: ConnectedServiceCreden
     return null;
 }
 
-function resolveClaudeSubscriptionPlanLabel(record: ConnectedServiceCredentialRecordV1): string | null {
+function resolveClaudeSubscriptionPlanLabel(record: OauthCredentialRecord | TokenCredentialRecord): string | null {
     if (record.kind !== 'oauth') return null;
     const raw = isRecord(record.oauth.raw) ? record.oauth.raw : null;
     const claudeAiOauth = isRecord(raw?.claudeAiOauth)
@@ -278,7 +282,7 @@ const USAGE_WINDOW_SEGMENT_ALIASES: ReadonlyArray<readonly [string, string]> = [
     ['week', 'seven_day'],
 ];
 
-const QUOTA_UNITS = new Set<ConnectedServiceQuotaMeterV1['unit']>([
+const QUOTA_UNITS = new Set([
     'count',
     'tokens',
     'credits',
@@ -470,17 +474,19 @@ function isUsageWindowRecord(value: unknown): value is Record<string, unknown> {
     return resolveUsageWindowUtilizationPct(value) !== null || resolveUsageWindowResetAtMs(value) !== null;
 }
 
-function resolveUsageWindowUnit(window: Record<string, unknown> | null): ConnectedServiceQuotaMeterV1['unit'] {
+function resolveUsageWindowUnit(
+    window: Record<string, unknown> | null,
+): 'count' | 'tokens' | 'credits' | 'usd' | 'requests' | 'unknown' {
     const raw = typeof window?.unit === 'string' ? window.unit.trim().toLowerCase() : '';
-    return QUOTA_UNITS.has(raw as ConnectedServiceQuotaMeterV1['unit'])
-        ? raw as ConnectedServiceQuotaMeterV1['unit']
+    return QUOTA_UNITS.has(raw as 'count' | 'tokens' | 'credits' | 'usd' | 'requests' | 'unknown')
+        ? raw as 'count' | 'tokens' | 'credits' | 'usd' | 'requests' | 'unknown'
         : 'unknown';
 }
 
 function buildUsageWindowMeter(
     meterId: string,
     window: Record<string, unknown> | null,
-): ConnectedServiceQuotaMeterV1 {
+): AgentAccountUsageMeter {
     const utilizationPct = resolveUsageWindowUtilizationPct(window);
     const used = window ? readFiniteNumberProperty(window, USAGE_WINDOW_USED_KEYS) : null;
     const limit = window ? readFiniteNumberProperty(window, USAGE_WINDOW_LIMIT_KEYS) : null;
@@ -555,9 +561,9 @@ function collectUsageWindowMeterEntries(
 
 export function parseClaudeSubscriptionUsageMeters(
     value: unknown,
-): ConnectedServiceQuotaSnapshotV1['meters'] {
+): AgentAccountUsageMeter[] {
     const data = isRecord(value) ? value : {};
-    const meters: ConnectedServiceQuotaSnapshotV1['meters'] =
+    const meters: AgentAccountUsageMeter[] =
         collectUsageWindowMeterEntries(data)
             .map(({ meterId, window }) => buildUsageWindowMeter(meterId, window));
     const extra = isRecord(data.extra_usage) ? data.extra_usage : null;
@@ -582,7 +588,7 @@ export function parseClaudeSubscriptionUsageMeters(
     return meters;
 }
 
-function buildQuotaUnknownMeter(meterId: string, label: string): ConnectedServiceQuotaMeterV1 {
+function buildQuotaUnknownMeter(meterId: string, label: string): AgentAccountUsageMeter {
     return {
         meterId,
         label,
@@ -594,6 +600,32 @@ function buildQuotaUnknownMeter(meterId: string, label: string): ConnectedServic
         status: 'unavailable',
         details: { code: 'quota_unknown' },
     };
+}
+
+function buildClaudeProviderHttpQuotaSnapshot(input: Readonly<{
+    record: OauthCredentialRecord | TokenCredentialRecord;
+    now: number;
+    staleAfterMs: number;
+    planLabel?: string | null;
+    accountLabel?: string | null;
+    meters: readonly AgentAccountUsageMeter[];
+}>): AgentAccountUsageSnapshot {
+    const providerAccountId = input.record.kind === 'oauth'
+        ? input.record.oauth.providerAccountId
+        : input.record.token.providerAccountId;
+    return mapClaudeProviderHttpUsageSnapshot({
+        subject: resolveClaudeUsageSubjectRef({
+            providerAccountId,
+            provisionalDiscriminator: `${input.record.serviceId}:${input.record.profileId}`,
+            accountLabel: input.accountLabel,
+        }),
+        observedAtMs: input.now,
+        fetchedAtMs: input.now,
+        staleAfterMs: input.staleAfterMs,
+        planLabel: input.planLabel,
+        accountLabel: input.accountLabel,
+        meters: input.meters,
+    });
 }
 
 function headersToRecord(headers: Headers | undefined): Readonly<Record<string, string>> {
@@ -748,18 +780,16 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
                 );
             }
             if (disablePrivateEndpoint) {
-                return {
-                    v: 1,
-                    serviceId: record.serviceId,
-                    profileId: record.profileId,
-                    fetchedAt: now,
+                return buildClaudeProviderHttpQuotaSnapshot({
+                    record,
+                    now,
                     staleAfterMs,
                     planLabel,
                     accountLabel: resolveConnectedServiceQuotaAccountLabel(record),
                     meters: Object.entries(WINDOW_LABELS).map(([meterId, label]) =>
                         buildQuotaUnknownMeter(meterId, label),
                     ),
-                };
+                });
             }
             const accessToken = record.oauth.accessToken;
 
@@ -788,16 +818,14 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
 
             const meters = parseClaudeSubscriptionUsageMeters(data);
 
-            return {
-                v: 1,
-                serviceId: record.serviceId,
-                profileId: record.profileId,
-                fetchedAt: now,
+            return buildClaudeProviderHttpQuotaSnapshot({
+                record,
+                now,
                 staleAfterMs,
                 planLabel,
                 accountLabel: resolveConnectedServiceQuotaAccountLabel(record),
                 meters,
-            };
+            });
         },
     };
 }

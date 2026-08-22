@@ -1,4 +1,4 @@
-import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk/experimental/diagnostics';
+import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
 
 import type {
     CanCallToolCallback,
@@ -8,6 +8,7 @@ import type {
     QueryPrompt,
     SDKMessage,
 } from './types.js';
+import { materializeClaudeMcpConfigArgsForSpawn } from '../mcp/materializeConfigArgs.js';
 
 export type ClaudeSdkExecResult = Readonly<{
     exitCode: number | null;
@@ -33,7 +34,6 @@ export type ClaudeSdkJsonStreamClient = Readonly<{
 export type ClaudeSdkExecClientHandle = Readonly<{
     readonly client: ClaudeSdkJsonStreamClient;
     readonly process: Readonly<{
-        pid: number | null;
         exit: Promise<ClaudeSdkExecResult>;
         writeStdin(input: string | Uint8Array): Promise<void>;
         kill(): void;
@@ -347,6 +347,7 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
     private promptTransportAttempted = false;
     private promptTransportSettled = false;
     private removePromptTransportAbortListener: (() => void) | null = null;
+    private cleanupSpawnArtifacts: (() => Promise<void>) | null = null;
     private resolvePromptTransportOutcome!: (outcome: ClaudeSdkPromptTransportOutcome) => void;
     readonly promptTransportOutcome: Promise<ClaudeSdkPromptTransportOutcome>;
 
@@ -423,8 +424,8 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
                     role: 'user',
                     content: text,
                 },
-            });
-            if (outcome.kind === 'accepted') return { kind: 'accepted' };
+            }, { signal: this.config.options?.abort });
+            if (outcome.kind === 'written') return { kind: 'accepted' };
             return {
                 kind: outcome.kind === 'rejected_before_write'
                     ? 'rejected_before_effect'
@@ -460,7 +461,11 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
         this.controlControllers.clear();
         this.rejectPendingControlResponses(new Error('Claude SDK query disposed before control response.'));
         const handle = await this.handlePromise.catch(() => null);
-        await handle?.dispose({ code: 'CLAUDE_SDK_QUERY_DISPOSED' });
+        try {
+            await handle?.dispose({ code: 'CLAUDE_SDK_QUERY_DISPOSED' });
+        } finally {
+            await this.cleanupSpawnArtifacts?.();
+        }
         this.settlePromptTransport({
             kind: this.promptTransportAttempted
                 ? 'effect_may_have_occurred'
@@ -478,27 +483,38 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
                 [CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH_ENV_KEY]: '1',
             }
             : options.env;
-        const handle = await this.ctx.spawnClient({
-            launch: {
-                kind: 'agent-cli',
-                agentId: 'claude',
-                args: buildClaudeArgs(this.config.prompt, options),
-                cwd: options.cwd,
-                env,
-            },
-            transport: {
-                kind: 'stdio',
-                framing: { kind: 'strict-lf-json' },
-            },
-            protocol: { kind: 'json-stream' },
-        }, { signal: options.abort });
+        const materializedMcpConfig = materializeClaudeMcpConfigArgsForSpawn(
+            buildClaudeArgs(this.config.prompt, options),
+        );
+        this.cleanupSpawnArtifacts = materializedMcpConfig.cleanup;
+        let handle: ClaudeSdkExecClientHandle;
+        try {
+            handle = await this.ctx.spawnClient({
+                launch: {
+                    kind: 'agent-cli',
+                    agentId: 'claude',
+                    args: materializedMcpConfig.args,
+                    cwd: options.cwd,
+                    env,
+                },
+                transport: {
+                    kind: 'stdio',
+                    framing: { kind: 'strict-lf-json' },
+                },
+                protocol: { kind: 'json-stream' },
+            }, { signal: options.abort });
+        } catch (error) {
+            await materializedMcpConfig.cleanup();
+            throw error;
+        }
         this.handle = handle;
         this.unsubscribe = handle.client.subscribe((record) => {
             void this.handleRecord(record);
         });
         void this.pumpPrompt(handle.client, this.config.prompt, options.abort);
         handle.process.exit.then(
-            (result) => {
+            async (result) => {
+                await materializedMcpConfig.cleanup();
                 this.exitResult = result;
                 this.rejectPendingControlResponses(
                     new Error('Claude SDK process exited before control response.'),
@@ -522,7 +538,10 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
                 }
                 this.messages.finish();
             },
-            (error) => this.messages.fail(error instanceof Error ? error : new Error(String(error))),
+            async (error) => {
+                await materializedMcpConfig.cleanup();
+                this.messages.fail(error instanceof Error ? error : new Error(String(error)));
+            },
         );
         return handle;
     }

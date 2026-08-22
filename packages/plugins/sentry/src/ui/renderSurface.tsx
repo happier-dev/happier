@@ -45,6 +45,7 @@ import {
   Tabs,
   Text,
   defineUiSurface,
+  usePluginTranslation,
   useSurfaceContext,
   useTabPanelActivity,
   type MetadataEntry,
@@ -53,6 +54,17 @@ import {
   TriageDetailSurfaceInputV1Schema,
   type TriageDetailSurfaceInputV1,
   type TriageSourceFailureV1,
+} from '@happier-dev/triage-protocol/v1';
+// The presentation rules used below are projections of the Triage contract's own
+// closed fact and failure vocabularies, so they are consumed from the one published
+// owner rather than re-spelled here: six copies is how one declared `compact` number
+// could start meaning two things in one list. They are aliased to this file's local
+// vocabulary so the call sites read as the panel language they already are.
+import {
+  describeTriageSourceFailureV1 as failureDescription,
+  formatTriageCountV1 as formatNumber,
+  formatTriageTimestampV1 as formatTimestamp,
+  projectTriageDetailFieldTextV1 as fieldValueText,
 } from '@happier-dev/triage-protocol/v1';
 
 import type {
@@ -82,7 +94,10 @@ import {
   type SentryPagedControllerV1,
   type SentryTagDistributionV1,
 } from './detail/panelReaders.js';
-import type { SentryReadStateV1 } from './detail/panelState.js';
+import type {
+  SentryDetailIncompleteReasonV1,
+  SentryReadStateV1,
+} from './detail/panelState.js';
 import {
   useSentrySelectedEvent,
   type SentrySelectedEventControllerV1,
@@ -102,72 +117,6 @@ const STATE_TONES = Object.freeze({
   unknown: 'neutral',
 } as const);
 
-const RELATIVE_UNITS: readonly (readonly [Intl.RelativeTimeFormatUnit, number])[] = Object.freeze([
-  ['year', 365 * 24 * 60 * 60 * 1000],
-  ['month', 30 * 24 * 60 * 60 * 1000],
-  ['day', 24 * 60 * 60 * 1000],
-  ['hour', 60 * 60 * 1000],
-  ['minute', 60 * 1000],
-] as const);
-
-/**
- * `relative` is relative to the reader's present, which is what a triage reader means by "last
- * seen 4 minutes ago". `nowMs` is passed in rather than read here so the value is a render input
- * and not a hidden clock read.
- */
-function formatTimestamp(
-  locale: string,
-  atMs: number,
-  format: 'relative' | 'absolute',
-  nowMs: number,
-): string {
-  if (format === 'absolute') {
-    return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
-      .format(new Date(atMs));
-  }
-  const deltaMs = atMs - nowMs;
-  const relative = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
-  for (const [unit, unitMs] of RELATIVE_UNITS) {
-    if (Math.abs(deltaMs) >= unitMs) return relative.format(Math.round(deltaMs / unitMs), unit);
-  }
-  return relative.format(Math.round(deltaMs / 1000), 'second');
-}
-
-function formatNumber(locale: string, value: number, format: 'compact' | 'plain'): string {
-  return new Intl.NumberFormat(
-    locale,
-    format === 'compact' ? { notation: 'compact', maximumFractionDigits: 1 } : {},
-  ).format(value);
-}
-
-function fieldValueText(
-  field: SentryDetailFieldV1,
-  locale: string,
-  nowMs: number,
-): string | null {
-  switch (field.kind) {
-    case 'text':
-    case 'status':
-      return field.value;
-    case 'number': {
-      const formatted = formatNumber(locale, field.value, field.format);
-      // A Sentry count is measured over the project's retention window. Presenting it as a bare
-      // total would state a lifetime figure the provider never promised.
-      return field.approximate ? `~${formatted}` : formatted;
-    }
-    case 'timestamp':
-      return formatTimestamp(locale, field.atMs, field.format, nowMs);
-    case 'pending':
-      return null;
-    default:
-      return null;
-  }
-}
-
-/** The one sentence every failed read owes its reader, without echoing a provider body. */
-function failureDescription(failure: TriageSourceFailureV1 | null, fallback: string): string {
-  return failure === null ? fallback : `${fallback} (${failure.code})`;
-}
 
 /* ------------------------------------------------------- selected occurrence */
 
@@ -243,6 +192,7 @@ function SelectedOccurrenceSummary({
   nowMs: number;
   onOpenStackTrace: () => void;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const { demand, read } = controller;
   // The demand is renewed whenever the controller is idle again — on mount, after the
   // exact entry or instance changed, and after a selection replaced the projection this
@@ -254,15 +204,16 @@ function SelectedOccurrenceSummary({
   }, [demand, readKind]);
 
   if (read.kind === 'idle' || read.kind === 'loading') {
-    return <LoadingState title="Reading one occurrence of this issue" />;
+    return <LoadingState title="Reading one occurrence of this issue" titleKey="plugins.sentry.ui.readingOccurrence" />;
   }
   if (read.kind === 'error') {
     return (
       <ErrorState
         title="This occurrence could not be read"
+        titleKey="plugins.sentry.ui.occurrenceUnavailable"
         description={failureDescription(
           read.failure,
-          'Sentry did not return an occurrence of this issue.',
+          text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'),
         )}
       />
     );
@@ -277,11 +228,25 @@ function SelectedOccurrenceSummary({
 
   return (
     <Stack gap="small">
-      <Text variant="caption" tone="neutral">
-        {when === null
-          ? `Showing ${selectionLabel(controller)}.`
-          : `Showing ${selectionLabel(controller)}, recorded ${when}.`}
-      </Text>
+      <Text
+        variant="caption"
+        tone="neutral"
+        valueKey={when === null
+          ? 'plugins.sentry.ui.showingSelection'
+          : 'plugins.sentry.ui.showingSelectionRecorded'}
+        fallback={when === null
+          ? 'Showing {selection}.'
+          : 'Showing {selection}, recorded {when}.'}
+        values={{ selection: selectionLabel(controller), when: when ?? '' }}
+      />
+      {/*
+        * Overview is the default tab and renders the exception value and the
+        * innermost app frame below, so it owes its reader the same disclosure
+        * the other two Tier-B/C regions already carry (`SENTRY.md` §8.2). It
+        * sits ABOVE the values it qualifies: a notice under them has already
+        * let the reader take a scrubbed value at face value.
+        */}
+      <RedactionNotice projection={projection} />
       {exception === null
         ? <Text variant="body">{projection.message === '' ? projection.title : projection.message}</Text>
         : (
@@ -297,12 +262,14 @@ function SelectedOccurrenceSummary({
         : (
           <Button
             title="Open the stack trace"
+            titleKey="plugins.sentry.ui.openStack"
             variant="secondary"
             onPress={onOpenStackTrace}
           />
         )}
       <Button
         title="Reread this occurrence"
+        titleKey="plugins.sentry.ui.rereadOccurrence"
         variant="plain"
         onPress={controller.refresh}
       />
@@ -320,6 +287,7 @@ function SelectedOccurrenceSummary({
 function RedactionNotice({
   projection,
 }: Readonly<{ projection: SentryEventProjectionV1 }>): React.ReactElement | null {
+  const text = usePluginTranslation();
   const scrubbed = projection.redactions.filter(
     (redaction) => redaction.reason === 'providerScrubbed',
   ).length;
@@ -327,10 +295,19 @@ function RedactionNotice({
   return (
     <Banner
       tone="neutral"
-      title={scrubbed === 0 ? 'Some content was shortened' : 'Sentry redacted some values'}
+      title={scrubbed === 0
+        ? text('plugins.sentry.ui.shortened', 'Some details were shortened')
+        : text('plugins.sentry.ui.valuesRedacted', 'Sentry redacted some values')}
       description={scrubbed === 0
-        ? 'Open the occurrence in Sentry to read the complete text.'
-        : `${String(scrubbed)} value(s) were already scrubbed by this organization’s own Sentry rules.`}
+        ? text(
+          'plugins.sentry.ui.shortened.description',
+          'Open the issue in Sentry to read the complete text.',
+        )
+        : text(
+          'plugins.sentry.ui.valuesRedacted.description',
+          '{count} value(s) were already scrubbed by this organization’s own Sentry rules.',
+          { count: scrubbed },
+        )}
     />
   );
 }
@@ -346,17 +323,19 @@ function LiveSummary({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   if (summary.kind === 'loading') {
-    return <LoadingState title="Reading this issue from Sentry" />;
+    return <LoadingState title="Reading this issue from Sentry" titleKey="plugins.sentry.ui.readingIssue" />;
   }
   if (summary.kind === 'unavailable') {
     return (
       <Banner
         tone="warning"
         title="Showing the last observation"
+        titleKey="plugins.sentry.ui.lastObservation"
         description={failureDescription(
           summary.failure,
-          'Sentry could not be read just now, so these facts are the ones this issue was last observed with.',
+          text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'),
         )}
       />
     );
@@ -394,10 +373,13 @@ function LiveSummary({
       </Row>
       {entries.length === 0
         ? null
-        : <Metadata title="Sentry now" entries={entries} />}
-      <Text variant="caption" tone="neutral">
-        {'Sentry counts what it retained for this project’s window, never every occurrence.'}
-      </Text>
+        : <Metadata title="Sentry now" titleKey="plugins.sentry.ui.sentryNow" entries={entries} />}
+      <Text
+        variant="caption"
+        tone="neutral"
+        valueKey="plugins.sentry.ui.retainedCount.description"
+        fallback="Sentry counts what it retained for this project’s window, never every occurrence."
+      />
     </Stack>
   );
 }
@@ -425,25 +407,30 @@ function TagValuesSection({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const controller = useSentryTagValues(input, tagKey);
   const { state } = controller;
 
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title={`Reading ${tagKey} values`} />;
+    return <LoadingState title={text('plugins.sentry.ui.readingTagValues', 'Reading {tag} values', { tag: tagKey })} />;
   }
   if (state.kind === 'unavailable') {
     return (
       <ErrorState
-        title={`${tagKey} values are unavailable`}
-        description={failureDescription(state.failure, 'Sentry did not return this distribution.')}
+        title={text('plugins.sentry.ui.tagValuesUnavailable', '{tag} values are unavailable', { tag: tagKey })}
+        description={failureDescription(
+          state.failure,
+          text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'),
+        )}
       />
     );
   }
   if (state.rows.length === 0) {
     return (
       <EmptyState
-        title={`No ${tagKey} values`}
+        title={text('plugins.sentry.ui.noTagValues', 'No {tag} values', { tag: tagKey })}
         description="Sentry recorded no values for this tag on this issue."
+        descriptionKey="plugins.sentry.ui.noTagValues.description"
       />
     );
   }
@@ -456,10 +443,18 @@ function TagValuesSection({
           <Banner
             tone="warning"
             title="Showing the values read so far"
-            description={failureDescription(state.failure, 'The next page could not be read.')}
+            titleKey="plugins.sentry.ui.partialTagValues"
+            description={failureDescription(
+              state.failure,
+              text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'),
+            )}
           />
         )}
-      <ItemGroup accessibilityLabel={`Values of ${tagKey} on this Sentry issue`}>
+      <ItemGroup accessibilityLabel={text(
+        'plugins.sentry.ui.tagValuesLabel',
+        'Values of {tag} on this Sentry issue',
+        { tag: tagKey },
+      )}>
         {state.rows.map((row: SentryProjectedTagValueV1) => (
           <Item
             key={row.value}
@@ -473,13 +468,19 @@ function TagValuesSection({
           />
         ))}
       </ItemGroup>
-      <Text variant="caption" tone="neutral">
-        {`${String(state.rows.length)} value(s) read.`}
-      </Text>
+      <Text
+        variant="caption"
+        tone="neutral"
+        valueKey="plugins.sentry.ui.valuesRead"
+        fallback="{count} value(s) read."
+        values={{ count: state.rows.length }}
+      />
+      <IncompleteWalkNotice incomplete={state.incomplete} />
       {state.canLoadMore
         ? (
           <Button
             title="Load more values"
+            titleKey="plugins.sentry.ui.loadMoreValues"
             variant="secondary"
             busy={state.pending}
             onPress={controller.loadMore}
@@ -501,18 +502,20 @@ function TagsSection({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const [openKey, setOpenKey] = React.useState<string | null>(null);
 
   if (distribution.kind === 'loading') {
-    return <LoadingState title="Reading this issue’s tags" />;
+    return <LoadingState title="Reading this issue’s tags" titleKey="plugins.sentry.ui.readingTags" />;
   }
   if (distribution.kind === 'unavailable') {
     return (
       <ErrorState
         title="Tags are unavailable"
+        titleKey="plugins.sentry.ui.tagsUnavailable"
         description={failureDescription(
           distribution.failure,
-          'Sentry did not return this issue’s tag distribution.',
+          text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'),
         )}
       />
     );
@@ -523,17 +526,41 @@ function TagsSection({
     return (
       <EmptyState
         title="No tags on this issue"
+        titleKey="plugins.sentry.ui.noTags"
         description="Sentry recorded no tag distribution for this issue."
+        descriptionKey="plugins.sentry.ui.noTags.description"
       />
     );
   }
 
   return (
     <Stack gap="small">
-      <Text variant="caption" tone="neutral">
-        {'Tag values come from the events Sentry retained. Opening one reads its distribution.'}
-      </Text>
-      <ItemGroup accessibilityLabel="Tags on this Sentry issue">
+      {/*
+        The disclosure this plane owes its reader (`SENTRY.md` §7.3a).
+
+        Both the row subtitle below and the drill-down that opens under it render a
+        tag's VALUE, and the only gate any of them passed is `isSentryRoutableTagKey`
+        — a path-segment safety test, not a classification. Keeping every customer
+        key here is deliberate: the event allow-list applies to event tags and only
+        there, because applying it to this distribution would delete the custom tags
+        teams triage by. So the reader is told what these values are instead of being
+        shown a bounded subset that looks complete, which is the same honesty rule
+        `RedactionNotice` states for a Tier-B/C body.
+      */}
+      <Banner
+        tone="neutral"
+        title="These tag values are unclassified"
+        titleKey="plugins.sentry.ui.tagsUnclassified"
+        description="Your own Sentry SDK chooses which tags exist, so a key such as user, url or server_name can carry personal data. Every tag Sentry indexed for this issue is shown here."
+        descriptionKey="plugins.sentry.ui.tagsUnclassified.description"
+      />
+      <Text
+        variant="caption"
+        tone="neutral"
+        valueKey="plugins.sentry.ui.tagValues.description"
+        fallback="Tag values come from the events Sentry retained. Opening one reads its distribution."
+      />
+      <ItemGroup accessibilityLabel="Tags on this Sentry issue" accessibilityLabelKey="plugins.sentry.ui.tagsLabel">
         {distribution.value.tags.map((tag) => (
           <Item
             key={tag.key}
@@ -557,9 +584,13 @@ function TagsSection({
       {distribution.value.omittedTagCount === 0
         ? null
         : (
-          <Text variant="caption" tone="neutral">
-            {`${String(distribution.value.omittedTagCount)} tag(s) on this issue could not be read.`}
-          </Text>
+          <Text
+            variant="caption"
+            tone="neutral"
+            valueKey="plugins.sentry.ui.tagsUnreadable"
+            fallback="{count} tag(s) on this issue could not be read."
+            values={{ count: distribution.value.omittedTagCount }}
+          />
         )}
     </Stack>
   );
@@ -612,15 +643,20 @@ function OverviewPanel({
           ? (
             <EmptyState
               title="No projected facts"
+              titleKey="plugins.sentry.ui.noFacts"
               description="This observation carried no displayable facts."
+              descriptionKey="plugins.sentry.ui.noFacts.description"
             />
           )
-          : <Metadata title="Facts" entries={entries} />}
+          : <Metadata title="Facts" titleKey="plugins.sentry.ui.facts" entries={entries} />}
         {pendingFields.length === 0 ? null : (
           <Stack gap="small">
-            <Text variant="caption" tone="neutral">
-              {'Read only in this detail body:'}
-            </Text>
+            <Text
+              variant="caption"
+              tone="neutral"
+              valueKey="plugins.sentry.ui.detailOnly"
+              fallback="Read only in this detail body:"
+            />
             <Row gap="small">
               {pendingFields.map((field) => <Badge key={field.id} value={field.label} />)}
             </Row>
@@ -630,7 +666,9 @@ function OverviewPanel({
           <Banner
             tone="neutral"
             title="Some details were shortened"
+            titleKey="plugins.sentry.ui.shortened"
             description="Open the issue in Sentry to read the complete text."
+            descriptionKey="plugins.sentry.ui.shortened.description"
           />
         )}
         <Divider />
@@ -645,6 +683,7 @@ function OverviewPanel({
         <Divider />
         <Metadata
           title="Observation"
+          titleKey="plugins.sentry.ui.observation"
           entries={[
             {
               label: 'Observed',
@@ -665,6 +704,38 @@ function OverviewPanel({
 
 /* ----------------------------------------------------------------- Occurrences */
 
+/**
+ * The sentence a walk owes its reader when it stopped without finishing.
+ *
+ * Sentry advertises its next page in a `Link` header. When that header is absent,
+ * carries a cursor this build will not follow, or repeats the cursor just
+ * requested, the walk ends WITHOUT reaching the end of the collection — and
+ * saying nothing would present a truncated list as a complete one.
+ */
+function incompleteDescription(
+  incomplete: SentryDetailIncompleteReasonV1 | null,
+): string | null {
+  return incomplete === null
+    ? null
+    : 'Sentry offered the next page in a form this build will not follow, so this list'
+      + ' stops here.';
+}
+
+
+/** Renders the stopped-short sentence, and nothing at all when the walk finished. */
+function IncompleteWalkNotice({
+  incomplete,
+}: Readonly<{ incomplete: SentryDetailIncompleteReasonV1 | null }>): React.ReactElement | null {
+  const text = usePluginTranslation();
+  const description = incompleteDescription(incomplete);
+  if (description === null) return null;
+  return (
+    <Text variant="caption" tone="neutral">
+      {text('plugins.sentry.ui.walkStoppedShort', description)}
+    </Text>
+  );
+}
+
 /** The one sentence this list owes its reader, every time it is shown. */
 const RETENTION_DISCLOSURE
   = 'These are the events Sentry retained in the queried window, not every occurrence.';
@@ -677,15 +748,23 @@ function OccurrencesFooter({
   const { state } = controller;
   return (
     <Stack gap="small">
-      <Text variant="caption" tone="neutral">
-        {state.omittedRowCount === 0
-          ? `${String(state.rows.length)} retained event(s) read.`
-          : `${String(state.rows.length)} retained event(s) read. ${String(state.omittedRowCount)} row(s) on the pages read could not be understood.`}
-      </Text>
+      <Text
+        variant="caption"
+        tone="neutral"
+        valueKey={state.omittedRowCount === 0
+          ? 'plugins.sentry.ui.retainedEventsRead'
+          : 'plugins.sentry.ui.retainedEventsReadWithUnreadable'}
+        fallback={state.omittedRowCount === 0
+          ? '{count} retained event(s) read.'
+          : '{count} retained event(s) read. {unreadable} row(s) on the pages read could not be understood.'}
+        values={{ count: state.rows.length, unreadable: state.omittedRowCount }}
+      />
+      <IncompleteWalkNotice incomplete={state.incomplete} />
       {state.canLoadMore
         ? (
           <Button
             title="Load more retained events"
+            titleKey="plugins.sentry.ui.loadMoreEvents"
             variant="secondary"
             busy={state.pending}
             onPress={controller.loadMore}
@@ -712,6 +791,7 @@ function OccurrencesFooter({
 function ActivatedOccurrenceDetail({
   controller,
 }: Readonly<{ controller: SentrySelectedEventControllerV1 }>): React.ReactElement | null {
+  const text = usePluginTranslation();
   const [revealUser, setRevealUser] = React.useState(false);
   const { active } = useTabPanelActivity();
   const { read, selected } = controller;
@@ -725,13 +805,17 @@ function ActivatedOccurrenceDetail({
 
   if (selected.kind !== 'event') return null;
   if (read.kind === 'idle' || read.kind === 'loading') {
-    return <LoadingState title="Reading this occurrence" />;
+    return <LoadingState title="Reading this occurrence" titleKey="plugins.sentry.ui.readingSelectedOccurrence" />;
   }
   if (read.kind === 'error') {
     return (
       <ErrorState
         title="This occurrence could not be read"
-        description={failureDescription(read.failure, 'Sentry did not return this event.')}
+        titleKey="plugins.sentry.ui.occurrenceUnavailable"
+        description={failureDescription(
+          read.failure,
+          text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'),
+        )}
       />
     );
   }
@@ -751,13 +835,16 @@ function ActivatedOccurrenceDetail({
   return (
     <Stack gap="small">
       <Divider />
-      <Text variant="label">{projection.title === '' ? 'Selected occurrence' : projection.title}</Text>
+      {projection.title === ''
+        ? <Text variant="label" valueKey="plugins.sentry.ui.selectedOccurrence" fallback="Selected occurrence" />
+        : <Text variant="label" value={projection.title} />}
       <RedactionNotice projection={projection} />
       {projection.tags.length === 0
         ? null
         : (
           <Metadata
             title="This event’s tags"
+            titleKey="plugins.sentry.ui.eventTags"
             entries={projection.tags.map((tag) => ({ label: tag.key, value: tag.value }))}
           />
         )}
@@ -766,13 +853,15 @@ function ActivatedOccurrenceDetail({
         : (
           <Stack gap="small">
             <Button
-              title={revealUser ? 'Hide event user details' : 'Show event user details'}
+              title={revealUser
+                ? text('plugins.sentry.ui.hideUserDetails', 'Hide event user details')
+                : text('plugins.sentry.ui.showUserDetails', 'Show event user details')}
               variant="secondary"
               onPress={() => {
                 setRevealUser((current) => !current);
               }}
             />
-            {revealUser ? <Metadata title="Event user" entries={userEntries} /> : null}
+            {revealUser ? <Metadata title="Event user" titleKey="plugins.sentry.ui.eventUser" entries={userEntries} /> : null}
           </Stack>
         )}
       <Divider />
@@ -791,17 +880,22 @@ function OccurrencesPanel({
   nowMs: number;
   selectedEvent: SentrySelectedEventControllerV1;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const controller = useSentryOccurrences(input);
   const { state } = controller;
 
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading retained events" />;
+    return <LoadingState title="Reading retained events" titleKey="plugins.sentry.ui.readingEvents" />;
   }
   if (state.kind === 'unavailable') {
     return (
       <ErrorState
         title="Retained events are unavailable"
-        description={failureDescription(state.failure, 'Sentry did not return this collection.')}
+        titleKey="plugins.sentry.ui.eventsUnavailable"
+        description={failureDescription(
+          state.failure,
+          text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'),
+        )}
       />
     );
   }
@@ -809,6 +903,7 @@ function OccurrencesPanel({
   return (
     <List
       accessibilityLabel="Events Sentry retained for this issue"
+      accessibilityLabelKey="plugins.sentry.ui.eventsLabel"
       items={state.rows}
       keyForItem={(row) => row.eventId}
       header={(
@@ -820,7 +915,11 @@ function OccurrencesPanel({
               <Banner
                 tone="warning"
                 title="Showing the events read so far"
-                description={failureDescription(state.failure, 'The next page could not be read.')}
+                titleKey="plugins.sentry.ui.partialEvents"
+                description={failureDescription(
+                  state.failure,
+                  text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'),
+                )}
               />
             )}
           <ActivatedOccurrenceDetail controller={selectedEvent} />
@@ -829,6 +928,7 @@ function OccurrencesPanel({
       empty={(
         <EmptyState
           title="No retained events"
+          titleKey="plugins.sentry.ui.noEvents"
           description={RETENTION_DISCLOSURE}
         />
       )}
@@ -870,12 +970,14 @@ function FrameList({
     return (
       <EmptyState
         title="No application frames"
+        titleKey="plugins.sentry.ui.noApplicationFrames"
         description="Every frame in this section came from outside your own code."
+        descriptionKey="plugins.sentry.ui.noApplicationFrames.description"
       />
     );
   }
   return (
-    <ItemGroup accessibilityLabel="Frames in this section, in the order Sentry recorded them">
+    <ItemGroup accessibilityLabel="Frames in this section, in the order Sentry recorded them" accessibilityLabelKey="plugins.sentry.ui.framesLabel">
       {shown.map((frame, index) => (
         <Item
           key={`${String(index)}:${frame.filename ?? ''}:${String(frame.lineNo ?? 0)}`}
@@ -905,13 +1007,14 @@ function StackTracePanel({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const [showSystemFrames, setShowSystemFrames] = React.useState(false);
   const { read } = controller;
 
   if (read.kind !== 'success') {
     // Reachable only in the instant between a refresh starting and settling: the
     // tab's own condition is derived from a successful projection.
-    return <LoadingState title="Reading this occurrence" />;
+    return <LoadingState title="Reading this occurrence" titleKey="plugins.sentry.ui.readingSelectedOccurrence" />;
   }
 
   const { projection } = read;
@@ -927,15 +1030,23 @@ function StackTracePanel({
   return (
     <ScrollArea>
       <Stack gap="large">
-        <Text variant="caption" tone="neutral">
-          {when === null
-            ? `This is ${selectionLabel(controller)}.`
-            : `This is ${selectionLabel(controller)}, recorded ${when}.`}
-        </Text>
+        <Text
+          variant="caption"
+          tone="neutral"
+          valueKey={when === null
+            ? 'plugins.sentry.ui.selectionIdentity'
+            : 'plugins.sentry.ui.selectionIdentityRecorded'}
+          fallback={when === null
+            ? 'This is {selection}.'
+            : 'This is {selection}, recorded {when}.'}
+          values={{ selection: selectionLabel(controller), when: when ?? '' }}
+        />
         <RedactionNotice projection={projection} />
         <Row gap="small">
           <Button
-            title={showSystemFrames ? 'Hide system frames' : 'Show system frames'}
+            title={showSystemFrames
+              ? text('plugins.sentry.ui.hideSystemFrames', 'Hide system frames')
+              : text('plugins.sentry.ui.showSystemFrames', 'Show system frames')}
             variant="secondary"
             onPress={() => {
               setShowSystemFrames((current) => !current);
@@ -953,18 +1064,23 @@ function StackTracePanel({
         {projection.omitted.frames === 0
           ? null
           : (
-            <Text variant="caption" tone="neutral">
-              {`${String(projection.omitted.frames)} outer frame(s) are not shown. The frames nearest the failure are kept.`}
-            </Text>
+            <Text
+              variant="caption"
+              tone="neutral"
+              valueKey="plugins.sentry.ui.framesOmitted"
+              fallback="{count} outer frame(s) are not shown. The frames nearest the failure are kept."
+              values={{ count: projection.omitted.frames }}
+            />
           )}
         {breadcrumbs.map((section, index) => (
           <Stack key={`breadcrumbs:${String(index)}`} gap="small">
-            <Text variant="label">Breadcrumbs</Text>
-            <ItemGroup accessibilityLabel="Breadcrumbs Sentry recorded before this occurrence">
+            <Text valueKey="plugins.sentry.ui.breadcrumbs" fallback="Breadcrumbs" variant="label" />
+            <ItemGroup accessibilityLabel="Breadcrumbs Sentry recorded before this occurrence" accessibilityLabelKey="plugins.sentry.ui.breadcrumbsLabel">
               {section.kind !== 'breadcrumbs' ? null : section.entries.map((crumb, crumbIndex) => (
                 <Item
                   key={`${String(crumbIndex)}:${crumb.category ?? ''}`}
-                  title={crumb.message ?? crumb.category ?? 'breadcrumb'}
+                  title={crumb.message ?? crumb.category
+                    ?? text('plugins.sentry.ui.breadcrumbs', 'Breadcrumbs')}
                   {...(crumb.level === null ? {} : { subtitle: crumb.level })}
                   {...(crumb.timestampMs === null
                     ? {}
@@ -1007,10 +1123,13 @@ function ReleasePanel({
   return (
     <ScrollArea>
       <Stack gap="large">
-        <Text variant="caption" tone="neutral">
-          {'Sentry states these releases on the issue itself; nothing here is inferred from a deploy history.'}
-        </Text>
-        <ItemGroup accessibilityLabel="Releases this Sentry issue is associated with">
+        <Text
+          variant="caption"
+          tone="neutral"
+          valueKey="plugins.sentry.ui.releaseEvidence.description"
+          fallback="Sentry states these releases on the issue itself; nothing here is inferred from a deploy history."
+        />
+        <ItemGroup accessibilityLabel="Releases this Sentry issue is associated with" accessibilityLabelKey="plugins.sentry.ui.releasesLabel">
           {rows.map((row) => {
             // Either date may be absent from the untyped field; a release with
             // neither keeps its version and loses only its date.
@@ -1053,7 +1172,9 @@ function ActivityBody({
     return (
       <ErrorState
         title="Activity could not be read"
+        titleKey="plugins.sentry.ui.activityUnreadable"
         description="Sentry returned an activity history this build does not understand."
+        descriptionKey="plugins.sentry.ui.activityUnreadable.description"
       />
     );
   }
@@ -1061,25 +1182,36 @@ function ActivityBody({
   return (
     <List
       accessibilityLabel="Recorded activity for this Sentry issue"
+      accessibilityLabelKey="plugins.sentry.ui.activityLabel"
       items={history.items}
       keyForItem={(item) => item.id}
       empty={(
         <EmptyState
           title="No recorded activity"
+          titleKey="plugins.sentry.ui.noActivity"
           description="Sentry has recorded no changes to this issue."
+          descriptionKey="plugins.sentry.ui.noActivity.description"
         />
       )}
       footer={(
         <Stack gap="small">
-          <Text variant="caption" tone="neutral">
-            {`${String(history.items.length)} activity record(s) read. Sentry states this history on the issue itself and does not paginate it.`}
-          </Text>
+          <Text
+            variant="caption"
+            tone="neutral"
+            valueKey="plugins.sentry.ui.activityRecordsRead"
+            fallback="{count} activity record(s) read. Sentry states this history on the issue itself and does not paginate it."
+            values={{ count: history.items.length }}
+          />
           {history.malformedItemCount + history.omittedItemCount === 0
             ? null
             : (
-              <Text variant="caption" tone="neutral">
-                {`${String(history.malformedItemCount + history.omittedItemCount)} record(s) could not be shown.`}
-              </Text>
+              <Text
+                variant="caption"
+                tone="neutral"
+                valueKey="plugins.sentry.ui.recordsNotShown"
+                fallback="{count} record(s) could not be shown."
+                values={{ count: history.malformedItemCount + history.omittedItemCount }}
+              />
             )}
         </Stack>
       )}
@@ -1104,18 +1236,20 @@ function ActivityPanel({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const history = useSentryActivityHistory(input);
 
   if (history.kind === 'loading') {
-    return <LoadingState title="Reading this issue’s activity" />;
+    return <LoadingState title="Reading this issue’s activity" titleKey="plugins.sentry.ui.readingActivity" />;
   }
   if (history.kind === 'unavailable') {
     return (
       <ErrorState
         title="Activity is unavailable"
+        titleKey="plugins.sentry.ui.activityUnavailable"
         description={failureDescription(
           history.failure,
-          'Sentry did not return this issue’s activity.',
+          text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'),
         )}
       />
     );
@@ -1227,7 +1361,9 @@ function SentryDetailSurface(context: RenderContext): React.ReactElement {
       <Screen safeArea>
         <ErrorState
           title="This issue cannot be shown"
+          titleKey="plugins.sentry.ui.invalidInput"
           description="Triage supplied a detail input this Sentry build does not accept."
+          descriptionKey="plugins.sentry.ui.invalidInput.description"
         />
       </Screen>
     );

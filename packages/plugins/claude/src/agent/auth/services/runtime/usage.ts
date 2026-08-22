@@ -1,16 +1,15 @@
-import type { ConnectedServiceLimitCategoryV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-
 import {
   parseClaudeProviderTimestampMs,
   parseClaudeUsageLimitReset,
   readClaudeAnthropicHeaderResetAtMs,
 } from './reset.js';
+import { parseTimestampMs } from '@happier-dev/plugin-sdk';
 
 export type NormalizedClaudeUsageLimitDetails = Readonly<{
   v: 1;
   resetAtMs: number | null;
   retryAfterMs: number | null;
-  limitCategory?: Extract<ConnectedServiceLimitCategoryV1, 'usage_limit' | 'rate_limit' | 'capacity'>;
+  limitCategory?: 'usage_limit' | 'rate_limit' | 'capacity';
   quotaScope: 'account' | 'provider';
   recoverability: 'wait';
   providerLimitId?: string;
@@ -67,8 +66,7 @@ function readString(value: unknown): string | null {
 }
 
 function readTimestampMs(value: unknown): number | null {
-  const integer = readNonNegativeInteger(value);
-  if (integer !== null) return integer < 10_000_000_000 ? integer * 1000 : integer;
+  if (typeof value === 'number') return parseTimestampMs(value);
   return parseClaudeProviderTimestampMs(value);
 }
 

@@ -1,4 +1,5 @@
 import { buildElevenLabsVoiceAgentPrompt } from '@happier-dev/agents';
+import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import type { VoiceClientToolDefinition } from '@happier-dev/plugin-sdk/voice/client';
 
 import {
@@ -32,7 +33,7 @@ export function createElevenLabsAutoprovision(input: Readonly<{
     signal: AbortSignal,
     tts?: ElevenLabsTtsConfigInput | null,
   ) => {
-    signal.throwIfAborted();
+    throwIfAborted(signal);
     const prompt = buildElevenLabsVoiceAgentPrompt().replace(/Claude Code/giu, 'the coding assistant');
     const tools = ElevenLabsProvisionToolSchema.array().parse(input.tools.map((tool) => Object.freeze({
       name: tool.name,
@@ -56,9 +57,9 @@ export function createElevenLabsAutoprovision(input: Readonly<{
 
   return Object.freeze({
     async findExistingAgents(signal: AbortSignal): Promise<Array<{ agentId: string; name: string }>> {
-      signal.throwIfAborted();
+      throwIfAborted(signal);
       const response = await input.client.provision({ kind: 'list' }, signal);
-      signal.throwIfAborted();
+      throwIfAborted(signal);
       return Array.isArray(response.agents)
         ? response.agents.flatMap((row) => row && typeof row === 'object'
           && typeof (row as { agentId?: unknown }).agentId === 'string'
@@ -72,9 +73,9 @@ export function createElevenLabsAutoprovision(input: Readonly<{
       signal: AbortSignal,
     ): Promise<{ agentId: string }> {
       const provision = await buildProvisionInput(signal, params.tts);
-      signal.throwIfAborted();
+      throwIfAborted(signal);
       const response = await input.client.provision({ kind: 'create', ...provision }, signal);
-      signal.throwIfAborted();
+      throwIfAborted(signal);
       if (typeof response.agentId !== 'string') throw new Error('provider_response_invalid');
       return { agentId: response.agentId };
     },
@@ -83,12 +84,12 @@ export function createElevenLabsAutoprovision(input: Readonly<{
       signal: AbortSignal,
     ): Promise<void> {
       const provision = await buildProvisionInput(signal, params.tts);
-      signal.throwIfAborted();
+      throwIfAborted(signal);
       const response = await input.client.provision(
         { kind: 'update', agentId: params.agentId, ...provision },
         signal,
       );
-      signal.throwIfAborted();
+      throwIfAborted(signal);
       if (response.updated !== true) throw new Error('provider_response_invalid');
     },
   });

@@ -23,9 +23,21 @@ export const SENTRY_CONNECTED_ACCOUNT_PURPOSE = 'sentry-account-use';
  *
  * `privateNetwork` is scope-level, a sibling of `methods`, so one grant holding
  * both the Cloud origins and the account origin could only declare it for all
- * three at once. A fixed public origin that resolves to an RFC1918 address is
- * exactly the rebinding case the flag exists to refuse, so the Cloud origins
- * keep their own grant and never gain private reach.
+ * three at once. Splitting them keeps the two fixed Cloud origins out of the
+ * reach a self-hosted deployment needs: a user who configures a private-network
+ * Sentry widens only the account grant, and the Cloud origins never gain private
+ * reach along with it.
+ *
+ * **Residual, stated plainly because this comment previously claimed otherwise:**
+ * `privateNetwork` classifies the URL's HOST as written — literal `localhost`,
+ * RFC1918 ranges, loopback, link-local and unique-local IPv6. It does NOT resolve
+ * the name, so a PUBLIC hostname whose DNS answer points at a private address is
+ * not caught here, and this split does not prevent that. Calling it rebinding
+ * protection was wrong twice over: nothing resolves or pins the address, and
+ * "DNS rebinding" conventionally names an INBOUND Host-header control rather than
+ * outbound egress. The grant is a capability DECLARATION that makes a plugin's
+ * private-network reach visible and reviewable — which is real value — not an
+ * enforcement boundary against the plugin, which is trusted first-party code.
  */
 export const SENTRY_CLOUD_NETWORK_HOST_ACCESS_ID = 'sentry-cloud-api';
 export const SENTRY_ACCOUNT_NETWORK_HOST_ACCESS_ID = 'sentry-account-api';
@@ -122,6 +134,18 @@ export const SENTRY_DISPLAY_PATH_SEPARATOR = ' \u00B7 ';
  */
 export const SENTRY_FAILURE_CODES = Object.freeze({
   tokenInvalid: 'sentry-token-invalid',
+  /**
+   * The HOST refused to materialize the exact bound account — the account was
+   * removed, the purpose was revoked, or the origin is no longer admitted. It is
+   * an `authentication` failure, not a Sentry outage: the user fixes the
+   * connection and presses Refresh, which the aggregate's backoff deliberately
+   * exempts for this class.
+   */
+  accountMaterializationFailed: 'sentry-account-materialization-failed',
+  /** The account materialized, but carried no usable `authorization` header. */
+  authorizationHeaderUnavailable: 'sentry-authorization-header-unavailable',
+  /** The account materialized something other than HTTP headers. */
+  unsupportedMaterialization: 'sentry-unsupported-materialization',
   insufficientPermission: 'sentry-insufficient-permission',
   rateLimited: 'sentry-rate-limited',
   rateLimitedUnhinted: 'sentry-rate-limited-unhinted',

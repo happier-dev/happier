@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   SESSION_WORKFLOW_RUN_SNAPSHOT_PROJECTION_VERSION,
   type SessionWorkflowRunSnapshotV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+} from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import { createCoalescedWorkflowActivityPublisher } from './coalescedWorkflowActivityPublisher.js';
 import type { WorkflowActivityPublishInput } from './publishWorkflowActivitySnapshot.js';

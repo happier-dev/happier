@@ -33,6 +33,19 @@ async function createGeminiRuntime() {
 }
 
 describe('Gemini native runtime migration', () => {
+  it('reexports the activation compiled by its canonical public plugin definition', async () => {
+    expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
+      'agents',
+      'connectedAccountDescriptors',
+      'hooks',
+      'systemTools',
+      'ui',
+    ]);
+    expect(await import('./manifest.js')).toEqual(expect.objectContaining({
+      GEMINI_PLUGIN: expect.objectContaining({ manifest: PLUGIN_MANIFEST, activate }),
+    }));
+  });
+
   it('declares only the raw Connected Account materialization kinds consumed by session launch', () => {
     expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual([{
       purpose: 'model_upstream',

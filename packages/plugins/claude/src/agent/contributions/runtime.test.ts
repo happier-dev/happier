@@ -3,12 +3,13 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+
 import {
   CLAUDE_AGENT_RUNTIME_CONTRIBUTION,
   materializeClaudeAuthEnvironment,
   verifyClaudeResumeReachability,
 } from './runtime.js';
-import { claudeHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
 
 type CliSessionCommandContribution = Readonly<{
   backendIdForSessionRuntime: string;
@@ -182,8 +183,13 @@ describe('Claude runtime contribution CLI command options', () => {
     expect(policy?.shouldUseDeferredBootstrap?.(input)).toBe(expected);
   });
 
-  it('projects handoff through the canonical contribution and has no predecessor goal adapter', () => {
-    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.sessionHandoff?.surface?.({} as never)).toBe(claudeHandoffSurface);
+  it('keeps only handoff metadata in the catalog contribution and has no predecessor goal adapter', () => {
+    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.sessionHandoff).toEqual({
+      runtimeLocalMetadata: {
+        build: expect.any(Function),
+      },
+    });
+    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.sessionHandoff).not.toHaveProperty('surface');
     expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.runtimeControl).toBeUndefined();
   });
 
@@ -193,7 +199,7 @@ describe('Claude runtime contribution CLI command options', () => {
 
   it('uses the canonical current Claude OAuth endpoints', () => {
     expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.cloudConnect?.oauthAuthorizationCode).toMatchObject({
-      authorizeUrl: 'https://platform.claude.com/oauth/authorize',
+      authorizeUrl: 'https://claude.com/cai/oauth/authorize',
       tokenUrl: 'https://platform.claude.com/v1/oauth/token',
     });
   });
@@ -202,7 +208,6 @@ describe('Claude runtime contribution CLI command options', () => {
     const terminal = (CLAUDE_AGENT_RUNTIME_CONTRIBUTION as Readonly<{
       terminal?: Readonly<{
         promptSubmitVerification?: Readonly<{
-          shouldVerifyBeforeSubmit(promptText: string): boolean;
           shouldVerifyAfterSubmit(promptText: string): boolean;
           verifyAfterSubmit(params: Readonly<{ promptText: string; screenText: string }>): boolean;
         }>;
@@ -210,7 +215,6 @@ describe('Claude runtime contribution CLI command options', () => {
     }>).terminal;
     const prompt = Array.from({ length: 41 }, (_, index) => `line ${index}`).join('\n');
 
-    expect(terminal?.promptSubmitVerification?.shouldVerifyBeforeSubmit(prompt)).toBe(false);
     expect(terminal?.promptSubmitVerification?.shouldVerifyAfterSubmit(prompt)).toBe(true);
     expect(terminal?.promptSubmitVerification?.verifyAfterSubmit({
       promptText: prompt,
@@ -359,7 +363,7 @@ describe('Claude runtime contribution CLI command options', () => {
         rootDir: root,
         sessionDirectory: root,
         processEnv: {},
-        qualifiedPurposeMaterialization: true,
+        connectedAccountMaterializationAuthority: 'qualified',
         claudeSubscription: {
           kind: 'oauth',
           serviceId: 'claude-subscription',
@@ -386,7 +390,7 @@ describe('Claude runtime contribution CLI command options', () => {
         rootDir: root,
         sessionDirectory: root,
         processEnv: {},
-        qualifiedPurposeMaterialization: true,
+        connectedAccountMaterializationAuthority: 'qualified',
         anthropic: {
           kind: 'token',
           serviceId: 'anthropic',
@@ -403,17 +407,73 @@ describe('Claude runtime contribution CLI command options', () => {
     }
   });
 
-  it('declares provider-owned preflight model probing without projection command adaptation', () => {
-    const preflight = (CLAUDE_AGENT_RUNTIME_CONTRIBUTION as Readonly<{
-      preflightSessionControls?: Readonly<Record<string, unknown>>;
-    }>).preflightSessionControls;
+  it('materializes raw Anthropic credentials only for the exact legacy one-shot authority', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-legacy-one-shot-root-'));
+    try {
+      await expect(materializeClaudeAuthEnvironment({
+        rootDir: root,
+        sessionDirectory: root,
+        processEnv: {},
+        connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
+        anthropic: buildConnectedServiceCredentialRecord({
+          now: 10,
+          serviceId: 'anthropic',
+          profileId: 'legacy-profile',
+          kind: 'token',
+          token: {
+            token: 'legacy-anthropic-key',
+            providerAccountId: null,
+            providerEmail: null,
+          },
+        }),
+      })).resolves.toEqual({
+        env: {
+          ANTHROPIC_API_KEY: 'legacy-anthropic-key',
+          CLAUDE_CONFIG_DIR: root,
+        },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
-    expect(preflight).toEqual(expect.objectContaining({
-      failureCacheStrategy: 'cooldown',
-      probeModelsRaw: expect.any(Function),
-    }));
-    expect(preflight).not.toHaveProperty('probeModelsCommandArgs');
-    expect(preflight).not.toHaveProperty('probeModelsFromCommandOutput');
+  it.each([
+    {
+      name: 'missing authority',
+      input: {},
+    },
+    {
+      name: 'unknown authority',
+      input: { connectedAccountMaterializationAuthority: 'unqualified' },
+    },
+    {
+      name: 'legacy one-shot combined with request auth',
+      input: {
+        connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
+        requestAuth: { capabilityPath: '/must-not-be-admitted' },
+      },
+    },
+  ])('rejects $name before preparing the materialized root', async ({ input }) => {
+    const root = join(tmpdir(), `claude-invalid-authority-${Date.now()}-${Math.random()}`);
+    try {
+      await expect(materializeClaudeAuthEnvironment({
+        rootDir: root,
+        sessionDirectory: root,
+        processEnv: {},
+        ...input,
+        anthropic: {
+          kind: 'token',
+          serviceId: 'anthropic',
+          profileId: 'legacy-profile',
+          token: {
+            token: 'must-not-materialize',
+          },
+        },
+      })).rejects.toThrow(/materialization authority|request-auth authority/);
+      await expect(stat(root)).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('maps Claude CLI-only args into session runtime options without host command code', () => {

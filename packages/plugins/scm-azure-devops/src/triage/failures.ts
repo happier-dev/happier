@@ -1,7 +1,8 @@
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+
 import { truncateUtf8 } from './decode.js';
 import {
   readAzureDevOpsRateLimitEvidence,
-  readHeader,
   resolveAzureDevOpsRetryNotBeforeMs,
 } from './rateLimit.js';
 import type {
@@ -78,15 +79,36 @@ export function classifyAzureDevOpsResponse(input: Readonly<{
   });
 }
 
+/**
+ * Whether this signal was aborted by a deadline rather than by its caller.
+ *
+ * The two are indistinguishable at the `aborted` flag and must not be reported
+ * as the same thing. A caller cancellation is the mount going away, and nobody
+ * is waiting for the answer; a deadline is a provider that accepted the request
+ * and then neither answered nor failed, while the reader is still looking at the
+ * panel. The owner that installs the deadline aborts with a `TimeoutError` —
+ * the same reason `AbortSignal.timeout` uses, and the reason `AbortSignal.any`
+ * propagates from whichever of its inputs fired first.
+ */
+export function isAzureDevOpsDeadlineAbort(signal: AbortSignal): boolean {
+  const reason: unknown = signal.reason;
+  return typeof reason === 'object'
+    && reason !== null
+    && (reason as Readonly<{ name?: unknown }>).name === 'TimeoutError';
+}
+
 export function classifyAzureDevOpsTransportFailure(input: Readonly<{
   error: unknown;
   signal: AbortSignal;
 }>): AzureDevOpsFailure {
   if (input.signal.aborted) {
+    const timedOut = isAzureDevOpsDeadlineAbort(input.signal);
     return failure({
-      failureClass: 'cancelled',
+      failureClass: timedOut ? 'timedOut' : 'cancelled',
       status: null,
-      detail: 'The Azure DevOps request was cancelled.',
+      detail: timedOut
+        ? 'Azure DevOps did not answer this request within its deadline.'
+        : 'The Azure DevOps request was cancelled.',
       typeKey: null,
       retryNotBeforeMs: null,
       rateLimit: null,
@@ -147,14 +169,14 @@ function looksLikeHtml(
   headers: Readonly<Record<string, string>>,
   bodyText: string,
 ): boolean {
-  const contentType = readHeader(headers, 'content-type');
+  const contentType = readTriageResponseHeaderV1(headers, 'content-type');
   if (contentType !== null && contentType.toLowerCase().includes('text/html')) return true;
   const prefix = bodyText.trimStart().slice(0, 64).toLowerCase();
   return prefix.startsWith('<!doctype html') || prefix.startsWith('<html');
 }
 
 function readServiceErrorHeader(headers: Readonly<Record<string, string>>): string | null {
-  const raw = readHeader(headers, 'x-tfs-serviceerror');
+  const raw = readTriageResponseHeaderV1(headers, 'x-tfs-serviceerror');
   if (raw === null) return null;
   try {
     return decodeURIComponent(raw.replace(/\+/gu, ' '));

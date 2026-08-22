@@ -36,7 +36,7 @@ describe('resolveClaudeStatuslineOriginalCommand', () => {
         expect(original).toEqual({ command: '~/bin/my-statusline.sh', padding: 2 });
     });
 
-    it('prefers HAPPIER_CLAUDE_CONFIG_DIR over CLAUDE_CONFIG_DIR', () => {
+    it('prefers CLAUDE_CONFIG_DIR over HAPPIER_CLAUDE_CONFIG_DIR', () => {
         const happierDir = createConfigDir({ statusLine: { type: 'command', command: 'happier-status' } });
         const claudeDir = createConfigDir({ statusLine: { type: 'command', command: 'claude-status' } });
 
@@ -44,7 +44,7 @@ describe('resolveClaudeStatuslineOriginalCommand', () => {
             env: { HAPPIER_CLAUDE_CONFIG_DIR: happierDir, CLAUDE_CONFIG_DIR: claudeDir },
         });
 
-        expect(original?.command).toBe('happier-status');
+        expect(original?.command).toBe('claude-status');
     });
 
     it('returns null for missing settings, non-command statuslines, and malformed values (fail-open)', () => {

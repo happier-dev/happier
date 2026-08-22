@@ -19,7 +19,7 @@
   "files": [
     "dist",
     "assets",
-    ".happier-plugin/plugin.json",
+    ".happier-plugin",
     "package.json"
   ],
   "scripts": {
@@ -35,8 +35,8 @@
     "@happier-dev/channels-protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
     "@happier-dev/plugin-ui": "0.0.0",
-    "@happier-dev/scm-forge-adapter": "0.0.0",
-    "@happier-dev/triage-protocol": "0.0.0"
+    "@happier-dev/triage-protocol": "0.0.0",
+    "@happier-dev/triage-sources": "0.0.0"
   },
   "devDependencies": {
     "@happier-dev/protocol": "0.0.0",

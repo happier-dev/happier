@@ -1,8 +1,9 @@
-import type { TerminalInputInjectionResult } from '@happier-dev/agents';
+import type { TerminalInputInjectionResult } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export type ClaudeUnifiedInjectionFailureAction =
   | Readonly<{ kind: 'retry'; retryAfterMs: number }>
   | Readonly<{ kind: 'await_provider_confirmation' }>
+  | Readonly<{ kind: 'handoff_ambiguous_failure' }>
   | Readonly<{ kind: 'terminal_failure' }>;
 
 export type ClaudeUnifiedInjectionFailurePolicyOptions = Readonly<{
@@ -24,8 +25,15 @@ export function classifyClaudeUnifiedInjectionFailure(
     return { kind: 'terminal_failure' };
   }
 
-  if (failure.duplicateRisk !== 'none' || failure.reason === 'ambiguous_provider_acceptance') {
+  if (
+    failure.phase === 'after_enter_unknown'
+    || failure.reason === 'ambiguous_provider_acceptance'
+  ) {
     return { kind: 'await_provider_confirmation' };
+  }
+
+  if (failure.duplicateRisk !== 'none') {
+    return { kind: 'handoff_ambiguous_failure' };
   }
 
   const retryAttempt = nonNegativeInteger(options.retryAttempt);

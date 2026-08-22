@@ -170,6 +170,19 @@ async function createPiRuntime(context: AgentRuntimeFactoryContext) {
 }
 
 describe('activate', () => {
+  it('reexports the activation compiled by its canonical public plugin definition', async () => {
+    expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
+      'agents',
+      'hooks',
+      'settings',
+      'systemTools',
+      'ui',
+    ]);
+    expect(await import('./manifest.js')).toEqual(expect.objectContaining({
+      PI_PLUGIN: expect.objectContaining({ manifest: PLUGIN_MANIFEST, activate }),
+    }));
+  });
+
   it('commits the complete Pi Agent aggregate through manifest-derived registration rights', async () => {
     const testkit = await createPluginTestkit({
       manifest: PLUGIN_MANIFEST,
@@ -230,7 +243,9 @@ describe('activate', () => {
       'reconcileResource',
     ]);
     expect(registration?.externalSessionHooks).toBeUndefined();
-    expect(registration?.externalSessionTakeover).toBeUndefined();
+    expect(registration?.externalSessionTakeover).toEqual({
+      resolveLaunch: expect.any(Function),
+    });
     const capture: Capture = { specs: [], written: [] };
     const context = createContext(capture);
     if (!registration?.factory) throw new Error('Expected Pi Agent factory');

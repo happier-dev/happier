@@ -6,6 +6,7 @@ import { classifyConversationCommand } from './commands.js';
 import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_RECORD_KIND } from './collections.js';
 import { createConversationPairingManager } from './pairing.js';
 import { createConversationPairingResourceRuntime } from './pairingResource.js';
+import { resourceText } from './testkit/resourceContract.js';
 import {
   createCurrentConversationConnectionFixture,
   type ConversationConnectionFixtureAuthority,
@@ -157,7 +158,7 @@ describe('Channels pairing Resource', () => {
       resource.read(resourceOptions(accountStorageFor(accountB))),
     ]);
 
-    expect(JSON.parse(projectionA)).toEqual(expect.objectContaining({
+    expect(JSON.parse(resourceText(projectionA))).toEqual(expect.objectContaining({
       challenges: [],
       proposals: [expect.objectContaining({
         connectionId: 'connection-a',
@@ -166,7 +167,7 @@ describe('Channels pairing Resource', () => {
     }));
     expect(projectionA).not.toContain('connection-b');
     expect(projectionA).not.toContain('Account B bot');
-    expect(JSON.parse(projectionB)).toEqual(expect.objectContaining({
+    expect(JSON.parse(resourceText(projectionB))).toEqual(expect.objectContaining({
       challenges: [expect.objectContaining({
         connectionId: 'connection-b',
         destinationLabel: 'Account B bot',

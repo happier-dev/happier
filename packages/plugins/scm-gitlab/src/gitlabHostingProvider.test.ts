@@ -27,7 +27,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
   it('declares a strict target SCM hosting-provider contribution with configured-origin access', async () => {
     expect(PLUGIN_MANIFEST).toMatchObject({
       id: 'happier.scm.forge.gitlab',
-      entrypoints: { daemon: './dist/index.js' },
+      entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: { required: expect.arrayContaining([
         expect.objectContaining({ id: 'gitlab-api', capability: 'network', scope: expect.objectContaining({ targets: expect.arrayContaining([{ kind: 'scmProviderOrigin', provider: 'gitlab' }]) }) }),
         expect.objectContaining({ id: 'gitlab-cli-process', capability: 'process', scope: { executables: [{ kind: 'systemTool', id: 'gitlab-cli' }] } }),

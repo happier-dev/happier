@@ -2,15 +2,23 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { TriageEntryRefV1Schema, type TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
+import { PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1 } from '@happier-dev/plugin-sdk/ui';
+
 import {
   TRIAGE_ROUTE_DEFAULT_LENS_V1,
   buildTriageRouteSubPathV1,
   parseTriageRouteSubPathV1,
+  preflightTriageRouteLensV1,
   readTriageRouteLensV1,
   writeTriageRouteLensV1,
   type TriageRouteLensV1,
 } from './location.js';
 import { TRIAGE_SURFACE_INITIAL_STATE_V1 } from '../state/surface.js';
+import { CORPUS_DEFAULT_SMART_POLICY_V1 } from '../../corpus/query/smartPolicy.js';
+import { TRIAGE_LIST_NO_FILTERS_V1 } from '../../projection/listWindow.js';
+import { MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 } from '../../settings/savedViews.js';
+
+const SOURCE = { pluginId: 'acme.scm', localId: 'github' } as const;
 
 function entryRef(input: Partial<Readonly<{
   pluginId: string;
@@ -32,6 +40,22 @@ function entryRef(input: Partial<Readonly<{
 
 function lens(overrides: Partial<TriageRouteLensV1> = {}): TriageRouteLensV1 {
   return { ...TRIAGE_ROUTE_DEFAULT_LENS_V1, ...overrides };
+}
+
+function routeBytes(value: TriageRouteLensV1): number {
+  return new TextEncoder().encode(buildTriageRouteSubPathV1(value)).byteLength;
+}
+
+/**
+ * A lens whose complete route is exactly `bytes` long.
+ *
+ * The query carries the padding because it is the one lens field with no
+ * schema bound of its own — which is also why it is the field a real reader
+ * can push over the limit by typing.
+ */
+function lensOfRouteBytes(bytes: number): TriageRouteLensV1 {
+  const overhead = routeBytes(lens({ query: 'x' })) - 1;
+  return lens({ query: 'x'.repeat(bytes - overhead) });
 }
 
 function hostApiWith(input: Readonly<{
@@ -134,6 +158,141 @@ describe('PRs & Issues route owner', () => {
       }),
       lens({ grouping: 'scope' }),
     )).resolves.toEqual({ kind: 'settled', subPath: 'g,kind' });
+  });
+
+  it('accepts a route at the host bound and refuses one byte over it', () => {
+    // `core/SURFACE.md` §3.2: every edit preflights the COMPLETE resulting
+    // route. A value at the limit is accepted; one above it is refused. The
+    // bound comes from the incumbent host owner rather than a Triage copy of
+    // the number, so this cannot pass against a bound that has drifted.
+    const atLimit = lensOfRouteBytes(PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1);
+    const overLimit = lensOfRouteBytes(PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1 + 1);
+
+    expect(routeBytes(atLimit)).toBe(PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1);
+    expect(preflightTriageRouteLensV1(atLimit))
+      .toEqual({ kind: 'accepted', subPath: buildTriageRouteSubPathV1(atLimit) });
+    expect(preflightTriageRouteLensV1(overLimit)).toEqual({ kind: 'refused' });
+  });
+
+  it('never asks the host for a route the bound already refuses', async () => {
+    const replace = vi.fn<PluginUiHostApi['replacePageLocation']>(async (subPath) => ({ subPath }));
+
+    await expect(writeTriageRouteLensV1(
+      hostApiWith({ methods: ['replacePageLocation'], replace }),
+      lensOfRouteBytes(PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1 + 1),
+    )).resolves.toEqual({ kind: 'refused', reason: 'tooLong' });
+
+    // Not `rejected`. Letting the transport throw and catching it collapses
+    // "this route cannot exist" into "the host said no", and the caller can no
+    // longer tell a refusal it must show the reader from a host that is simply
+    // unavailable.
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('carries the complete effective filter selection and Smart precedence', () => {
+    const value = lens({
+      order: 'smart',
+      smartPolicy: { v: 1, precedence: ['activity', 'attention'] },
+      filters: {
+        sources: [{ source: SOURCE }],
+        types: [
+          { source: SOURCE, kindId: 'pullRequest' },
+          { source: SOURCE, kindId: 'issue' },
+        ],
+        // A scope carrying both separators at once: the componentwise encoding
+        // is the only reason a copied link still names this one scope.
+        scopes: [{ source: SOURCE, collisionScope: 'acme,web/main' }],
+        states: ['open', 'unresolved'],
+        attention: ['required'],
+      },
+    });
+    const subPath = buildTriageRouteSubPathV1(value);
+
+    expect(subPath).not.toContain('acme,web/main');
+    expect(parseTriageRouteSubPathV1(subPath)).toEqual(value);
+  });
+
+  it('keeps an unfiltered default-policy lens byte-identical to the location it had before', () => {
+    expect(buildTriageRouteSubPathV1(lens({ query: 'bug' }))).toBe('q,bug');
+    expect(buildTriageRouteSubPathV1(lens({ order: 'smart' }))).toBe('o,smart');
+    // The default policy is the retained one, so naming it would put a value in
+    // every reader's URL that says nothing.
+    expect(buildTriageRouteSubPathV1(lens({
+      smartPolicy: CORPUS_DEFAULT_SMART_POLICY_V1,
+    }))).toBe('');
+  });
+
+  it('drops only the invalid facet value and never another still-valid one', () => {
+    const parsed = parseTriageRouteSubPathV1([
+      'fst,open,sideways,unresolved',
+      'fa,required,loud',
+      // A type value missing its kind, beside a complete one.
+      `ft,${encodeURIComponent(SOURCE.pluginId)},${encodeURIComponent(SOURCE.localId)}`,
+      `ft,${encodeURIComponent(SOURCE.pluginId)},${encodeURIComponent(SOURCE.localId)},issue`,
+      'sp,sideways',
+      'q,keep%20me',
+    ].join('/'));
+
+    expect(parsed.filters.states).toEqual(['open', 'unresolved']);
+    expect(parsed.filters.attention).toEqual(['required']);
+    expect(parsed.filters.types).toEqual([{ source: SOURCE, kindId: 'issue' }]);
+    // An unreadable precedence falls back to the retained default rather than
+    // dropping the query beside it.
+    expect(parsed.smartPolicy).toEqual(CORPUS_DEFAULT_SMART_POLICY_V1);
+    expect(parsed.query).toBe('keep me');
+  });
+
+  it('never admits more facet values than the one lens the list read can carry', () => {
+    const scopes = Array.from(
+      { length: MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 + 1 },
+      (_unused, index) => `fp,${encodeURIComponent(SOURCE.pluginId)},${encodeURIComponent(SOURCE.localId)},scope-${index}`,
+    );
+    const parsed = parseTriageRouteSubPathV1([...scopes, 'q,keep'].join('/'));
+
+    // A hand-edited route wider than the wire bound would make every list read
+    // fail whole, which shows the reader no list at all.
+    expect(parsed.filters.scopes).toHaveLength(MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1);
+    expect(parsed.filters.scopes.at(-1)).toEqual({
+      source: SOURCE,
+      collisionScope: `scope-${MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 - 1}`,
+    });
+    expect(parsed.query).toBe('keep');
+  });
+
+  it('drops a repeated facet value rather than spending the bound twice', () => {
+    const one = `fs,${encodeURIComponent(SOURCE.pluginId)},${encodeURIComponent(SOURCE.localId)}`;
+    expect(parseTriageRouteSubPathV1([one, one].join('/')).filters.sources)
+      .toEqual([{ source: SOURCE }]);
+  });
+
+  it('reads the filters and the Smart precedence from the one reducer state', () => {
+    expect(readTriageRouteLensV1({
+      ...TRIAGE_SURFACE_INITIAL_STATE_V1,
+      filters: { ...TRIAGE_LIST_NO_FILTERS_V1, states: ['done'] },
+      smartPolicy: { v: 1, precedence: ['activity', 'attention'] },
+    })).toEqual(lens({
+      filters: { ...TRIAGE_LIST_NO_FILTERS_V1, states: ['done'] },
+      smartPolicy: { v: 1, precedence: ['activity', 'attention'] },
+    }));
+  });
+
+  it('measures the filters as part of the complete route it preflights', () => {
+    const scopeValue = (index: number) => ({
+      source: SOURCE,
+      collisionScope: `${'scope'.repeat(12)}-${index}`,
+    });
+    const filtered = lens({
+      filters: {
+        ...TRIAGE_LIST_NO_FILTERS_V1,
+        scopes: Array.from({ length: MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 }, (_u, i) => scopeValue(i)),
+      },
+    });
+
+    // The reader chose sixteen scopes the facet bound allows, and the resulting
+    // location does not fit. §3.2's refusal is therefore reachable from an
+    // ordinary filter edit, not only from a hand-edited URL.
+    expect(routeBytes(filtered)).toBeGreaterThan(PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1);
+    expect(preflightTriageRouteLensV1(filtered)).toEqual({ kind: 'refused' });
   });
 
   it('refuses rather than inventing a local route when the host cannot replace', async () => {

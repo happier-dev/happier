@@ -1,4 +1,5 @@
 import {
+  isPluginError,
   PluginError,
   arePluginMachineExecutionOriginsEqual,
   type JsonValue,
@@ -24,6 +25,7 @@ import {
   ConversationConnectionDeleteInputV1Schema,
   ConversationConnectionPollRetryInputV1Schema,
   ConversationConnectionPrepareInputV1Schema,
+  isConversationConnectionSelectableTransportV1,
   ConversationConnectionSetEnabledInputV1Schema,
   ConversationConnectionTestResultV1Schema,
   ConversationConnectionTransferInputV1Schema,
@@ -42,6 +44,7 @@ import {
   ConversationTransportFactReportInputV1Schema,
   MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
   areConversationEndpointIdentitiesEqual,
+  conversationBindingPolicyForOmittedFieldsV1,
   hasCanonicalConversationResolutionCandidateOrderV1,
   type ConversationBindingCreateResultV1,
   type ConversationBindingCreateInputV1,
@@ -111,6 +114,7 @@ import {
   type ConversationDeleteStopRequestV1,
   type ConversationPendingOldTransportStopV1,
   type ConversationTransferStopRequestV1,
+  areConversationMaterializationRefsEqual,
 } from './connectionLifecycle.js';
 import { hasCurrentConversationTransportCaller } from './reconciliation.js';
 import {
@@ -163,6 +167,7 @@ import {
 } from './ingress.js';
 import {
   resolveConversationOutwardDeliveryCustodyInAccountCollection,
+  type ConversationDeliveryResolutionDecision,
   settleConversationOutwardDeliveriesForBindingDeletion,
   settleConversationOutwardDeliveriesForConnectionDeletion,
 } from './outwardDelivery.js';
@@ -218,7 +223,7 @@ type ConversationDeliveryResolveResult = Readonly<{
   kind: 'resolved';
   custodyId: string;
   revision: number;
-  resolution: 'accepted' | 'discarded';
+  resolution: ConversationDeliveryResolutionDecision;
 }>;
 type ConversationConnectionDeleteResult = Readonly<{
   kind: 'deletePending' | 'deleteFinalizing' | 'rejoined';
@@ -861,43 +866,48 @@ async function resolveBindingPrincipalCandidatesForEndpoint(input: Readonly<{
 /**
  * One persisted audience must be selected from the exact current provider
  * candidates. The selection is never treated as a durable provider identity.
+ *
+ * Binding create and binding update both reach the audience through this one
+ * resolver; the operation only names which error domain a rejected selection
+ * belongs to.
  */
 async function resolveBindingAudienceSelection(input: Readonly<{
   connectionId: string;
-  audienceSelection: NonNullable<ConversationBindingUpdateInputV1['audienceSelection']>;
+  expectedConnectionRevision: number;
+  endpointSelection: NonNullable<
+    ConversationBindingUpdateInputV1['audienceSelection']
+  >['endpointSelection'];
+  principalSelection: NonNullable<
+    ConversationBindingUpdateInputV1['audienceSelection']
+  >['principalSelection'];
+  operation: 'channels_binding_create' | 'channels_binding_update';
   context: PluginInvocationContext;
 }>): Promise<BindingAudienceResolution> {
-  assertBindingPrincipalSelectionIdsAreUnique(
-    input.audienceSelection.principalSelection,
-    'channels_binding_update',
-  );
+  assertBindingPrincipalSelectionIdsAreUnique(input.principalSelection, input.operation);
   const endpointResolution = await resolveBindingEndpointCandidates({
     connectionId: input.connectionId,
-    expectedConnectionRevision: input.audienceSelection.expectedConnectionRevision,
-    query: input.audienceSelection.endpointSelection.query,
-    kinds: input.audienceSelection.endpointSelection.kinds,
+    expectedConnectionRevision: input.expectedConnectionRevision,
+    query: input.endpointSelection.query,
+    kinds: input.endpointSelection.kinds,
     context: input.context,
   });
   if (endpointResolution.kind !== 'endpointCandidates') return endpointResolution;
   const endpoint = endpointResolution.candidates.find((candidate) => (
-    areConversationEndpointIdentitiesEqual(
-      candidate,
-      input.audienceSelection.endpointSelection.selected,
-    )
+    areConversationEndpointIdentitiesEqual(candidate, input.endpointSelection.selected)
   ));
   if (endpoint === undefined) return bindingResolutionStale();
 
   const principalResolution = await resolveBindingPrincipalCandidatesForEndpoint({
     connectionId: input.connectionId,
-    expectedConnectionRevision: input.audienceSelection.expectedConnectionRevision,
+    expectedConnectionRevision: input.expectedConnectionRevision,
     endpoint,
     witness: endpointResolution.witness,
-    query: input.audienceSelection.principalSelection.query,
+    query: input.principalSelection.query,
     context: input.context,
   });
   if (principalResolution.kind !== 'principalCandidates') return principalResolution;
   const allowedPrincipalIds: string[] = [];
-  for (const selection of input.audienceSelection.principalSelection.selected) {
+  for (const selection of input.principalSelection.selected) {
     const principal = principalResolution.candidates.find((candidate) => (
       candidate.id === selection.id && candidate.kind === selection.kind
     ));
@@ -1329,6 +1339,9 @@ async function resolveBindingTargetForPersistence(
     assertConversationApprovalPolicyCanPersist(target);
     return target;
   }
+  // A conversation binding is an additional invocation source for an
+  // Automation the Account already owns: several bindings may name the same
+  // target, so persistence only asks whether that target is still current.
   const verification = await verifyAutomationBindingTarget(target, context);
   if (verification.kind === 'notVerified') return verification;
   return {
@@ -1484,15 +1497,6 @@ function didSessionProjectionTargetChange(
     && (previous.kind !== 'session' || previous.sessionId !== next.sessionId);
 }
 
-function sameMaterialization(
-  left: ConnectionTransportOrigin['materializationRef'],
-  right: ConversationPairingBindingWriteInput['materialization'],
-): boolean {
-  return left.pluginId === right.pluginId
-    && left.machineId === right.machineId
-    && left.materializationId === right.materializationId;
-}
-
 function createPairingBindingCandidate(
   input: ConversationPairingBindingWriteInput,
   target: ConversationBindingTargetV1,
@@ -1503,11 +1507,7 @@ function createPairingBindingCandidate(
     endpoint: input.endpoint,
     target,
     allowedPrincipalIds: [input.principalId],
-    allowBotSenders: false,
-    inputMode: input.endpoint.audience === 'direct' ? 'allAllowedMessages' : 'directMentionsOnly',
-    inboundDebounceMs: 750,
-    linkPreviewPolicy: 'suppress',
-    senderFeedback: 'off',
+    ...conversationBindingPolicyForOmittedFieldsV1(input.endpoint.audience),
     enabled: input.enabled,
   });
 }
@@ -1525,7 +1525,7 @@ async function writeConversationPairingBinding(
   }
   const connection = readConversationConnectionUpdateRow({ row: connectionRow, connectionId: input.connectionId });
   if (connection.lifecycle.deletionState !== 'none') return { kind: 'staleConnectionRevision' };
-  if (!sameMaterialization(connection.transportOrigin.materializationRef, input.materialization)) {
+  if (!areConversationMaterializationRefsEqual(connection.transportOrigin.materializationRef, input.materialization)) {
     return { kind: 'wrongMaterialization' };
   }
   // Pairing proposals freeze only a caller precondition. Recheck it after the
@@ -1756,7 +1756,7 @@ async function ensureConnectionIdentityKey(context: PluginInvocationContext): Pr
     return candidate;
   } catch (error) {
     assertNotAborted(context.signal);
-    if (error instanceof PluginError && error.code === 'collection_quota_incompatible') {
+    if (isPluginError(error) && error.code === 'collection_quota_incompatible') {
       throw error;
     }
     const rejoined = await collection.get(CHANNEL_STATE_FIXED_ROW_ID.connectionIdentityKey, { signal: context.signal });
@@ -2245,6 +2245,30 @@ async function runProviderSetupAndTest(input: Readonly<{
   return prepared;
 }
 
+function projectConnectionPrepareTransportSelection(
+  setup: ConversationProviderSetupResultV1,
+): Readonly<{
+  supportedTransports: readonly ConversationConnectionCreateInputV1['selectedTransport'][];
+  recommendedTransport: ConversationConnectionCreateInputV1['selectedTransport'];
+}> {
+  const supportedTransports = setup.supportedTransports.filter(
+    isConversationConnectionSelectableTransportV1,
+  );
+  const fallbackTransport = supportedTransports[0];
+  if (fallbackTransport === undefined) {
+    throw pluginError(
+      'channels_connection_transport_unavailable',
+      'Provider setup does not support a transport current connection creation can select.',
+    );
+  }
+  return {
+    supportedTransports,
+    recommendedTransport: isConversationConnectionSelectableTransportV1(setup.recommendedTransport)
+      ? setup.recommendedTransport
+      : fallbackTransport,
+  };
+}
+
 /**
  * C2's non-persisting preparation owner. It observes provider setup only and
  * projects safe transport facts without allocating or retaining connection state.
@@ -2265,10 +2289,10 @@ export async function prepareConversationConnectionForInvocation(
     credentialRef: prepareInput.credentialRef,
   });
   if (prepared.kind === 'requiresRemediation') return prepared;
+  const transportSelection = projectConnectionPrepareTransportSelection(prepared.setup);
   return {
     kind: 'ready',
-    supportedTransports: prepared.setup.supportedTransports,
-    recommendedTransport: prepared.setup.recommendedTransport,
+    ...transportSelection,
     overlapSafety: prepared.setup.overlapSafety,
     replayContinuity: prepared.setup.replayContinuity,
     outboundTextLimit: prepared.setup.outboundTextLimit,
@@ -2297,58 +2321,24 @@ async function mutateConversationConnectionLifecycle(input: Readonly<{
 }
 
 /**
- * C2's in-place connection policy owner. It changes only Account-local
- * lifecycle fields in the retained row and never re-runs setup, pairing, or
- * transport materialization for ordinary policy edits.
+ * The one disable-time provider effect for every mounted lifecycle Action that
+ * can turn a connection off. Direct Account-local callers end at the shared
+ * CAS; a mounted Action additionally issues this best-effort transport stop,
+ * and only after rereading the exact persisted revision that the lifecycle
+ * owner just committed. Both mounted enable-bit owners route through here so a
+ * disable cannot silently leave the provider socket running.
  */
-export async function updateConversationConnectionForInvocation(
-  input: JsonValue,
+async function stopDisabledConversationConnectionTransport(
+  input: Readonly<{ connectionId: string; result: ConversationConnectionUpdateResult }>,
   context: PluginInvocationContext,
 ): Promise<ConversationConnectionUpdateResult> {
-  const updateInput = readAdmittedConnectionUpdateInput(input);
-  return await mutateConversationConnectionLifecycle({
-    connectionId: updateInput.connectionId,
-    expectedRevision: updateInput.expectedRevision,
-    operation: 'channels_connection_update',
-    transition: (current, now) => transitionConversationConnection({
-      current,
-      requested: {
-        enabled: updateInput.enabled,
-        maximumObservationAgeMs: updateInput.maximumObservationAgeMs,
-      },
-      now,
-    }),
-  }, context);
-}
-
-/**
- * The narrow enable/disable Action uses the same lifecycle CAS as ordinary
- * policy edits but cannot carry a freshness-policy or provider mutation.
- */
-export async function setConversationConnectionEnabledForInvocation(
-  input: JsonValue,
-  context: PluginInvocationContext,
-): Promise<ConversationConnectionUpdateResult> {
-  const setEnabledInput = readAdmittedConnectionSetEnabledInput(input);
-  const result = await mutateConversationConnectionLifecycle({
-    connectionId: setEnabledInput.connectionId,
-    expectedRevision: setEnabledInput.expectedRevision,
-    operation: 'channels_connection_set_enabled',
-    transition: (current) => setConversationConnectionEnabled({
-      current,
-      enabled: setEnabledInput.enabled,
-    }),
-  }, context);
-  if (setEnabledInput.enabled || result.kind !== 'updated') return result;
-
-  // Direct Account-local callers end at the shared CAS above. The mounted
-  // Action alone owns this best-effort online effect, and only after rereading
-  // the exact persisted revision that the lifecycle owner just committed.
+  const { connectionId, result } = input;
+  if (result.kind !== 'updated') return result;
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-  const row = await collection.get(setEnabledInput.connectionId, { signal: context.signal });
+  const row = await collection.get(connectionId, { signal: context.signal });
   assertNotAborted(context.signal);
   if (row === null || row.revision !== result.revision) return result;
-  const current = readConversationConnectionUpdateRow({ row, connectionId: setEnabledInput.connectionId });
+  const current = readConversationConnectionUpdateRow({ row, connectionId });
   const transport = own(current.payload, 'transport');
   if (!isJsonRecord(transport) || transport.kind !== 'socket'
     || current.lifecycle.enabled
@@ -2375,7 +2365,7 @@ export async function setConversationConnectionEnabledForInvocation(
   try {
     stopRequest = ConversationProviderConnectionStopInputV1Schema.parse({
       v: 1,
-      connectionId: setEnabledInput.connectionId,
+      connectionId,
       providerConnectionKey: own(current.payload, 'providerConnectionKey'),
       providerConfigVersion: own(current.payload, 'providerConfigVersion'),
       providerConfig: own(current.payload, 'providerConfig'),
@@ -2396,6 +2386,61 @@ export async function setConversationConnectionEnabledForInvocation(
     if (context.signal.aborted) throw cause;
   }
   return result;
+}
+
+/**
+ * C2's in-place connection policy owner. It changes only Account-local
+ * lifecycle fields in the retained row and never re-runs setup, pairing, or
+ * transport materialization for ordinary policy edits.
+ */
+export async function updateConversationConnectionForInvocation(
+  input: JsonValue,
+  context: PluginInvocationContext,
+): Promise<ConversationConnectionUpdateResult> {
+  const updateInput = readAdmittedConnectionUpdateInput(input);
+  const result = await mutateConversationConnectionLifecycle({
+    connectionId: updateInput.connectionId,
+    expectedRevision: updateInput.expectedRevision,
+    operation: 'channels_connection_update',
+    transition: (current, now) => transitionConversationConnection({
+      current,
+      requested: {
+        enabled: updateInput.enabled,
+        maximumObservationAgeMs: updateInput.maximumObservationAgeMs,
+      },
+      now,
+    }),
+  }, context);
+  if (updateInput.enabled) return result;
+  return await stopDisabledConversationConnectionTransport({
+    connectionId: updateInput.connectionId,
+    result,
+  }, context);
+}
+
+/**
+ * The narrow enable/disable Action uses the same lifecycle CAS as ordinary
+ * policy edits but cannot carry a freshness-policy or provider mutation.
+ */
+export async function setConversationConnectionEnabledForInvocation(
+  input: JsonValue,
+  context: PluginInvocationContext,
+): Promise<ConversationConnectionUpdateResult> {
+  const setEnabledInput = readAdmittedConnectionSetEnabledInput(input);
+  const result = await mutateConversationConnectionLifecycle({
+    connectionId: setEnabledInput.connectionId,
+    expectedRevision: setEnabledInput.expectedRevision,
+    operation: 'channels_connection_set_enabled',
+    transition: (current) => setConversationConnectionEnabled({
+      current,
+      enabled: setEnabledInput.enabled,
+    }),
+  }, context);
+  if (setEnabledInput.enabled) return result;
+  return await stopDisabledConversationConnectionTransport({
+    connectionId: setEnabledInput.connectionId,
+    result,
+  }, context);
 }
 
 /**
@@ -2456,7 +2501,7 @@ export async function retryConversationConnectionPollForInvocation(
     ))?.revision;
   } catch (cause) {
     assertNotAborted(context.signal);
-    if (cause instanceof PluginError) throw cause;
+    if (isPluginError(cause)) throw cause;
   }
   if (persistedRevision !== undefined) {
     return {
@@ -2546,6 +2591,15 @@ function deleteResult(input: Readonly<{
 }
 
 /**
+ * A frozen stop can only reach the exact contribution its custody names. An
+ * absent stop operation is reported rather than thrown so each lifecycle owner
+ * keeps its own result vocabulary.
+ */
+type FrozenOldTransportStopResult =
+  | ReturnType<typeof ConversationProviderConnectionStopResultV1Schema.parse>
+  | Readonly<{ kind: 'stopUnavailable' }>;
+
+/**
  * The generic Actions owner enforces the frozen origin before target-handler
  * admission and again after it settles. This consumer never selects or
  * compares a replacement target locally.
@@ -2553,7 +2607,7 @@ function deleteResult(input: Readonly<{
 async function executeFrozenOldTransportStop(input: Readonly<{
   context: PluginInvocationContext;
   pendingOldTransportStop: ConversationPendingOldTransportStopV1;
-}>): Promise<ReturnType<typeof ConversationProviderConnectionStopResultV1Schema.parse>> {
+}>): Promise<FrozenOldTransportStopResult> {
   const provider = await readCurrentProviderContributionForPersistedSelection({
     context: {
       targetedContributions: input.context.services.targetedContributions,
@@ -2566,13 +2620,7 @@ async function executeFrozenOldTransportStop(input: Readonly<{
     providerContributionSelection: input.pendingOldTransportStop.providerContributionSelection,
   });
   const stop = provider.operations.connectionStop;
-  if (stop === undefined) {
-    throw pluginError(
-      'channels_connection_stop_unavailable',
-      'The current provider contribution does not support stopping this connection transport.',
-      true,
-    );
-  }
+  if (stop === undefined) return { kind: 'stopUnavailable' };
   const execution = await input.context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
     stop,
     input.pendingOldTransportStop.stopRequest,
@@ -2601,15 +2649,17 @@ async function readCurrentFrozenOldTransportStopForEffect(input: Readonly<{
   collection: ChannelStateCollection;
   connectionId: string;
   pendingRevision: number;
+  reason: 'delete' | 'transfer';
 }>, context: PluginInvocationContext): Promise<Readonly<{
   pendingOldTransportStop: ConversationPendingOldTransportStopV1;
   lifecycle: ConversationConnectionLifecycleStateV1;
 }>> {
+  const conflictCode = `channels_connection_${input.reason}_stop_currentness_conflict`;
   const row = await input.collection.get(input.connectionId, { signal: context.signal });
   assertNotAborted(context.signal);
   if (row === null || row.revision !== input.pendingRevision) {
     throw pluginError(
-      'channels_connection_delete_stop_currentness_conflict',
+      conflictCode,
       'Connection old-stop authority changed before the provider effect could start.',
       true,
     );
@@ -2619,12 +2669,12 @@ async function readCurrentFrozenOldTransportStopForEffect(input: Readonly<{
   if (
     pendingOldTransportStop === null
     || pendingOldTransportStop.acceptedPossibleLoss
-    || pendingOldTransportStop.stopRequest.reason !== 'delete'
+    || pendingOldTransportStop.stopRequest.reason !== input.reason
     || pendingOldTransportStop.stopRequest.authorityEpoch !== current.lifecycle.authorityEpoch
     || current.providerPluginId !== pendingOldTransportStop.transportOrigin.materializationRef.pluginId
   ) {
     throw pluginError(
-      'channels_connection_delete_stop_currentness_conflict',
+      conflictCode,
       'Connection old-stop authority is no longer current for a provider effect.',
       true,
     );
@@ -2643,17 +2693,19 @@ async function settleCurrentConnectionStopProof(input: Readonly<{
   collection: ChannelStateCollection;
   connectionId: string;
   pendingRevision: number;
+  reason: 'delete' | 'transfer';
   frozenStopRequest: ConversationPendingOldTransportStopV1['stopRequest'];
 }>, context: PluginInvocationContext): Promise<Readonly<{
-  kind: 'deleteFinalizing';
+  kind: 'deleteFinalizing' | 'transportStopConfirmed';
   revision: number;
   lifecycle: ConversationConnectionLifecycleStateV1;
 }>> {
+  const expectedKind = input.reason === 'delete' ? 'deleteFinalizing' : 'transportStopConfirmed';
   const row = await input.collection.get(input.connectionId, { signal: context.signal });
   assertNotAborted(context.signal);
   if (row === null || row.revision !== input.pendingRevision) {
     throw pluginError(
-      'channels_connection_delete_stop_settlement_conflict',
+      `channels_connection_${input.reason}_stop_settlement_conflict`,
       'Connection stop proof no longer matches the current retained pending row.',
       true,
     );
@@ -2663,9 +2715,9 @@ async function settleCurrentConnectionStopProof(input: Readonly<{
     current: current.lifecycle,
     reportedAuthorityEpoch: input.frozenStopRequest.authorityEpoch,
   });
-  if (transition.kind !== 'deleteFinalizing') {
+  if (transition.kind !== expectedKind) {
     throw pluginError(
-      'channels_connection_delete_stop_settlement_stale',
+      `channels_connection_${input.reason}_stop_settlement_stale`,
       'Connection stop proof no longer matches its current lifecycle custody.',
       true,
     );
@@ -2675,12 +2727,78 @@ async function settleCurrentConnectionStopProof(input: Readonly<{
     row,
     current,
     lifecycle: transition.connection,
-    operation: 'channels_connection_delete_stop_settlement',
+    operation: `channels_connection_${input.reason}_stop_settlement`,
   }, context);
   return {
     kind: transition.kind,
     revision,
     lifecycle: transition.connection,
+  };
+}
+
+/**
+ * The one physical old-transport stop path. Delete and transfer both commit
+ * their frozen custody first, reach the same generic expected-origin Action
+ * owner here, and settle that same durable slot; neither owns a private stop
+ * subsystem, and each maps this outcome into its own result vocabulary.
+ */
+type FrozenOldTransportStopOutcome =
+  | Readonly<{
+    kind: 'settled';
+    revision: number;
+    lifecycle: ConversationConnectionLifecycleStateV1;
+  }>
+  | Readonly<{
+    kind: 'pending';
+    lifecycle: ConversationConnectionLifecycleStateV1;
+  }>
+  | Readonly<{
+    kind: 'stopUnavailable';
+    lifecycle: ConversationConnectionLifecycleStateV1;
+  }>
+  | Readonly<{
+    kind: 'notReady';
+    retryable: boolean;
+    lifecycle: ConversationConnectionLifecycleStateV1;
+  }>;
+
+async function runFrozenOldTransportStopForCommittedCustody(input: Readonly<{
+  collection: ChannelStateCollection;
+  connectionId: string;
+  pendingRevision: number;
+  reason: 'delete' | 'transfer';
+}>, context: PluginInvocationContext): Promise<FrozenOldTransportStopOutcome> {
+  const currentStop = await readCurrentFrozenOldTransportStopForEffect({
+    collection: input.collection,
+    connectionId: input.connectionId,
+    pendingRevision: input.pendingRevision,
+    reason: input.reason,
+  }, context);
+  const stopResult = await executeFrozenOldTransportStop({
+    context,
+    pendingOldTransportStop: currentStop.pendingOldTransportStop,
+  });
+  if (stopResult.kind === 'stopUnavailable' || stopResult.kind === 'pending') {
+    return { kind: stopResult.kind, lifecycle: currentStop.lifecycle };
+  }
+  if (stopResult.kind === 'notReady') {
+    return {
+      kind: 'notReady',
+      retryable: stopResult.retryAfterMs !== undefined,
+      lifecycle: currentStop.lifecycle,
+    };
+  }
+  const settled = await settleCurrentConnectionStopProof({
+    collection: input.collection,
+    connectionId: input.connectionId,
+    pendingRevision: input.pendingRevision,
+    reason: input.reason,
+    frozenStopRequest: currentStop.pendingOldTransportStop.stopRequest,
+  }, context);
+  return {
+    kind: 'settled',
+    revision: settled.revision,
+    lifecycle: settled.lifecycle,
   };
 }
 
@@ -2793,41 +2911,39 @@ export async function deleteConversationConnectionForInvocation(
       lifecycle: pending,
     });
   }
-  const currentStop = await readCurrentFrozenOldTransportStopForEffect({
+  const outcome = await runFrozenOldTransportStopForCommittedCustody({
     collection,
     connectionId: deleteInput.connectionId,
     pendingRevision,
+    reason: 'delete',
   }, context);
-  const stopResult = await executeFrozenOldTransportStop({
-    context,
-    pendingOldTransportStop: currentStop.pendingOldTransportStop,
-  });
-  if (stopResult.kind === 'pending') {
+  if (outcome.kind === 'stopUnavailable') {
+    throw pluginError(
+      'channels_connection_stop_unavailable',
+      'The current provider contribution does not support stopping this connection transport.',
+      true,
+    );
+  }
+  if (outcome.kind === 'pending') {
     return deleteResult({
       kind: 'deletePending',
       connectionId: deleteInput.connectionId,
       revision: pendingRevision,
-      lifecycle: currentStop.lifecycle,
+      lifecycle: outcome.lifecycle,
     });
   }
-  if (stopResult.kind === 'notReady') {
+  if (outcome.kind === 'notReady') {
     throw pluginError(
       'channels_connection_stop_not_ready',
       'Provider stop did not confirm the old transport has stopped.',
-      stopResult.retryAfterMs !== undefined,
+      outcome.retryable,
     );
   }
-  const settled = await settleCurrentConnectionStopProof({
-    collection,
-    connectionId: deleteInput.connectionId,
-    pendingRevision,
-    frozenStopRequest: currentStop.pendingOldTransportStop.stopRequest,
-  }, context);
   return deleteResult({
     kind: 'deleteFinalizing',
     connectionId: deleteInput.connectionId,
-    revision: settled.revision,
-    lifecycle: settled.lifecycle,
+    revision: outcome.revision,
+    lifecycle: outcome.lifecycle,
   });
 }
 
@@ -3219,7 +3335,7 @@ export async function settleConversationProviderExclusiveCheckpointedPollReplace
     return { kind: 'settled', revision };
   } catch (cause) {
     if (
-      cause instanceof PluginError
+      isPluginError(cause)
       && cause.code === 'channels_provider_exclusive_checkpointed_poll_replacement_settlement_conflict'
     ) return { kind: 'staleAuthority' };
     throw cause;
@@ -3708,55 +3824,34 @@ export async function createConversationBindingForInvocation(
   context: PluginInvocationContext,
 ): Promise<ConversationBindingCreateResult> {
   const createInput = readAdmittedBindingCreateInput(input);
-  assertBindingPrincipalSelectionIdsAreUnique(
-    createInput.principalSelection,
-    'channels_binding_create',
-  );
-  const endpointResolution = await resolveBindingEndpointCandidates({
+  const audience = await resolveBindingAudienceSelection({
     connectionId: createInput.connectionId,
     expectedConnectionRevision: createInput.expectedConnectionRevision,
-    query: createInput.endpointSelection.query,
-    kinds: createInput.endpointSelection.kinds,
+    endpointSelection: createInput.endpointSelection,
+    principalSelection: createInput.principalSelection,
+    operation: 'channels_binding_create',
     context,
   });
-  if (endpointResolution.kind !== 'endpointCandidates') return endpointResolution;
-  const endpoint = endpointResolution.candidates.find((candidate) => (
-    areConversationEndpointIdentitiesEqual(candidate, createInput.endpointSelection.selected)
-  ));
-  if (endpoint === undefined) return bindingResolutionStale();
-
-  const principalResolution = await resolveBindingPrincipalCandidatesForEndpoint({
-    connectionId: createInput.connectionId,
-    expectedConnectionRevision: createInput.expectedConnectionRevision,
-    endpoint,
-    witness: endpointResolution.witness,
-    query: createInput.principalSelection.query,
-    context,
-  });
-  if (principalResolution.kind !== 'principalCandidates') return principalResolution;
-  const allowedPrincipalIds: string[] = [];
-  for (const selection of createInput.principalSelection.selected) {
-    const principal = principalResolution.candidates.find((candidate) => (
-      candidate.id === selection.id && candidate.kind === selection.kind
-    ));
-    if (principal === undefined) return bindingResolutionStale();
-    allowedPrincipalIds.push(principal.id);
-  }
+  if (audience.kind !== 'ready') return audience;
+  const { endpoint, allowedPrincipalIds } = audience;
 
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+  // The binding identity is minted before verification so the Automation owner
+  // can answer for this exact binding rather than for the target alone.
+  const newBindingId = createBindingId();
+  const defaults = conversationBindingPolicyForOmittedFieldsV1(endpoint.audience);
   const createCandidate = (target: ConversationBindingTargetV1) => createConversationBindingRow({
-    bindingId: createBindingId(),
+    bindingId: newBindingId,
     connectionId: createInput.connectionId,
     endpoint,
     target,
     allowedPrincipalIds,
-    allowBotSenders: createInput.allowBotSenders ?? false,
-    inputMode: createInput.inputMode
-      ?? (endpoint.audience === 'direct' ? 'allAllowedMessages' : 'directMentionsOnly'),
-    inboundDebounceMs: createInput.inboundDebounceMs ?? 750,
-    linkPreviewPolicy: createInput.linkPreviewPolicy ?? 'suppress',
-    senderFeedback: createInput.senderFeedback ?? 'off',
-    enabled: createInput.enabled ?? false,
+    allowBotSenders: createInput.allowBotSenders ?? defaults.allowBotSenders,
+    inputMode: createInput.inputMode ?? defaults.inputMode,
+    inboundDebounceMs: createInput.inboundDebounceMs ?? defaults.inboundDebounceMs,
+    linkPreviewPolicy: createInput.linkPreviewPolicy ?? defaults.linkPreviewPolicy,
+    senderFeedback: createInput.senderFeedback ?? defaults.senderFeedback,
+    enabled: createInput.enabled ?? defaults.enabled,
   });
 
   let candidate: ReturnType<typeof createCandidate>;
@@ -3772,7 +3867,7 @@ export async function createConversationBindingForInvocation(
       connectionId: createInput.connectionId,
       expectedConnectionRevision: createInput.expectedConnectionRevision,
       context,
-      providerBefore: principalResolution.witness,
+      providerBefore: audience.witness,
     });
     if (finalCurrent.kind !== 'current') return finalCurrent;
     candidate = createCandidate(target);
@@ -3790,7 +3885,7 @@ export async function createConversationBindingForInvocation(
       connectionId: createInput.connectionId,
       expectedConnectionRevision: createInput.expectedConnectionRevision,
       context,
-      providerBefore: principalResolution.witness,
+      providerBefore: audience.witness,
     });
     if (finalCurrent.kind !== 'current') return finalCurrent;
   }
@@ -3875,7 +3970,10 @@ async function mutateConversationBinding(
     }
     audience = await resolveBindingAudienceSelection({
       connectionId: current.binding.connectionId,
-      audienceSelection,
+      expectedConnectionRevision: audienceSelection.expectedConnectionRevision,
+      endpointSelection: audienceSelection.endpointSelection,
+      principalSelection: audienceSelection.principalSelection,
+      operation: 'channels_binding_update',
       context,
     });
     if (audience.kind !== 'ready') return audience;
@@ -4266,6 +4364,49 @@ function transferConnectionValue(input: Readonly<{
 }
 
 /**
+ * Runs the already-committed transfer custody through the shared frozen-stop
+ * owner and speaks only the transfer result vocabulary.
+ *
+ * The replacement authority is durable before this runs, so an unknown,
+ * deferred, unsupported, or failed stop is disclosed as retained custody
+ * instead of failing an Action whose durable outcome already succeeded. Only a
+ * provider-proven stop settles the slot.
+ */
+async function settleTransferOldTransportStop(input: Readonly<{
+  collection: ChannelStateCollection;
+  connectionId: string;
+  pendingRevision: number;
+  authorityEpoch: number;
+}>, context: PluginInvocationContext): Promise<ConversationConnectionTransferResult> {
+  const pendingResult: ConversationConnectionTransferResult = {
+    kind: 'transferPendingOldStop',
+    connectionId: input.connectionId,
+    revision: input.pendingRevision,
+    authorityEpoch: input.authorityEpoch,
+  };
+  let outcome: FrozenOldTransportStopOutcome;
+  try {
+    outcome = await runFrozenOldTransportStopForCommittedCustody({
+      collection: input.collection,
+      connectionId: input.connectionId,
+      pendingRevision: input.pendingRevision,
+      reason: 'transfer',
+    }, context);
+  } catch {
+    assertNotAborted(context.signal);
+    return pendingResult;
+  }
+  return outcome.kind === 'settled'
+    ? {
+      kind: 'transferred',
+      connectionId: input.connectionId,
+      revision: outcome.revision,
+      authorityEpoch: input.authorityEpoch,
+    }
+    : pendingResult;
+}
+
+/**
  * Replaces one exact retained connection authority without assigning a second
  * owner to provider setup, checkpoint progress, or old-transport stop custody.
  */
@@ -4283,13 +4424,16 @@ export async function transferConversationConnectionForInvocation(
   }
   const current = readConversationConnectionUpdateRow({ row, connectionId: transferInput.connectionId });
   if (row.revision !== transferInput.expectedRevision) {
+    // A lost transfer response never replays setup or test. The frozen stop is
+    // idempotent and addressed to the exact retired origin, so its replay is
+    // the one settlement this Action still owns for its committed custody.
     if (isImmediateLostTransferCommit({ row, current, transferInput })) {
-      return {
-        kind: 'rejoined',
+      return await settleTransferOldTransportStop({
+        collection,
         connectionId: transferInput.connectionId,
-        revision: row.revision,
+        pendingRevision: row.revision,
         authorityEpoch: current.lifecycle.authorityEpoch,
-      };
+      }, context);
     }
     throw pluginError(
       'channels_connection_transfer_conflict',
@@ -4363,12 +4507,12 @@ export async function transferConversationConnectionForInvocation(
       current: postSetupCurrent,
       transferInput,
     })) {
-      return {
-        kind: 'rejoined',
+      return await settleTransferOldTransportStop({
+        collection,
         connectionId: transferInput.connectionId,
-        revision: postSetupRow.revision,
+        pendingRevision: postSetupRow.revision,
         authorityEpoch: postSetupCurrent.lifecycle.authorityEpoch,
-      };
+      }, context);
     }
     throw pluginError(
       'channels_connection_transfer_conflict',
@@ -4491,10 +4635,21 @@ export async function transferConversationConnectionForInvocation(
       true,
     );
   }
-  return {
-    kind: 'transferPendingOldStop',
+  if (oldTransport === 'checkpointedPull') {
+    // A checkpointed pull has no provider-local consumer to stop. The one core
+    // poll supervisor observes the fenced predecessor become ineligible and
+    // settles this exact durable custody itself.
+    return {
+      kind: 'transferPendingOldStop',
+      connectionId: transferInput.connectionId,
+      revision: persisted.revision,
+      authorityEpoch: lifecycleStart.connection.authorityEpoch,
+    };
+  }
+  return await settleTransferOldTransportStop({
+    collection,
     connectionId: transferInput.connectionId,
-    revision: persisted.revision,
+    pendingRevision: persisted.revision,
     authorityEpoch: lifecycleStart.connection.authorityEpoch,
-  };
+  }, context);
 }

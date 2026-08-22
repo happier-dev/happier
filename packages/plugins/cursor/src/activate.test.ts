@@ -11,6 +11,17 @@ import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('activate', () => {
+  it('reexports the activation compiled by its canonical public plugin definition', async () => {
+    expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
+      'agents',
+      'settings',
+      'systemTools',
+    ]);
+    expect(await import('./manifest.js')).toEqual(expect.objectContaining({
+      CURSOR_PLUGIN: expect.objectContaining({ manifest: PLUGIN_MANIFEST, activate }),
+    }));
+  });
+
   it('opens Cursor through the native ACP composer and host-owned interaction/work-state services', async () => {
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
 

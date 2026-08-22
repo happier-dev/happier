@@ -4,6 +4,8 @@ import type {
 } from '@happier-dev/channels-protocol/v1';
 import { MAX_CONVERSATION_INGRESS_TEXT_UTF8_BYTES } from '@happier-dev/channels-protocol/v1';
 
+import { createDiscordChannelEndpointId } from './discordPluginConstants.js';
+
 export type DiscordChannelAddress = Readonly<{
   kind: 'direct' | 'shared' | 'thread';
   channelId: string;
@@ -152,14 +154,14 @@ function endpointForChannel(channel: DiscordChannelAddress): ConversationResolve
     return {
       kind: 'direct',
       audience: 'direct',
-      id: `discord:channel:${channelId}`,
+      id: createDiscordChannelEndpointId(channelId),
     };
   }
   if (channel.kind === 'shared') {
     return {
       kind: 'shared',
       audience: 'shared',
-      id: `discord:channel:${channelId}`,
+      id: createDiscordChannelEndpointId(channelId),
     };
   }
   const parentChannelId = readNonEmptyString(channel.parentChannelId);
@@ -167,8 +169,8 @@ function endpointForChannel(channel: DiscordChannelAddress): ConversationResolve
   return {
     kind: 'thread',
     audience: 'shared',
-    id: `discord:channel:${channelId}`,
-    parentId: `discord:channel:${parentChannelId}`,
+    id: createDiscordChannelEndpointId(channelId),
+    parentId: createDiscordChannelEndpointId(parentChannelId),
   };
 }
 

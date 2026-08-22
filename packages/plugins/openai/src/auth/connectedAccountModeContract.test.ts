@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 
-import { activate } from '../activate.js';
+import { activate } from '../manifest.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 
 function credentialStore(values = new Map<string, string>()) {

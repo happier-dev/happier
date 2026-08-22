@@ -10,10 +10,13 @@ import type { CorpusCollectionHandleV1 } from './handles.js';
 /**
  * The three bound durable Collections.
  *
- * Separation is by writer: each collection has exactly one canonical writer
- * module, so two independently written concerns can never race inside one row.
- * Binding happens once and the handles are passed to those owners; no owner
- * rebinds a collection of its own.
+ * Separation is by writer: each collection has exactly one module that creates
+ * its rows, so two independently written concerns can never race inside one row.
+ * `session-links` additionally has `sessions/reconcileMergedSuccessor.ts`, which
+ * creates nothing — it retargets an existing row onto an authoritative successor
+ * — and `user-marks` deliberately has no second writer at all, which is why a
+ * merge never moves a pin. Binding happens once and the handles are passed to
+ * those owners; no owner rebinds a collection of its own.
  */
 export type CorpusCollectionsV1 = Readonly<{
     sourceInstances: CorpusCollectionHandleV1;

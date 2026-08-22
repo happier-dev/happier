@@ -1,8 +1,3 @@
-import type { PluginApi } from '@happier-dev/plugin-sdk';
+import { SAPLING_PLUGIN } from './manifest.js';
 
-import { createSaplingScmBackendRegistration } from './backend.js';
-
-export function activate(api: PluginApi): void {
-    const { id, ...runtime } = createSaplingScmBackendRegistration();
-    api.scm.registerBackend(id, runtime);
-}
+export const activate = SAPLING_PLUGIN.activate;

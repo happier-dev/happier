@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   AgentRuntimeContext,
   AgentSessionConfigurationSnapshot,
+  AgentSessionRuntimeContext,
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   createAntigravityNativeRuntime,
+  type AntigravityNativeExecutionRunFactory,
   type AntigravityNativeSessionFactory,
 } from './nativeRuntime.js';
 
@@ -66,10 +68,16 @@ function createConnectedAccountsFixture(binding: unknown = null) {
   };
 }
 
-function createContext(connectedAccounts = createConnectedAccountsFixture()): AgentRuntimeContext {
+const openExecutionRunAdapter: AntigravityNativeExecutionRunFactory = ({ request }) => (
+  createNativeSession(request.sessionId)
+);
+
+function createContext(connectedAccounts = createConnectedAccountsFixture()): AgentSessionRuntimeContext {
   return {
     signal: new AbortController().signal,
     services: { connectedAccounts },
+    session: { id: 'session-1', services: {} },
+    workState: {},
   } as unknown as AgentRuntimeContext;
 }
 
@@ -78,7 +86,10 @@ describe('createAntigravityNativeRuntime', () => {
     const openSession = vi.fn<AntigravityNativeSessionFactory>(({ request }) => {
       return createNativeSession(request.sessionId);
     });
-    const runtime = createAntigravityNativeRuntime({ openSession });
+    const runtime = createAntigravityNativeRuntime({
+      openSession,
+      openExecutionRun: openExecutionRunAdapter,
+    });
     const context = createContext();
 
     const sdk = await runtime.sessions?.open({
@@ -114,11 +125,14 @@ describe('createAntigravityNativeRuntime', () => {
     });
   });
 
-  it('opens SDK execution runs through the same native session owner', async () => {
+  it('opens detached SDK execution runs through the operation-scoped entry without fabricating a Session', async () => {
     const openSession = vi.fn<AntigravityNativeSessionFactory>(({ request }) => (
       createNativeSession(request.sessionId)
     ));
-    const runtime = createAntigravityNativeRuntime({ openSession });
+    const openExecutionRun = vi.fn(({ request }) => (
+      createNativeSession(request.sessionId)
+    ));
+    const runtime = createAntigravityNativeRuntime({ openSession, openExecutionRun });
     const context = createContext();
 
     const executionRun = await runtime.executionRuns?.open({
@@ -135,7 +149,11 @@ describe('createAntigravityNativeRuntime', () => {
     const events: string[] = [];
     executionRun?.watch((event) => events.push(event.kind));
 
-    expect(openSession).toHaveBeenCalledWith(expect.objectContaining({ mode: 'sdk' }));
+    expect(openExecutionRun).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'sdk',
+      context,
+    }));
+    expect(openSession).not.toHaveBeenCalled();
     expect(events).toEqual(expect.arrayContaining(['run-start', 'output-delta']));
   });
 
@@ -145,6 +163,7 @@ describe('createAntigravityNativeRuntime', () => {
     ));
     const runtime = createAntigravityNativeRuntime({
       openSession,
+      openExecutionRun: openExecutionRunAdapter,
       resolveMode: async () => 'sdk',
     });
     const context = createContext();
@@ -169,6 +188,7 @@ describe('createAntigravityNativeRuntime', () => {
   it('declares the data-only terminal launch surface on the same native runtime', async () => {
     const runtime = createAntigravityNativeRuntime({
       openSession: ({ request }) => createNativeSession(request.sessionId),
+      openExecutionRun: openExecutionRunAdapter,
     });
 
     await expect(Promise.resolve(runtime.surfaces?.terminal?.resolveLaunch({
@@ -215,7 +235,10 @@ describe('createAntigravityNativeRuntime', () => {
     const openSession = vi.fn<AntigravityNativeSessionFactory>(({ request }) => (
       createNativeSession(request.sessionId)
     ));
-    const runtime = createAntigravityNativeRuntime({ openSession });
+    const runtime = createAntigravityNativeRuntime({
+      openSession,
+      openExecutionRun: openExecutionRunAdapter,
+    });
     const context = {
       signal,
       services: { connectedAccounts },
@@ -260,7 +283,10 @@ describe('createAntigravityNativeRuntime', () => {
     const openSession = vi.fn<AntigravityNativeSessionFactory>(({ request }) => (
       createNativeSession(request.sessionId)
     ));
-    const runtime = createAntigravityNativeRuntime({ openSession });
+    const runtime = createAntigravityNativeRuntime({
+      openSession,
+      openExecutionRun: openExecutionRunAdapter,
+    });
 
     await runtime.sessions?.open({
       kind: 'create',
@@ -298,6 +324,7 @@ describe('createAntigravityNativeRuntime', () => {
         ...createNativeSession(request.sessionId),
         dispose: disposeSession,
       }),
+      openExecutionRun: openExecutionRunAdapter,
     });
     const session = await runtime.sessions?.open({
       kind: 'create',

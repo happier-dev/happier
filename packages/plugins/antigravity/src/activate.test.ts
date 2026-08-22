@@ -9,6 +9,19 @@ import { antigravityExternalSessionObservationContribution } from './agent/cliPr
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Antigravity plugin activation', () => {
+  it('reexports the activation compiled by its canonical public plugin definition', async () => {
+    expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
+      'agents',
+      'hooks',
+      'managedDependencies',
+      'settings',
+      'systemTools',
+    ]);
+    expect(await import('./manifest.js')).toEqual(expect.objectContaining({
+      ANTIGRAVITY_PLUGIN: expect.objectContaining({ manifest: PLUGIN_MANIFEST, activate }),
+    }));
+  });
+
   it('commits the complete Antigravity Agent aggregate through manifest-derived registration rights', async () => {
     const testkit = await createPluginTestkit({
       manifest: PLUGIN_MANIFEST,

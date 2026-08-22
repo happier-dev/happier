@@ -53,6 +53,7 @@ import {
   Tabs,
   Text,
   defineUiSurface,
+  usePluginTranslation,
   useSurfaceContext,
   type MetadataEntry,
 } from '@happier-dev/plugin-ui';
@@ -61,6 +62,17 @@ import {
   type TriageDetailSurfaceInputV1,
   type TriageLinkedSessionProjectionV1,
   type TriageSourceFailureV1,
+} from '@happier-dev/triage-protocol/v1';
+// The presentation rules used below are projections of the Triage contract's own
+// closed fact and failure vocabularies, so they are consumed from the one published
+// owner rather than re-spelled here: six copies is how one declared `compact` number
+// could start meaning two things in one list. They are aliased to this file's local
+// vocabulary so the call sites read as the panel language they already are.
+import {
+  describeTriageSourceFailureV1 as failureDescription,
+  formatTriageCountV1 as formatNumber,
+  formatTriageTimestampV1 as formatTimestamp,
+  projectTriageDetailFieldTextV1 as fieldValueText,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -98,71 +110,6 @@ import {
   type GithubDetailTabIdV1,
 } from './detail/tabDeclarations.js';
 
-const RELATIVE_UNITS: readonly (readonly [Intl.RelativeTimeFormatUnit, number])[] = Object.freeze([
-  ['year', 365 * 24 * 60 * 60 * 1000],
-  ['month', 30 * 24 * 60 * 60 * 1000],
-  ['day', 24 * 60 * 60 * 1000],
-  ['hour', 60 * 60 * 1000],
-  ['minute', 60 * 1000],
-] as const);
-
-/**
- * `relative` is relative to the reader's present, which is what a triage reader means by
- * "updated 4 minutes ago". `nowMs` is passed in rather than read here so the value is a render
- * input and not a hidden clock read.
- */
-function formatTimestamp(
-  locale: string,
-  atMs: number,
-  format: 'relative' | 'absolute',
-  nowMs: number,
-): string {
-  if (format === 'absolute') {
-    return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
-      .format(new Date(atMs));
-  }
-  const deltaMs = atMs - nowMs;
-  const relative = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
-  for (const [unit, unitMs] of RELATIVE_UNITS) {
-    if (Math.abs(deltaMs) >= unitMs) return relative.format(Math.round(deltaMs / unitMs), unit);
-  }
-  return relative.format(Math.round(deltaMs / 1000), 'second');
-}
-
-function formatNumber(locale: string, value: number, format: 'compact' | 'plain'): string {
-  return new Intl.NumberFormat(
-    locale,
-    format === 'compact' ? { notation: 'compact', maximumFractionDigits: 1 } : {},
-  ).format(value);
-}
-
-function fieldValueText(
-  field: GithubDetailFieldV1,
-  locale: string,
-  nowMs: number,
-): string | null {
-  switch (field.kind) {
-    case 'text':
-    case 'status':
-      return field.value;
-    case 'number': {
-      const formatted = formatNumber(locale, field.value, field.format);
-      // A count the source could not promise as exact is never presented as a total.
-      return field.approximate ? `~${formatted}` : formatted;
-    }
-    case 'timestamp':
-      return formatTimestamp(locale, field.atMs, field.format, nowMs);
-    case 'pending':
-      return null;
-    default:
-      return null;
-  }
-}
-
-/** The one sentence every failed read owes its reader, without echoing a provider body. */
-function failureDescription(failure: TriageSourceFailureV1 | null, fallback: string): string {
-  return failure === null ? fallback : `${fallback} (${failure.code})`;
-}
 
 /**
  * The sentence a walk owes its reader when it stopped without finishing.
@@ -191,12 +138,17 @@ function incompleteDescription(
 function PageFailureBanner({
   state,
 }: Readonly<{ state: GithubPagedStateV1<unknown> }>): React.ReactElement | null {
+  const text = usePluginTranslation();
   if (state.failure === null) return null;
   return (
     <Banner
       tone="warning"
       title="Showing what was read so far"
-      description={failureDescription(state.failure, 'The next page could not be read.')}
+      titleKey="plugins.github.ui.partial"
+      description={failureDescription(
+        state.failure,
+        text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'),
+      )}
     />
   );
 }
@@ -211,11 +163,13 @@ function RefreshRow({
   onRefresh,
   pending,
   accessibilityLabel,
+  accessibilityLabelKey,
 }: Readonly<{
   onRefresh: () => void;
   /** A walk already in flight; the control stays mounted and inert rather than vanishing. */
   pending: boolean;
   accessibilityLabel: string;
+  accessibilityLabelKey?: string;
 }>): React.ReactElement {
   return (
     <Row gap="small">
@@ -224,6 +178,7 @@ function RefreshRow({
         disabled={pending}
         variant="plain"
         accessibilityLabel={accessibilityLabel}
+        accessibilityLabelKey={accessibilityLabelKey}
       />
     </Row>
   );
@@ -264,15 +219,20 @@ function OverviewPanel({
           ? (
             <EmptyState
               title="No projected facts"
+              titleKey="plugins.github.ui.noFacts"
               description="This observation carried no displayable GitHub facts."
+              descriptionKey="plugins.github.ui.noFacts.description"
             />
           )
-          : <Metadata title="GitHub" entries={entries} />}
+          : <Metadata title="GitHub" titleKey="plugins.github.ui.facts" entries={entries} />}
         {pendingFields.length === 0 ? null : (
           <Stack gap="small">
-            <Text variant="caption" tone="neutral">
-              {'Answered in the panels beside this one, not on the list row:'}
-            </Text>
+            <Text
+              variant="caption"
+              tone="neutral"
+              valueKey="plugins.github.ui.pendingPanels.description"
+              fallback="Answered in the panels beside this one, not on the list row:"
+            />
             <Row gap="small">
               {pendingFields.map((field) => <Badge key={field.id} value={field.label} />)}
             </Row>
@@ -330,17 +290,22 @@ function TimelinePanel({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const controller = useGithubTimeline(input);
   const { state } = controller;
 
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading this timeline from GitHub" />;
+    return <LoadingState title="Reading this timeline from GitHub" titleKey="plugins.github.ui.readingTimeline" />;
   }
   if (state.kind === 'unavailable') {
     return (
       <ErrorState
         title="The timeline is unavailable"
-        description={failureDescription(state.failure, 'GitHub did not return this timeline.')}
+        titleKey="plugins.github.ui.timelineUnavailable"
+        description={failureDescription(
+          state.failure,
+          text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'),
+        )}
       />
     );
   }
@@ -349,22 +314,31 @@ function TimelinePanel({
   return (
     <List
       accessibilityLabel="Events GitHub recorded for this entry"
+      accessibilityLabelKey="plugins.github.ui.timelineLabel"
       items={state.rows}
       keyForItem={(row) => row.id}
       header={<PageFailureBanner state={state} />}
       empty={(
         <EmptyState
           title="No recorded events"
+          titleKey="plugins.github.ui.noEvents"
           description="GitHub has recorded no timeline events for this entry yet."
+          descriptionKey="plugins.github.ui.noEvents.description"
         />
       )}
       footer={(
         <Stack gap="small">
-          <Text variant="caption" tone="neutral">
-            {state.omittedRowCount === 0
-              ? `${String(state.rows.length)} event(s) read.`
-              : `${String(state.rows.length)} event(s) read. ${String(state.omittedRowCount)} row(s) on the pages read could not be understood.`}
-          </Text>
+          <Text
+            variant="caption"
+            tone="neutral"
+            valueKey={state.omittedRowCount === 0
+              ? 'plugins.github.ui.eventsRead'
+              : 'plugins.github.ui.eventsReadWithUnreadable'}
+            fallback={state.omittedRowCount === 0
+              ? '{count} event(s) read.'
+              : '{count} event(s) read. {unreadable} row(s) on the pages read could not be understood.'}
+            values={{ count: state.rows.length, unreadable: state.omittedRowCount }}
+          />
           {incomplete === null
             ? null
             : <Text variant="caption" tone="neutral">{incomplete}</Text>}
@@ -372,6 +346,7 @@ function TimelinePanel({
             ? (
               <Button
                 title="Load earlier events"
+                titleKey="plugins.github.ui.loadEarlierEvents"
                 variant="secondary"
                 busy={state.pending}
                 onPress={controller.loadMore}
@@ -382,6 +357,7 @@ function TimelinePanel({
             onRefresh={controller.refresh}
             pending={state.pending}
             accessibilityLabel="Re-read this timeline from GitHub"
+            accessibilityLabelKey="plugins.github.ui.rereadTimeline"
           />
         </Stack>
       )}
@@ -399,7 +375,11 @@ function TimelinePanel({
                 <Action.OpenExternal
                   url={row.webUrl}
                   variant="plain"
-                  accessibilityLabel={`Open this event on GitHub: ${timelineHeadline(row)}`}
+                  accessibilityLabel={text(
+                    'plugins.github.ui.openOnGithub',
+                    'Open {item} on GitHub',
+                    { item: timelineHeadline(row) },
+                  )}
                 />
               ),
             })}
@@ -438,6 +418,7 @@ function FilesPanel({
   input,
   locale,
 }: Readonly<{ input: TriageDetailSurfaceInputV1; locale: string }>): React.ReactElement {
+  const text = usePluginTranslation();
   const controller = useGithubChangedFiles(input);
   const { state } = controller;
   // The reading order is a source-owned fact computed over everything read so
@@ -450,13 +431,17 @@ function FilesPanel({
   );
 
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading the changed files from GitHub" />;
+    return <LoadingState title="Reading the changed files from GitHub" titleKey="plugins.github.ui.readingFiles" />;
   }
   if (state.kind === 'unavailable') {
     return (
       <ErrorState
         title="The changed files are unavailable"
-        description={failureDescription(state.failure, 'GitHub did not return this file list.')}
+        titleKey="plugins.github.ui.filesUnavailable"
+        description={failureDescription(
+          state.failure,
+          text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'),
+        )}
       />
     );
   }
@@ -471,7 +456,9 @@ function FilesPanel({
     return (
       <EmptyState
         title="No changed files"
+        titleKey="plugins.github.ui.noFiles"
         description="GitHub reports that this pull request changes no files."
+        descriptionKey="plugins.github.ui.noFiles.description"
       />
     );
   }
@@ -479,6 +466,7 @@ function FilesPanel({
   return (
     <List
       accessibilityLabel="Files this pull request changes"
+      accessibilityLabelKey="plugins.github.ui.filesLabel"
       sections={sections}
       keyForItem={(row) => row.path}
       header={(
@@ -490,21 +478,28 @@ function FilesPanel({
               // Known-incomplete is a rendered state, not a log line: a count
               // that stops at a round number with no explanation reads as a
               // defect in this product rather than a limit of GitHub's.
-              <Banner tone="warning" title="This file list is incomplete" description={incomplete} />
+              <Banner tone="warning" title="This file list is incomplete" titleKey="plugins.github.ui.incompleteFiles" description={incomplete} />
             )}
         </Stack>
       )}
       footer={(
         <Stack gap="small">
-          <Text variant="caption" tone="neutral">
-            {state.omittedRowCount === 0
-              ? `${String(state.rows.length)} changed file(s) read.`
-              : `${String(state.rows.length)} changed file(s) read. ${String(state.omittedRowCount)} row(s) on the pages read could not be understood.`}
-          </Text>
+          <Text
+            variant="caption"
+            tone="neutral"
+            valueKey={state.omittedRowCount === 0
+              ? 'plugins.github.ui.filesRead'
+              : 'plugins.github.ui.filesReadWithUnreadable'}
+            fallback={state.omittedRowCount === 0
+              ? '{count} changed file(s) read.'
+              : '{count} changed file(s) read. {unreadable} row(s) on the pages read could not be understood.'}
+            values={{ count: state.rows.length, unreadable: state.omittedRowCount }}
+          />
           {state.canLoadMore
             ? (
               <Button
                 title="Load more files"
+                titleKey="plugins.github.ui.loadMoreFiles"
                 variant="secondary"
                 busy={state.pending}
                 onPress={controller.loadMore}
@@ -515,6 +510,7 @@ function FilesPanel({
             onRefresh={controller.refresh}
             pending={state.pending}
             accessibilityLabel="Re-read the changed files from GitHub"
+            accessibilityLabelKey="plugins.github.ui.rereadFiles"
           />
         </Stack>
       )}
@@ -529,7 +525,9 @@ function FilesPanel({
               <Action.Copy
                 value={row.path}
                 variant="plain"
-                accessibilityLabel={`Copy the path ${row.path}`}
+                accessibilityLabel={text('plugins.github.ui.copyValue', 'Copy {item}', {
+                  item: row.path,
+                })}
               />
               {row.webUrl === undefined
                 ? null
@@ -537,7 +535,11 @@ function FilesPanel({
                   <Action.OpenExternal
                     url={row.webUrl}
                     variant="plain"
-                    accessibilityLabel={`Open ${row.path} on GitHub`}
+                    accessibilityLabel={text(
+                      'plugins.github.ui.openOnGithub',
+                      'Open {item} on GitHub',
+                      { item: row.path },
+                    )}
                   />
                 )}
             </Row>
@@ -584,6 +586,7 @@ function ChecksBody({
   nowMs: number;
   onRefresh: () => void;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const rollup = checksRollup(view);
   const failures = [
     ...(view.checkRunsFailure === undefined
@@ -597,6 +600,7 @@ function ChecksBody({
   return (
     <List
       accessibilityLabel="Checks GitHub reports for this pull request"
+      accessibilityLabelKey="plugins.github.ui.checksLabel"
       items={view.rows}
       keyForItem={(row) => row.key}
       header={(
@@ -607,6 +611,7 @@ function ChecksBody({
               <Banner
                 tone="warning"
                 title="One check surface could not be read"
+                titleKey="plugins.github.ui.checkSurfaceUnavailable"
                 description={failures
                   .map((entry) => `${entry.label}: ${entry.failure.code}`)
                   .join(' · ')}
@@ -618,13 +623,19 @@ function ChecksBody({
               <Banner
                 tone="warning"
                 title="This check suite is larger than GitHub will list"
+                titleKey="plugins.github.ui.checkSuiteIncomplete"
                 description="The rows below are real, but they are not the whole suite."
+                descriptionKey="plugins.github.ui.checkSuiteIncomplete.description"
               />
             )}
-          {rollup.length === 0 ? null : <Metadata title="At this head" entries={rollup} />}
-          <Text variant="caption" tone="neutral">
-            {`Read against ${view.headRevision.slice(0, 7)}.`}
-          </Text>
+          {rollup.length === 0 ? null : <Metadata title="At this head" titleKey="plugins.github.ui.atHead" entries={rollup} />}
+          <Text
+            variant="caption"
+            tone="neutral"
+            valueKey="plugins.github.ui.readAgainstRevision"
+            fallback="Read against {revision}."
+            values={{ revision: view.headRevision.slice(0, 7) }}
+          />
         </Stack>
       )}
       empty={(
@@ -633,13 +644,17 @@ function ChecksBody({
           ? (
             <ErrorState
               title="The checks could not be determined"
+              titleKey="plugins.github.ui.checksUnknown"
               description="GitHub did not answer for this commit, so nothing here says the checks passed."
+              descriptionKey="plugins.github.ui.checksUnknown.description"
             />
           )
           : (
             <EmptyState
               title="No checks configured"
+              titleKey="plugins.github.ui.noChecks"
               description="No check run or commit status reports against this commit."
+              descriptionKey="plugins.github.ui.noChecks.description"
             />
           )
       )}
@@ -648,14 +663,19 @@ function ChecksBody({
           {view.omittedRowCount === 0
             ? null
             : (
-              <Text variant="caption" tone="neutral">
-                {`${String(view.omittedRowCount)} further check(s) are not listed.`}
-              </Text>
+              <Text
+                variant="caption"
+                tone="neutral"
+                valueKey="plugins.github.ui.checksNotListed"
+                fallback="{count} further check(s) are not listed."
+                values={{ count: view.omittedRowCount }}
+              />
             )}
           <RefreshRow
             onRefresh={onRefresh}
             pending={false}
             accessibilityLabel="Re-read the checks from GitHub"
+            accessibilityLabelKey="plugins.github.ui.rereadChecks"
           />
         </Stack>
       )}
@@ -672,7 +692,9 @@ function ChecksBody({
               <Action.Copy
                 value={row.name}
                 variant="plain"
-                accessibilityLabel={`Copy the check name ${row.name}`}
+                accessibilityLabel={text('plugins.github.ui.copyValue', 'Copy {item}', {
+                  item: row.name,
+                })}
               />
               {row.detailsUrl === undefined
                 ? null
@@ -680,7 +702,11 @@ function ChecksBody({
                   <Action.OpenExternal
                     url={row.detailsUrl}
                     variant="plain"
-                    accessibilityLabel={`Open the ${row.name} results`}
+                  accessibilityLabel={text(
+                    'plugins.github.ui.openResults',
+                    'Open results for {item}',
+                    { item: row.name },
+                  )}
                   />
                 )}
             </Row>
@@ -700,19 +726,21 @@ function ChecksPanel({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const controller = useGithubChecks(input);
   const checks: GithubReadStateV1<GithubChecksViewV1> = controller.state;
 
   if (checks.kind === 'loading') {
-    return <LoadingState title="Reading the checks from GitHub" />;
+    return <LoadingState title="Reading the checks from GitHub" titleKey="plugins.github.ui.readingChecks" />;
   }
   if (checks.kind === 'unavailable') {
     return (
       <ErrorState
         title="The checks are unavailable"
+        titleKey="plugins.github.ui.checksUnavailable"
         description={failureDescription(
           checks.failure,
-          'GitHub did not return the checks for this pull request.',
+          text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'),
         )}
       />
     );
@@ -755,17 +783,22 @@ function CommentsPanel({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const controller = useGithubComments(input);
   const { state } = controller;
 
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading this conversation from GitHub" />;
+    return <LoadingState title="Reading this conversation from GitHub" titleKey="plugins.github.ui.readingConversation" />;
   }
   if (state.kind === 'unavailable') {
     return (
       <ErrorState
         title="The conversation is unavailable"
-        description={failureDescription(state.failure, 'GitHub did not return these comments.')}
+        titleKey="plugins.github.ui.conversationUnavailable"
+        description={failureDescription(
+          state.failure,
+          text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'),
+        )}
       />
     );
   }
@@ -774,6 +807,7 @@ function CommentsPanel({
   return (
     <List
       accessibilityLabel="Comments on this GitHub entry"
+      accessibilityLabelKey="plugins.github.ui.commentsLabel"
       items={state.rows}
       keyForItem={(row) => row.id}
       header={(
@@ -785,21 +819,31 @@ function CommentsPanel({
       empty={(
         <EmptyState
           title="No comments yet"
+          titleKey="plugins.github.ui.noComments"
           description={COMMENT_SCOPE_DISCLOSURE}
         />
       )}
       footer={(
         <Stack gap="small">
-          <Text variant="caption" tone="neutral">
-            {state.omittedRowCount === 0
-              ? `${String(state.rows.length)} comment(s) read.`
-              : `${String(state.rows.length)} comment(s) read. ${String(state.omittedRowCount)} row(s) on the pages read could not be understood.`}
-          </Text>
+          <Text
+            variant="caption"
+            tone="neutral"
+            valueKey={state.omittedRowCount === 0
+              ? 'plugins.github.ui.commentsRead'
+              : 'plugins.github.ui.commentsReadWithUnreadable'}
+            fallback={state.omittedRowCount === 0
+              ? '{count} comment(s) read.'
+              : '{count} comment(s) read. {unreadable} row(s) on the pages read could not be understood.'}
+            values={{ count: state.rows.length, unreadable: state.omittedRowCount }}
+          />
           {state.projectionTruncated
             ? (
-              <Text variant="caption" tone="neutral">
-                {'Some comments were shortened. Open the entry on GitHub to read them in full.'}
-              </Text>
+              <Text
+                variant="caption"
+                tone="neutral"
+                valueKey="plugins.github.ui.commentsShortened.description"
+                fallback="Some comments were shortened. Open the entry on GitHub to read them in full."
+              />
             )
             : null}
           {incomplete === null
@@ -809,6 +853,7 @@ function CommentsPanel({
             ? (
               <Button
                 title="Load more comments"
+                titleKey="plugins.github.ui.loadMoreComments"
                 variant="secondary"
                 busy={state.pending}
                 onPress={controller.loadMore}
@@ -819,6 +864,7 @@ function CommentsPanel({
             onRefresh={controller.refresh}
             pending={state.pending}
             accessibilityLabel="Re-read this conversation from GitHub"
+            accessibilityLabelKey="plugins.github.ui.rereadConversation"
           />
         </Stack>
       )}
@@ -839,15 +885,22 @@ function CommentsPanel({
                 <Action.OpenExternal
                   url={row.webUrl}
                   variant="plain"
-                  accessibilityLabel={`Open this comment on GitHub: ${commentHeadline(row)}`}
+                  accessibilityLabel={text(
+                    'plugins.github.ui.openOnGithub',
+                    'Open {item} on GitHub',
+                    { item: commentHeadline(row) },
+                  )}
                 />
               )}
           </Row>
           {row.body === ''
             ? (
-              <Text variant="caption" tone="neutral">
-                {'This comment carries no text.'}
-              </Text>
+              <Text
+                variant="caption"
+                tone="neutral"
+                valueKey="plugins.github.ui.commentNoText"
+                fallback="This comment carries no text."
+              />
             )
             : <Markdown value={row.body} />}
           <Divider />
@@ -870,12 +923,14 @@ function WorkSessionsPanel({
     return (
       <EmptyState
         title="No linked sessions"
+        titleKey="plugins.github.ui.noSessions"
         description="Sessions started from this issue will be listed here."
+        descriptionKey="plugins.github.ui.noSessions.description"
       />
     );
   }
   return (
-    <List accessibilityLabel="Sessions linked to this GitHub issue">
+    <List accessibilityLabel="Sessions linked to this GitHub issue" accessibilityLabelKey="plugins.github.ui.sessionsLabel">
       <ItemGroup>
         {sessions.map((session) => (
           <Item
@@ -971,7 +1026,9 @@ function GithubDetailSurface(context: RenderContext): React.ReactElement {
       <Screen safeArea>
         <ErrorState
           title="This entry cannot be shown"
+          titleKey="plugins.github.ui.invalidInput"
           description="Triage supplied a detail input this GitHub build does not accept."
+          descriptionKey="plugins.github.ui.invalidInput.description"
         />
       </Screen>
     );

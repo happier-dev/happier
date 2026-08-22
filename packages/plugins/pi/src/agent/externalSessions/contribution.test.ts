@@ -124,6 +124,125 @@ afterEach(async () => {
 });
 
 describe('Pi pure External Sessions contribution leaf', () => {
+  it.each([
+    ['a duplicated entry id', [
+      {
+        type: 'message',
+        id: 'pi-integrity-user',
+        parentId: null,
+        timestamp: '2026-08-16T10:00:00.000Z',
+        message: { role: 'user', content: 'first prompt' },
+      },
+      {
+        type: 'message',
+        id: 'pi-integrity-user',
+        parentId: null,
+        timestamp: '2026-08-16T10:00:01.000Z',
+        message: { role: 'user', content: 'shadowing prompt' },
+      },
+      {
+        type: 'message',
+        id: 'pi-integrity-leaf',
+        parentId: 'pi-integrity-user',
+        timestamp: '2026-08-16T10:00:02.000Z',
+        message: { role: 'user', content: 'leaf prompt' },
+      },
+    ]],
+    ['a parent cycle', [
+      {
+        type: 'message',
+        id: 'pi-integrity-a',
+        parentId: 'pi-integrity-b',
+        timestamp: '2026-08-16T10:00:00.000Z',
+        message: { role: 'user', content: 'cycle a' },
+      },
+      {
+        type: 'message',
+        id: 'pi-integrity-b',
+        parentId: 'pi-integrity-a',
+        timestamp: '2026-08-16T10:00:01.000Z',
+        message: { role: 'user', content: 'cycle b' },
+      },
+    ]],
+  ] as const)('fails a transcript page closed instead of publishing a branch folded across %s', async (_label, entries) => {
+    const { agentDir, sessionRoot } = await createAgentDir();
+    const sessionId = 'pi-integrity';
+    const sessionFile = join(sessionRoot, `2026-08-16T10-00-00.000Z_${sessionId}.jsonl`);
+    await writeFile(sessionFile, [
+      line({
+        type: 'session',
+        version: 3,
+        id: sessionId,
+        timestamp: '2026-08-16T10:00:00.000Z',
+        cwd: '/workspace',
+      }),
+      ...entries.map((entry) => line(entry)),
+    ].join(''), 'utf8');
+
+    const contribution = createPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+
+    // A duplicated id silently shadows one record and a cycle silently truncates
+    // the branch. Publishing either as a successful page hands the user a
+    // transcript that is missing history without saying so, and advances the
+    // cursor past it.
+    await expect(contribution.pageTranscript({
+      ...invocation(),
+      source: { kind: 'piAgentDir' as const, agentDir, sessionFile },
+      remoteSessionId: sessionId,
+      direction: 'older',
+      maxItems: 50,
+    })).resolves.toMatchObject({ ok: false, code: 'agent_error' });
+  });
+
+  it('keeps paging a well-formed transcript whose window simply does not reach the root', async () => {
+    const { agentDir, sessionRoot } = await createAgentDir();
+    const sessionId = 'pi-windowed';
+    const sessionFile = join(sessionRoot, `2026-08-16T10-00-00.000Z_${sessionId}.jsonl`);
+    await writeFile(sessionFile, [
+      line({
+        type: 'session',
+        version: 3,
+        id: sessionId,
+        timestamp: '2026-08-16T10:00:00.000Z',
+        cwd: '/workspace',
+      }),
+      ...[0, 1, 2, 3].map((index) => line({
+        type: 'message',
+        id: `pi-windowed-${index}`,
+        parentId: index === 0 ? null : `pi-windowed-${index - 1}`,
+        timestamp: `2026-08-16T10:00:0${index}.000Z`,
+        message: { role: 'user', content: `prompt ${index}` },
+      })),
+    ].join(''), 'utf8');
+
+    const contribution = createPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+
+    // A backward page reads a WINDOW, so the oldest entry in it always names a
+    // parent outside the window. That missing parent is the pagination handoff
+    // this leaf already consumes as the next page's leaf — not corruption.
+    const first = await contribution.pageTranscript({
+      ...invocation(),
+      source: { kind: 'piAgentDir' as const, agentDir, sessionFile },
+      remoteSessionId: sessionId,
+      direction: 'older',
+      maxItems: 1,
+    });
+    expect(first).toMatchObject({ ok: true, value: { hasMore: true } });
+    if (!first.ok || !first.value.nextCursor) return;
+    await expect(contribution.pageTranscript({
+      ...invocation(),
+      source: { kind: 'piAgentDir' as const, agentDir, sessionFile },
+      remoteSessionId: sessionId,
+      direction: 'older',
+      cursor: first.value.nextCursor,
+      maxItems: 1,
+    })).resolves.toMatchObject({ ok: true });
+  });
+
   it('lists only the explicitly configured source when ambient Pi storage points elsewhere', async () => {
     const configured = await createAgentDir();
     const ambient = await createAgentDir();

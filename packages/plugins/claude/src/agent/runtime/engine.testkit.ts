@@ -6,7 +6,7 @@ import { expect, vi } from 'vitest';
 import type {
   AgentSessionHostServices,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type {
   TerminalHostHandle,
@@ -61,6 +61,8 @@ type ClaudeTestTranscriptsService = Readonly<{
   fileFollow: Readonly<{
     follow(input: ClaudeTestTranscriptFileFollowInput): Promise<ClaudeTestTranscriptFileFollowHandle>;
   }>;
+  publishSessionEvent(event: unknown): Promise<Readonly<{ status: 'custodied' }>>;
+  markSourceFactConsumed(request: unknown): Promise<Readonly<{ status: 'custodied' }>>;
 }>;
 
 export function createTerminalHostHandle(): TerminalHostHandle {
@@ -106,7 +108,12 @@ export function createTerminalHostFixture(): Readonly<{
     })),
     captureInputState: vi.fn(async () => ({
       stable: true,
-      currentInput: 'What would you like to work on?',
+      currentInput: [
+        'What would you like to work on?',
+        '╭───────────────────────────────────────────────╮',
+        '│ >                                             │',
+        '╰───────────────────────────────────────────────╯',
+      ].join('\n'),
       observedAt: 101,
     })),
     controlPort: vi.fn(async () => null),
@@ -235,7 +242,6 @@ export function createSdkExecFixture(): Readonly<{
   const handle: ClaudeSdkExecClientHandle = {
     client,
     process: {
-      pid: 123,
       exit,
       async writeStdin() {},
       kill() {},
@@ -434,6 +440,8 @@ function createTranscriptsFixture(options: TestTranscriptsFixtureOptions = {}): 
         return createTestTranscriptFileFollowHandle(input, sourcePath, pollIntervalMs);
       }),
     },
+    publishSessionEvent: vi.fn(async () => ({ status: 'custodied' as const })),
+    markSourceFactConsumed: vi.fn(async () => ({ status: 'custodied' as const })),
   };
 }
 
@@ -454,9 +462,9 @@ function createPluginStorageScopeFixture() {
 function createPluginStorageFixture() {
   return {
     ephemeral: createPluginStorageScopeFixture(),
-    session: createPluginStorageScopeFixture(),
-    local: createPluginStorageScopeFixture(),
-    synced: createPluginStorageScopeFixture(),
+    daemonSession: createPluginStorageScopeFixture(),
+    daemon: createPluginStorageScopeFixture(),
+    account: createPluginStorageScopeFixture(),
   };
 }
 
@@ -473,12 +481,14 @@ export function createPluginContextFixture(
     sessionPermissions?: unknown;
     sessionWriteAgentState?: unknown;
     sessionWriteStateField?: unknown;
-    sessionWriteMetadata?: unknown;
+    sessionPublishWorkflowHeadline?: unknown;
     sessionWriteSystemRecord?: unknown;
     sessionReadSystemRecord?: unknown;
-    sessionSend?: unknown;
+    publishSessionEvent?: unknown;
+    markSourceFactConsumed?: unknown;
     sessionAuth?: unknown;
     transcripts?: unknown;
+    toolExecution?: unknown;
     transcriptFileFollowAllowedPaths?: readonly string[];
     transcriptFileFollowAllowedPathRoots?: readonly string[];
   }>,
@@ -491,18 +501,29 @@ export function createPluginContextFixture(
     requestDecision: vi.fn(async () => ({ decision: 'approved' })),
     getMode: () => 'default',
   };
-  const transcripts = extras?.transcripts ?? createTranscriptsFixture({
+  const rawTranscripts = extras?.transcripts ?? createTranscriptsFixture({
     allowedPaths: extras?.transcriptFileFollowAllowedPaths,
     allowedPathRoots: extras?.transcriptFileFollowAllowedPathRoots,
+  });
+  const transcriptRecord = rawTranscripts as Readonly<Record<string, unknown>>;
+  const publishSessionEvent = extras?.publishSessionEvent
+    ?? transcriptRecord.publishSessionEvent;
+  const markSourceFactConsumed = extras?.markSourceFactConsumed
+    ?? transcriptRecord.markSourceFactConsumed;
+  const transcripts = Object.freeze({
+    ...transcriptRecord,
+    publishSessionEvent,
+    markSourceFactConsumed,
   });
   const currentSession = {
     permissions: sessionPermissions,
     ...(extras?.sessionWriteAgentState ? { writeAgentState: extras.sessionWriteAgentState } : {}),
     writeStateField: extras?.sessionWriteStateField ?? vi.fn(async () => undefined),
-    ...(extras?.sessionWriteMetadata ? { writeMetadata: extras.sessionWriteMetadata } : {}),
-    ...(extras?.sessionWriteSystemRecord ? { writeSystemRecord: extras.sessionWriteSystemRecord } : {}),
-    ...(extras?.sessionReadSystemRecord ? { readSystemRecord: extras.sessionReadSystemRecord } : {}),
-    ...(extras?.sessionSend ? { send: extras.sessionSend } : {}),
+    workflowActivity: {
+      publishHeadlines: extras?.sessionPublishWorkflowHeadline ?? vi.fn(async () => undefined),
+    },
+    writeSystemRecord: extras?.sessionWriteSystemRecord ?? vi.fn(async () => undefined),
+    readSystemRecord: extras?.sessionReadSystemRecord ?? vi.fn(async () => null),
     ...(extras?.sessionAuth ? { auth: extras.sessionAuth } : {}),
   };
   // Boundary fixture: these tests exercise the Claude plugin contract and only need SDK services consumed by this runtime.
@@ -518,12 +539,16 @@ export function createPluginContextFixture(
       isEnabled: vi.fn((featureId: string) => enabledFeatures.has(featureId)),
     },
     settings: {
-      get: vi.fn(async (key: string) => settingsValues[key]),
+      forScope: vi.fn((scope: Readonly<{ kind: string }>) => {
+        if (scope.kind !== 'account') throw new Error(`unexpected settings scope: ${scope.kind}`);
+        return { get: vi.fn(async (key: string) => settingsValues[key]) };
+      }),
     },
     storage: createPluginStorageFixture(),
     events,
     agentRuntime: {
       exec: extras?.exec ?? createSdkExecFixture().service,
+      ...(extras?.toolExecution ? { toolExecution: extras.toolExecution } : {}),
       terminalHost,
       sessionHooks,
       transcripts,

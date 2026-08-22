@@ -72,6 +72,7 @@ type AntigravityExternalReadAfterOutcome =
       hasMore: boolean;
       sourceRevision: string;
       skippedPositions?: readonly number[];
+      nonTranscriptPositions?: readonly number[];
       sourceDiagnostics?: readonly Readonly<{
         code: 'malformed_source_utf8';
         count: number;
@@ -244,17 +245,19 @@ async function validateSource(params: Readonly<{
   source: AgentExternalSessionSource;
 }>>> {
   if (params.source.kind !== SOURCE_KIND) return failed('source_invalid', 'provider/source mismatch');
-  const configuredBrainDir = await canonicalizePath(resolveAntigravityBrainDir(params.env));
   const requestedBrainDir = readString(params.source.brainDir);
   if (Object.hasOwn(params.source, 'brainDir') && !requestedBrainDir) {
     return failed('source_invalid', 'Antigravity brain directory must be a nonempty string.');
   }
-  if (requestedBrainDir && await canonicalizePath(requestedBrainDir) !== configuredBrainDir) {
-    return failed('source_invalid', 'Antigravity brain directory does not match the configured source.');
-  }
+  // Canonicalization only. Whether a requested brain directory is one the
+  // machine environment or the account's settings authorized is decided once,
+  // by the host admission boundary, for every Agent.
+  const brainDir = requestedBrainDir
+    ? await canonicalizePath(requestedBrainDir)
+    : await canonicalizePath(resolveAntigravityBrainDir(params.env));
   return ok({
-    brainDir: configuredBrainDir,
-    source: { kind: SOURCE_KIND, brainDir: configuredBrainDir },
+    brainDir,
+    source: { kind: SOURCE_KIND, brainDir },
   });
 }
 
@@ -537,8 +540,15 @@ export async function readAntigravityExternalTranscriptAfter(params: Readonly<{
   });
   const groups = projected.groups;
   const items = groups.flatMap((group) => group.items);
-  const skippedPositions = groups
-    .filter((group) => group.items.length === 0)
+  const emptyGroups = groups.filter((group) => group.items.length === 0);
+  // The host counts every skip code except `non_transcript_record_skipped` as a
+  // REQUIRED item failure, so a checkpoint this build deliberately omits must
+  // not be reported as history it could not read.
+  const skippedPositions = emptyGroups
+    .filter((group) => group.unsupported)
+    .map((group) => group.startOffsetBytes);
+  const nonTranscriptPositions = emptyGroups
+    .filter((group) => !group.unsupported)
     .map((group) => group.startOffsetBytes);
   return {
     kind: 'advanced',
@@ -557,6 +567,9 @@ export async function readAntigravityExternalTranscriptAfter(params: Readonly<{
     ...(skippedPositions.length > 0
       ? { skippedPositions }
       : {}),
+    ...(nonTranscriptPositions.length > 0
+      ? { nonTranscriptPositions }
+      : {}),
   };
 }
 
@@ -572,10 +585,19 @@ function mapReadAfterOutcome(
         items: outcome.items,
         nextCursor: outcome.nextCursor,
         boundary: outcome.items.at(-1)?.id ?? outcome.nextCursor,
-        ...(outcome.sourceDiagnostics || outcome.skippedPositions
+        ...(outcome.sourceDiagnostics
+          || outcome.skippedPositions
+          || outcome.nonTranscriptPositions
           ? {
               diagnostics: [
                 ...(outcome.sourceDiagnostics ?? []),
+                ...(outcome.nonTranscriptPositions
+                  ? [{
+                      code: 'non_transcript_record_skipped',
+                      count: outcome.nonTranscriptPositions.length,
+                      positions: outcome.nonTranscriptPositions.slice(0, 200),
+                    }]
+                  : []),
                 ...(outcome.skippedPositions
                   ? [{
                       code: 'unsupported_record_skipped',
@@ -823,22 +845,37 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
         pendingToolCallIds: incomingPendingToolCallIds,
       });
       const groups = projected.groups;
-      const items = groups.flatMap((group) => group.items);
+      // A transcript page carries no diagnostics channel, so a record this build
+      // cannot read can only be reported by declaring the page INCOMPLETE.
+      // Records arrive oldest-first inside a backward page, so everything older
+      // than the newest unreadable record is unreachable: publishing it as an
+      // ordinary success would finalize a history with a silent hole and hand
+      // back a cursor that walks straight past it.
+      const lastUnsupportedIndex = groups.reduce(
+        (found, group, index) => (group.unsupported ? index : found),
+        -1,
+      );
+      const readableGroups = lastUnsupportedIndex < 0
+        ? groups
+        : groups.slice(lastUnsupportedIndex + 1);
+      const items = readableGroups.flatMap((group) => group.items);
       if (items.length > request.maxItems) return failed('invalid_request');
       const tailPendingToolCallIds = projectAntigravityTranscriptRecordGroupsWithCorrelation({
         conversationId: request.remoteSessionId,
         records: outcome.tailCorrelationLookbackRecords,
       }).pendingToolCallIds;
+      const truncated = lastUnsupportedIndex >= 0;
       return boundedResult(request, ok({
         items,
-        nextCursor: outcome.nextCursor,
+        nextCursor: truncated ? null : outcome.nextCursor,
         tailCursor: encodeAntigravityExternalReadAfterCursor({
           v: 1,
           kind: 'antigravityExternalReadAfter',
           transcriptCursor: outcome.tailCursor,
           pendingToolCallIds: tailPendingToolCallIds,
         }),
-        hasMore: outcome.hasMore,
+        hasMore: truncated ? false : outcome.hasMore,
+        ...(truncated ? { truncated: true } : {}),
       }));
     },
 

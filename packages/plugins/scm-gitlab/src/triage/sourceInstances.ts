@@ -14,6 +14,7 @@
  *    target-owned administration Action creates a configured instance.
  */
 
+import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 import type {
   TriageListInstancesResultV1,
   TriageSourceAccountBindingV1,
@@ -61,23 +62,27 @@ function isAbortError(error: unknown): boolean {
 export async function listGitlabTriageInstances(
   input: GitlabListInstancesInput,
 ): Promise<TriageListInstancesResultV1> {
-  let listing;
-  try {
-    listing = await input.connectedAccounts.listAccounts(
-      { purpose: GITLAB_CONNECTED_ACCOUNT_PURPOSE },
-      { signal: input.signal },
-    );
-  } catch (error) {
+  const outcome = await readTriageSourceAccountListingV1({
+    connectedAccounts: input.connectedAccounts,
+    purpose: GITLAB_CONNECTED_ACCOUNT_PURPOSE,
+    signal: input.signal,
+  });
+  if (outcome.kind === 'failed') {
     // The source learned nothing at all: not an empty account set.
     return {
       kind: 'failed',
       failure: {
-        class: isAbortError(error) ? 'transient' : 'unknown',
-        code: isAbortError(error) ? 'cancelled' : 'account-listing-failed',
+        class: isAbortError(outcome.error) ? 'transient' : 'unknown',
+        code: isAbortError(outcome.error) ? 'cancelled' : 'account-listing-failed',
         detail: 'The authorized GitLab accounts could not be listed.',
       },
     };
   }
+  // A purpose with no selected account is an empty set the reader can act on by
+  // connecting one — never a GitLab that refused a request nobody sent.
+  const listing = outcome.kind === 'unbound'
+    ? { status: 'complete' as const, accounts: [] }
+    : outcome.listing;
 
   const candidates: TriageSourceInstanceDraftV1[] = [];
   const failures: InstanceFailure[] = [];

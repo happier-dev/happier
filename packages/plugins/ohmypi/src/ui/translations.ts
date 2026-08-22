@@ -1,0 +1,83 @@
+export const OH_MY_PI_UI_TRANSLATIONS = Object.freeze({
+  en: Object.freeze({
+    'settingsAgents.plugins.ohmypi.title': 'Oh My Pi',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title': 'Agent directory',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle': 'Optional Oh My Pi data root. Leave empty to use ~/.omp/agent.',
+    'settingsAgents.plugins.ohmypi.sections.storage.title': 'Storage',
+    'settingsAgents.plugins.ohmypi.sections.storage.footer': 'This directory is used only for Oh My Pi sessions started or discovered by Happier.',
+  }),
+  ru: Object.freeze({
+    'settingsAgents.plugins.ohmypi.title': 'Oh My Pi',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title': 'Каталог агента',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle': 'Необязательный корневой каталог данных Oh My Pi. Оставьте пустым, чтобы использовать ~/.omp/agent.',
+    'settingsAgents.plugins.ohmypi.sections.storage.title': 'Хранилище',
+    'settingsAgents.plugins.ohmypi.sections.storage.footer': 'Этот каталог используется только для сеансов Oh My Pi, запущенных или обнаруженных Happier.',
+  }),
+  pl: Object.freeze({
+    'settingsAgents.plugins.ohmypi.title': 'Oh My Pi',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title': 'Katalog agenta',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle': 'Opcjonalny katalog główny danych Oh My Pi. Pozostaw puste, aby użyć ~/.omp/agent.',
+    'settingsAgents.plugins.ohmypi.sections.storage.title': 'Pamięć',
+    'settingsAgents.plugins.ohmypi.sections.storage.footer': 'Ten katalog jest używany wyłącznie dla sesji Oh My Pi uruchomionych lub wykrytych przez Happier.',
+  }),
+  es: Object.freeze({
+    'settingsAgents.plugins.ohmypi.title': 'Oh My Pi',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title': 'Directorio del agente',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle': 'Raíz de datos opcional de Oh My Pi. Déjalo vacío para usar ~/.omp/agent.',
+    'settingsAgents.plugins.ohmypi.sections.storage.title': 'Almacenamiento',
+    'settingsAgents.plugins.ohmypi.sections.storage.footer': 'Este directorio solo se usa para sesiones de Oh My Pi iniciadas o detectadas por Happier.',
+  }),
+  fr: Object.freeze({
+    'settingsAgents.plugins.ohmypi.title': 'Oh My Pi',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title': 'Répertoire de l’agent',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle': 'Racine de données Oh My Pi facultative. Laissez vide pour utiliser ~/.omp/agent.',
+    'settingsAgents.plugins.ohmypi.sections.storage.title': 'Stockage',
+    'settingsAgents.plugins.ohmypi.sections.storage.footer': 'Ce répertoire sert uniquement aux sessions Oh My Pi lancées ou découvertes par Happier.',
+  }),
+  it: Object.freeze({
+    'settingsAgents.plugins.ohmypi.title': 'Oh My Pi',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title': 'Directory dell’agente',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle': 'Directory principale facoltativa dei dati di Oh My Pi. Lascia vuoto per usare ~/.omp/agent.',
+    'settingsAgents.plugins.ohmypi.sections.storage.title': 'Archiviazione',
+    'settingsAgents.plugins.ohmypi.sections.storage.footer': 'Questa directory viene usata solo per le sessioni Oh My Pi avviate o rilevate da Happier.',
+  }),
+  pt: Object.freeze({
+    'settingsAgents.plugins.ohmypi.title': 'Oh My Pi',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title': 'Diretório do agente',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle': 'Raiz de dados opcional do Oh My Pi. Deixe em branco para usar ~/.omp/agent.',
+    'settingsAgents.plugins.ohmypi.sections.storage.title': 'Armazenamento',
+    'settingsAgents.plugins.ohmypi.sections.storage.footer': 'Este diretório é usado apenas para sessões do Oh My Pi iniciadas ou detetadas pelo Happier.',
+  }),
+  ca: Object.freeze({
+    'settingsAgents.plugins.ohmypi.title': 'Oh My Pi',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title': 'Directori de l’agent',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle': 'Arrel de dades opcional d’Oh My Pi. Deixa-ho buit per utilitzar ~/.omp/agent.',
+    'settingsAgents.plugins.ohmypi.sections.storage.title': 'Emmagatzematge',
+    'settingsAgents.plugins.ohmypi.sections.storage.footer': 'Aquest directori només s’utilitza per a sessions d’Oh My Pi iniciades o detectades per Happier.',
+  }),
+  'zh-Hans': Object.freeze({
+    'settingsAgents.plugins.ohmypi.title': 'Oh My Pi',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title': '代理目录',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle': '可选的 Oh My Pi 数据根目录。留空则使用 ~/.omp/agent。',
+    'settingsAgents.plugins.ohmypi.sections.storage.title': '存储',
+    'settingsAgents.plugins.ohmypi.sections.storage.footer': '此目录仅用于 Happier 启动或发现的 Oh My Pi 会话。',
+  }),
+  'zh-Hant': Object.freeze({
+    'settingsAgents.plugins.ohmypi.title': 'Oh My Pi',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title': '代理目錄',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle': '可選的 Oh My Pi 資料根目錄。留空則使用 ~/.omp/agent。',
+    'settingsAgents.plugins.ohmypi.sections.storage.title': '儲存空間',
+    'settingsAgents.plugins.ohmypi.sections.storage.footer': '此目錄僅供 Happier 啟動或找到的 Oh My Pi 工作階段使用。',
+  }),
+  ja: Object.freeze({
+    'settingsAgents.plugins.ohmypi.title': 'Oh My Pi',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title': 'エージェントディレクトリ',
+    'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle': '任意の Oh My Pi データルートです。空欄の場合は ~/.omp/agent を使用します。',
+    'settingsAgents.plugins.ohmypi.sections.storage.title': 'ストレージ',
+    'settingsAgents.plugins.ohmypi.sections.storage.footer': 'このディレクトリは、Happier が開始または検出した Oh My Pi セッションにのみ使用されます。',
+  }),
+});
+
+export const OH_MY_PI_UI_TRANSLATION_BUNDLES = Object.freeze(
+  Object.entries(OH_MY_PI_UI_TRANSLATIONS).map(([locale, messages]) => ({ locale, messages })),
+);

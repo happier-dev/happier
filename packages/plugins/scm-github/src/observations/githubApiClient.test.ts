@@ -1,6 +1,8 @@
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import { describe, expect, it } from 'vitest';
 
+import { classifyGithubTransportFailure } from '../triage/errors.js';
+
 import {
   createGithubListedAccountApiClient,
   GITHUB_RATE_LIMIT_FALLBACK_MS,
@@ -100,5 +102,72 @@ describe('GitHub API URL admission', () => {
       });
     }
     expect(attempted).toEqual(['https://api.github.com/repos/o/r']);
+  });
+});
+
+describe('GitHub listed-account authorization', () => {
+  function contextWithMaterializer(
+    materializeListedAccount: () => Promise<unknown>,
+    signal: AbortSignal = new AbortController().signal,
+  ): Parameters<typeof createGithubListedAccountApiClient>[0] {
+    return {
+      signal,
+      plugin: { id: 'happier.scm.forge.github' },
+      services: {
+        connectedAccounts: { materializeListedAccount },
+        http: {
+          async request() {
+            throw new Error('no request should be attempted without authorization');
+          },
+        },
+      },
+    } as unknown as Parameters<typeof createGithubListedAccountApiClient>[0];
+  }
+
+  it('reports a host materialization refusal as authentication, and never echoes the host’s own code', async () => {
+    // The user fixes a revoked or unauthorized account by reconnecting and pressing
+    // Refresh, and `refresh/refreshEligibility.ts` exempts `authentication` from the
+    // aggregate backoff for exactly that reason. Classifying it `unsupportedContract`
+    // told the reader this source cannot support the contract instead.
+    const caught = await createGithubListedAccountApiClient(
+      contextWithMaterializer(() => Promise.reject(
+        Object.assign(new Error('account revoked'), { code: 'connected_account_revoked' }),
+      )),
+      ACCOUNT_REF,
+    ).catch((error: unknown) => error);
+
+    expect(classifyGithubTransportFailure(caught)).toEqual({
+      class: 'authentication',
+      code: 'github_credential_unavailable',
+    });
+  });
+
+  it('reports an uncoded host rejection as authentication too, not as a provider blip', async () => {
+    const caught = await createGithubListedAccountApiClient(
+      contextWithMaterializer(() => Promise.reject(new Error('nope'))),
+      ACCOUNT_REF,
+    ).catch((error: unknown) => error);
+
+    expect(classifyGithubTransportFailure(caught)).toEqual({
+      class: 'authentication',
+      code: 'github_credential_unavailable',
+    });
+  });
+
+  it('keeps a cancelled materialization transient rather than turning it into a credential problem', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const caught = await createGithubListedAccountApiClient(
+      contextWithMaterializer(
+        () => Promise.reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+        controller.signal,
+      ),
+      ACCOUNT_REF,
+    ).catch((error: unknown) => error);
+
+    expect(classifyGithubTransportFailure(caught)).toEqual({
+      class: 'transient',
+      code: 'github_request_cancelled',
+    });
   });
 });

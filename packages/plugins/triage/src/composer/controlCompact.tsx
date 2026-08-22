@@ -1,8 +1,16 @@
 import * as React from 'react';
 import type { PluginUiIconTokenV1, RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
-import { Icon, Row, Text, defineUiSurface, useComposerView } from '@happier-dev/plugin-ui';
+import {
+    Icon,
+    Row,
+    Text,
+    defineUiSurface,
+    useComposerView,
+    usePluginTranslation,
+} from '@happier-dev/plugin-ui';
+import type { PluginTranslate } from '@happier-dev/plugin-ui';
 
-import { TRIAGE_DISPLAY_NAME } from '../manifest.js';
+import { TRIAGE_DISPLAY_NAME } from '../displayName.js';
 import { TRIAGE_ENTRIES_CONTROL_ICON_V1 } from '../ui/contributions.js';
 import {
     projectTriageEntriesCompactState,
@@ -28,14 +36,28 @@ import { useTriageBoundComposer } from './useBoundComposer.js';
  * fallback and the control chrome all remain the host's.
  */
 
-function compactLabel(state: TriageEntriesCompactStateV1): string {
+/**
+ * The one label this control shows, in the reader's own language.
+ *
+ * Only the many-arm is a SENTENCE, so only it is resolved through the host
+ * catalog. The other two carry no words of ours: `staticTitle` is the plugin's
+ * own display name, and `entry` is the host-presented label of the attached
+ * record. A count assembled here as `${n} ${name}` shipped English word order
+ * to every locale — and it is the arm a reader sees most often, because a draft
+ * with several entries is the ordinary case this control exists for.
+ */
+function compactLabel(state: TriageEntriesCompactStateV1, text: PluginTranslate): string {
     switch (state.label.kind) {
         case 'staticTitle':
             return TRIAGE_DISPLAY_NAME;
         case 'entry':
             return state.label.text;
         case 'count':
-            return `${state.label.count} ${TRIAGE_DISPLAY_NAME}`;
+            return text(
+                'plugins.triage.composer.entriesCount',
+                `${state.label.count} ${TRIAGE_DISPLAY_NAME}`,
+                { count: state.label.count },
+            );
     }
 }
 
@@ -44,11 +66,12 @@ function compactIcon(state: TriageEntriesCompactStateV1): PluginUiIconTokenV1 {
 }
 
 export function TriageEntriesControlCompact(context: RenderContext): React.ReactElement {
+    const text = usePluginTranslation();
     const mount = readTriageComposerControlMount(context.launchInput);
     const handle = useTriageBoundComposer(mount.status === 'bound' ? mount.composer : null);
     const composerView = useComposerView(handle);
     const state = projectTriageEntriesCompactState(composerView.result);
-    const label = compactLabel(state);
+    const label = compactLabel(state, text);
 
     return (
         <Row gap="small" align="center">

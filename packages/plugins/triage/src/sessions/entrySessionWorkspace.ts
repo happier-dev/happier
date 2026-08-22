@@ -13,6 +13,8 @@ import type {
     TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 
+import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
+
 /**
  * What a Triage Session start knows about the working directory it is about to
  * create a Session in.
@@ -234,7 +236,12 @@ export async function resolveEntrySessionWorkspace(
     // the configured instance must be the same admitted source, so a selection
     // from one forge can never prepare a checkout through another's account.
     if (request.workflowSubject !== 'pullRequest') return REFUSED_TERMINAL;
-    if (!sameSource(request)) return REFUSED_TERMINAL;
+    if (!sameTriageSourceIdentity(
+        request.entryRef.source,
+        request.instance.instance.source,
+    )) {
+        return REFUSED_TERMINAL;
+    }
     const operation = deps.operation;
     if (operation === undefined) return REFUSED_TERMINAL;
 
@@ -264,13 +271,6 @@ export async function resolveEntrySessionWorkspace(
             reviewEligibility: reviewEligibilityFor(result.currentness, request.observed),
         },
     };
-}
-
-function sameSource(request: TriageReviewWorkspacePreparationRequestV1): boolean {
-    const entrySource = request.entryRef.source;
-    const instanceSource = request.instance.instance.source;
-    return entrySource.pluginId === instanceSource.pluginId
-        && entrySource.localId === instanceSource.localId;
 }
 
 /**

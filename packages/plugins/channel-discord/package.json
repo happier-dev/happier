@@ -2,12 +2,6 @@
   "name": "@happier-dev/plugins-channel-discord",
   "version": "0.0.0",
   "private": true,
-  "happier": {
-    "pluginScaffold": {
-      "shipping": "reservation_only",
-      "plannedStage": "C7 after C4, SDK-NETWORK-01, and SDK-BACKGROUND"
-    }
-  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -24,6 +18,7 @@
   "files": [
     "dist",
     "assets",
+    ".happier-plugin",
     "package.json"
   ],
   "scripts": {

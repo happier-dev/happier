@@ -58,7 +58,19 @@ function backgroundContext(
     signal,
     // These are the genuine host boundaries used by the supervisor; no provider
     // parsing, lifecycle, or admission behavior is substituted in this fixture.
-    services: services as PluginInvocationContext['services'],
+    // The host always supplies a logger to a background service, so the
+    // fixture supplies one rather than letting an absent boundary look like
+    // supervisor behavior.
+    services: {
+      ...services,
+      logger: {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        diagnostic: vi.fn(),
+      },
+    } as unknown as PluginInvocationContext['services'],
   };
 }
 
@@ -227,6 +239,7 @@ describe('Discord Gateway supervisor', () => {
       };
       const connectedAccounts = {
         materialize: vi.fn(async () => ({ kind: 'environment' as const, env: { DISCORD_BOT_TOKEN: 'bot-token' } })),
+        watch: vi.fn(() => ({ dispose: vi.fn() })),
       };
       const contextFor = (
         supervisor: DiscordGatewaySupervisor,
@@ -709,6 +722,125 @@ describe('Discord Gateway supervisor', () => {
       },
     ]);
     expect(current.authorityEpoch).toBe(7);
+    await supervisor.dispose();
+  });
+
+  it('reaches no Automation authority while the Discord Automation Event is withheld from the manifest', async () => {
+    // The host builds an adopted-definition owner only for a manifest-declared
+    // automation-eligible Event (`resolveExecutablePluginRuntimeRegistry.ts`).
+    // Discord withholds its Event, so any `automation.event.sources.list` this
+    // loop issued would fail with `automation_event_adopted_definitions_unavailable`
+    // once per reconciliation tick, on every Machine, forever.
+    const supervisor = createDiscordGatewaySupervisor({
+      workerFactory: vi.fn(() => ({
+        result: Promise.resolve({ kind: 'stopped' } as const),
+        stop: vi.fn(),
+      })),
+      reconciliationIntervalMs: 5,
+    });
+    const executeCore = async (action: Readonly<{ localId: string }>) => {
+      if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
+        return { 'connection-1': snapshot() };
+      }
+      if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport) {
+        return { kind: 'recorded' };
+      }
+      throw new Error(`Unexpected core Action ${action.localId}`);
+    };
+    const generation = new AbortController();
+    const { actions, background } = supervisorBackgroundHarness({
+      supervisor,
+      connectedAccounts: {
+        materialize: vi.fn(async () => ({ kind: 'environment' as const, env: { DISCORD_BOT_TOKEN: 'bot-token' } })),
+        watch: vi.fn(() => ({ dispose: vi.fn() })),
+      } as unknown as PluginInvocationContext['services']['connectedAccounts'],
+      http: {
+        request: vi.fn(async () => { throw new Error('Unexpected Discord request'); }),
+        openWebSocket: vi.fn(),
+      } as unknown as PluginInvocationContext['services']['http'],
+      executeCore,
+      signal: generation.signal,
+    });
+
+    const running = supervisor.run(background);
+    // Two completed ticks: an unconditional per-tick catalog read would have
+    // reached a host Action addressed by bare id rather than by contribution.
+    await vi.waitFor(() => expect(actions.execute.mock.calls.filter(
+      ([action]) => (action as { localId?: string } | string as { localId?: string })?.localId
+        === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList,
+    ).length).toBeGreaterThan(1));
+    generation.abort(new Error('Discord plugin generation retired.'));
+    await running;
+
+    expect(actions.execute.mock.calls.filter(([action]) => typeof action === 'string')).toEqual([]);
+    await supervisor.dispose();
+  });
+
+  it('retries an authentication-failed connection after the host reports a Connected Account credential resync', async () => {
+    // Gateway close 4004 means the selected bot token is wrong. Repairing it
+    // inside the same Connected Account changes nothing the core reconciliation
+    // snapshot carries, so the connection fingerprint is byte-identical and
+    // only the host's credential resync can retire the terminal memo.
+    const workerResults: DiscordGatewayWorkerResult[] = [
+      { kind: 'terminal', reason: 'authenticationFailed' },
+    ];
+    const workerFactory = vi.fn(() => ({
+      result: Promise.resolve(workerResults.shift() ?? ({ kind: 'stopped' } as const)),
+      stop: vi.fn(),
+    }));
+    const supervisor = createDiscordGatewaySupervisor({
+      workerFactory,
+      reconciliationIntervalMs: 3_600_000,
+    });
+    const executeCore = async (action: Readonly<{ localId: string }>) => {
+      if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
+        return { 'connection-1': snapshot() };
+      }
+      if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport) {
+        return { kind: 'recorded' };
+      }
+      throw new Error(`Unexpected core Action ${action.localId}`);
+    };
+    const credentialResyncListeners: Array<() => void> = [];
+    const connectedAccounts = {
+      materialize: vi.fn(async () => ({ kind: 'environment' as const, env: { DISCORD_BOT_TOKEN: 'bot-token' } })),
+      watch: vi.fn((purpose: string, listener: () => void) => {
+        expect(purpose).toBe('discord-bot-credential');
+        credentialResyncListeners.push(listener);
+        return { dispose: vi.fn() };
+      }),
+    };
+    const http = {
+      request: vi.fn(async (request: Readonly<{ url: string }>) => response(
+        request.url.endsWith('/oauth2/applications/@me')
+          ? { id: 'application-1', flags: 0, flags_new: '0' }
+          : { id: 'bot-1', username: 'Happier Bot', bot: true },
+      )),
+      openWebSocket: vi.fn(),
+    };
+    const generation = new AbortController();
+    const { background } = supervisorBackgroundHarness({
+      supervisor,
+      connectedAccounts,
+      http,
+      executeCore,
+      signal: generation.signal,
+    });
+
+    const running = supervisor.run(background);
+    await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(1));
+
+    // The terminal memo holds while the credential is unchanged.
+    await supervisor.reconcile(background);
+    expect(workerFactory).toHaveBeenCalledTimes(1);
+
+    expect(credentialResyncListeners).toHaveLength(1);
+    for (const listener of credentialResyncListeners) listener();
+    await supervisor.reconcile(background);
+    await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(2));
+
+    generation.abort(new Error('Discord plugin generation retired.'));
+    await running;
     await supervisor.dispose();
   });
 });

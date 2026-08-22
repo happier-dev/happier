@@ -30,11 +30,10 @@ describe('CLIProxyAPI plugin manifest', () => {
   });
 
   it('declares the public managed Provider facet and requires its conditional runtime registration', () => {
-    expect(PLUGIN_MANIFEST.entrypoints).toEqual({ daemon: './dist/index.js' });
+    expect(PLUGIN_MANIFEST.entrypoints).toEqual({ daemon: './.happier-plugin/daemon.js' });
     const providerFamily = PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'providers');
     expect(providerFamily).toMatchObject({
       identityKind: 'delegatedDomain',
-      stability: 'delegated',
       disposition: 'delegated',
       activationDemand: 'conditional',
       allowedRuntimeRegistration: 'providers',
@@ -85,7 +84,6 @@ describe('CLIProxyAPI plugin manifest', () => {
     });
     expect(providerFamily?.projectIntrospection(PLUGIN_MANIFEST.contributes.providers[0])).toMatchObject({
       localId: null,
-      stability: 'delegated',
       registration: 'required',
     });
   });

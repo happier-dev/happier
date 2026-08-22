@@ -883,4 +883,55 @@ describe('GitHub issue-comment Channel polling', () => {
       continuation: null,
     });
   });
+  // RFC 8288 spells one `Link` relation several equivalent ways: the `rel` parameter
+  // may be unquoted, may be preceded by other link parameters, and may be cased
+  // differently. A private `split(',')` + anchored-regex parse silently reads NO next
+  // page from those spellings and reports a finished collection the provider never
+  // stated. This asserts the contract by comparison: an equivalently spelled header
+  // must produce the same walk as the canonical one, whatever that walk is.
+  it.each([
+    ['canonical', (next: string) => `<${next}>; rel="next"`],
+    ['unquoted rel', (next: string) => `<${next}>; rel=next`],
+    ['a link parameter before rel', (next: string) => `<${next}>; type="application/json"; rel="next"`],
+    ['a link parameter after rel', (next: string) => `<${next}>; rel="next"; type="application/json"`],
+    ['an upper-cased rel', (next: string) => `<${next}>; rel="NEXT"`],
+  ])('follows a next page whose Link header uses %s', async (_label, writeLink) => {
+    const requests: string[] = [];
+    const client: GithubApiClientV1 = {
+      async request({ url }) {
+        const parsed = new URL(url);
+        if (parsed.pathname === '/repos/acme/widgets/issues/comments') {
+          requests.push(url);
+          const page = Number(parsed.searchParams.get('page') ?? '1');
+          return jsonResponse([{
+            id: 100 + page,
+            body: `comment on page ${page}`,
+            created_at: `2026-08-10T12:00:0${page}Z`,
+            updated_at: `2026-08-10T12:00:0${page}Z`,
+            issue_url: 'https://api.github.com/repos/acme/widgets/issues/1',
+            user: { id: 123, login: 'octocat', type: 'User' },
+          }], page === 1 ? { link: writeLink(pageUrl(2)) } : {});
+        }
+        if (parsed.pathname === '/repos/acme/widgets/issues/1') {
+          return jsonResponse({ id: 5, number: 1, title: 'Issue title' });
+        }
+        throw new Error(`Unexpected GitHub request ${url}`);
+      },
+    };
+
+    const result = expectPollBatch(await pollGithubIssueCommentsForChannels(pollInput({
+      client,
+      checkpoint: {
+        v: 1,
+        updatedAtIso: '2026-08-10T12:00:00.000Z',
+        commentIdAtUpdatedAt: '1',
+        etag: null,
+      },
+      limit: 10,
+    })));
+
+    expect(requests).toEqual([pageUrl(1), pageUrl(2)]);
+    expect(fullTextObservations(result).map((observation) => observation.message.id))
+      .toEqual(['101', '102']);
+  });
 });

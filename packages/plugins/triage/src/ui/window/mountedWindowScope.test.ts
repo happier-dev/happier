@@ -183,12 +183,29 @@ describe('the mounted PRs & Issues window is scoped to its host', () => {
     const shellHost = createHostStub(INSTANCE_A);
     const lease = shellRealm.acquireTriageListWindow(shellHost.host);
     await shellRealm.refreshTriageListWindow('view', shellHost.host);
-    expect(shellRealm.readTriageListWindowSnapshot(shellHost.host).freshness).toBe('fresh');
+
+    // The shell realm ran a pass and holds the configured connection; the picker
+    // realm holds nothing. That contrast IS the realm-locality contract, and it
+    // is asserted on `configuredSources` rather than on freshness so this test
+    // stops re-encoding a freshness rule it is not about.
+    //
+    // Its freshness is `stale`, not `fresh`: this stub's only connection is
+    // `available: false`, so the pass never read it, and a window that never read
+    // a configured source is not current. Requiring `fresh` here encoded exactly
+    // the claim the freshness owner was corrected to stop making.
+    const shellSnapshot = shellRealm.readTriageListWindowSnapshot(shellHost.host);
+    expect(shellSnapshot.configuredSources).toHaveLength(1);
+    expect(shellSnapshot.freshness).toBe('stale');
 
     expect(pickerRealm.readTriageListWindowSnapshot(shellHost.host)).toMatchObject({
       freshness: 'unknown',
       configuredSources: [],
     });
     lease.release();
-  });
+    // Budgeted for what this case DOES, not to silence a failure: proving two
+    // artifacts cannot share a window REQUIRES `vi.resetModules()` and a second
+    // full import of this module's graph, so the case pays two module-graph
+    // resolutions. That measures just past vitest's 5s default and grew with the
+    // graph. Anything red here is an assertion, never the clock.
+  }, 60_000);
 });

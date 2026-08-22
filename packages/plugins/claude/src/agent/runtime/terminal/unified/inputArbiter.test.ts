@@ -140,7 +140,7 @@ describe('createClaudeUnifiedInputArbiter', () => {
     const arbiter = createClaudeUnifiedInputArbiter({
       injectPrompt: vi.fn(async () => ({
         status: 'failed',
-        reason: 'ambiguous_provider_acceptance',
+        reason: 'verification_failed',
         phase: 'after_enter_unknown',
         recoverable: true,
         duplicateRisk: 'possible',
@@ -168,6 +168,55 @@ describe('createClaudeUnifiedInputArbiter', () => {
       queuedCount: 0,
       providerAcceptancePendingCount: 0,
       headInputState: 'submitted',
+    });
+
+    arbiter.dispose();
+  });
+
+  it('hands a pre-Enter timeout to the host and accepts later input without retaining a second custody owner', async () => {
+    const first = promptInput('pre-enter-ambiguous');
+    const second = promptInput('later-prompt');
+    const onInjectionFailure = vi.fn();
+    const injectPrompt = vi.fn()
+      .mockResolvedValueOnce({
+        status: 'failed' as const,
+        reason: 'timeout' as const,
+        phase: 'after_write_before_enter' as const,
+        duplicateRisk: 'possible' as const,
+        recoverable: true,
+        observedAt: 1_100,
+      })
+      .mockResolvedValueOnce(injected());
+    const arbiter = createClaudeUnifiedInputArbiter({
+      injectPrompt,
+      onInjectionFailure,
+    });
+
+    arbiter.enqueue(first);
+    arbiter.observeReadiness(readiness());
+    await arbiter.drain();
+
+    expect(onInjectionFailure).toHaveBeenCalledWith(expect.objectContaining({
+      input: first,
+      failureState: 'failed_ambiguous',
+      result: expect.objectContaining({ phase: 'after_write_before_enter' }),
+    }));
+    expect(arbiter.snapshot()).toMatchObject({
+      queuedCount: 0,
+      pendingInjectionCount: 0,
+      terminalCustodyCount: 0,
+      providerAcceptancePendingCount: 0,
+      headInputState: null,
+    });
+
+    arbiter.enqueue(second);
+    await arbiter.drain();
+
+    expect(injectPrompt).toHaveBeenCalledTimes(2);
+    expect(arbiter.snapshot()).toMatchObject({
+      terminalCustodyCount: 0,
+      providerAcceptancePendingCount: 1,
+      headInputState: 'awaiting_provider_acceptance',
     });
 
     arbiter.dispose();

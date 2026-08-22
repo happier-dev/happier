@@ -8,7 +8,7 @@ import type {
   VoiceRealtimeJsonValue,
 } from '@happier-dev/plugin-sdk/voice';
 
-import { PLUGIN_MANIFEST } from '../../manifest.js';
+import { XAI_VOICE_PROVIDER_CONTRIBUTION_ID } from '../../constants.js';
 import { XaiRealtimeSettingsV1Schema } from '../../protocol/voice/settings.js';
 import { createXaiWebSocketDriver } from './connection.js';
 import type { XaiWebSocketDriverInput } from './connection.js';
@@ -251,7 +251,7 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
 /** Public executable Voice module entry named by the provider declaration. */
 export function activate(api: Pick<PluginApi, 'voiceProviders'>): void {
   api.voiceProviders.register(
-    PLUGIN_MANIFEST.contributes.voiceProviders[0].id,
+    XAI_VOICE_PROVIDER_CONTRIBUTION_ID,
     createXaiRealtimeProviderRuntime(),
   );
 }

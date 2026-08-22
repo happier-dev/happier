@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  BITBUCKET_RATE_LIMIT_WINDOW_MS,
   readBitbucketRateLimitTelemetry,
   readBitbucketRetryNotBeforeMs,
 } from './bitbucketRateLimit.js';
@@ -46,9 +45,11 @@ describe('Bitbucket rate-limit evidence', () => {
       .toBe(Date.parse(httpDate));
   });
 
-  it('clamps to the published one-hour limit window and drops evidence that is not a deadline', () => {
+  it('reports a far-future Retry-After as Bitbucket stated it, and drops evidence that is not a deadline', () => {
+    // Bounding a provider statement is the single consumer's pacing policy
+    // (`plugins/triage` `refresh/refreshEligibility.ts`), not a per-source constant.
     expect(readBitbucketRetryNotBeforeMs({ 'retry-after': '999999' }, NOW_MS))
-      .toBe(NOW_MS + BITBUCKET_RATE_LIMIT_WINDOW_MS);
+      .toBe(NOW_MS + (999_999 * 1_000));
     expect(readBitbucketRetryNotBeforeMs({ 'retry-after': 'soon' }, NOW_MS)).toBeNull();
     expect(readBitbucketRetryNotBeforeMs({ 'retry-after': '-5' }, NOW_MS)).toBeNull();
     expect(readBitbucketRetryNotBeforeMs({ 'retry-after': new Date(NOW_MS - 5_000).toUTCString() }, NOW_MS))

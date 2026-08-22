@@ -146,6 +146,66 @@
           "messages": {
             "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"
           }
+        },
+        {
+          "locale": "ru",
+          "messages": {
+            "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"
+          }
+        },
+        {
+          "locale": "pl",
+          "messages": {
+            "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"
+          }
+        },
+        {
+          "locale": "es",
+          "messages": {
+            "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"
+          }
+        },
+        {
+          "locale": "fr",
+          "messages": {
+            "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"
+          }
+        },
+        {
+          "locale": "it",
+          "messages": {
+            "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"
+          }
+        },
+        {
+          "locale": "pt",
+          "messages": {
+            "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"
+          }
+        },
+        {
+          "locale": "ca",
+          "messages": {
+            "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"
+          }
+        },
+        {
+          "locale": "zh-Hans",
+          "messages": {
+            "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"
+          }
+        },
+        {
+          "locale": "zh-Hant",
+          "messages": {
+            "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"
+          }
+        },
+        {
+          "locale": "ja",
+          "messages": {
+            "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"
+          }
         }
       ],
       "views": []
@@ -159,7 +219,7 @@
     "happier": "^0.0.0"
   },
   "entrypoints": {
-    "daemon": "./dist/index.js"
+    "daemon": "./.happier-plugin/daemon.js"
   },
   "hostAccess": {
     "optional": [],

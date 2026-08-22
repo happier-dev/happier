@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import type {
     AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createClaudeExternalSessionObservationContribution } from './observation.js';

@@ -1,32 +1,40 @@
 import { describe, expect, it } from 'vitest';
 
-import type { TriageListRowV1 } from '../../projection/listWindow.js';
+import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
 import { CORPUS_LANE } from '../../corpus/fold/lane.js';
 import {
   testkitObservation,
   testkitPresentOutcome,
   testkitSnapshot,
 } from '../../corpus/testkit/observations.test-support.js';
-import { triageEntryRowKey } from '../window/entryDisplay.js';
 import type { TriagePinnedEntryV1 } from './pinCommand.js';
 import { indexTriagePinsByEntry, projectTriagePinnedRow, projectTriageWindowRow } from './pinnedRows.js';
 
 const SOURCE = Object.freeze({ pluginId: 'happier.example.source', localId: 'example-forge' });
 
 function windowRow(overrides: Partial<TriageListRowV1> = {}): TriageListRowV1 {
+  const observations = overrides.observations ?? [testkitObservation({
+    outcome: testkitPresentOutcome({
+      snapshot: testkitSnapshot({ title: 'Replace the duplicated normalizer' }),
+    }),
+  })];
+  const [content] = observations;
   return {
     entryRef: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
+    // The fold decides the content observation once; a row without one is a row
+    // no fold can produce.
+    content: content === undefined || content.outcome.kind !== 'present' ? null : {
+      sourceInstanceId: content.sourceInstanceId,
+      observedAtMs: content.observedAtMs,
+      outcome: content.outcome,
+    },
     lane: CORPUS_LANE.open,
     sortAtMs: 0,
     presence: { kind: 'present', observedAtMs: 1_000 },
     attention: null,
     selected: { kind: 'selected', sourceInstanceId: '11111111-1111-4111-8111-111111111111', reason: 'onlyPresent' },
-    observations: [testkitObservation({
-      outcome: testkitPresentOutcome({
-        snapshot: testkitSnapshot({ title: 'Replace the duplicated normalizer' }),
-      }),
-    })],
     ...overrides,
+    observations,
   };
 }
 

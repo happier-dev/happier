@@ -185,6 +185,176 @@ describe('Sentry event projection — what may leave this source', () => {
     });
   });
 
+  it('honours a `_meta` annotation on an exception value and on a stack frame', () => {
+    // The provider's own scrubbing rules reach far past tags and user: the
+    // exception message and the frame that carries the reader's file paths are
+    // where `@creditcard` and `@userpath` actually fire.
+    const projected = projectSentryEventForDisplay({
+      ...exceptionEvent({
+        entries: [{
+          type: 'exception',
+          data: {
+            values: [{
+              type: 'ChargeDeclined',
+              value: 'card 4111111111111111 was declined',
+              stacktrace: {
+                frames: [frame({
+                  filename: '/Users/ada/secret-project/checkout.ts',
+                  vars: undefined,
+                })],
+              },
+            }],
+          },
+        }],
+      }),
+      _meta: {
+        entries: {
+          '0': {
+            data: {
+              values: {
+                '0': {
+                  value: { '': { rem: [['@creditcard', 's', 5, 25]] } },
+                  stacktrace: {
+                    frames: {
+                      '0': {
+                        filename: {
+                          '': { chunks: [{ type: 'redaction', rule_id: '@userpath' }] },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const serialized = JSON.stringify(projected);
+    expect(serialized).not.toContain('4111111111111111');
+    expect(serialized).not.toContain('secret-project');
+    // The provider's rule ids are never republished, only the fact of the scrub.
+    expect(serialized).not.toContain('@creditcard');
+    expect(serialized).not.toContain('@userpath');
+
+    const [section] = projected.sections;
+    expect(section?.kind).toBe('exception');
+    if (section?.kind !== 'exception') return;
+    expect(section.value).toBe('');
+    expect(section.frames[0]?.filename).toBeNull();
+    // The structure around the two scrubbed values still renders.
+    expect(section.type).toBe('ChargeDeclined');
+    expect(section.frames[0]?.function).toBe('submitOrder');
+    expect(section.frames[0]?.lineNo).toBe(42);
+
+    expect(projected.redactions).toContainEqual({
+      path: 'entries[0].data.values[0].value',
+      reason: 'providerScrubbed',
+    });
+    expect(projected.redactions).toContainEqual({
+      path: 'entries[0].data.frames[0].filename',
+      reason: 'providerScrubbed',
+    });
+  });
+
+  it('honours a `_meta` annotation on a breadcrumb, a message section and a top-level field', () => {
+    const projected = projectSentryEventForDisplay({
+      ...exceptionEvent({
+        location: '/Users/ada/secret-project/checkout.ts',
+        entries: [
+          {
+            type: 'breadcrumbs',
+            data: {
+              values: [{
+                timestamp: '2026-02-03T04:05:00.000Z',
+                category: 'fetch',
+                level: 'info',
+                message: 'POST /charge pan=4111111111111111',
+              }],
+            },
+          },
+          { type: 'message', data: { formatted: 'declined for ada@example.com' } },
+        ],
+      }),
+      _meta: {
+        location: { '': { rem: [['@userpath', 's', 0, 10]] } },
+        entries: {
+          '0': {
+            data: {
+              values: { '0': { message: { '': { rem: [['@creditcard', 's', 0, 10]] } } } },
+            },
+          },
+          '1': { data: { formatted: { '': { rem: [['@email', 's', 0, 10]] } } } },
+        },
+      },
+    });
+
+    const serialized = JSON.stringify(projected);
+    expect(serialized).not.toContain('4111111111111111');
+    expect(serialized).not.toContain('ada@example.com');
+    expect(serialized).not.toContain('secret-project');
+
+    expect(projected.location).toBeNull();
+    const [breadcrumbs] = projected.sections;
+    expect(breadcrumbs?.kind).toBe('breadcrumbs');
+    if (breadcrumbs?.kind !== 'breadcrumbs') return;
+    expect(breadcrumbs.entries[0]?.message).toBeNull();
+    // The surrounding breadcrumb is still shown.
+    expect(breadcrumbs.entries[0]?.category).toBe('fetch');
+    // A message section whose only text was scrubbed carries no section at all.
+    expect(projected.sections).toHaveLength(1);
+
+    expect(projected.redactions).toContainEqual({
+      path: 'location',
+      reason: 'providerScrubbed',
+    });
+    expect(projected.redactions).toContainEqual({
+      path: 'entries[0].data.values[0].message',
+      reason: 'providerScrubbed',
+    });
+    expect(projected.redactions).toContainEqual({
+      path: 'entries[1].data.formatted',
+      reason: 'providerScrubbed',
+    });
+  });
+
+  it('names the retained event body content it still carries in `sensitivePaths`', () => {
+    // §8.4 builds its disclosure from this array. A projection carrying a whole
+    // stack trace, its source context lines and an exception message must not
+    // report the same empty set as one carrying nothing.
+    const projected = projectSentryEventForDisplay(exceptionEvent({
+      entries: [
+        {
+          type: 'exception',
+          data: {
+            values: [{
+              type: 'ChargeDeclined',
+              value: 'card was declined',
+              stacktrace: { frames: [frame({ vars: undefined })] },
+            }],
+          },
+        },
+        {
+          type: 'breadcrumbs',
+          data: { values: [{ category: 'fetch', level: 'info', message: 'POST /charge' }] },
+        },
+      ],
+    }));
+
+    expect(projected.sensitivePaths).toContain('entries[0].data.values[0].value');
+    expect(projected.sensitivePaths).toContain('entries[0].data.frames[].filename');
+    expect(projected.sensitivePaths).toContain('entries[0].data.frames[].contextLine');
+    expect(projected.sensitivePaths).toContain('entries[1].data.values[].message');
+    // A repeated field is named once, not once per element: the ceiling exists to
+    // carry every kind of retained content, not forty copies of one kind.
+    expect(projected.sensitivePaths.filter((path) => path.includes('[]'))
+      .every((path) => !/\[\d+\]\.(filename|contextLine|message)$/u.test(path))).toBe(true);
+    // Tier-A row facts are not sensitive-path material; they are already the list row.
+    expect(projected.sensitivePaths).not.toContain('title');
+    expect(projected.sensitivePaths).not.toContain('culprit');
+  });
+
   it('publishes only allow-listed tag keys and names the ones it withheld', () => {
     const projected = projectSentryEventForDisplay({
       ...exceptionEvent(),
@@ -284,6 +454,15 @@ describe('Sentry event projection — what may leave this source', () => {
       { kind: 'message', formatted: 'card was declined' },
     ]);
     expect(JSON.stringify(projected)).not.toContain('session=notatoken');
+  });
+
+  it('falls back to a message interface’s own `message` when its `formatted` is blank', () => {
+    const projected = projectSentryEventForDisplay(exceptionEvent({
+      entries: [{ type: 'message', data: { formatted: '', message: 'card was declined' } }],
+    }));
+
+    expect(projected.sections).toEqual([{ kind: 'message', formatted: 'card was declined' }]);
+    expect(projected.sensitivePaths).toContain('entries[0].data.message');
   });
 
   it('skips a malformed sibling and keeps every valid one', () => {

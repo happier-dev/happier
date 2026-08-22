@@ -16,8 +16,10 @@
  * itself says the page has results, and the caller then constructs the next
  * request. No provider URL crosses the Action boundary or reaches a panel.
  *
- * An absent `Link` ends the walk without claiming the collection was exhausted:
- * the panels count what they read and never say "all".
+ * An absent `Link` ends the walk WITHOUT claiming the collection was exhausted,
+ * and says which of those two happened: a page that ended the walk and a page
+ * that stopped short of it are different answers, and a panel that cannot tell
+ * them apart renders a truncated list exactly like a complete one.
  *
  * `readSentryEventProjection` is the fourth, and the only one that touches a whole
  * event body. It is the sole HTTP, parser and projection owner for both the
@@ -49,6 +51,7 @@ import {
   type SentryFailureV1,
   type SentryOperationV1,
 } from '../sentryContracts.js';
+import type { SentryDetailIncompleteReasonV1 } from '../ui/detail/panelState.js';
 
 import {
   SENTRY_DETAIL_BOUNDS_V1,
@@ -106,31 +109,59 @@ function decodeBody(
 }
 
 /**
- * Reads the provider's advertised next cursor, or `null` when this source will
+ * Where a detail walk stands after one page: continuing, genuinely finished, or
+ * stopped short of the collection with the reason it stopped.
+ *
+ * The three outcomes were one `string | null` until it was measured: five
+ * distinct situations — including an absent `Link` header, which is NOT a
+ * finished walk — all collapsed into "no next cursor", and the panel then
+ * rendered a truncated list exactly like a complete one. The reason names are
+ * the SCAN plane's own (`scan/scanIssuesPage.ts`), because the same cursor means
+ * the same thing on both planes.
+ */
+export type SentryNextPageV1 =
+  | Readonly<{ kind: 'next'; cursor: string }>
+  | Readonly<{ kind: 'end' }>
+  | Readonly<{ kind: 'stoppedShort'; reason: SentryDetailIncompleteReasonV1 }>;
+
+const WALK_END: SentryNextPageV1 = Object.freeze({ kind: 'end' as const });
+
+function stoppedShort(reason: SentryDetailIncompleteReasonV1): SentryNextPageV1 {
+  return Object.freeze({ kind: 'stoppedShort' as const, reason });
+}
+
+/**
+ * Reads the provider's advertised next cursor, or states why this source will
  * not follow it.
  */
 function verifyNextCursor(
   headers: Readonly<Record<string, string>>,
   expectedPath: string,
   requestedCursor: string | null,
-): string | null {
+): SentryNextPageV1 {
   const link = parseSentryLinkHeader(headers);
-  // An absent header is not a finished walk, but it is also not a reason to
-  // discard the rows already read. The walk stops and the panel says only what
-  // it covered.
-  if (!link.present || link.next === null) return null;
+  // An absent header is not a finished walk, and it is also not a reason to
+  // discard the rows already read. The walk stops and the panel says so.
+  if (!link.present) return stoppedShort('paginationHeaderAbsent');
   const { next } = link;
-  if (!next.hasResults || next.cursor === null || next.cursor === '') return null;
+  // No `next` relation, or one Sentry itself marks as carrying no further
+  // results, is the provider stating the collection ended.
+  if (next === null || !next.hasResults) return WALK_END;
+  if (next.cursor === null || next.cursor === '') {
+    return stoppedShort('paginationCursorMalformed');
+  }
   // A next cursor equal to the one just requested does not advance; following
   // it would walk the same page forever.
-  if (next.cursor === requestedCursor) return null;
+  if (next.cursor === requestedCursor) return stoppedShort('paginationCursorNotAdvancing');
   let url: URL;
   try {
     url = new URL(next.url);
   } catch {
-    return null;
+    return stoppedShort('paginationCursorMalformed');
   }
-  return url.pathname === expectedPath ? next.cursor : null;
+  return url.pathname === expectedPath
+    ? Object.freeze({ kind: 'next' as const, cursor: next.cursor })
+    : stoppedShort('paginationCursorMalformed');
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -273,8 +304,8 @@ export type SentryEventsPageV1 = Readonly<{
   rows: readonly SentryProjectedEventRowV1[];
   omittedRowCount: number;
   projectionTruncated: boolean;
-  /** The verified next cursor, or `null` when this source will not walk further. */
-  nextCursor: string | null;
+  /** Where the walk stands: continuing, ended, or stopped short with its reason. */
+  nextPage: SentryNextPageV1;
 }>;
 
 export type SentryEventsPageInputV1 = Readonly<{
@@ -316,7 +347,7 @@ export async function readSentryIssueEventsPage(
       rows: projected.rows,
       omittedRowCount: projected.omittedRowCount,
       projectionTruncated: projected.projectionTruncated,
-      nextCursor: verifyNextCursor(outcome.response.headers, new URL(url).pathname, input.cursor),
+      nextPage: verifyNextCursor(outcome.response.headers, new URL(url).pathname, input.cursor),
     }),
   });
 }
@@ -327,7 +358,8 @@ export type SentryTagValuesPageV1 = Readonly<{
   rows: readonly SentryProjectedTagValueV1[];
   omittedRowCount: number;
   projectionTruncated: boolean;
-  nextCursor: string | null;
+  /** Where the walk stands: continuing, ended, or stopped short with its reason. */
+  nextPage: SentryNextPageV1;
 }>;
 
 export type SentryTagValuesPageInputV1 = Readonly<{
@@ -371,7 +403,7 @@ export async function readSentryTagValuesPage(
       rows: projected.rows,
       omittedRowCount: projected.omittedRowCount,
       projectionTruncated: projected.projectionTruncated,
-      nextCursor: verifyNextCursor(outcome.response.headers, new URL(url).pathname, input.cursor),
+      nextPage: verifyNextCursor(outcome.response.headers, new URL(url).pathname, input.cursor),
     }),
   });
 }

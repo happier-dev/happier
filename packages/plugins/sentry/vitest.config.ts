@@ -13,6 +13,10 @@ const repoRoot = resolve(packageRoot, '../../..');
 
 const workspacePackages: readonly WorkspacePackageSpec[] = [
   {
+    packageName: '@happier-dev/triage-sources',
+    packageSourceRoot: resolve(repoRoot, 'packages/triage-sources/src'),
+  },
+  {
     packageName: '@happier-dev/plugin-sdk',
     packageSourceRoot: resolve(repoRoot, 'packages/plugin-sdk/src'),
   },

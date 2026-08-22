@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 
 export type PiShellBridgeAvailability =
   | Readonly<{
@@ -160,11 +161,7 @@ export function normalizePiShellPath(
       normalized = `${match[1]!.toUpperCase()}:\\${match[2]?.replaceAll('/', '\\') ?? ''}`;
     }
   }
-  if (normalized === '~') return homeDir;
-  if (normalized.startsWith('~/') || (platform === 'win32' && normalized.startsWith('~\\'))) {
-    const suffix = normalized.slice(2);
-    return platform === 'win32' ? win32.join(homeDir, suffix) : join(homeDir, suffix);
-  }
+  if (/^~(?:[\\/]|$)/u.test(normalized)) return expandHomePath(normalized, homeDir, platform);
   if (/^file:\/\//.test(normalized)) {
     return fileURLToPath(normalized, { windows: platform === 'win32' });
   }
@@ -199,7 +196,7 @@ export function resolvePiShellBridgeAvailabilityForRuntime(params: Readonly<{
   }
 
   const pathApi = platform === 'win32' ? win32 : { dirname, join, resolve };
-  const homeDir = env.USERPROFILE?.trim() || env.HOME?.trim() || homedir();
+  const homeDir = resolveHomeDirFromEnvironment(env, platform);
   const agentDir = env.PI_CODING_AGENT_DIR?.trim() || pathApi.join(homeDir, '.pi', 'agent');
   const globalSettings = readJsonRecord(pathApi.join(agentDir, 'settings.json'));
   const globalShellPath = resolvePiSettingsShellPath(globalSettings);

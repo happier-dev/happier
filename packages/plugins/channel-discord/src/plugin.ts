@@ -15,6 +15,7 @@ import {
   DISCORD_BRAND_RESOURCE_ID,
   DISCORD_CHANNEL_ACTION_IDS,
   DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
+  DISCORD_PLUGIN_ID,
 } from './discordPluginConstants.js';
 import {
   deliverDiscordMessage,
@@ -26,6 +27,15 @@ import {
   createDiscordGatewaySupervisor,
   type DiscordGatewaySupervisor,
 } from './discordGatewaySupervisor.js';
+import {
+  DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
+  DISCORD_AUTOMATION_MESSAGE_SETUP_HOST_ACCESS,
+  DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS,
+  DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
+  DISCORD_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,
+  setupDiscordAutomationMessageSource,
+} from './discordAutomationEvent.js';
+import { DISCORD_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
 const discordProviderProtocol = ConversationProvidersContributionProtocolV1;
 const discordProviderOperations = discordProviderProtocol.operations;
@@ -117,13 +127,13 @@ function createDiscordPlugin() {
   const gatewayActivationBindings = createDiscordGatewayActivationBindings();
 
   return definePlugin({
-  id: 'happier.channel.discord',
+  id: DISCORD_PLUGIN_ID,
   version: '0.0.0',
   displayName: 'Discord Channels',
   description: 'Connects Discord conversations to Happier Channels.',
   engines: { happier: '^0.0.0' },
   runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   brand: { iconResourceId: DISCORD_BRAND_RESOURCE_ID },
   hostAccess: {
     required: [
@@ -165,6 +175,9 @@ function createDiscordPlugin() {
       contentType: 'image/png',
     },
   },
+  ui: {
+    translations: DISCORD_UI_TRANSLATION_BUNDLES,
+  },
   connectedAccountDescriptors: {
     [DISCORD_BOT_CONNECTED_ACCOUNT_ID]: {
       declaration: {
@@ -197,6 +210,7 @@ function createDiscordPlugin() {
   actions: {
     [DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID]: {
       title: 'Run Discord Gateway worker attempt',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: ['plugin'],
       dangerLevel: 'safe',
@@ -208,8 +222,32 @@ function createDiscordPlugin() {
       }],
       run: gatewayActivationBindings.runWorkerAttempt,
     },
+    // The Automation Event this Action resolves a source for is WITHHELD from
+    // this manifest; the withheld-declaration note in
+    // `discordAutomationEvent.ts` owns why and what a real observer needs. The
+    // Action stays declared so the retained observer work keeps its one
+    // registered entry point, and it is reachable only from the `plugin`
+    // surface, so nothing user-facing offers an Automation that cannot exist.
+    [DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID]: {
+      title: 'Watch a Discord channel for Automations',
+      description: 'Resolves a Discord channel to immutable source facts for an Automation Event.',
+      execution: { target: 'daemon' },
+      scopes: ['global'],
+      surfaces: ['plugin'],
+      dangerLevel: 'safe',
+      inputSchema: DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
+      inputHints: DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS,
+      resultSchema: DISCORD_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,
+      hostAccess: [...DISCORD_AUTOMATION_MESSAGE_SETUP_HOST_ACCESS],
+      connectedAccountPurposeBindings: [{
+        path: 'credentialRef',
+        purpose: DISCORD_BOT_CREDENTIAL_PURPOSE,
+      }],
+      run: setupDiscordAutomationMessageSource,
+    },
     [DISCORD_CHANNEL_ACTION_IDS.setup]: {
       title: 'Set up Discord Channels',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: discordProviderOperations.setup.declaration.surfaces,
       dangerLevel: discordProviderOperations.setup.declaration.dangerLevel,
@@ -243,6 +281,7 @@ function createDiscordPlugin() {
     },
     [DISCORD_CHANNEL_ACTION_IDS.connectionTest]: {
       title: 'Test Discord connection',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: connectionTestOperation.declaration.surfaces,
       dangerLevel: connectionTestOperation.declaration.dangerLevel,
@@ -257,6 +296,7 @@ function createDiscordPlugin() {
     },
     [DISCORD_CHANNEL_ACTION_IDS.endpointResolve]: {
       title: 'Resolve Discord destination',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: endpointResolveOperation.declaration.surfaces,
       dangerLevel: endpointResolveOperation.declaration.dangerLevel,
@@ -271,6 +311,7 @@ function createDiscordPlugin() {
     },
     [DISCORD_CHANNEL_ACTION_IDS.messageDeliver]: {
       title: 'Deliver Discord message',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: messageDeliverOperation.declaration.surfaces,
       dangerLevel: messageDeliverOperation.declaration.dangerLevel,
@@ -285,6 +326,7 @@ function createDiscordPlugin() {
     },
     [DISCORD_CHANNEL_ACTION_IDS.connectionStop]: {
       title: 'Stop Discord Gateway connection',
+      execution: { target: 'daemon' },
       scopes: ['global'],
       surfaces: connectionStopOperation.declaration.surfaces,
       dangerLevel: connectionStopOperation.declaration.dangerLevel,
@@ -294,6 +336,9 @@ function createDiscordPlugin() {
       run: gatewayActivationBindings.stop,
     },
   },
+  // This provider declares no Event. Its Automation Event declaration is
+  // WITHHELD; `discordAutomationEvent.ts` owns the note that says why and what
+  // a real history-capable observer needs before it can be declared again.
   backgroundServices: [{
     declaration: {
       id: 'gateway-supervisor',

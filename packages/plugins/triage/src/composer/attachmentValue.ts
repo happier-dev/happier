@@ -7,6 +7,8 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import type { TriageEntryRefV1, TriageSourceInstanceRefV1 } from '@happier-dev/triage-protocol/v1';
 
+import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
+
 /**
  * The private value and key of the one Triage composer entry attachment
  * (`core/COMPOSER.md` §1.1).
@@ -117,10 +119,7 @@ export function parseTriageComposerEntryAttachmentValue(
 
     const candidate = parsed.data as TriageComposerEntryAttachmentValueV1;
     const { entryRef, sourceInstance } = candidate;
-    if (
-        sourceInstance.source.pluginId !== entryRef.source.pluginId
-        || sourceInstance.source.localId !== entryRef.source.localId
-    ) {
+    if (!sameTriageSourceIdentity(sourceInstance.source, entryRef.source)) {
         return { status: 'invalid', reason: 'sourceMismatch' };
     }
     return { status: 'valid', value: candidate };

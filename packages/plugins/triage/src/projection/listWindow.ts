@@ -1,7 +1,6 @@
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import {
     type TriageEntryRefV1,
-    type TriageSourceEntrySnapshotV1,
     type TriageSourceFailureV1,
     type TriageSourceScanEvidenceV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -9,6 +8,7 @@ import {
 import { deriveDisplayedAttention, type CorpusDisplayedAttentionV1 } from '../corpus/attention/deriveAttention.js';
 import { CORPUS_LANE, laneForSnapshot, sortAtMsFor, type CorpusLaneV1 } from '../corpus/fold/lane.js';
 import { rollUpPresence, type CorpusPresenceV1 } from '../corpus/fold/presence.js';
+import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
 import { rankCorpusWindow } from '../corpus/query/rankWindow.js';
 import {
     CORPUS_DEFAULT_SMART_POLICY_V1,
@@ -20,6 +20,11 @@ import {
     selectObservationInstance,
     type CorpusSelectedInstanceV1,
 } from '../corpus/selection/selectObservationInstance.js';
+import {
+    parseTriageSearchQuery,
+    projectTriageEntrySearchText,
+    triageEntryMatchesSearch,
+} from './entrySearch.js';
 
 /**
  * The one assembled PRs & Issues window.
@@ -67,8 +72,14 @@ export const MAX_TRIAGE_LIST_WINDOW_ROWS_V1 = 56;
  *
  * The first three arms are the source's own bounded scan evidence; `failed`
  * carries its typed failure; `unavailable` is the honest fourth arm for an
- * invocation that never settled into either, which is not provider evidence
- * about the source at all.
+ * invocation that produced no evidence of either kind, which is not provider
+ * evidence about the source at all.
+ *
+ * A scan that never answers is NOT `unavailable`. The scan owner bounds each
+ * page with a deadline and classifies a lane that reaches it as `failed` with a
+ * transient failure, because "this source did not answer in time" is a typed,
+ * retryable statement about the source — whereas `unavailable` stays for an
+ * invocation that rejected outright, where there is nothing typed to carry.
  */
 export type TriageListLaneHealthV1 =
     | TriageSourceScanEvidenceV1
@@ -119,9 +130,29 @@ export function triageListCoverageLanes(input: Readonly<{
     })));
 }
 
+/**
+ * The one observation a row's content comes from.
+ *
+ * It is a member rather than a rule each reader applies, because a row whose
+ * title, lane, ordinal and locator are each chosen by their own reader is a row
+ * that can say *open* in the title and file itself under *Done* — silently, with
+ * nothing to error on. This is the observation `core/CORPUS.md` §3.2 names, and
+ * every surface reads it instead of choosing again.
+ */
+export type TriageListRowContentV1 = Readonly<{
+    sourceInstanceId: string;
+    observedAtMs: number;
+    outcome: Extract<ProjectedObservationV1['outcome'], Readonly<{ kind: 'present' }>>;
+}>;
+
 /** One projected row: one canonical entry as every configured connection answered for it. */
 export type TriageListRowV1 = Readonly<{
     entryRef: TriageEntryRefV1;
+    /**
+     * The observation this row's content, lane and ordinal come from, or `null`
+     * when no connection reports the entry at all.
+     */
+    content: TriageListRowContentV1 | null;
     lane: CorpusLaneV1;
     /** Presentation ordinal only; it is never compared to a clock or a freshness claim. */
     sortAtMs: number;
@@ -201,14 +232,20 @@ export const TRIAGE_LIST_DEFAULT_LENS_V1: TriageListLensV1 = Object.freeze({
 });
 
 /**
- * The grouping key of one canonical entry reference.
+ * The one row key of a canonical entry reference: the fold's grouping key and
+ * the surfaces' presentation key.
  *
  * Deliberately a JSON array encoding rather than a delimiter join: `U+001F` is
  * representable inside `collisionScope`, so joining components would merge two
  * contract-valid distinct entries into one row. JSON string escaping is
  * injective over the ordered components, so this key cannot collide.
+ *
+ * It is exported because the pinned-row join keys projected rows against rows
+ * this fold grouped, so the two must be the same encoder rather than two
+ * encoders that agree today: a drift in either one silently lists a pinned entry
+ * twice or drops it from the join, with nothing to error on.
  */
-function entryKey(entryRef: TriageEntryRefV1): string {
+export function triageEntryRowKey(entryRef: TriageEntryRefV1): string {
     return JSON.stringify([
         entryRef.source.pluginId,
         entryRef.source.localId,
@@ -218,65 +255,60 @@ function entryKey(entryRef: TriageEntryRefV1): string {
     ]);
 }
 
-function sameSource(left: PluginContributionIdentity, right: PluginContributionIdentity): boolean {
-    return left.pluginId === right.pluginId && left.localId === right.localId;
-}
-
-/** The newest present snapshot of one entry, by our own observation clock. */
-function winningSnapshot(observations: CorpusEntryObservationsV1): Readonly<{
-    snapshot: TriageSourceEntrySnapshotV1;
-    sortAtMs: number;
-}> | null {
-    let winner: Readonly<{ snapshot: TriageSourceEntrySnapshotV1; sortAtMs: number; observedAtMs: number }> | null = null;
+/**
+ * The one present observation this row's content comes from: the
+ * lexicographically smallest stable `sourceInstanceId` (`core/CORPUS.md` §3.2).
+ *
+ * It is deliberately **not** a freshness claim. Two connections' `observedAtMs`
+ * values come from two machines' clocks and `sourceUpdatedAtMs` values from two
+ * providers' clocks, and §3.2 forbids comparing either pair across instances: a
+ * provider whose clock runs ahead wins once and then wins every subsequent
+ * comparison, freezing the entry with no error anywhere. A stable id also makes
+ * the answer order-independent, which an arrival-order winner is not.
+ *
+ * Within one connection its own clock *is* comparable, so the same connection
+ * answering twice in one pass — the same entry on two pages — contributes its
+ * newest answer.
+ *
+ * What this costs is stated in §3.2 and must not be "fixed" with an ordinal: the
+ * displayed snapshot may come from the alphabetically first connection rather
+ * than the most recently updated one. It loses no observation, and it decides no
+ * absence, attention or authority — those read the observations directly.
+ */
+function contentObservation(observations: CorpusEntryObservationsV1): TriageListRowContentV1 | null {
+    let winner: TriageListRowContentV1 | null = null;
     for (const observation of observations) {
         if (observation.outcome.kind !== 'present') continue;
-        const candidate = {
-            snapshot: observation.outcome.snapshot,
-            sortAtMs: sortAtMsFor({
-                snapshot: observation.outcome.snapshot,
-                ...(observation.outcome.sourceUpdatedAtMs === undefined
-                    ? {}
-                    : { sourceUpdatedAtMs: observation.outcome.sourceUpdatedAtMs }),
-                observedAtMs: observation.observedAtMs,
-            }),
+        const candidate: TriageListRowContentV1 = {
+            sourceInstanceId: observation.sourceInstanceId,
             observedAtMs: observation.observedAtMs,
+            outcome: observation.outcome,
         };
-        if (winner === null || candidate.observedAtMs > winner.observedAtMs) winner = candidate;
+        if (winner === null
+            || candidate.sourceInstanceId < winner.sourceInstanceId
+            || (candidate.sourceInstanceId === winner.sourceInstanceId
+                && candidate.observedAtMs > winner.observedAtMs)) {
+            winner = candidate;
+        }
     }
-    return winner === null ? null : { snapshot: winner.snapshot, sortAtMs: winner.sortAtMs };
+    return winner;
+}
+
+/** The presentation ordinal of the observation the row's content came from. */
+function sortAtMsForContent(content: TriageListRowContentV1): number {
+    return sortAtMsFor({
+        snapshot: content.outcome.snapshot,
+        ...(content.outcome.sourceUpdatedAtMs === undefined
+            ? {}
+            : { sourceUpdatedAtMs: content.outcome.sourceUpdatedAtMs }),
+        observedAtMs: content.observedAtMs,
+    });
 }
 
 function latestObservedAtMs(observations: CorpusEntryObservationsV1): number {
     let latest = 0;
     for (const observation of observations) latest = Math.max(latest, observation.observedAtMs);
     return latest;
-}
-
-/**
- * Search folds case with the locale-independent mapping on purpose.
- *
- * `toLocaleLowerCase` reads the device's own locale, so the same query over the
- * same rows would match on one user's machine and not on another's — a Turkish
- * locale maps `I` to `ı`, and a search for `Issue` would then miss every entry
- * titled `ISSUE`. The window is source-neutral and device-local; its matching
- * must not depend on where the device is set up.
- */
-function foldForSearch(value: string): string {
-    return value.toLowerCase();
-}
-
-function matchesQuery(row: TriageListRowV1, query: string): boolean {
-    if (query === '') return true;
-    const needle = foldForSearch(query);
-    for (const observation of row.observations) {
-        if (observation.outcome.kind !== 'present') continue;
-        const { snapshot, locator } = observation.outcome;
-        const haystack = [snapshot.title, snapshot.summary, snapshot.scopeLabel, locator.displayPath];
-        for (const value of haystack) {
-            if (value !== undefined && foldForSearch(value).includes(needle)) return true;
-        }
-    }
-    return false;
 }
 
 function matchesState(row: TriageListRowV1, states: readonly CorpusStateFilterValueV1[]): boolean {
@@ -302,21 +334,92 @@ function matchesAttention(
 
 function matchesFilters(row: TriageListRowV1, filters: SurfaceFilterSelectionV1): boolean {
     if (filters.sources.length > 0
-        && !filters.sources.some((value) => sameSource(value.source, row.entryRef.source))) {
+        && !filters.sources.some((value) => sameTriageSourceIdentity(value.source, row.entryRef.source))) {
         return false;
     }
     if (filters.types.length > 0 && !filters.types.some(
-        (value) => sameSource(value.source, row.entryRef.source) && value.kindId === row.entryRef.kindId,
+        (value) => sameTriageSourceIdentity(value.source, row.entryRef.source) && value.kindId === row.entryRef.kindId,
     )) {
         return false;
     }
     if (filters.scopes.length > 0 && !filters.scopes.some(
-        (value) => sameSource(value.source, row.entryRef.source)
+        (value) => sameTriageSourceIdentity(value.source, row.entryRef.source)
             && value.collisionScope === row.entryRef.collisionScope,
     )) {
         return false;
     }
     return matchesState(row, filters.states) && matchesAttention(row, filters.attention);
+}
+
+/**
+ * Bound one ordered window fairly across the connections that answered for it
+ * (`core/CORPUS.md` §4.3).
+ *
+ * A page of the aggregate list is assembled from several connections, and one
+ * deep source must not consume the whole page budget. Cutting the globally
+ * ranked window at the limit does exactly that: a connection holding 500 recent
+ * entries fills every row of a `newest` window and a connection holding three
+ * older ones is invisible — which reads as a missing integration rather than as
+ * a paging choice, and which no error, health arm or coverage claim reports,
+ * because every lane genuinely finished its walk.
+ *
+ * So rows are taken one at a time in rotation over the connections, in stable id
+ * order, before any connection takes a second one. A row several connections
+ * observed is taken once and skipped on the other connections' turns rather than
+ * spending them, so a connection whose entries are all shared is not starved by
+ * its own overlap. The rotation decides only *which* rows the window carries;
+ * the order the reader sees stays the lens's, so this is a bound and never a
+ * second ranker.
+ *
+ * The common case costs nothing: a window that fits its limit is returned
+ * unchanged.
+ */
+function boundAcrossSourceLanes(
+    ordered: readonly TriageListRowV1[],
+    limit: number,
+): readonly TriageListRowV1[] {
+    if (ordered.length <= limit) return ordered;
+
+    const queues = new Map<string, TriageListRowV1[]>();
+    for (const row of ordered) {
+        for (const observation of row.observations) {
+            const queue = queues.get(observation.sourceInstanceId);
+            if (queue === undefined) {
+                queues.set(observation.sourceInstanceId, [row]);
+                continue;
+            }
+            // One connection may answer for one entry twice in a pass; that is
+            // one row of its lane, not two.
+            if (queue[queue.length - 1] !== row) queue.push(row);
+        }
+    }
+
+    // Stable id order, never arrival order: two lanes legitimately answer in a
+    // different order on every pass, and a rotation that depended on it would
+    // reshuffle which rows a reader can see.
+    const rotation = [...queues.keys()].sort();
+    const cursors = new Map<string, number>(rotation.map((sourceInstanceId) => [sourceInstanceId, 0]));
+    const taken = new Set<TriageListRowV1>();
+
+    let placedThisRotation = true;
+    while (taken.size < limit && placedThisRotation) {
+        placedThisRotation = false;
+        for (const sourceInstanceId of rotation) {
+            if (taken.size >= limit) break;
+            const queue = queues.get(sourceInstanceId) ?? [];
+            let cursor = cursors.get(sourceInstanceId) ?? 0;
+            while (cursor < queue.length && taken.has(queue[cursor])) cursor += 1;
+            if (cursor >= queue.length) {
+                cursors.set(sourceInstanceId, cursor);
+                continue;
+            }
+            taken.add(queue[cursor]);
+            cursors.set(sourceInstanceId, cursor + 1);
+            placedThisRotation = true;
+        }
+    }
+
+    return ordered.filter((row) => taken.has(row));
 }
 
 /**
@@ -343,7 +446,7 @@ export function foldTriageListWindow(input: Readonly<{
     const activeSourceInstanceIds = [...input.activeSourceInstanceIds];
     const grouped = new Map<string, { entryRef: TriageEntryRefV1; observations: ProjectedObservationV1[] }>();
     for (const observation of input.observations) {
-        const key = entryKey(observation.entryRef);
+        const key = triageEntryRowKey(observation.entryRef);
         const bucket = grouped.get(key);
         // The canonical ref is discarded from the projected observation: a record
         // carrying both a row identity and an inner one carries two identities
@@ -361,21 +464,29 @@ export function foldTriageListWindow(input: Readonly<{
     }
 
     const rows: TriageListRowV1[] = [];
+    const terms = parseTriageSearchQuery(input.lens.query);
     for (const { entryRef, observations } of grouped.values()) {
         const attention = deriveDisplayedAttention(observations);
-        const winner = winningSnapshot(observations);
+        const content = contentObservation(observations);
         const row: TriageListRowV1 = {
             entryRef,
+            content,
             // An entry with no present observation is not finished; calling it
             // done because a connection failed would retire a live entry.
-            lane: winner === null ? CORPUS_LANE.open : laneForSnapshot(winner.snapshot),
-            sortAtMs: winner === null ? latestObservedAtMs(observations) : winner.sortAtMs,
+            lane: content === null ? CORPUS_LANE.open : laneForSnapshot(content.outcome.snapshot),
+            sortAtMs: content === null ? latestObservedAtMs(observations) : sortAtMsForContent(content),
             presence: rollUpPresence(observations),
             attention,
             selected: selectObservationInstance(observations, activeSourceInstanceIds, attention, null),
             observations,
         };
-        if (matchesFilters(row, input.lens.filters) && matchesQuery(row, input.lens.query)) rows.push(row);
+        // Search has one owner, shared with the Composer picker: two matchers
+        // over one projection gave the same query two answers.
+        const matchesQuery = triageEntryMatchesSearch(
+            projectTriageEntrySearchText(observations),
+            terms,
+        );
+        if (matchesFilters(row, input.lens.filters) && matchesQuery) rows.push(row);
     }
 
     // Ordering has one owner, and it is not this assembler: `rankCorpusWindow`
@@ -383,9 +494,14 @@ export function foldTriageListWindow(input: Readonly<{
     // from the policy a saved view persisted.
     const ordered = rankCorpusWindow(rows, input.lens.order, input.lens.smartPolicy);
     const limit = Math.max(0, Math.min(input.lens.limit, MAX_TRIAGE_LIST_WINDOW_ROWS_V1));
-    const bounded = ordered.slice(0, limit);
+    const bounded = boundAcrossSourceLanes(ordered, limit);
     const everyLaneExhausted = input.lanes.every((lane) => lane.exhausted);
     const complete = input.configuredSourcesStatus === 'complete'
+        // A window that asked no lane has no basis for saying every configured
+        // source answered, and `lanes.every` is vacuously true over none — which
+        // is how an enumeration-only read reported an authoritative "nothing
+        // needs you" from a call that asked nobody.
+        && input.lanes.length > 0
         && everyLaneExhausted
         && bounded.length === ordered.length;
 

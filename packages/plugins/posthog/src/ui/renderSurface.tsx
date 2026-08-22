@@ -42,6 +42,7 @@ import {
     Text,
     defineUiSurface,
     useExecutePluginAction,
+    usePluginTranslation,
     useSurfaceContext,
     useTabPanelActivity,
     type MetadataEntry,
@@ -51,6 +52,15 @@ import {
     TriageSourceObservationV1Schema,
     type TriageDetailSurfaceInputV1,
     type TriageSourceObservationV1,
+} from '@happier-dev/triage-protocol/v1';
+// The presentation rules used below are projections of the Triage contract's own
+// closed fact and failure vocabularies, so they are consumed from the one published
+// owner rather than re-spelled here: six copies is how one declared `compact` number
+// could start meaning two things in one list. They are aliased to this file's local
+// vocabulary so the call sites read as the panel language they already are.
+import {
+  formatTriageTimestampV1 as formatTimestamp,
+  projectTriageDetailFieldTextV1 as fieldValueText,
 } from '@happier-dev/triage-protocol/v1';
 
 import { POSTHOG_ACTION_IDS, POSTHOG_PLUGIN_ID } from '../posthogContracts.js';
@@ -79,68 +89,6 @@ import {
     type PosthogDetailTabIdV1,
 } from './detail/tabDeclarations.js';
 
-const RELATIVE_UNITS: readonly (readonly [Intl.RelativeTimeFormatUnit, number])[] = Object.freeze([
-    ['year', 365 * 24 * 60 * 60 * 1000],
-    ['month', 30 * 24 * 60 * 60 * 1000],
-    ['day', 24 * 60 * 60 * 1000],
-    ['hour', 60 * 60 * 1000],
-    ['minute', 60 * 1000],
-] as const);
-
-/**
- * `relative` is relative to the reader's present, which is what a triage reader means by
- * "last seen 4 minutes ago". `nowMs` is passed in rather than read here so the value is a
- * render input and not a hidden clock read.
- */
-function formatTimestamp(
-    locale: string,
-    atMs: number,
-    format: 'relative' | 'absolute',
-    nowMs: number,
-): string {
-    if (format === 'absolute') {
-        return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
-            .format(new Date(atMs));
-    }
-    const deltaMs = atMs - nowMs;
-    const relative = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
-    for (const [unit, unitMs] of RELATIVE_UNITS) {
-        if (Math.abs(deltaMs) >= unitMs) return relative.format(Math.round(deltaMs / unitMs), unit);
-    }
-    return relative.format(Math.round(deltaMs / 1000), 'second');
-}
-
-function formatNumber(locale: string, value: number, format: 'compact' | 'plain'): string {
-    return new Intl.NumberFormat(
-        locale,
-        format === 'compact' ? { notation: 'compact', maximumFractionDigits: 1 } : {},
-    ).format(value);
-}
-
-function fieldValueText(
-    field: PosthogDetailFieldV1,
-    locale: string,
-    nowMs: number,
-): string | null {
-    switch (field.kind) {
-        case 'text':
-        case 'status':
-            return field.value;
-        case 'number': {
-            const formatted = formatNumber(locale, field.value, field.format);
-            // PostHog counts users and sessions approximately, and counts occurrences
-            // exactly only for what it ingested. Presenting either as a bare total would
-            // state a figure the provider never promised.
-            return field.approximate ? `~${formatted}` : formatted;
-        }
-        case 'timestamp':
-            return formatTimestamp(locale, field.atMs, field.format, nowMs);
-        case 'pending':
-            return null;
-        default:
-            return null;
-    }
-}
 
 /**
  * Recomputes a panel-owned derivation only while its tab is the active one.
@@ -256,7 +204,9 @@ function OverviewPanel({
                         <Banner
                             tone="warning"
                             title="Showing the last observation"
+                            titleKey="plugins.posthog.ui.lastObservation"
                             description="PostHog could not be read just now, so these facts are the ones this issue was last observed with."
+                            descriptionKey="plugins.posthog.ui.lastObservation.description"
                         />
                     )
                     : null}
@@ -266,6 +216,7 @@ function OverviewPanel({
                         <Banner
                             tone="info"
                             title="PostHog reports a different status"
+                            titleKey="plugins.posthog.ui.differentStatus"
                             description={model.nativeStateNow.nativeLabel
                                 ?? model.nativeStateNow.presentation}
                         />
@@ -287,10 +238,12 @@ function OverviewPanel({
                     ? (
                         <EmptyState
                             title="No projected facts"
+                            titleKey="plugins.posthog.ui.noFacts"
                             description="This observation carried no displayable facts."
+                            descriptionKey="plugins.posthog.ui.noFacts.description"
                         />
                     )
-                    : <Metadata title="Facts" entries={projected.entries} />}
+                    : <Metadata title="Facts" titleKey="plugins.posthog.ui.facts" entries={projected.entries} />}
                 {projected.disclosures.map((disclosure) => (
                     <Text key={disclosure.id} variant="caption" tone="neutral">
                         {`${disclosure.label}: ${disclosure.disclosure}`}
@@ -300,9 +253,12 @@ function OverviewPanel({
                     ? null
                     : (
                         <Stack gap="small">
-                            <Text variant="caption" tone="neutral">
-                                {'Read only in the detail plane:'}
-                            </Text>
+                            <Text
+                                variant="caption"
+                                tone="neutral"
+                                valueKey="plugins.posthog.ui.detailOnly"
+                                fallback="Read only in the detail plane:"
+                            />
                             <Row gap="small">
                                 {projected.pendingFields.map((field) => (
                                     <Badge key={field.id} value={field.label} />
@@ -315,13 +271,16 @@ function OverviewPanel({
                         <Banner
                             tone="neutral"
                             title="Some details were shortened"
+                            titleKey="plugins.posthog.ui.shortened"
                             description="Open the issue in PostHog to read the complete text."
+                            descriptionKey="plugins.posthog.ui.shortened.description"
                         />
                     )
                     : null}
                 <Divider />
                 <Metadata
                     title="Observation"
+                    titleKey="plugins.posthog.ui.observation"
                     entries={[
                         {
                             label: 'Observed',
@@ -359,15 +318,22 @@ function SampleFooter({
 }: Readonly<{ controller: PosthogOccurrenceControllerV1 }>): React.ReactElement {
     return (
         <Stack gap="small">
-            <Text variant="caption" tone="neutral">
-                {controller.state.omittedRowCount === 0
+            <Text
+                variant="caption"
+                tone="neutral"
+                valueKey={controller.state.omittedRowCount === 0
+                    ? 'plugins.posthog.ui.sampleDisclosure'
+                    : 'plugins.posthog.ui.sampleDisclosureUnreadable'}
+                fallback={controller.state.omittedRowCount === 0
                     ? SAMPLE_DISCLOSURE
-                    : `${SAMPLE_DISCLOSURE} ${String(controller.state.omittedRowCount)} row(s) in this sample could not be read.`}
-            </Text>
+                    : `${SAMPLE_DISCLOSURE} {count} row(s) in this sample could not be read.`}
+                values={{ count: controller.state.omittedRowCount }}
+            />
             {controller.state.canLoadMore
                 ? (
                     <Button
                         title="Load more sampled occurrences"
+                        titleKey="plugins.posthog.ui.loadMoreSamples"
                         variant="secondary"
                         busy={controller.state.pending}
                         onPress={controller.loadMore}
@@ -387,20 +353,22 @@ function OccurrencesPanel({
     locale: string;
     nowMs: number;
 }>): React.ReactElement {
+    const text = usePluginTranslation();
     const rows = useActiveDerivation(
-        () => posthogOccurrenceRows(controller.state.events),
-        [controller.state.events],
+        () => posthogOccurrenceRows(controller.state.rows),
+        [controller.state.rows],
     );
 
     if (controller.state.kind === 'loading') {
-        return <LoadingState title="Reading sampled occurrences" />;
+        return <LoadingState title="Reading sampled occurrences" titleKey="plugins.posthog.ui.readingSamples" />;
     }
     if (controller.state.kind === 'unavailable') {
         return (
             <ErrorState
                 title="Sampled occurrences are unavailable"
+                titleKey="plugins.posthog.ui.samplesUnavailable"
                 description={controller.state.failure === null
-                    ? 'PostHog did not return this sample.'
+                    ? text('plugins.posthog.ui.readFailed', 'PostHog could not complete this read.')
                     : controller.state.failure.code}
             />
         );
@@ -409,6 +377,7 @@ function OccurrencesPanel({
     return (
         <List
             accessibilityLabel="Sampled occurrences of this PostHog issue"
+            accessibilityLabelKey="plugins.posthog.ui.samplesLabel"
             items={rows}
             keyForItem={(row) => row.uuid}
             selection={{
@@ -418,6 +387,7 @@ function OccurrencesPanel({
             empty={(
                 <EmptyState
                     title="No sampled occurrences"
+                    titleKey="plugins.posthog.ui.noSamples"
                     description={SAMPLE_DISCLOSURE}
                 />
             )}
@@ -445,29 +415,42 @@ function StackTracePanel({
     );
 
     if (controller.state.kind === 'loading') {
-        return <LoadingState title="Reading the sampled stack" />;
+        return <LoadingState title="Reading the sampled stack" titleKey="plugins.posthog.ui.readingStack" />;
     }
 
     return (
         <List
             accessibilityLabel="Frames of the selected sampled occurrence"
+            accessibilityLabelKey="plugins.posthog.ui.framesLabel"
             items={trace.frames}
             keyForItem={(frame) => frame.id}
             header={(
                 <Stack gap="small">
-                    <Text variant="caption" tone="neutral">
-                        {trace.exceptionLabel
-                            ?? 'Select a sampled occurrence to read its stack.'}
-                    </Text>
-                    <Text variant="caption" tone="neutral">
-                        {`This stack belongs to one sampled occurrence, not to the latest one. ${String(trace.appFrameCount)} application frame(s), ${String(trace.otherFrameCount)} other frame(s).`}
-                    </Text>
+                    {trace.exceptionLabel === null
+                        ? (
+                            <Text
+                                variant="caption"
+                                tone="neutral"
+                                valueKey="plugins.posthog.ui.selectSampleForStack"
+                                fallback="Select a sampled occurrence to read its stack."
+                            />
+                        )
+                        : <Text variant="caption" tone="neutral" value={trace.exceptionLabel} />}
+                    <Text
+                        variant="caption"
+                        tone="neutral"
+                        valueKey="plugins.posthog.ui.sampleStackCounts"
+                        fallback="This stack belongs to one sampled occurrence, not to the latest one. {application} application frame(s), {other} other frame(s)."
+                        values={{ application: trace.appFrameCount, other: trace.otherFrameCount }}
+                    />
                     {trace.truncated
                         ? (
                             <Banner
                                 tone="neutral"
                                 title="This stack was shortened"
+                                titleKey="plugins.posthog.ui.stackShortened"
                                 description="Open the occurrence in PostHog to read every frame."
+                                descriptionKey="plugins.posthog.ui.stackShortened.description"
                             />
                         )
                         : null}
@@ -476,7 +459,9 @@ function StackTracePanel({
             empty={(
                 <EmptyState
                     title="No frames in this sample"
+                    titleKey="plugins.posthog.ui.noFrames"
                     description="The selected sampled occurrence carried no readable stack frames."
+                    descriptionKey="plugins.posthog.ui.noFrames.description"
                 />
             )}
             renderItem={(frame) => (
@@ -498,30 +483,36 @@ function AffectedSessionsPanel({
     input: TriageDetailSurfaceInputV1;
 }>): React.ReactElement {
     const rows = useActiveDerivation(
-        () => posthogAffectedSessionRows(controller.state.events, {
+        () => posthogAffectedSessionRows(controller.state.rows, {
             issueWebUrl: input.observation.locator.webUrl ?? null,
         }),
-        [controller.state.events, input.observation.locator.webUrl],
+        [controller.state.rows, input.observation.locator.webUrl],
     );
 
     if (controller.state.kind === 'loading') {
-        return <LoadingState title="Deriving affected sessions" />;
+        return <LoadingState title="Deriving affected sessions" titleKey="plugins.posthog.ui.derivingSessions" />;
     }
 
     return (
         <List
             accessibilityLabel="PostHog sessions this sample named"
+            accessibilityLabelKey="plugins.posthog.ui.sessionsLabel"
             items={rows}
             keyForItem={(row) => row.sessionId}
             header={(
-                <Text variant="caption" tone="neutral">
-                    {'These are the PostHog sessions the sampled occurrences named. A session here is not a claim that a recording exists.'}
-                </Text>
+                <Text
+                    variant="caption"
+                    tone="neutral"
+                    valueKey="plugins.posthog.ui.sampledSessions.description"
+                    fallback="These are the PostHog sessions the sampled occurrences named. A session here is not a claim that a recording exists."
+                />
             )}
             empty={(
                 <EmptyState
                     title="No sessions in this sample"
+                    titleKey="plugins.posthog.ui.noSessions"
                     description="None of the sampled occurrences carried a PostHog session id."
+                    descriptionKey="plugins.posthog.ui.noSessions.description"
                 />
             )}
             renderItem={(row) => (
@@ -561,25 +552,36 @@ function ActivityFooter({
     controller,
 }: Readonly<{ controller: PosthogActivityControllerV1 }>): React.ReactElement {
     const { state } = controller;
-    const covered = state.records.length;
+    const covered = state.rows.length;
     return (
         <Stack gap="small">
-            <Text variant="caption" tone="neutral">
-                {state.totalCount === null
-                    ? `${String(covered)} activity record(s) read.`
-                    : `${String(covered)} of ${String(state.totalCount)} activity record(s) read.`}
-            </Text>
+            <Text
+                variant="caption"
+                tone="neutral"
+                valueKey={state.totalCount === null
+                    ? 'plugins.posthog.ui.activityRecordsRead'
+                    : 'plugins.posthog.ui.activityRecordsReadOfTotal'}
+                fallback={state.totalCount === null
+                    ? '{covered} activity record(s) read.'
+                    : '{covered} of {total} activity record(s) read.'}
+                values={{ covered, total: state.totalCount ?? covered }}
+            />
             {state.omittedRowCount === 0
                 ? null
                 : (
-                    <Text variant="caption" tone="neutral">
-                        {`${String(state.omittedRowCount)} record(s) on the pages read could not be understood.`}
-                    </Text>
+                    <Text
+                        variant="caption"
+                        tone="neutral"
+                        valueKey="plugins.posthog.ui.recordsUnreadable"
+                        fallback="{count} record(s) on the pages read could not be understood."
+                        values={{ count: state.omittedRowCount }}
+                    />
                 )}
             {state.canLoadMore
                 ? (
                     <Button
                         title="Load more activity"
+                        titleKey="plugins.posthog.ui.loadMoreActivity"
                         variant="secondary"
                         busy={state.pending}
                         onPress={controller.loadMore}
@@ -613,18 +615,20 @@ function ActivityPanel({
     locale: string;
     nowMs: number;
 }>): React.ReactElement {
+    const text = usePluginTranslation();
     const { state } = controller;
 
     if (state.kind === 'idle' || state.kind === 'loading') {
-        return <LoadingState title="Reading this issue’s activity" />;
+        return <LoadingState title="Reading this issue’s activity" titleKey="plugins.posthog.ui.readingActivity" />;
     }
     if (state.kind === 'unavailable') {
         return (
             <ErrorState
                 title="Activity is unavailable"
+                titleKey="plugins.posthog.ui.activityUnavailable"
                 description={state.failure === null
-                    ? 'PostHog did not return this issue’s activity.'
-                    : `${state.failure.code}. Reading activity needs the activity_log:read scope on this PostHog account.`}
+                    ? text('plugins.posthog.ui.readFailed', 'PostHog could not complete this read.')
+                    : state.failure.code}
             />
         );
     }
@@ -632,7 +636,8 @@ function ActivityPanel({
     return (
         <List
             accessibilityLabel="Recorded activity for this PostHog issue"
-            items={state.records}
+            accessibilityLabelKey="plugins.posthog.ui.activityLabel"
+            items={state.rows}
             keyForItem={(row) => row.id}
             {...(state.failure === null
                 ? {}
@@ -641,6 +646,7 @@ function ActivityPanel({
                         <Banner
                             tone="warning"
                             title="Showing the activity read so far"
+                            titleKey="plugins.posthog.ui.partialActivity"
                             description={state.failure.code}
                         />
                     ),
@@ -648,7 +654,9 @@ function ActivityPanel({
             empty={(
                 <EmptyState
                     title="No recorded activity"
+                    titleKey="plugins.posthog.ui.noActivity"
                     description="PostHog has recorded no changes to this issue."
+                    descriptionKey="plugins.posthog.ui.noActivity.description"
                 />
             )}
             footer={<ActivityFooter controller={controller} />}
@@ -763,7 +771,9 @@ function PosthogDetailSurface(context: RenderContext): React.ReactElement {
             <Screen safeArea>
                 <ErrorState
                     title="This issue cannot be shown"
+                    titleKey="plugins.posthog.ui.invalidInput"
                     description="Triage supplied a detail input this PostHog build does not accept."
+                    descriptionKey="plugins.posthog.ui.invalidInput.description"
                 />
             </Screen>
         );

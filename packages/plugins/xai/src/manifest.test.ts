@@ -21,6 +21,9 @@ describe('xAI Voice plugin manifest', () => {
 
     const declaration = PLUGIN_MANIFEST.contributes.voiceProviders[0];
     expect(declaration?.platforms).toEqual(['web', 'ios', 'android']);
+    expect(declaration?.capabilities).toMatchObject({
+      tools: { effectCalls: 'stable_ids' },
+    });
     expect(declaration?.credentials).toMatchObject({
       slot: { id: 'api_key', purpose: 'voice.client-auth' },
       requirement: { kind: 'always' },

@@ -1,4 +1,4 @@
-import { sleep } from '@happier-dev/plugin-sdk/experimental/timeout';
+import { sleep } from '@happier-dev/plugin-sdk/async';
 
 import { resolveClaudeDefaultEffortForKnownAliasOrModel } from '../../../reasoningEffort.js';
 

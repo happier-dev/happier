@@ -5,6 +5,8 @@ import {
   CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS,
   CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES,
   CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES,
+  DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE,
+  DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY,
 } from './definition.js';
 
 describe('CLAUDE_AGENT_SETTINGS_CONTRIBUTION', () => {
@@ -69,12 +71,14 @@ describe('CLAUDE_AGENT_SETTINGS_CONTRIBUTION', () => {
       default: 'ask_every_time',
     }));
     expect(CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS.claudeUnifiedTerminalResumeChoice).toBe('ask_every_time');
+    expect(DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE).toBe('ask_every_time');
     expect(CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES).toEqual([
       'ask_every_time',
       'always_trust_happier_workspaces',
       'always_reject_happier_workspaces',
     ]);
     expect(CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS.claudeUnifiedTerminalWorkspaceTrust).toBe('ask_every_time');
+    expect(DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY).toBe('ask_every_time');
 
     const section = CLAUDE_AGENT_SETTINGS_CONTRIBUTION.presentation.sections.find(
       (entry) => entry.id === 'claude-unified-terminal',

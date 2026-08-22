@@ -116,21 +116,27 @@ function createCollection(initial: readonly StateRow[]) {
     },
     async batch(operations: readonly StateMutation[]) {
       batches.push([...operations]);
-      for (const operation of operations) {
+      // The Account Data owner answers a conflict with the exact conflicting
+      // rows, and `management.ts` iterates them. Publish them here so the
+      // fake cannot silently exercise a shape the writer never receives.
+      const conflicts = operations.flatMap((operation) => {
         const rowId = operation.kind === 'put' ? operation.value.id : operation.rowId;
         const current = rows.get(rowId);
         const matches = operation.expectedRevision === 'absent'
           ? current === undefined
           : current?.revision === operation.expectedRevision;
-        if (!matches) return { status: 'conflict' as const, results: [] };
-      }
+        return matches ? [] : [{ rowId, revision: current?.revision ?? 0, deleted: false as const }];
+      });
+      if (conflicts.length > 0) return { status: 'conflict' as const, conflicts };
       const results = operations.flatMap((operation) => {
         if (operation.kind !== 'put') return [];
         const revision = (rows.get(operation.value.id)?.revision ?? 0) + 1;
         rows.set(operation.value.id, { rowId: operation.value.id, revision, value: operation.value });
         return [{ rowId: operation.value.id, revision, deleted: false as const }];
       });
-      return { status: 'updated' as const, results };
+      // These cases never reread across a write, so the fake reports the same
+      // stable change cursor its query pages publish.
+      return { status: 'updated' as const, results, changeCursor: 1 };
     },
   };
 }

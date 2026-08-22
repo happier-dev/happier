@@ -1,12 +1,15 @@
-import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
+import { definePlugin } from '@happier-dev/plugin-sdk';
 
-export const PLUGIN_MANIFEST = {
-  schemaVersion: 2,
+import { AGENT_DEFINITION } from './agent/definition.js';
+import { createQwenAgentRuntime } from './agent/runtime/factory.js';
+
+export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: 'happier.agent.qwen',
   version: '0.0.0',
   displayName: 'Qwen Code',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
       id: 'qwen-process',
@@ -16,43 +19,55 @@ export const PLUGIN_MANIFEST = {
     }],
     optional: [],
   },
-  contributes: {
-    agents: [{
-      id: 'qwen',
-      title: 'Qwen Code',
-      runtime: { kind: 'custom' },
-      cli: {
-        displayName: 'Qwen CLI',
-        executable: {
-          binaryName: 'qwen',
-          knownUserBinDirSuffixes: null,
-          sourcePreference: 'system-first',
-        },
-        install: {
-          managed: {
-            kind: 'managed_package',
-            packageName: '@qwen-code/qwen-code',
+  agents: {
+    qwen: {
+      declaration: {
+        title: 'Qwen Code',
+        runtime: { kind: 'custom' },
+        cli: {
+          displayName: 'Qwen CLI',
+          executable: {
             binaryName: 'qwen',
+            knownUserBinDirSuffixes: null,
+            sourcePreference: 'system-first',
           },
-          manual: { kind: 'command' },
-          guideUrl: 'https://qwenlm.github.io/qwen-code-docs/',
-          docsUrl: null,
+          install: {
+            managed: {
+              kind: 'managed_package',
+              packageName: '@qwen-code/qwen-code',
+              binaryName: 'qwen',
+            },
+            manual: { kind: 'command' },
+            guideUrl: 'https://qwenlm.github.io/qwen-code-docs/',
+            docsUrl: null,
+          },
+          auth: {
+            support: 'login_terminal',
+            probe: { parser: 'unknown', backgroundChecks: 'safe', statusArgs: null },
+            loginLaunches: [{ kind: 'primary', args: [], initialInput: '/auth\r' }],
+          },
         },
-        auth: {
-          support: 'login_terminal',
-          probe: { parser: 'unknown', backgroundChecks: 'safe', statusArgs: null },
-          loginLaunches: [{ kind: 'primary', args: [], initialInput: '/auth\r' }],
-        },
+        primary: 'sessions',
+        capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
+          sessions: {
+            open: ['create', 'resume'],
+            delivery: ['newTurn', 'steer', 'followUp'],
+            cancel: true,
+          },
+        }),
       },
-      primary: 'sessions',
-      capabilities: {
-        sessions: {
-          open: ['create', 'resume'],
-          delivery: ['newTurn', 'steer', 'followUp'],
-          cancel: true,
-        },
+      factory: createQwenAgentRuntime,
+      sessionRunnerFactory: {
+        module: './agent/runtime/factory',
+        export: 'createQwenAgentRuntime',
+        runtimeApiVersion: 1,
       },
-    }],
-    systemTools: [{ id: 'qwen-cli', title: 'Qwen Code CLI', executableNames: ['qwen'] }],
+    },
   },
-} satisfies PluginManifest;
+  systemTools: {
+    'qwen-cli': {
+      title: 'Qwen Code CLI',
+      executableNames: ['qwen'],
+    },
+  },
+});

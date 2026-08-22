@@ -1,7 +1,7 @@
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
-import type { TriageListRowV1 } from '../../projection/listWindow.js';
-import { projectTriageEntryDisplay, triageEntryRowKey } from '../window/entryDisplay.js';
+import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
+import { projectTriageEntryDisplay } from '../window/entryDisplay.js';
 import type { TriagePinnedEntryV1 } from './pinCommand.js';
 
 /**

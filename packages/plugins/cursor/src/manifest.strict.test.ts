@@ -7,7 +7,7 @@ describe('Cursor strict plugin manifest', () => {
   it('uses the strict v2 root and keeps the custom runtime binding identity aligned', () => {
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
     expect(PLUGIN_MANIFEST).toMatchObject({
-      entrypoints: { daemon: './dist/index.js' },
+      entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: { required: expect.arrayContaining([{ id: 'cursor-api-key', capability: 'environment', reason: expect.any(String), scope: { keys: ['CURSOR_API_KEY'] } }]), optional: [] },
     });
     expect(PLUGIN_MANIFEST).not.toHaveProperty('activation');

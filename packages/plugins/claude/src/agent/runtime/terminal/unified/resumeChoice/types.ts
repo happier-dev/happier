@@ -1,8 +1,8 @@
 import {
   DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE,
-  normalizeClaudeUnifiedTerminalResumeChoice,
   type ClaudeUnifiedTerminalResumeChoice,
-} from '@happier-dev/agents';
+} from '../../../../../agentSettings/definition.js';
+import { normalizeClaudeUnifiedTerminalResumeChoice } from '../../../../../protocol/remoteSettings.js';
 
 export type ClaudeUnifiedResumeChoicePolicy = ClaudeUnifiedTerminalResumeChoice;
 

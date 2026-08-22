@@ -26,6 +26,18 @@ async function createKimiRuntime() {
 }
 
 describe('activate', () => {
+  it('reexports the activation compiled by its canonical public plugin definition', async () => {
+    expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
+      'agents',
+      'hooks',
+      'settings',
+      'systemTools',
+    ]);
+    expect(await import('./manifest.js')).toEqual(expect.objectContaining({
+      KIMI_PLUGIN: expect.objectContaining({ manifest: PLUGIN_MANIFEST, activate }),
+    }));
+  });
+
   it('registers the Kimi ACP spawn prerequisite hook through the plugin API', async () => {
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
 

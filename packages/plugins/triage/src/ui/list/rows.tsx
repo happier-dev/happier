@@ -34,6 +34,11 @@ export type TriageRowPinHandlersV1 = Readonly<{
 
 const PIN_ACTION_ID = 'set-pinned';
 
+/** Stable automation identity derived from the canonical collision-safe row key. */
+export function triageListRowTestId(rowKey: string): string {
+  return `triage-entry-row:${encodeURIComponent(rowKey)}`;
+}
+
 export function TriageListRow(props: Readonly<{
   row: TriageListDisplayRowV1;
   handlers: TriageRowPinHandlersV1;
@@ -45,6 +50,7 @@ export function TriageListRow(props: Readonly<{
   const onSetPinned = React.useCallback(() => { handlers.onSetPinned(row); }, [handlers, row]);
 
   const common = {
+    testID: triageListRowTestId(row.key),
     title: row.title,
     subtitle: row.scopeLabel,
     ...(row.detail === null ? {} : { detail: row.detail }),
@@ -95,4 +101,31 @@ export function renderTriageListRow(
   handlers: TriageRowPinHandlersV1,
 ): React.ReactElement {
   return <TriageListRow row={row} handlers={handlers} />;
+}
+
+/**
+ * A section's last row when its walk is not finished (`core/SURFACE.md` §4.2).
+ *
+ * It is the same shared `List.Item` every other row is, so it occupies one
+ * position in the flattened traversal order and is announced with the same
+ * section-local position as its neighbours — which is the whole reason the
+ * design chose a stated row over an invisible scroll trigger. It carries no
+ * Pin/Unpin affordance and no press handler: it names no entry, and there is
+ * no per-section continuation operation for it to invoke. Its copy therefore
+ * offers no way to load more either — **Refresh** re-reads the same first page
+ * at the same bound, so implying it can reach a further entry would make this
+ * row a dead-end affordance instead of an honest statement.
+ */
+export function TriageListContinuationRow(props: Readonly<{
+  title: string;
+  description: string;
+}>): React.ReactElement {
+  return (
+    <List.Item
+      title={props.title}
+      subtitle={props.description}
+      tone="neutral"
+      accessibilityLabel={props.title}
+    />
+  );
 }

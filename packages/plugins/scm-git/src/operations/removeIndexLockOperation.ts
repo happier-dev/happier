@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
 import { access, lstat, realpath, unlink } from 'node:fs/promises';
-import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, resolve } from 'node:path';
 
 import {
   SCM_OPERATION_ERROR_CODES,
@@ -8,6 +8,7 @@ import {
   type ScmRepositoryRemoveIndexLockResponse,
   type ScmWorkingSnapshot,
 } from '@happier-dev/plugin-sdk/scm';
+import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 
 import { runScmCommand } from '../runtime.js';
 import type { ScmBackendContext } from '../types.js';
@@ -56,11 +57,6 @@ function hasOwnProperty(value: object, property: string): boolean {
 
 function containsTraversalSegment(rawPath: string): boolean {
     return rawPath.split(/[\\/]+/).some((segment) => segment === '..');
-}
-
-function isPathInside(parentPath: string, childPath: string): boolean {
-    const relativePath = relative(parentPath, childPath);
-    return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath));
 }
 
 async function realpathIfExists(path: string): Promise<string | null> {
@@ -196,7 +192,7 @@ async function validateResolvedIndexLockPath(input: {
 
     const allowedRoots = [input.absoluteGitDir, input.commonDir]
         .filter((path): path is string => typeof path === 'string' && path.length > 0);
-    if (!allowedRoots.some((rootPath) => isPathInside(rootPath, parentRealPath))) {
+    if (!allowedRoots.some((rootPath) => isCanonicalAbsolutePathInsideRoot(rootPath, parentRealPath))) {
         return invalidRequestResponse('Resolved Git index lock path is outside the Git directory.');
     }
 

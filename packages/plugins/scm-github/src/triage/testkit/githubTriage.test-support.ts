@@ -61,6 +61,8 @@ export type StubGithubTransport = Readonly<{
   materializeCount: () => number;
   materializations: readonly RecordedMaterialization[];
   listRequests: readonly Readonly<{ purpose: string; limit?: number }>[];
+  /** Every purpose whose binding was re-asked after a refused listing. */
+  bindingReads: readonly string[];
 }>;
 
 export function jsonBody(value: unknown): Uint8Array {
@@ -77,10 +79,18 @@ export function createStubGithubTransport(input: Readonly<{
   signal?: AbortSignal;
   /** Present only for discovery tests; absent leaves the listing unimplemented. */
   listing?: StubConnectedAccountListing | (() => never);
+  /**
+   * The host's answer to `getBinding`. `null` is a purpose with no selected
+   * account — the state in which the host also refuses to list it. Defaults to a
+   * bound summary so a test that only stubs a listing still describes a
+   * configured Account.
+   */
+  binding?: Readonly<{ purpose: string }> | null;
 }>): StubGithubTransport {
   const requests: RecordedGithubRequest[] = [];
   const materializations: RecordedMaterialization[] = [];
   const listRequests: Array<Readonly<{ purpose: string; limit?: number }>> = [];
+  const bindingReads: string[] = [];
   let materializeCount = 0;
 
   const connectedAccounts = {
@@ -93,6 +103,10 @@ export function createStubGithubTransport(input: Readonly<{
         throw new Error('No stubbed Connected Account listing for this test');
       }
       return typeof listing === 'function' ? listing() : listing;
+    },
+    async getBinding(purpose: string): Promise<Readonly<{ purpose: string }> | null> {
+      bindingReads.push(purpose);
+      return input.binding === undefined ? Object.freeze({ purpose }) : input.binding;
     },
     async materializeListedAccount(
       request: Readonly<{
@@ -173,6 +187,7 @@ export function createStubGithubTransport(input: Readonly<{
     materializeCount: () => materializeCount,
     materializations,
     listRequests,
+    bindingReads,
   });
 }
 

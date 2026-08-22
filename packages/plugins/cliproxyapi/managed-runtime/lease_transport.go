@@ -158,6 +158,7 @@ func (t *leaseRoundTripper) roundTrip(request *http.Request, allowAuthRetry bool
 	outbound.Header = request.Header.Clone()
 	// These are the bounded credential/account identity headers the pinned
 	// Codex and Claude executors can derive from registration-time auth data.
+	// Re-derive this list against the upstream whenever go.mod moves the pin.
 	for _, name := range []string{
 		"Authorization",
 		"Chatgpt-Account-Id",

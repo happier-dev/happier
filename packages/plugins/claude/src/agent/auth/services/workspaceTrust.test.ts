@@ -342,6 +342,7 @@ describe('materializeClaudeAuthEnvironment workspace trust wiring', () => {
             rootDir: targetDir,
             processEnv: { CLAUDE_CONFIG_DIR: sourceDir, HOME: join(root, 'home') },
             sessionDirectory,
+            connectedAccountMaterializationAuthority: 'qualified',
             claudeSubscription: null,
             anthropic: null,
         });

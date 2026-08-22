@@ -2,14 +2,19 @@ import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type {
+    OauthCredentialRecord,
+    TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
     classifyClaudeCodeCredentialHealth,
     type ClaudeCodeCredentialHealth,
 } from './health.js';
-import { parseClaudeCodeCredentialScopes } from './scopes.js';
-import { CLAUDE_CODE_SETUP_TOKEN_SCOPES } from './scopes.js';
+import {
+    CLAUDE_CODE_SETUP_TOKEN_SCOPES,
+    parseClaudeCodeCredentialScopes,
+} from './scopes.js';
 
 export type ClaudeCodeNativeCredentialPayload = Readonly<{
     claudeAiOauth: Readonly<{
@@ -177,7 +182,7 @@ export function readClaudeCodeNativeCredentialPayload(
 }
 
 export function buildClaudeCodeCredentialPayload(
-    record: ConnectedServiceCredentialRecordV1,
+    record: OauthCredentialRecord | TokenCredentialRecord,
 ): ClaudeCodeCredentialPayloadBuildResult {
     const health = classifyClaudeCodeCredentialHealth(record);
     if (health.status !== 'ok') {

@@ -1,0 +1,2524 @@
+{
+  "brand": {
+    "iconResourceId": "brand-icon"
+  },
+  "contributes": {
+    "accountCollections": [],
+    "actions": [
+      {
+        "connectedAccountPurposeBindings": [
+          {
+            "path": "credentialRef",
+            "purpose": "discord-bot-credential"
+          }
+        ],
+        "dangerLevel": "safe",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "discord-rest",
+          "discord-gateway",
+          "discord-bot-credential"
+        ],
+        "id": "discord/gateway-worker-attempt",
+        "inputSchema": {
+          "allOf": [
+            {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "authorityEpoch": {
+                      "maximum": 9007199254740991,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "connectionId": {
+                      "maxLength": 96,
+                      "minLength": 1,
+                      "pattern": "^[\\x21-\\x7E]+$",
+                      "type": "string"
+                    },
+                    "credentialRef": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "accountId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                              "type": "string"
+                            },
+                            "service": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "localId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                                  "type": "string"
+                                },
+                                "pluginId": {
+                                  "maxLength": 256,
+                                  "minLength": 3,
+                                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "service",
+                            "accountId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "deletionState": {
+                      "const": "none"
+                    },
+                    "enabled": {
+                      "anyOf": [
+                        {
+                          "const": true
+                        },
+                        {
+                          "const": false
+                        }
+                      ]
+                    },
+                    "providerConfig": {
+                      "x-happier-max-serialized-utf8-bytes": 49152
+                    },
+                    "providerConfigVersion": {
+                      "const": 1
+                    },
+                    "providerConnectionKey": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "requiresFullSharedMessageContent": {
+                      "anyOf": [
+                        {
+                          "const": true
+                        },
+                        {
+                          "const": false
+                        }
+                      ]
+                    },
+                    "v": {
+                      "const": 1
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "connectionId",
+                    "providerConnectionKey",
+                    "providerConfigVersion",
+                    "providerConfig",
+                    "credentialRef",
+                    "authorityEpoch",
+                    "requiresFullSharedMessageContent",
+                    "enabled",
+                    "deletionState"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "authorityEpoch": {
+                      "maximum": 9007199254740991,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "connectionId": {
+                      "maxLength": 96,
+                      "minLength": 1,
+                      "pattern": "^[\\x21-\\x7E]+$",
+                      "type": "string"
+                    },
+                    "credentialRef": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "accountId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                              "type": "string"
+                            },
+                            "service": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "localId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                                  "type": "string"
+                                },
+                                "pluginId": {
+                                  "maxLength": 256,
+                                  "minLength": 3,
+                                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "service",
+                            "accountId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "deletionState": {
+                      "anyOf": [
+                        {
+                          "const": "pendingStopReconciliation"
+                        },
+                        {
+                          "const": "finalizingDelete"
+                        }
+                      ]
+                    },
+                    "enabled": {
+                      "const": false
+                    },
+                    "providerConfig": {
+                      "x-happier-max-serialized-utf8-bytes": 49152
+                    },
+                    "providerConfigVersion": {
+                      "const": 1
+                    },
+                    "providerConnectionKey": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "requiresFullSharedMessageContent": {
+                      "anyOf": [
+                        {
+                          "const": true
+                        },
+                        {
+                          "const": false
+                        }
+                      ]
+                    },
+                    "v": {
+                      "const": 1
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "connectionId",
+                    "providerConnectionKey",
+                    "providerConfigVersion",
+                    "providerConfig",
+                    "credentialRef",
+                    "authorityEpoch",
+                    "requiresFullSharedMessageContent",
+                    "enabled",
+                    "deletionState"
+                  ],
+                  "type": "object"
+                }
+              ]
+            }
+          ],
+          "properties": {
+            "credentialRef": {
+              "anyOf": [
+                {
+                  "$schema": "http://json-schema.org/draft-07/schema#",
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                      "type": "string"
+                    },
+                    "service": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "localId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "pluginId": {
+                          "maxLength": 256,
+                          "minLength": 3,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "credentialRef"
+          ],
+          "type": "object"
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Run Discord Gateway worker attempt"
+      },
+      {
+        "connectedAccountPurposeBindings": [
+          {
+            "path": "credentialRef",
+            "purpose": "discord-bot-credential"
+          }
+        ],
+        "dangerLevel": "safe",
+        "description": "Resolves a Discord channel to immutable source facts for an Automation Event.",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "discord-rest",
+          "discord-bot-credential"
+        ],
+        "id": "automation/setup-channel-message-source-v1",
+        "inputHints": {
+          "description": {
+            "fallback": "Choose the Discord bot and the channel whose messages should start this Automation.",
+            "key": "discord.automation.messageSource.setup.description"
+          },
+          "fields": [
+            {
+              "connectedAccountOptions": true,
+              "description": {
+                "fallback": "Choose the existing Discord bot Connected Account; bot tokens are never entered here.",
+                "key": "discord.automation.messageSource.setup.credential.description"
+              },
+              "path": "credentialRef",
+              "requireExplicitSelection": true,
+              "required": true,
+              "title": {
+                "fallback": "Discord bot account",
+                "key": "discord.automation.messageSource.setup.credential"
+              },
+              "widget": "select"
+            },
+            {
+              "description": {
+                "fallback": "Enter the Discord channel ID the bot can already read.",
+                "key": "discord.automation.messageSource.setup.channel.description"
+              },
+              "path": "channelId",
+              "placeholder": "123456789012345678",
+              "required": true,
+              "title": {
+                "fallback": "Channel ID",
+                "key": "discord.automation.messageSource.setup.channel"
+              },
+              "widget": "text"
+            }
+          ],
+          "submitLabel": {
+            "fallback": "Watch channel",
+            "key": "discord.automation.messageSource.setup.submit"
+          },
+          "title": {
+            "fallback": "Watch a Discord channel",
+            "key": "discord.automation.messageSource.setup.title"
+          }
+        },
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "channelId": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9]+$",
+              "type": "string"
+            },
+            "credentialRef": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false,
+              "properties": {
+                "accountId": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                  "type": "string"
+                },
+                "service": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "localId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "pluginId": {
+                      "maxLength": 256,
+                      "minLength": 3,
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pluginId",
+                    "localId"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "service",
+                "accountId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "credentialRef",
+            "channelId"
+          ],
+          "type": "object"
+        },
+        "resultSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "displayLabel": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "sourceConfig": {
+              "additionalProperties": false,
+              "properties": {
+                "applicationId": {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                },
+                "channelId": {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                },
+                "v": {
+                  "const": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "v",
+                "applicationId",
+                "channelId"
+              ],
+              "type": "object"
+            },
+            "sourceContractVersion": {
+              "const": 1,
+              "type": "integer"
+            },
+            "sourceInstanceId": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "v": {
+              "const": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "v",
+            "sourceInstanceId",
+            "sourceContractVersion",
+            "sourceConfig",
+            "displayLabel"
+          ],
+          "type": "object"
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Watch a Discord channel for Automations"
+      },
+      {
+        "connectedAccountPurposeBindings": [
+          {
+            "path": "credentialRef",
+            "purpose": "discord-bot-credential"
+          }
+        ],
+        "dangerLevel": "safe",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "discord-rest",
+          "discord-bot-credential"
+        ],
+        "id": "discord/prepare-bot",
+        "inputHints": {
+          "description": {
+            "fallback": "Select the Connected Account for the Discord bot to verify.",
+            "key": "channels.discord.setup.description"
+          },
+          "fields": [
+            {
+              "connectedAccountOptions": true,
+              "description": {
+                "fallback": "Choose the existing Discord bot Connected Account; bot tokens are never entered here.",
+                "key": "channels.discord.setup.credential.description"
+              },
+              "path": "credentialRef",
+              "required": true,
+              "title": {
+                "fallback": "Discord bot account",
+                "key": "channels.discord.setup.credential"
+              },
+              "widget": "select"
+            }
+          ],
+          "submitLabel": {
+            "fallback": "Verify bot",
+            "key": "channels.discord.setup.submit"
+          },
+          "title": {
+            "fallback": "Set up Discord Channels",
+            "key": "channels.discord.setup.title"
+          }
+        },
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "credentialRef": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false,
+              "properties": {
+                "accountId": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                  "type": "string"
+                },
+                "service": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "localId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "pluginId": {
+                      "maxLength": 256,
+                      "minLength": 3,
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pluginId",
+                    "localId"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "service",
+                "accountId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "credentialRef"
+          ],
+          "type": "object"
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "credentialRef": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "accountId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                          "type": "string"
+                        },
+                        "service": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "maxLength": 256,
+                              "minLength": 3,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "service",
+                        "accountId"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "integrationPrincipal": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "outboundTextLimit": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "maximum": {
+                      "maximum": 9007199254740991,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "unit": {
+                      "anyOf": [
+                        {
+                          "const": "utf8Bytes"
+                        },
+                        {
+                          "const": "utf16CodeUnits"
+                        },
+                        {
+                          "const": "unicodeCodePoints"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "maximum",
+                    "unit"
+                  ],
+                  "type": "object"
+                },
+                "overlapSafety": {
+                  "anyOf": [
+                    {
+                      "const": "safe"
+                    },
+                    {
+                      "const": "providerExclusive"
+                    },
+                    {
+                      "const": "destructive"
+                    }
+                  ]
+                },
+                "pairingDeepLinkTemplate": {
+                  "minLength": 1,
+                  "pattern": "^(?:(?!\\{\\{token\\}\\})[\\s\\S])*\\{\\{token\\}\\}(?:(?!\\{\\{token\\}\\})[\\s\\S])*$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 2048
+                },
+                "providerConfig": {
+                  "x-happier-max-serialized-utf8-bytes": 49152
+                },
+                "providerConfigVersion": {
+                  "const": 1
+                },
+                "providerConnectionKey": {
+                  "minLength": 1,
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 512
+                },
+                "recommendedTransport": {
+                  "anyOf": [
+                    {
+                      "const": "checkpointedPull"
+                    },
+                    {
+                      "const": "socket"
+                    },
+                    {
+                      "const": "durablePush"
+                    }
+                  ]
+                },
+                "replayContinuity": {
+                  "anyOf": [
+                    {
+                      "const": "checkpointed"
+                    },
+                    {
+                      "const": "sessionBound"
+                    },
+                    {
+                      "const": "none"
+                    }
+                  ]
+                },
+                "supportedTransports": {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "const": "checkpointedPull"
+                      },
+                      {
+                        "const": "socket"
+                      },
+                      {
+                        "const": "durablePush"
+                      }
+                    ]
+                  },
+                  "maxItems": 3,
+                  "minItems": 1,
+                  "type": "array",
+                  "uniqueItems": true
+                },
+                "v": {
+                  "const": 1
+                },
+                "webhookContributionRef": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "localId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "pluginId": {
+                      "maxLength": 256,
+                      "minLength": 3,
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pluginId",
+                    "localId"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "v",
+                "credentialRef",
+                "providerConnectionKey",
+                "providerConfigVersion",
+                "providerConfig",
+                "integrationPrincipal",
+                "supportedTransports",
+                "recommendedTransport",
+                "overlapSafety",
+                "replayContinuity",
+                "outboundTextLimit"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "requiresRemediation"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Set up Discord Channels"
+      },
+      {
+        "connectedAccountPurposeBindings": [
+          {
+            "path": "credentialRef",
+            "purpose": "discord-bot-credential"
+          }
+        ],
+        "dangerLevel": "safe",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "discord-rest",
+          "discord-bot-credential"
+        ],
+        "id": "discord/inspect-connection",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "connectionId": {
+              "maxLength": 96,
+              "minLength": 1,
+              "pattern": "^[\\x21-\\x7E]+$",
+              "type": "string"
+            },
+            "credentialRef": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                      "type": "string"
+                    },
+                    "service": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "localId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "pluginId": {
+                          "maxLength": 256,
+                          "minLength": 3,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "providerConfig": {
+              "x-happier-max-serialized-utf8-bytes": 49152
+            },
+            "providerConfigVersion": {
+              "const": 1
+            },
+            "providerConnectionKey": {
+              "minLength": 1,
+              "type": "string",
+              "x-happier-max-utf8-bytes": 512
+            },
+            "selectedTransport": {
+              "anyOf": [
+                {
+                  "const": "checkpointedPull"
+                },
+                {
+                  "const": "socket"
+                },
+                {
+                  "const": "durablePush"
+                }
+              ]
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "connectionId",
+            "providerConnectionKey",
+            "providerConfigVersion",
+            "providerConfig",
+            "credentialRef",
+            "selectedTransport"
+          ],
+          "type": "object"
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "integrationPrincipal": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "label": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "ready"
+                },
+                "providerConnectionKey": {
+                  "minLength": 1,
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 512
+                }
+              },
+              "required": [
+                "kind",
+                "integrationPrincipal",
+                "providerConnectionKey"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "diagnostic": {
+                  "minLength": 1,
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 1024
+                },
+                "kind": {
+                  "const": "notReady"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "credentialInvalid"
+                    },
+                    {
+                      "const": "permissionMissing"
+                    },
+                    {
+                      "const": "network"
+                    },
+                    {
+                      "const": "rateLimited"
+                    },
+                    {
+                      "const": "providerConflict"
+                    },
+                    {
+                      "const": "unsupported"
+                    },
+                    {
+                      "const": "invalidConfiguration"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "maximum": 86400000,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Test Discord connection"
+      },
+      {
+        "connectedAccountPurposeBindings": [
+          {
+            "path": "credentialRef",
+            "purpose": "discord-bot-credential"
+          }
+        ],
+        "dangerLevel": "safe",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "discord-rest",
+          "discord-bot-credential"
+        ],
+        "id": "discord/choose-channel",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "connectionId": {
+              "maxLength": 96,
+              "minLength": 1,
+              "pattern": "^[\\x21-\\x7E]+$",
+              "type": "string"
+            },
+            "credentialRef": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                      "type": "string"
+                    },
+                    "service": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "localId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "pluginId": {
+                          "maxLength": 256,
+                          "minLength": 3,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kinds": {
+              "items": {
+                "anyOf": [
+                  {
+                    "const": "direct"
+                  },
+                  {
+                    "const": "shared"
+                  },
+                  {
+                    "const": "thread"
+                  },
+                  {
+                    "const": "githubIssue"
+                  },
+                  {
+                    "const": "githubPullRequest"
+                  }
+                ]
+              },
+              "maxItems": 5,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "providerConfig": {
+              "x-happier-max-serialized-utf8-bytes": 49152
+            },
+            "providerConfigVersion": {
+              "const": 1
+            },
+            "providerConnectionKey": {
+              "minLength": 1,
+              "type": "string",
+              "x-happier-max-utf8-bytes": 512
+            },
+            "query": {
+              "minLength": 1,
+              "type": "string",
+              "x-happier-max-utf8-bytes": 2048
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "connectionId",
+            "providerConnectionKey",
+            "providerConfigVersion",
+            "providerConfig",
+            "credentialRef",
+            "query"
+          ],
+          "type": "object"
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "candidates": {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "audience": {
+                            "const": "direct"
+                          },
+                          "id": {
+                            "minLength": 1,
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "kind": {
+                            "const": "direct"
+                          },
+                          "label": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "parentId": {
+                            "minLength": 1,
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "parentLabel": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "audience",
+                          "id"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "audience": {
+                            "const": "shared"
+                          },
+                          "id": {
+                            "minLength": 1,
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "kind": {
+                            "const": "shared"
+                          },
+                          "label": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "parentId": {
+                            "minLength": 1,
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "parentLabel": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "audience",
+                          "id"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "audience": {
+                            "anyOf": [
+                              {
+                                "const": "direct"
+                              },
+                              {
+                                "const": "shared"
+                              }
+                            ]
+                          },
+                          "id": {
+                            "minLength": 1,
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "kind": {
+                            "const": "thread"
+                          },
+                          "label": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "parentId": {
+                            "minLength": 1,
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "parentLabel": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "audience",
+                          "id"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "audience": {
+                            "const": "shared"
+                          },
+                          "id": {
+                            "minLength": 1,
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "kind": {
+                            "const": "githubIssue"
+                          },
+                          "label": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "parentId": {
+                            "minLength": 1,
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "parentLabel": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "audience",
+                          "id"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "audience": {
+                            "const": "shared"
+                          },
+                          "id": {
+                            "minLength": 1,
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "kind": {
+                            "const": "githubPullRequest"
+                          },
+                          "label": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "parentId": {
+                            "minLength": 1,
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 512
+                          },
+                          "parentLabel": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "audience",
+                          "id"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "maxItems": 50,
+                  "type": "array",
+                  "uniqueItems": true
+                },
+                "kind": {
+                  "const": "resolved"
+                }
+              },
+              "required": [
+                "kind",
+                "candidates"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "diagnostic": {
+                  "minLength": 1,
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 1024
+                },
+                "kind": {
+                  "const": "notReady"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "credentialInvalid"
+                    },
+                    {
+                      "const": "permissionMissing"
+                    },
+                    {
+                      "const": "network"
+                    },
+                    {
+                      "const": "rateLimited"
+                    },
+                    {
+                      "const": "providerConflict"
+                    },
+                    {
+                      "const": "unsupported"
+                    },
+                    {
+                      "const": "invalidConfiguration"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "maximum": 86400000,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Resolve Discord destination"
+      },
+      {
+        "connectedAccountPurposeBindings": [
+          {
+            "path": "credentialRef",
+            "purpose": "discord-bot-credential"
+          }
+        ],
+        "dangerLevel": "writesRemote",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "discord-rest",
+          "discord-bot-credential"
+        ],
+        "id": "discord/post-message",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "connectionId": {
+              "maxLength": 96,
+              "minLength": 1,
+              "pattern": "^[\\x21-\\x7E]+$",
+              "type": "string"
+            },
+            "content": {
+              "minLength": 1,
+              "type": "string",
+              "x-happier-max-utf8-bytes": 196608
+            },
+            "credentialRef": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                      "type": "string"
+                    },
+                    "service": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "localId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "pluginId": {
+                          "maxLength": 256,
+                          "minLength": 3,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "deliveryKey": {
+              "minLength": 1,
+              "type": "string",
+              "x-happier-max-utf8-bytes": 256
+            },
+            "endpoint": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "audience": {
+                      "const": "direct"
+                    },
+                    "id": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "kind": {
+                      "const": "direct"
+                    },
+                    "label": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "parentId": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentLabel": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "audience": {
+                      "const": "shared"
+                    },
+                    "id": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "kind": {
+                      "const": "shared"
+                    },
+                    "label": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "parentId": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentLabel": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "audience": {
+                      "anyOf": [
+                        {
+                          "const": "direct"
+                        },
+                        {
+                          "const": "shared"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "kind": {
+                      "const": "thread"
+                    },
+                    "label": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "parentId": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentLabel": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "audience": {
+                      "const": "shared"
+                    },
+                    "id": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "kind": {
+                      "const": "githubIssue"
+                    },
+                    "label": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "parentId": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentLabel": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "audience": {
+                      "const": "shared"
+                    },
+                    "id": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "kind": {
+                      "const": "githubPullRequest"
+                    },
+                    "label": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "parentId": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "parentLabel": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "audience",
+                    "id"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "linkPreviewPolicy": {
+              "anyOf": [
+                {
+                  "const": "suppress"
+                },
+                {
+                  "const": "providerDefault"
+                }
+              ]
+            },
+            "mentionPolicy": {
+              "const": "suppress"
+            },
+            "providerConfig": {
+              "x-happier-max-serialized-utf8-bytes": 49152
+            },
+            "providerConfigVersion": {
+              "const": 1
+            },
+            "providerConnectionKey": {
+              "minLength": 1,
+              "type": "string",
+              "x-happier-max-utf8-bytes": 512
+            },
+            "replyContext": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "replyToMessageId": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    }
+                  },
+                  "required": [
+                    "replyToMessageId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "threadId": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    }
+                  },
+                  "required": [
+                    "threadId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "replyToMessageId": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "threadId": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    }
+                  },
+                  "required": [
+                    "replyToMessageId",
+                    "threadId"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "connectionId",
+            "providerConnectionKey",
+            "providerConfigVersion",
+            "providerConfig",
+            "credentialRef",
+            "endpoint",
+            "content",
+            "deliveryKey",
+            "mentionPolicy",
+            "linkPreviewPolicy"
+          ],
+          "type": "object"
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "delivered"
+                },
+                "providerMessageIds": {
+                  "items": {
+                    "minLength": 1,
+                    "type": "string",
+                    "x-happier-max-utf8-bytes": 512
+                  },
+                  "maxItems": 32,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "kind",
+                "providerMessageIds"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failedChunk": {
+                  "maximum": 32,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "partial"
+                },
+                "providerMessageIds": {
+                  "items": {
+                    "minLength": 1,
+                    "type": "string",
+                    "x-happier-max-utf8-bytes": 512
+                  },
+                  "maxItems": 32,
+                  "type": "array"
+                },
+                "retrySafe": {
+                  "const": false
+                }
+              },
+              "required": [
+                "kind",
+                "providerMessageIds",
+                "failedChunk",
+                "retrySafe"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "notDelivered"
+                },
+                "retry": {
+                  "anyOf": [
+                    {
+                      "const": "safe"
+                    },
+                    {
+                      "const": "after"
+                    },
+                    {
+                      "const": "never"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "maximum": 86400000,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "retry"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "endpointArchived"
+                },
+                "recovery": {
+                  "anyOf": [
+                    {
+                      "const": "unarchiveAndRetry"
+                    },
+                    {
+                      "const": "ownerMustUnarchiveOrRebind"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "recovery"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "outcomeUnknown"
+                },
+                "providerMessageIds": {
+                  "items": {
+                    "minLength": 1,
+                    "type": "string",
+                    "x-happier-max-utf8-bytes": 512
+                  },
+                  "maxItems": 32,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Deliver Discord message"
+      },
+      {
+        "dangerLevel": "writesRemote",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "discord-gateway",
+          "discord-rest",
+          "discord-bot-credential"
+        ],
+        "id": "discord/halt-gateway",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "authorityEpoch": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "connectionId": {
+              "maxLength": 96,
+              "minLength": 1,
+              "pattern": "^[\\x21-\\x7E]+$",
+              "type": "string"
+            },
+            "credentialRef": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                      "type": "string"
+                    },
+                    "service": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "localId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "pluginId": {
+                          "maxLength": 256,
+                          "minLength": 3,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "accountId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "providerConfig": {
+              "x-happier-max-serialized-utf8-bytes": 49152
+            },
+            "providerConfigVersion": {
+              "const": 1
+            },
+            "providerConnectionKey": {
+              "minLength": 1,
+              "type": "string",
+              "x-happier-max-utf8-bytes": 512
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "const": "disable"
+                },
+                {
+                  "const": "delete"
+                },
+                {
+                  "const": "transfer"
+                }
+              ]
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "connectionId",
+            "providerConnectionKey",
+            "providerConfigVersion",
+            "providerConfig",
+            "credentialRef",
+            "authorityEpoch",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "anyOf": [
+                    {
+                      "const": "stopped"
+                    },
+                    {
+                      "const": "notRunning"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "pending"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "diagnostic": {
+                  "minLength": 1,
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 1024
+                },
+                "kind": {
+                  "const": "notReady"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "credentialInvalid"
+                    },
+                    {
+                      "const": "permissionMissing"
+                    },
+                    {
+                      "const": "network"
+                    },
+                    {
+                      "const": "rateLimited"
+                    },
+                    {
+                      "const": "providerConflict"
+                    },
+                    {
+                      "const": "unsupported"
+                    },
+                    {
+                      "const": "invalidConfiguration"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "maximum": 86400000,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Stop Discord Gateway connection"
+      }
+    ],
+    "agents": [],
+    "backgroundServices": [
+      {
+        "id": "gateway-supervisor",
+        "title": "Discord Gateway supervisor"
+      }
+    ],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [
+      {
+        "authentication": {
+          "defaultModeId": "bot-token",
+          "modes": [
+            {
+              "fields": [
+                {
+                  "description": "Token issued by the Discord Developer Portal for this bot.",
+                  "id": "token",
+                  "schema": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "secret": true,
+                  "title": "Bot token"
+                }
+              ],
+              "id": "bot-token",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "title": "Bot token"
+            }
+          ]
+        },
+        "description": "Discord bot account used for Channel setup, delivery, and Gateway observation.",
+        "id": "discord-bot",
+        "title": "Discord bot"
+      }
+    ],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [
+      {
+        "contentType": "image/png",
+        "id": "brand-icon",
+        "kind": "asset",
+        "path": "assets/brand.png"
+      }
+    ],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [],
+    "targetedPluginContributions": [
+      {
+        "id": "discord-provider",
+        "operations": {
+          "connectionStop": "discord/halt-gateway",
+          "connectionTest": "discord/inspect-connection",
+          "endpointResolve": "discord/choose-channel",
+          "messageDeliver": "discord/post-message",
+          "setup": "discord/prepare-bot"
+        },
+        "protocol": {
+          "id": "happier.channels/providers",
+          "version": 1
+        },
+        "target": {
+          "pluginId": "happier.channels",
+          "pointId": "providers"
+        }
+      }
+    ],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [
+        {
+          "locale": "en",
+          "messages": {
+            "channels.discord.setup.credential": "Discord bot account",
+            "channels.discord.setup.credential.description": "Choose the existing Discord bot Connected Account; bot tokens are never entered here.",
+            "channels.discord.setup.description": "Select the Connected Account for the Discord bot to verify.",
+            "channels.discord.setup.submit": "Verify bot",
+            "channels.discord.setup.title": "Set up Discord Channels",
+            "discord.automation.messageSource.setup.channel": "Channel ID",
+            "discord.automation.messageSource.setup.channel.description": "Enter the Discord channel ID the bot can already read.",
+            "discord.automation.messageSource.setup.credential": "Discord bot account",
+            "discord.automation.messageSource.setup.credential.description": "Choose the existing Discord bot Connected Account; bot tokens are never entered here.",
+            "discord.automation.messageSource.setup.description": "Choose the Discord bot and the channel whose messages should start this Automation.",
+            "discord.automation.messageSource.setup.submit": "Watch channel",
+            "discord.automation.messageSource.setup.title": "Watch a Discord channel"
+          }
+        },
+        {
+          "locale": "ru",
+          "messages": {
+            "channels.discord.setup.credential": "Учётная запись бота Discord",
+            "channels.discord.setup.credential.description": "Выберите существующую подключённую учётную запись бота Discord; токены бота здесь не вводятся.",
+            "channels.discord.setup.description": "Выберите подключённую учётную запись бота Discord для проверки.",
+            "channels.discord.setup.submit": "Проверить бота",
+            "channels.discord.setup.title": "Настроить каналы Discord",
+            "discord.automation.messageSource.setup.channel": "Идентификатор канала",
+            "discord.automation.messageSource.setup.channel.description": "Укажите идентификатор канала Discord, который бот уже может читать.",
+            "discord.automation.messageSource.setup.credential": "Учётная запись бота Discord",
+            "discord.automation.messageSource.setup.credential.description": "Выберите существующую подключённую учётную запись бота Discord; токены бота здесь не вводятся.",
+            "discord.automation.messageSource.setup.description": "Выберите бота Discord и канал, сообщения которого должны запускать эту автоматизацию.",
+            "discord.automation.messageSource.setup.submit": "Отслеживать канал",
+            "discord.automation.messageSource.setup.title": "Отслеживать канал Discord"
+          }
+        },
+        {
+          "locale": "pl",
+          "messages": {
+            "channels.discord.setup.credential": "Konto bota Discord",
+            "channels.discord.setup.credential.description": "Wybierz istniejące połączone konto bota Discord; tokenów bota nie wpisuje się tutaj.",
+            "channels.discord.setup.description": "Wybierz połączone konto bota Discord, aby je zweryfikować.",
+            "channels.discord.setup.submit": "Zweryfikuj bota",
+            "channels.discord.setup.title": "Skonfiguruj kanały Discord",
+            "discord.automation.messageSource.setup.channel": "Identyfikator kanału",
+            "discord.automation.messageSource.setup.channel.description": "Podaj identyfikator kanału Discord, który bot może już czytać.",
+            "discord.automation.messageSource.setup.credential": "Konto bota Discord",
+            "discord.automation.messageSource.setup.credential.description": "Wybierz istniejące połączone konto bota Discord; tokenów bota nie wpisuje się tutaj.",
+            "discord.automation.messageSource.setup.description": "Wybierz bota Discord i kanał, którego wiadomości mają uruchamiać tę automatyzację.",
+            "discord.automation.messageSource.setup.submit": "Obserwuj kanał",
+            "discord.automation.messageSource.setup.title": "Obserwuj kanał Discord"
+          }
+        },
+        {
+          "locale": "es",
+          "messages": {
+            "channels.discord.setup.credential": "Cuenta del bot de Discord",
+            "channels.discord.setup.credential.description": "Elige la cuenta conectada existente del bot de Discord; los tokens del bot nunca se introducen aquí.",
+            "channels.discord.setup.description": "Selecciona la cuenta conectada del bot de Discord para verificarla.",
+            "channels.discord.setup.submit": "Verificar bot",
+            "channels.discord.setup.title": "Configurar canales de Discord",
+            "discord.automation.messageSource.setup.channel": "ID del canal",
+            "discord.automation.messageSource.setup.channel.description": "Introduce el ID del canal de Discord que el bot ya puede leer.",
+            "discord.automation.messageSource.setup.credential": "Cuenta del bot de Discord",
+            "discord.automation.messageSource.setup.credential.description": "Elige la cuenta conectada existente del bot de Discord; los tokens del bot nunca se introducen aquí.",
+            "discord.automation.messageSource.setup.description": "Elige el bot de Discord y el canal cuyos mensajes deben iniciar esta automatización.",
+            "discord.automation.messageSource.setup.submit": "Observar canal",
+            "discord.automation.messageSource.setup.title": "Observar un canal de Discord"
+          }
+        },
+        {
+          "locale": "fr",
+          "messages": {
+            "channels.discord.setup.credential": "Compte du bot Discord",
+            "channels.discord.setup.credential.description": "Choisissez le compte connecté existant du bot Discord ; les jetons du bot ne sont jamais saisis ici.",
+            "channels.discord.setup.description": "Sélectionnez le compte connecté du bot Discord à vérifier.",
+            "channels.discord.setup.submit": "Vérifier le bot",
+            "channels.discord.setup.title": "Configurer les canaux Discord",
+            "discord.automation.messageSource.setup.channel": "Identifiant du salon",
+            "discord.automation.messageSource.setup.channel.description": "Saisissez l’identifiant du salon Discord que le bot peut déjà lire.",
+            "discord.automation.messageSource.setup.credential": "Compte du bot Discord",
+            "discord.automation.messageSource.setup.credential.description": "Choisissez le compte connecté existant du bot Discord ; les jetons du bot ne sont jamais saisis ici.",
+            "discord.automation.messageSource.setup.description": "Choisissez le bot Discord et le salon dont les messages doivent démarrer cette automatisation.",
+            "discord.automation.messageSource.setup.submit": "Surveiller le salon",
+            "discord.automation.messageSource.setup.title": "Surveiller un salon Discord"
+          }
+        },
+        {
+          "locale": "it",
+          "messages": {
+            "channels.discord.setup.credential": "Account del bot Discord",
+            "channels.discord.setup.credential.description": "Scegli l’account connesso esistente del bot Discord; i token del bot non vengono mai inseriti qui.",
+            "channels.discord.setup.description": "Seleziona l’account connesso del bot Discord da verificare.",
+            "channels.discord.setup.submit": "Verifica bot",
+            "channels.discord.setup.title": "Configura i canali Discord",
+            "discord.automation.messageSource.setup.channel": "ID del canale",
+            "discord.automation.messageSource.setup.channel.description": "Inserisci l’ID del canale Discord che il bot può già leggere.",
+            "discord.automation.messageSource.setup.credential": "Account del bot Discord",
+            "discord.automation.messageSource.setup.credential.description": "Scegli l’account connesso esistente del bot Discord; i token del bot non si inseriscono mai qui.",
+            "discord.automation.messageSource.setup.description": "Scegli il bot Discord e il canale i cui messaggi devono avviare questa automazione.",
+            "discord.automation.messageSource.setup.submit": "Osserva canale",
+            "discord.automation.messageSource.setup.title": "Osserva un canale Discord"
+          }
+        },
+        {
+          "locale": "pt",
+          "messages": {
+            "channels.discord.setup.credential": "Conta do bot do Discord",
+            "channels.discord.setup.credential.description": "Escolha a conta conectada existente do bot do Discord; os tokens do bot nunca são inseridos aqui.",
+            "channels.discord.setup.description": "Selecione a conta conectada do bot do Discord para verificá-la.",
+            "channels.discord.setup.submit": "Verificar bot",
+            "channels.discord.setup.title": "Configurar canais do Discord",
+            "discord.automation.messageSource.setup.channel": "ID do canal",
+            "discord.automation.messageSource.setup.channel.description": "Introduza o ID do canal do Discord que o bot já consegue ler.",
+            "discord.automation.messageSource.setup.credential": "Conta do bot do Discord",
+            "discord.automation.messageSource.setup.credential.description": "Escolha a conta ligada existente do bot do Discord; os tokens do bot nunca são introduzidos aqui.",
+            "discord.automation.messageSource.setup.description": "Escolha o bot do Discord e o canal cujas mensagens devem iniciar esta automação.",
+            "discord.automation.messageSource.setup.submit": "Observar canal",
+            "discord.automation.messageSource.setup.title": "Observar um canal do Discord"
+          }
+        },
+        {
+          "locale": "ca",
+          "messages": {
+            "channels.discord.setup.credential": "Compte del bot de Discord",
+            "channels.discord.setup.credential.description": "Tria el compte connectat existent del bot de Discord; els testimonis del bot no s’introdueixen mai aquí.",
+            "channels.discord.setup.description": "Selecciona el compte connectat del bot de Discord per verificar-lo.",
+            "channels.discord.setup.submit": "Verifica el bot",
+            "channels.discord.setup.title": "Configura els canals de Discord",
+            "discord.automation.messageSource.setup.channel": "ID del canal",
+            "discord.automation.messageSource.setup.channel.description": "Introdueix l’ID del canal de Discord que el bot ja pot llegir.",
+            "discord.automation.messageSource.setup.credential": "Compte del bot de Discord",
+            "discord.automation.messageSource.setup.credential.description": "Tria el compte connectat existent del bot de Discord; els tokens del bot no s’introdueixen mai aquí.",
+            "discord.automation.messageSource.setup.description": "Tria el bot de Discord i el canal els missatges del qual han d’iniciar aquesta automatització.",
+            "discord.automation.messageSource.setup.submit": "Observa el canal",
+            "discord.automation.messageSource.setup.title": "Observa un canal de Discord"
+          }
+        },
+        {
+          "locale": "zh-Hans",
+          "messages": {
+            "channels.discord.setup.credential": "Discord 机器人账户",
+            "channels.discord.setup.credential.description": "选择现有的 Discord 机器人已连接账户；无需在此输入机器人令牌。",
+            "channels.discord.setup.description": "选择要验证的 Discord 机器人已连接账户。",
+            "channels.discord.setup.submit": "验证机器人",
+            "channels.discord.setup.title": "设置 Discord 频道",
+            "discord.automation.messageSource.setup.channel": "频道 ID",
+            "discord.automation.messageSource.setup.channel.description": "输入机器人已能读取的 Discord 频道 ID。",
+            "discord.automation.messageSource.setup.credential": "Discord 机器人账户",
+            "discord.automation.messageSource.setup.credential.description": "选择现有的 Discord 机器人连接账户；此处从不输入机器人令牌。",
+            "discord.automation.messageSource.setup.description": "选择 Discord 机器人以及消息应触发此自动化的频道。",
+            "discord.automation.messageSource.setup.submit": "监视频道",
+            "discord.automation.messageSource.setup.title": "监视 Discord 频道"
+          }
+        },
+        {
+          "locale": "zh-Hant",
+          "messages": {
+            "channels.discord.setup.credential": "Discord 機器人帳戶",
+            "channels.discord.setup.credential.description": "選擇現有的 Discord 機器人已連線帳戶；無需在此輸入機器人權杖。",
+            "channels.discord.setup.description": "選擇要驗證的 Discord 機器人已連線帳戶。",
+            "channels.discord.setup.submit": "驗證機器人",
+            "channels.discord.setup.title": "設定 Discord 頻道",
+            "discord.automation.messageSource.setup.channel": "頻道 ID",
+            "discord.automation.messageSource.setup.channel.description": "輸入機器人已能讀取的 Discord 頻道 ID。",
+            "discord.automation.messageSource.setup.credential": "Discord 機器人帳戶",
+            "discord.automation.messageSource.setup.credential.description": "選擇現有的 Discord 機器人連線帳戶；此處從不輸入機器人權杖。",
+            "discord.automation.messageSource.setup.description": "選擇 Discord 機器人以及訊息應觸發此自動化的頻道。",
+            "discord.automation.messageSource.setup.submit": "監看頻道",
+            "discord.automation.messageSource.setup.title": "監看 Discord 頻道"
+          }
+        },
+        {
+          "locale": "ja",
+          "messages": {
+            "channels.discord.setup.credential": "Discord Bot アカウント",
+            "channels.discord.setup.credential.description": "既存の Discord Bot 接続済みアカウントを選択してください。Bot トークンをここで入力することはありません。",
+            "channels.discord.setup.description": "確認する Discord Bot の接続済みアカウントを選択してください。",
+            "channels.discord.setup.submit": "Bot を確認",
+            "channels.discord.setup.title": "Discord チャンネルを設定",
+            "discord.automation.messageSource.setup.channel": "チャンネル ID",
+            "discord.automation.messageSource.setup.channel.description": "ボットがすでに読み取れる Discord チャンネル ID を入力します。",
+            "discord.automation.messageSource.setup.credential": "Discord ボットアカウント",
+            "discord.automation.messageSource.setup.credential.description": "既存の Discord ボット接続アカウントを選択します。ボットトークンをここに入力することはありません。",
+            "discord.automation.messageSource.setup.description": "この自動化を開始するメッセージが届く Discord ボットとチャンネルを選択します。",
+            "discord.automation.messageSource.setup.submit": "チャンネルを監視",
+            "discord.automation.messageSource.setup.title": "Discord チャンネルを監視"
+          }
+        }
+      ],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "Connects Discord conversations to Happier Channels.",
+  "displayName": "Discord Channels",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./.happier-plugin/daemon.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "network",
+        "id": "discord-rest",
+        "reason": "Verify Discord application identity and send messages through Discord REST.",
+        "scope": {
+          "methods": [
+            "GET",
+            "POST",
+            "PATCH"
+          ],
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://discord.com"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "network.client",
+        "id": "discord-gateway",
+        "reason": "Maintain the selected Discord Gateway connection for authenticated conversation events.",
+        "scope": {
+          "privateNetwork": false,
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://gateway.discord.gg"
+            }
+          ],
+          "transports": [
+            "websocket"
+          ]
+        }
+      },
+      {
+        "capability": "connectedAccounts",
+        "id": "discord-bot-credential",
+        "reason": "Materialize only the exact selected Discord bot token for REST and Gateway calls.",
+        "scope": {
+          "materializationKinds": [
+            "environment"
+          ],
+          "operations": [
+            "select",
+            "use"
+          ],
+          "serviceRefs": [
+            "discord-bot"
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.channel.discord",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

@@ -1,3 +1,5 @@
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+
 import {
   decodeAzureProjectRow,
   decodeAzurePullRequestRow,
@@ -5,7 +7,6 @@ import {
   decodeAzureRowPage,
 } from './decode.js';
 import { createAzureDevOpsFailure } from './failures.js';
-import { readHeader } from './rateLimit.js';
 import {
   AZURE_SCAN_STICKY_REASONS,
   type AzureDevOpsApiClient,
@@ -141,7 +142,7 @@ export async function readAzureProjectPage(input: Readonly<{
     undecodable: page.undecodable,
     // Only the response-issued token continues the walk. A locally incremented or guessed
     // project token is not a continuation.
-    continuationToken: readHeader(result.headers, AZURE_CONTINUATION_TOKEN_HEADER),
+    continuationToken: readTriageResponseHeaderV1(result.headers, AZURE_CONTINUATION_TOKEN_HEADER),
   };
 }
 

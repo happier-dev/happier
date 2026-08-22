@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseTimestampMs } from '@happier-dev/plugin-sdk';
 
 const ClaudeSessionRuntimeIssueSourceSchema = z.enum([
   'agent_status_error',
@@ -298,8 +299,9 @@ function readResetAtMs(value: unknown): number | null {
     'quotaResetTimestamp',
     'quota_reset_timestamp',
   ]);
+  if (typeof raw === 'number') return parseTimestampMs(raw);
   const numeric = readNonNegativeIntegerLike(raw);
-  if (numeric !== null) return numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+  if (numeric !== null) return parseTimestampMs(numeric);
   const text = readString(raw);
   if (!text) return null;
   const dateMs = Date.parse(text);

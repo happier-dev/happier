@@ -23,7 +23,7 @@ import {
   type ConversationProviderSetupResultV1,
   type ConversationResolvedEndpointV1,
 } from '@happier-dev/channels-protocol/v1';
-import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
@@ -165,7 +165,7 @@ function providerFailure(error: unknown): ConversationProviderFailureV1 {
   if (error instanceof GithubIssueCommentPollResponseError) {
     return providerFailureForGithubResponse(error.response);
   }
-  if (error instanceof PluginError) {
+  if (isPluginError(error)) {
     if (error.code.includes('credential')) return { kind: 'notReady', reason: 'credentialInvalid' };
     return { kind: 'notReady', reason: error.retryable ? 'network' : 'invalidConfiguration' };
   }
@@ -175,7 +175,7 @@ function providerFailure(error: unknown): ConversationProviderFailureV1 {
 function rethrowPreEffectLifecycleFailure(error: unknown, signal: AbortSignal): void {
   if (
     signal.aborted
-    || (error instanceof PluginError && error.code === 'plugin_final_generation_retired')
+    || (isPluginError(error) && error.code === 'plugin_final_generation_retired')
   ) {
     throw error;
   }
@@ -496,7 +496,7 @@ export async function deliverGithubChannelMessage(
     client = await createGithubApiClient(context, credentialRef);
   } catch (error) {
     rethrowPreEffectLifecycleFailure(error, context.signal);
-    if (error instanceof PluginError) {
+    if (isPluginError(error)) {
       if (error.retryable || error.code === 'plugin_service_unavailable') {
         return ConversationDeliveryResultV1Schema.parse({ kind: 'notDelivered', retry: 'safe' });
       }

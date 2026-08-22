@@ -45,12 +45,14 @@ function listing(
 
 function transport(input: Readonly<{
   listing?: StubConnectedAccountListing | (() => never);
+  binding?: Readonly<{ purpose: string }> | null;
   userStatus?: number;
   userHeaders?: Readonly<Record<string, string>>;
 }>) {
   let identityReads = 0;
   return createStubGithubTransport({
     ...(input.listing === undefined ? {} : { listing: input.listing }),
+    ...(input.binding === undefined ? {} : { binding: input.binding }),
     respond: (request) => {
       if (!request.url.endsWith('/user')) return undefined;
       identityReads += 1;
@@ -137,6 +139,49 @@ describe('GitHub Triage discovery', () => {
     });
     // A source that learned nothing performs no provider read on a missing listing.
     expect(failing.requests).toHaveLength(0);
+  });
+
+  /**
+   * A reader with no connected GitHub account has configured nothing — they have
+   * not been refused by GitHub. The host declines to list a purpose it holds no
+   * selection for, and reporting that decline as a source failure tells the
+   * Settings page that a provider it never contacted returned something
+   * unreadable, hiding the one thing the reader can act on.
+   */
+  it('reports an unbound purpose as a complete empty candidate set, not a source failure', async () => {
+    const unbound = transport({
+      binding: null,
+      listing: () => {
+        throw Object.assign(new Error('resource not selected'), {
+          code: 'plugin_host_access_resource_not_selected',
+        });
+      },
+    });
+
+    const result = await listGithubTriageInstances(unbound.context, { now: fixedClock(1_000) });
+
+    expect(() => TriageListInstancesResultV1Schema.parse(result)).not.toThrow();
+    expect(result).toEqual({ kind: 'complete', candidates: [], failures: [] });
+    // The claim is the host's own answer about the binding, never an error-code guess.
+    expect(unbound.bindingReads).toEqual([GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
+    // Nothing was connected, so no provider read was attempted.
+    expect(unbound.requests).toHaveLength(0);
+  });
+
+  it('still reports a refused listing as a failure while the purpose is bound', async () => {
+    const bound = transport({
+      listing: () => {
+        throw new Error('connected account listing unavailable');
+      },
+    });
+
+    const result = await listGithubTriageInstances(bound.context, { now: fixedClock(1_000) });
+
+    expect(result).toEqual({
+      kind: 'failed',
+      failure: { class: 'transient', code: 'github_request_failed' },
+    });
+    expect(bound.bindingReads).toEqual([GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
   });
 
   it('reports one unauthorized account as an exact-binding failure without dropping the account', async () => {

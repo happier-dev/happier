@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-    ConnectedServiceQuotaFetchError,
-    ConnectedServiceQuotaSnapshotV1Schema,
+    QuotaFetchError as ConnectedServiceQuotaFetchError,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import {
     buildConnectedServiceCredentialRecord,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+} from '@happier-dev/protocol';
 
 import {
     claudeSubscriptionQuotaFetcherDescriptor,
@@ -151,16 +152,25 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
             signal: new AbortController().signal,
         });
 
-        const parsed = ConnectedServiceQuotaSnapshotV1Schema.safeParse(snapshot);
-        expect(parsed.success).toBe(true);
-        if (parsed.success) {
-            expect(parsed.data.planLabel).toBe('max');
-            expect(parsed.data.meters.map((meter) => meter.meterId)).toEqual(expect.arrayContaining([
-                'five_hour',
-                'seven_day',
-                'extra_usage',
-            ]));
-        }
+        expect(snapshot).toMatchObject({
+            providerId: 'claude',
+            recordKey: {
+                providerId: 'claude',
+                subjectKind: 'unknown',
+                quotaScope: 'account',
+            },
+            accountSubject: { kind: 'provisionalLocalSubject' },
+            source: 'providerHttp',
+            planLabel: 'max',
+            meters: expect.arrayContaining([
+                expect.objectContaining({ meterId: 'five_hour' }),
+                expect.objectContaining({ meterId: 'seven_day' }),
+                expect.objectContaining({ meterId: 'extra_usage' }),
+            ]),
+        });
+        expect(snapshot).not.toHaveProperty('recordId');
+        expect(snapshot).not.toHaveProperty('serviceId');
+        expect(snapshot).not.toHaveProperty('profileId');
 
         const headers = headersFromFetchCall(fetchMock.mock.calls[0] ?? []);
         expect(headers.Authorization).toBe('Bearer at');

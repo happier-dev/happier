@@ -43,12 +43,6 @@ async function readConnectionsResource(
     signal: options.signal,
     connectionIds: connectionRows.connections.map((row) => row.connectionId),
   });
-  if (deliveryAttention.kind === 'invalid') {
-    throw new PluginError({
-      code: 'channels_connections_resource_delivery_row_invalid',
-      message: 'The Channels connections Resource received an invalid delivery custody row.',
-    });
-  }
   if (deliveryAttention.kind === 'unavailable') {
     throw new PluginError({
       code: 'channels_connections_resource_delivery_status_unavailable',

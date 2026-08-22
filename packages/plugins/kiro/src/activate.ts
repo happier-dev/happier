@@ -1,12 +1,3 @@
-import type { PluginApi } from '@happier-dev/plugin-sdk';
-import { createKiroAgentRuntime } from './agent/runtime/factory.js';
+import { KIRO_PLUGIN } from './manifest.js';
 
-export function activate(api: PluginApi): void {
-  api.agents.register('kiro', createKiroAgentRuntime, {
-    sessionRunnerFactory: {
-      module: './agent/runtime/factory',
-      export: 'createKiroAgentRuntime',
-      runtimeApiVersion: 1,
-    },
-  });
-}
+export const activate = KIRO_PLUGIN.activate;

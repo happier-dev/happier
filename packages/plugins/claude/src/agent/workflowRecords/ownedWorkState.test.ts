@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import { filterWorkflowOwnedWorkStateItems } from './ownedWorkState.js';
 

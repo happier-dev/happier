@@ -7,9 +7,13 @@ import type {
   VoiceRealtimeJsonValue,
 } from '@happier-dev/plugin-sdk/voice';
 
-import { PLUGIN_MANIFEST } from '../../manifest.js';
+import { CODEX_VOICE_PROVIDER_CONTRIBUTION_ID } from '../../constants.js';
 import {
+  createCodexV3ToolSessionUpdate,
   createCodexV3ControlDecoder,
+  encodeCodexV3ContextUpdate,
+  encodeCodexV3ToolContinuation,
+  encodeCodexV3ToolResult,
   type CodexV3ControlDecoder,
 } from './control.js';
 
@@ -99,7 +103,7 @@ export function createCodexRealtimeVoiceProviderRuntime(): RealtimeVoiceProvider
     protocol,
     microphoneMode: 'host_webrtc',
     outputLevelMeter: 'unavailable',
-    async createConnection({ attemptId, media, signal, execution, ui }) {
+    async createConnection({ attemptId, media, signal, execution, ui, tools }) {
       if (execution.kind !== 'experimental_agent_session_realtime') {
         throw new Error('voice_agent_realtime_execution_authority_required');
       }
@@ -118,6 +122,7 @@ export function createCodexRealtimeVoiceProviderRuntime(): RealtimeVoiceProvider
       });
       activeAttemptsById.set(attemptId, Object.freeze({ attemptId, decoder }));
       currentAttemptId = attemptId;
+      const sessionUpdate = createCodexV3ToolSessionUpdate(tools);
       return media.createWebRtcConnection({
         signaling: {
           async exchangeOffer({ offerSdp, signal: offerSignal }) {
@@ -141,13 +146,15 @@ export function createCodexRealtimeVoiceProviderRuntime(): RealtimeVoiceProvider
         },
         control: {
           label: CONTROL_CHANNEL_LABEL,
-          onOpen() {},
+          async onOpen({ sendJson }) {
+            await sendJson(sessionUpdate);
+          },
         },
       });
     },
-    encodeToolResults: () => EMPTY_CONTROLS,
-    encodeToolContinuation: () => ({}),
-    encodeContextUpdate: () => EMPTY_CONTROLS,
+    encodeToolResults: (results) => Object.freeze(results.map(encodeCodexV3ToolResult)),
+    encodeToolContinuation: () => encodeCodexV3ToolContinuation(),
+    encodeContextUpdate: (text) => Object.freeze([encodeCodexV3ContextUpdate(text)]),
     encodeTextTurn: () => EMPTY_CONTROLS,
   };
   return Object.freeze(runtime);
@@ -155,7 +162,7 @@ export function createCodexRealtimeVoiceProviderRuntime(): RealtimeVoiceProvider
 
 export function activate(api: Pick<PluginApi, 'voiceProviders'>): void {
   api.voiceProviders.register(
-    PLUGIN_MANIFEST.contributes.voiceProviders[0].id,
+    CODEX_VOICE_PROVIDER_CONTRIBUTION_ID,
     createCodexRealtimeVoiceProviderRuntime(),
   );
 }

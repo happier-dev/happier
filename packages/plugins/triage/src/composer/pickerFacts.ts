@@ -1,10 +1,11 @@
+import { projectTriageEntrySearchText } from '../projection/entrySearch.js';
 import type { TriageListWindowSnapshotV1 } from '../projection/listWindowStore.js';
+import { projectTriageFailedSourceHealth } from '../projection/sourceHealth.js';
 import { projectTriageEntryDisplay } from '../ui/window/entryDisplay.js';
 import type {
     TriagePickerCorpusFactsV1,
     TriagePickerCorpusRowV1,
     TriagePickerFreshnessV1,
-    TriagePickerSourceHealthV1,
 } from './pickerModel.js';
 
 /**
@@ -28,26 +29,6 @@ function pickerFreshness(snapshot: TriageListWindowSnapshotV1): TriagePickerFres
     return { kind: 'stale', lastMaterializedAtMs: window.assembledAtMs };
 }
 
-function pickerHealth(snapshot: TriageListWindowSnapshotV1): readonly TriagePickerSourceHealthV1[] {
-    const displayLabels = new Map(snapshot.configuredSources.map(
-        (source) => [source.sourceInstanceId, source.displayLabel],
-    ));
-    const health: TriagePickerSourceHealthV1[] = [];
-    for (const lane of snapshot.window?.lanes ?? []) {
-        if (lane.health.kind !== 'failed') continue;
-        health.push({
-            sourceInstance: { source: lane.source, sourceInstanceId: lane.sourceInstanceId },
-            // The configured label is the user's own name for the connection;
-            // the qualified contribution id is the honest fallback rather than
-            // an invented one.
-            displayName: displayLabels.get(lane.sourceInstanceId)
-                ?? `${lane.source.pluginId}/${lane.source.localId}`,
-            failure: lane.health.failure,
-        });
-    }
-    return Object.freeze(health);
-}
-
 export function projectTriagePickerCorpusFacts(input: Readonly<{
     snapshot: TriageListWindowSnapshotV1;
     nowMs: number;
@@ -59,6 +40,9 @@ export function projectTriagePickerCorpusFacts(input: Readonly<{
             entryRef: row.entryRef,
             title: display.title,
             scopeLabel: display.scopeLabel,
+            // Projected by the one search owner, so the picker answers a query
+            // exactly as the list does over these same rows.
+            search: projectTriageEntrySearchText(row.observations),
             // The instance decision is the window's, never re-derived here: the
             // picker must attach an entry under the same connection the list
             // would open it with.
@@ -74,7 +58,15 @@ export function projectTriagePickerCorpusFacts(input: Readonly<{
         coverage: snapshot.window?.coverage === 'complete' ? 'complete' : 'progressive',
         freshness: pickerFreshness(snapshot),
         refreshRunning: snapshot.pending !== 'idle',
-        health: pickerHealth(snapshot),
+        // The one join of failed lanes to the reader's own connection names; the
+        // shell reports the same fact from the same owner.
+        health: projectTriageFailedSourceHealth(snapshot),
+        // Whether a Refresh press can read anything is the refresh coordinator's
+        // decision, carried here verbatim. The picker used to re-derive a
+        // narrower answer from rate-limit failures alone and therefore offered a
+        // Refresh that the coordinator was already refusing for an aggregate
+        // backoff, with no banner, no disabled control and no log.
+        refreshBlocked: snapshot.refreshBlocked ?? null,
         nowMs: input.nowMs,
     });
 }

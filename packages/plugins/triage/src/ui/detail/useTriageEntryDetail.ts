@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import { usePluginHostApi } from '@happier-dev/plugin-ui';
-import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
+import type {
+  TriageDetailSurfaceInputV1,
+  TriageSourceDescriptorV1,
+} from '@happier-dev/triage-protocol/v1';
 
 import {
   TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1,
@@ -28,7 +31,17 @@ import { buildTriageDetailSurfaceInputV1 } from './input.js';
 
 export type TriageEntryDetailStateV1 =
   | Readonly<{ kind: 'reading' }>
-  | Readonly<{ kind: 'ready'; input: TriageDetailSurfaceInputV1 }>
+  | Readonly<{
+    kind: 'ready';
+    input: TriageDetailSurfaceInputV1;
+    /**
+     * The entry's source's own declared descriptor, already parsed by the host
+     * with this target's schema and carried out of the admitted snapshot by the
+     * Action. `null` when that source has no currently admitted contribution;
+     * nothing here decodes it.
+     */
+    sourceDescriptor: TriageSourceDescriptorV1 | null;
+  }>
   /** The selected connection is retired, removed, or no longer this source's. */
   | Readonly<{ kind: 'unavailable' }>
   /** The Account could not be read at all; retrying is the reader's move. */
@@ -91,7 +104,11 @@ export async function readTriageEntryDetailState(
     linkedSessions: result.linkedSessions,
   });
   return built.kind === 'admitted'
-    ? Object.freeze({ kind: 'ready', input: built.input })
+    ? Object.freeze({
+      kind: 'ready',
+      input: built.input,
+      sourceDescriptor: result.sourceDescriptor ?? null,
+    })
     : Object.freeze({ kind: 'refused', reason: built.reason });
 }
 

@@ -544,10 +544,19 @@ describe('Codex public Agent External Sessions contribution', () => {
       searchMode: 'fast',
       ...invocation(),
     })).resolves.toMatchObject({ ok: false, code: 'invalid_request' });
+    // A byte bound that is not a positive size is a MALFORMED inbound request.
+    expect(await contribution.resolveSource({
+      source,
+      ...invocation({ maxSerializedBytes: 0 }),
+    })).toMatchObject({ ok: false, code: 'invalid_request' });
+    // A well-formed bound the Agent's own OUTPUT cannot fit is not a caller
+    // mistake to correct: it is a nonretryable Agent-side failure, and it is the
+    // same classification the host's bounded-invocation owner already applies
+    // when a leaf overruns the identical budget.
     expect(await contribution.resolveSource({
       source,
       ...invocation({ maxSerializedBytes: 1 }),
-    })).toMatchObject({ ok: false, code: 'invalid_request' });
+    })).toMatchObject({ ok: false, code: 'agent_error', retryable: false });
   });
 
   it('keeps connected-service home identity qualified through candidates and persisted links', async () => {
@@ -623,6 +632,68 @@ describe('Codex public Agent External Sessions contribution', () => {
           linkData: { source: canonicalSource },
         },
       });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * The media read roots a source grants are the homes this Agent actually
+   * resolves for it, never the value the request carried. A connected-service
+   * request names an entry in a host-owned home namespace, and only the home
+   * resolver decides which concrete directory that is, so a request cannot
+   * hand itself a read root the active server root never contained.
+   */
+  it('grants media read roots only for homes the connected-service namespace verifies', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-media-read-roots-'));
+    try {
+      const activeServerDir = join(root, 'active-server');
+      const verifiedHome = join(
+        activeServerDir,
+        'daemon',
+        'connected-services',
+        'homes',
+        'openai-codex',
+        'profile-1',
+        'codex',
+        'codex-home',
+      );
+      await mkdir(join(verifiedHome, 'sessions'), { recursive: true });
+      const rogueHome = join(root, 'rogue-codex-home');
+      await mkdir(join(rogueHome, 'sessions'), { recursive: true });
+      const contribution = createCodexExternalSessionsContribution({
+        env: {} as NodeJS.ProcessEnv,
+        activeServerDir,
+      });
+      const rogueSource = {
+        kind: 'codexHome',
+        home: 'connectedService',
+        connectedServiceId: 'openai-codex',
+        connectedServiceProfileId: 'profile-1',
+        homePath: rogueHome,
+      } as const;
+
+      const resolvedRogue = await contribution.resolveSource({
+        source: rogueSource,
+        ...invocation(),
+      });
+      if (!resolvedRogue.ok) throw new Error('Expected a resolved Codex source');
+      expect(resolvedRogue.value.transcriptMediaReadRoots ?? []).not.toContain(rogueHome);
+
+      const rogueIdentity = await contribution.resolveLinkIdentity({
+        source: rogueSource,
+        remoteSessionId: '33333333-3333-3333-3333-333333333333',
+        ...invocation(),
+      });
+      if (!rogueIdentity.ok) throw new Error('Expected a resolved Codex link identity');
+      expect(rogueIdentity.value.transcriptMediaReadRoots ?? []).not.toContain(rogueHome);
+
+      const resolvedVerified = await contribution.resolveSource({
+        source: { ...rogueSource, homePath: verifiedHome },
+        ...invocation(),
+      });
+      if (!resolvedVerified.ok) throw new Error('Expected a resolved Codex source');
+      expect(resolvedVerified.value.transcriptMediaReadRoots).toEqual([await realpath(verifiedHome)]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

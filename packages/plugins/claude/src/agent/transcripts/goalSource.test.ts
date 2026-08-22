@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import { createClaudeGoalWorkStateSource } from './goalSource.js';
 
@@ -203,12 +203,12 @@ describe('createClaudeGoalWorkStateSource — live usage accumulation (G-3/E)', 
     return { type: 'attachment', uuid: params.uuid, sessionId: SESSION_ID, attachment: { type: 'goal_status', met: false, condition: params.condition } };
   }
 
-  function assistantWithUsage(params: Readonly<{ inputTokens: number; outputTokens: number; endTurn?: boolean; timestamp?: string }>): unknown {
+  function assistantWithUsage(params: Readonly<{ inputTokens: number; outputTokens: number; endTurn?: boolean; timestamp?: string; isSidechain?: boolean }>): unknown {
     return {
       type: 'assistant',
       uuid: `a-${Math.random()}`,
       sessionId: SESSION_ID,
-      isSidechain: false,
+      isSidechain: params.isSidechain === true,
       ...(params.timestamp ? { timestamp: params.timestamp } : {}),
       message: {
         role: 'assistant',
@@ -278,6 +278,20 @@ describe('createClaudeGoalWorkStateSource — live usage accumulation (G-3/E)', 
     const item = goalItem(published[published.length - 1]);
     expect(item).toMatchObject({ status: 'complete', tokensUsed: 2393 });
     expect(item?.timeUsedSeconds).toBeCloseTo(41.613, 2);
+  });
+
+  it('bills a subagent turn to the CHILD — sidechain rows never reach the parent goal meter', () => {
+    const { source, published, advance } = createUsageSource();
+    source.observeTranscriptMessage(activeGoalAttachment({ uuid: 'g-1', condition: 'ship it' }));
+    advance(10_000);
+    // A subagent's assistant rows ride the SAME raw transcript channel, marked `isSidechain: true`.
+    // They are already refused as turn BOUNDARIES, so their cost is merely HELD — and folded at the
+    // parent's next boundary, which is the leak: the parent's meter grows by the child's budget.
+    source.observeTranscriptMessage(assistantWithUsage({ inputTokens: 40_000, outputTokens: 2_277, isSidechain: true }));
+    source.observeTranscriptMessage(assistantWithUsage({ inputTokens: 30_000, outputTokens: 1_000, endTurn: true, isSidechain: true }));
+    // The parent's own completed turn: only ITS 600 tokens are the parent's to bill.
+    source.observeTranscriptMessage(assistantWithUsage({ inputTokens: 500, outputTokens: 100, endTurn: true }));
+    expect(goalItem(published[published.length - 1])).toMatchObject({ tokensUsed: 600 });
   });
 
   it('does not accumulate usage when there is no active goal', () => {

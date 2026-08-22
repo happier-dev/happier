@@ -9,6 +9,7 @@ import { PLUGIN_MANIFEST } from '../manifest.js';
 import {
   CLIPROXYAPI_MANAGED_ENV,
   CLIPROXYAPI_MANAGED_HEALTH_IDENTITY,
+  CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED,
   CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES,
   CLIPROXYAPI_MANAGED_SERVICE,
 } from './managedContract.js';
@@ -254,6 +255,7 @@ async function resolveManagedPurposeSnapshot(
     healthPurposes,
     serializedPurposeConfiguration: JSON.stringify({
       v: 2,
+      modelListEnabled: CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED,
       purposes: boundFamilies.map((family) => ({
         id: family.authEntry.id,
         provider: family.authEntry.provider,
@@ -320,16 +322,24 @@ function publicManagedServiceSpec(
   });
 }
 
+// A catalog probe reads the managed wrapper's own model list, which the service
+// serves regardless of which upstream purposes are bound. Every declared probe
+// endpoint therefore stays reachable for a catalog probe start, so declaring a
+// second probe never silently costs the provider its catalog.
+const CATALOG_PROBE_ENDPOINT_TEMPLATE_IDS: ReadonlySet<string> = new Set(
+  CLIPROXYAPI_PROVIDER_CONTRIBUTION.catalog.probes.map(
+    (probe) => probe.endpointTemplateId,
+  ),
+);
+
 const start: ManagedProviderRuntime['start'] = async (request, context) => {
   const purposeSnapshot = await resolveManagedPurposeSnapshot(context);
-  const catalogEndpointTemplateId = request.reason === 'catalogProbe'
-    && CLIPROXYAPI_PROVIDER_CONTRIBUTION.catalog.probes.length === 1
-    ? CLIPROXYAPI_PROVIDER_CONTRIBUTION.catalog.probes[0]?.endpointTemplateId
-    : undefined;
+  const admitsCatalogProbeEndpoints = request.reason === 'catalogProbe';
   const endpointTemplateIds = Object.freeze(request.endpointTemplateIds.filter(
     (endpointTemplateId) => purposeSnapshot.endpointTemplateIds.includes(
       endpointTemplateId,
-    ) || endpointTemplateId === catalogEndpointTemplateId,
+    ) || (admitsCatalogProbeEndpoints
+      && CATALOG_PROBE_ENDPOINT_TEMPLATE_IDS.has(endpointTemplateId)),
   ));
   if (endpointTemplateIds.length === 0) {
     throw new Error(

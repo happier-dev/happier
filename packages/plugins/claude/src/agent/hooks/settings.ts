@@ -1,4 +1,4 @@
-import { buildShellCommand } from '@happier-dev/agents/process/shellCommand';
+import { buildShellCommand } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { resolveClaudePermissionHookTimeoutSeconds } from './permissionHookTimeout.js';
 
@@ -53,6 +53,7 @@ export type ClaudeHookPluginManifest = Readonly<{
 
 export type BuildClaudeHookPluginHooksParams = Readonly<{
     port: number;
+    platform?: NodeJS.Platform;
     nodeExecutable: string;
     sessionForwarderScript: string;
     sessionHookSecretFile?: string;
@@ -113,6 +114,7 @@ export function buildClaudeHookPluginHooks(params: BuildClaudeHookPluginHooksPar
     for (const eventName of CLAUDE_SESSION_HOOK_EVENTS) {
         hooks[eventName] = [buildCommandHook({
             command: buildForwarderCommand({
+                platform: params.platform,
                 nodeExecutable: params.nodeExecutable,
                 scriptPath: params.sessionForwarderScript,
                 port: params.port,
@@ -130,6 +132,7 @@ export function buildClaudeHookPluginHooks(params: BuildClaudeHookPluginHooksPar
 
         hooks.PermissionRequest = [buildCommandHook({
             command: buildForwarderCommand({
+                platform: params.platform,
                 nodeExecutable: params.nodeExecutable,
                 scriptPath: params.permissionForwarderScript,
                 port: params.port,
@@ -141,6 +144,7 @@ export function buildClaudeHookPluginHooks(params: BuildClaudeHookPluginHooksPar
         })];
         hooks.PreToolUse = [buildCommandHook({
             command: buildForwarderCommand({
+                platform: params.platform,
                 nodeExecutable: params.nodeExecutable,
                 scriptPath: params.permissionForwarderScript,
                 port: params.port,
@@ -173,6 +177,7 @@ function buildCommandHook(params: Readonly<{
 }
 
 function buildForwarderCommand(params: Readonly<{
+    platform?: NodeJS.Platform;
     nodeExecutable: string;
     scriptPath: string;
     port: number;
@@ -187,6 +192,9 @@ function buildForwarderCommand(params: Readonly<{
     ];
     if (typeof params.secretFile === 'string' && params.secretFile.length > 0) {
         parts.push('--secret-file', params.secretFile);
+    }
+    if ((params.platform ?? process.platform) === 'win32') {
+        return buildShellCommand(parts, 'powershell_encoded');
     }
     return buildShellCommand(parts, 'posix');
 }

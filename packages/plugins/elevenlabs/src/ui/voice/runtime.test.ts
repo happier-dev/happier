@@ -134,6 +134,18 @@ describe('ElevenLabs public Voice provider leaf', () => {
     expect((runtime.protocol as Readonly<{ encodeTurnControl(action: string): unknown }>).encodeTurnControl('cancel_response')).toBeNull();
   });
 
+  it('preserves a native pre-abort reason when settings catalog signals lack throwIfAborted', async () => {
+    const runtime = createElevenLabsVoiceProviderRuntime();
+    const reason = new Error('native settings catalog aborted');
+    const signal = { aborted: true, reason } as AbortSignal;
+
+    await expect(runtime.settingsOperations.listCatalog({
+      catalog: 'voices',
+      credentials: { phase: 'settings', mediated: null, raw: null },
+      signal,
+    })).rejects.toBe(reason);
+  });
+
   it('executes declared Create Agent through settings-phase credential access and returns only its settings patch', async () => {
     const runtime = createElevenLabsVoiceProviderRuntime();
     let toolSequence = 0;

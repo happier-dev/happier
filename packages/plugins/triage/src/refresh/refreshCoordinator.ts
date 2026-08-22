@@ -6,7 +6,7 @@ import {
     recordRefreshFailure,
     TRIAGE_REFRESH_BACKOFF_IDLE_V1,
     type TriageRefreshBackoffStateV1,
-    type TriageRefreshPacingReasonV1,
+    type TriageRefreshPacingBlockV1,
     type TriageRefreshTriggerV1,
 } from './refreshEligibility.js';
 
@@ -59,7 +59,14 @@ export type TriageRefreshPassOutcomeV1 =
 /** Why a request did not read the provider now. */
 export type TriageRefreshBlockedV1 =
     | Readonly<{ reason: 'retired' }>
-    | Readonly<{ reason: TriageRefreshPacingReasonV1; nextEligibleAtMs: number }>;
+    | TriageRefreshPacingBlockV1;
+
+/** Whether a refusal carries a deadline a surface can state, or is a dead slot. */
+export function triageRefreshPacingBlock(
+    blocked: TriageRefreshBlockedV1 | undefined,
+): TriageRefreshPacingBlockV1 | null {
+    return blocked === undefined || blocked.reason === 'retired' ? null : blocked;
+}
 
 export type TriageRefreshRequestResultV1 = Readonly<{
     /**
@@ -79,6 +86,19 @@ export type TriageRefreshCoordinatorV1 = Readonly<{
         sourceInstanceId: string;
         trigger: TriageRefreshTriggerV1;
     }>): TriageRefreshRequestResultV1;
+    /**
+     * What this trigger would be told right now, without asking for a pass.
+     *
+     * A surface that offers **Refresh** has to know whether pressing it can read
+     * anything, and it must learn that from the same evaluator the request itself
+     * uses — otherwise the control and the coordinator answer one question twice.
+     * It is a pure read of process-local pacing state: it starts nothing, records
+     * nothing, and opens no slot.
+     */
+    pacingBlock(input: Readonly<{
+        sourceInstanceId: string;
+        trigger: TriageRefreshTriggerV1;
+    }>): TriageRefreshPacingBlockV1 | null;
     /** Retirement, reconfiguration, or contribution loss for one instance. */
     retire(sourceInstanceId: string): void;
     dispose(): void;
@@ -240,6 +260,20 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
             }
             const slot = openSlot(input.sourceInstanceId, input.trigger);
             return { disposition: 'started', settled: slot.scheduler.flush() };
+        },
+        pacingBlock(input): TriageRefreshPacingBlockV1 | null {
+            if (disposed) return null;
+            const slot = slots.get(input.sourceInstanceId);
+            if (slot?.retired) return null;
+            const eligibility = evaluateRefreshEligibility({
+                trigger: input.trigger,
+                nowMs: deps.nowMs(),
+                lastReadStartedAtMs: slot?.lastReadStartedAtMs ?? null,
+                backoff: slot?.backoff ?? TRIAGE_REFRESH_BACKOFF_IDLE_V1,
+            });
+            return eligibility.kind === 'blocked'
+                ? { reason: eligibility.reason, nextEligibleAtMs: eligibility.nextEligibleAtMs }
+                : null;
         },
         retire(sourceInstanceId: string): void {
             const slot = slots.get(sourceInstanceId);

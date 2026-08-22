@@ -1,20 +1,21 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import type { TerminalControlPort } from '@happier-dev/agents';
+import type { TerminalControlPort } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
   ClaudePermissionContext,
   ClaudePermissionDecision,
 } from '../../../../permissions/createClaudePermissionEngine.js';
 import {
   DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY,
-  CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
-  normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy,
   type ClaudeUnifiedTerminalWorkspaceTrustPolicy,
-} from '@happier-dev/agents';
+} from '../../../../../agentSettings/definition.js';
+import { normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy } from '../../../../../protocol/remoteSettings.js';
+import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/protocol/agents/claude';
 
 import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from '../constants.js';
 import type { ClaudeScreenState } from '../screenState.js';
 import { answerClaudeUnifiedRegisteredDialog } from '../tuiControls/dialogAnswer.js';
+import { captureScreenState } from '../tuiControls/controlRuntime.js';
 import {
   buildClaudeUnifiedDialogQuestionInput,
   getClaudeUnifiedDialogIdentity,
@@ -100,8 +101,6 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
   isStartupActive?: (() => boolean) | undefined;
   /** Event edge used by startup readiness to suspend every timeout/relaunch timer while a human owns the prompt. */
   onPendingUserActionChange?: ((pending: boolean) => void) | undefined;
-  /** Arms runtime-local ownership only when resume-from-summary Enter reaches the terminal. */
-  onResumeSummaryCompactResidue?: (() => void) | undefined;
 }>): Readonly<{
   handle(screen: ClaudeScreenState): Promise<ClaudeUnifiedResumeChoiceStartupResult>;
   hasPendingUserAction(): boolean;
@@ -147,9 +146,6 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
       option: dialogOption,
       settleMs: params.settleMs,
       wait: params.wait,
-      onSubmitted: dialogId === 'resume_choice' && dialogOption.choice === 'resume_from_summary'
-        ? params.onResumeSummaryCompactResidue
-        : undefined,
     });
     return result.status === 'answered' || result.status === 'not_visible';
   };
@@ -318,7 +314,19 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
 
       const dialog = resolveClaudeUnifiedVisibleDialog(screen);
       if (!dialog) {
-        if (pendingRequest) await cancelPending();
+        if (pendingRequest) {
+          await params.wait(params.settleMs);
+          const recaptured = await captureScreenState(params.port);
+          if (recaptured.kind !== 'state') return 'waiting_for_user';
+          const recapturedDialog = resolveClaudeUnifiedVisibleDialog(recaptured.state);
+          if (
+            recapturedDialog
+            && pendingIdentity === getClaudeUnifiedDialogIdentity(recapturedDialog)
+          ) {
+            return 'waiting_for_user';
+          }
+          await cancelPending();
+        }
         closedIdentity = null;
         return 'unhandled';
       }

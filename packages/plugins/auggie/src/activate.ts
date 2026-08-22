@@ -1,12 +1,3 @@
-import type { PluginApi } from '@happier-dev/plugin-sdk';
-import { createAuggieAgentRuntime } from './agent/runtime/factory.js';
+import { AUGGIE_PLUGIN } from './manifest.js';
 
-export function activate(api: PluginApi): void {
-  api.agents.register('auggie', createAuggieAgentRuntime, {
-    sessionRunnerFactory: {
-      module: './agent/runtime/factory',
-      export: 'createAuggieAgentRuntime',
-      runtimeApiVersion: 1,
-    },
-  });
-}
+export const activate = AUGGIE_PLUGIN.activate;

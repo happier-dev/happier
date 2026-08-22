@@ -93,7 +93,6 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
     externalSessions: {
       browseDescriptorId: 'claude.externalSessions.browse.v1',
       sessionHandoffDescriptorId: 'claude.sessionHandoff.v1',
-      supportsBackgroundFollow: true,
       sessionHandoff: {
         clearMetadataKeys: [
           'claudeTranscriptPath',

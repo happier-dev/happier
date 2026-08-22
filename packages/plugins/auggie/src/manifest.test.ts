@@ -10,7 +10,7 @@ describe('Auggie plugin manifest', () => {
     expect(PLUGIN_MANIFEST).not.toHaveProperty('uses');
     expect(PLUGIN_MANIFEST).not.toHaveProperty('permissions');
     expect(PLUGIN_MANIFEST).not.toHaveProperty('activationEvents');
-    expect(PLUGIN_MANIFEST).toMatchObject({ entrypoints: { daemon: './dist/index.js' } });
+    expect(PLUGIN_MANIFEST).toMatchObject({ entrypoints: { daemon: './.happier-plugin/daemon.js' } });
     expect(PLUGIN_MANIFEST).not.toHaveProperty('activation');
     expect(PLUGIN_MANIFEST.contributes.agents[0]).not.toHaveProperty('externalSessions');
     expect(PLUGIN_MANIFEST).toMatchObject({

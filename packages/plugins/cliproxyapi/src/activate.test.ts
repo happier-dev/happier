@@ -70,6 +70,7 @@ const anthropicOnlyIdentity = Object.freeze({
 
 const fullyBoundPurposeConfiguration = JSON.stringify({
   v: 2,
+  modelListEnabled: true,
   purposes: [
     {
       id: 'codex',
@@ -98,6 +99,7 @@ const fullyBoundPurposeConfiguration = JSON.stringify({
 
 const anthropicOnlyPurposeConfiguration = JSON.stringify({
   v: 2,
+  modelListEnabled: true,
   purposes: [{
     id: 'claude',
     provider: 'claude',
@@ -356,10 +358,10 @@ describe('CLIProxyAPI public managed Provider activation', () => {
     expect(JSON.stringify(result)).not.toContain('downstream-secret');
   });
 
-  it('keeps the declared catalog probe reachable when only Anthropic is bound', async () => {
-    expect(CLIPROXYAPI_PROVIDER_CONTRIBUTION.catalog.probes).toHaveLength(1);
-    const catalogProbe = CLIPROXYAPI_PROVIDER_CONTRIBUTION.catalog.probes[0];
-    if (!catalogProbe) throw new Error('CLIProxyAPI must declare one catalog probe');
+  it('keeps every declared catalog probe reachable when only Anthropic is bound', async () => {
+    const catalogProbeEndpointTemplateIds = CLIPROXYAPI_PROVIDER_CONTRIBUTION
+      .catalog.probes.map((probe) => probe.endpointTemplateId);
+    expect(catalogProbeEndpointTemplateIds.length).toBeGreaterThan(0);
     const managedRuntime = CLIPROXYAPI_PROVIDER_CONTRIBUTION.managedRuntime;
     if (!managedRuntime) throw new Error('CLIProxyAPI must declare a managed runtime');
     const runtime = captureRuntime();
@@ -393,13 +395,17 @@ describe('CLIProxyAPI public managed Provider activation', () => {
         }),
       }),
     }), { signal });
-    expect(result.endpoints).toEqual([{
-      endpointTemplateId: catalogProbe.endpointTemplateId,
-      endpoint: { kind: 'servicePath', path: '/v1' },
-    }, {
-      endpointTemplateId: 'cliproxyapi-anthropic',
-      endpoint: { kind: 'servicePath', path: '/' },
-    }]);
+    const admittedEndpointTemplateIds = result.endpoints.map(
+      (endpoint) => endpoint.endpointTemplateId,
+    );
+    expect(admittedEndpointTemplateIds).toEqual(expect.arrayContaining(
+      catalogProbeEndpointTemplateIds,
+    ));
+    expect(admittedEndpointTemplateIds).toContain('cliproxyapi-anthropic');
+    // Nothing unbound leaks in beyond the declared catalog probes.
+    expect(admittedEndpointTemplateIds).toHaveLength(
+      catalogProbeEndpointTemplateIds.length + 1,
+    );
   });
 
   it('disposes the newly supervised service when readiness fails', async () => {

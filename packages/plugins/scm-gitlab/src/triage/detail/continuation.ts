@@ -21,7 +21,7 @@
  * persisted, and is never a watermark.
  */
 
-import { admitForgeRequestUrl } from '@happier-dev/scm-forge-adapter';
+import { admitForgeRequestUrl } from '@happier-dev/triage-sources/runtime';
 
 import type { GitlabConfiguredOrigin } from '../origin.js';
 

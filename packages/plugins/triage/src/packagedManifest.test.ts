@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 
+import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { describe, expect, it } from 'vitest';
 
+import { PLUGIN_MANIFEST } from './manifest.js';
 import { TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1, TRIAGE_ENTRY_ATTACHMENT_LOCAL_ID_V1 } from './composer/attachmentValue.js';
 import { TRIAGE_APP_PAGE_LOCAL_ID_V1 } from './composer/openEntryDetails.js';
 import {
@@ -66,6 +68,26 @@ function readPackagedManifest(): PackagedManifest {
 }
 
 describe('packaged PRs & Issues manifest', () => {
+    it('ships exactly what the source manifest projects, fact for fact', () => {
+        // The package-local half of `yarn test:migration:bundled-plugin-projections`.
+        // That governance lane regenerates every bundled artifact and owns the
+        // repository verdict, but it runs neither in this package's suite nor in
+        // seconds — so an author changing the manifest, or moving the package
+        // onto a different author path, learns nothing here until CI.
+        //
+        // Every other assertion in this file names one hand-picked fact and is
+        // therefore blind to the rest. This one is the whole artifact: it fails
+        // for any fact the source projection adds, drops or renames, which is
+        // what makes it evidence that an author-path migration changed nothing
+        // the host installs.
+        const projected = parsePluginManifest(PLUGIN_MANIFEST);
+        if (!projected.ok) {
+            throw new Error(projected.diagnostics.map((diagnostic) => diagnostic.message).join('; '));
+        }
+
+        expect(projected.manifest).toEqual(readPackagedManifest());
+    });
+
     it('ships the aggregate app page and the Session-targeted panel', () => {
         const views = readPackagedManifest().contributes.ui.views;
 

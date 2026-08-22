@@ -1,12 +1,4 @@
-import {
-  CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES,
-  CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES,
-  DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE,
-  DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY,
-  type ClaudeUnifiedTerminalResumeChoice,
-  type ClaudeUnifiedTerminalWorkspaceTrustPolicy,
-} from '@happier-dev/agents';
-import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/manifest';
+import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/settings';
 
 export const CLAUDE_SETTING_SOURCES_V2 = ['user', 'project', 'local'] as const;
 export type ClaudeSettingSourceV2 = (typeof CLAUDE_SETTING_SOURCES_V2)[number];
@@ -17,12 +9,25 @@ export type ClaudeRemoteDebugCategory = (typeof CLAUDE_REMOTE_DEBUG_CATEGORIES)[
 export const CLAUDE_UNIFIED_TERMINAL_HOSTS = ['auto', 'tmux', 'zellij'] as const;
 export type ClaudeUnifiedTerminalHost = (typeof CLAUDE_UNIFIED_TERMINAL_HOSTS)[number];
 
-export {
-  CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES,
-  CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES,
-  type ClaudeUnifiedTerminalResumeChoice,
-  type ClaudeUnifiedTerminalWorkspaceTrustPolicy,
-};
+export const CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES = [
+  'ask_every_time',
+  'resume_from_summary',
+  'resume_full_session',
+] as const;
+export type ClaudeUnifiedTerminalResumeChoice =
+  (typeof CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES)[number];
+export const DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE:
+  ClaudeUnifiedTerminalResumeChoice = 'ask_every_time';
+
+export const CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES = [
+  'ask_every_time',
+  'always_trust_happier_workspaces',
+  'always_reject_happier_workspaces',
+] as const;
+export type ClaudeUnifiedTerminalWorkspaceTrustPolicy =
+  (typeof CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES)[number];
+export const DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY:
+  ClaudeUnifiedTerminalWorkspaceTrustPolicy = 'ask_every_time';
 
 export const MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS = 16_384;
 
@@ -408,7 +413,7 @@ export const CLAUDE_AGENT_SETTINGS_CONTRIBUTION = {
   version: 1,
   title: { key: 'settingsAgents.plugins.claude.title', fallback: 'Claude (remote)' },
   target: { kind: 'agent', agent: 'claude' },
-  scope: 'synced',
+  scope: 'account',
   fields: CLAUDE_AGENT_SETTINGS_FIELDS,
   presentation: {
     icon: { ionName: 'sparkles-outline', color: { kind: 'theme', token: 'orange' } },

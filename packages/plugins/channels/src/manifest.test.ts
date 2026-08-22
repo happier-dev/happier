@@ -35,7 +35,30 @@ import {
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
 import { CONVERSATION_DELIVERY_CUSTODY_STATES } from './deliveryCustody.js';
+
+/**
+ * `PluginManifest` types every contribution entry as `{ id, [key: string]: unknown }`,
+ * so these assertions narrow the exact declared protocol shape they compare
+ * against and fail loudly on a manifest that stops declaring one.
+ */
+type DeclaredPointProtocol = Readonly<{
+  id: string;
+  version: number;
+  operations?: Readonly<Record<string, unknown>>;
+}>;
+
+function declaredPointProtocols(
+  point: Readonly<{ readonly [key: string]: unknown }> | undefined,
+): readonly DeclaredPointProtocol[] {
+  const protocols = point?.protocols;
+  if (!Array.isArray(protocols)) {
+    throw new Error('Expected the Channels contribution point to declare its protocols.');
+  }
+  return protocols as readonly DeclaredPointProtocol[];
+}
+
 import {
+  CHANNELS_PLUGIN,
   CHANNELS_PLUGIN_ID,
   CHANNELS_PROVIDER_POINT_ID,
   CHANNELS_PROVIDER_POINT_REF,
@@ -82,6 +105,34 @@ const C1_PUBLIC_BOUNDARY_SOURCE_FILES = [
 ] as const;
 
 describe('Channels core manifest', () => {
+  it('projects its prior cold identity and declared contribution families through one definePlugin value', () => {
+    const normalized = parsePluginManifest(CHANNELS_PLUGIN.manifest);
+
+    expect(normalized.ok).toBe(true);
+    if (!normalized.ok) throw new Error('Expected the Channels definePlugin manifest to normalize');
+    expect(CHANNELS_PLUGIN.manifest).toBe(PLUGIN_MANIFEST);
+    expect({
+      id: normalized.manifest.id,
+      version: normalized.manifest.version,
+      displayName: normalized.manifest.displayName,
+      entrypoints: normalized.manifest.entrypoints,
+    }).toEqual({
+      id: 'happier.channels',
+      version: '0.0.0',
+      displayName: 'Conversation Channels',
+      entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    });
+    expect(Object.keys(CHANNELS_PLUGIN.manifest.contributes).sort()).toEqual([
+      'accountCollections',
+      'actions',
+      'backgroundServices',
+      'pluginContributionPoints',
+      'resources',
+      'transcriptActivities',
+      'ui',
+    ]);
+  });
+
   it('keeps the C1 implementation and verification boundary on public SDK seams', async () => {
     const sources = await Promise.all(C1_PUBLIC_BOUNDARY_SOURCE_FILES.map(
       async (path) => await readFile(new URL(`./${path}`, import.meta.url), 'utf8'),
@@ -138,15 +189,19 @@ describe('Channels core manifest', () => {
         version: CHANNELS_PROVIDER_POINT_REF.protocol.version,
       }],
     });
-    expect(CHANNELS_PROVIDER_POINT_REF).toEqual({
+    // The public target reference also carries the Protocol-owned semantic
+    // decoder, which the decode assertion below owns. This assertion owns only
+    // the stable routing identity, so it must not also claim the reference has
+    // nothing else on it.
+    expect(CHANNELS_PROVIDER_POINT_REF).toMatchObject({
       targetPluginId: CHANNELS_PLUGIN_ID,
       id: CHANNELS_PROVIDER_POINT_ID,
       protocol: {
-        id: point?.protocols[0]?.id,
-        version: point?.protocols[0]?.version,
+        id: declaredPointProtocols(point)[0]?.id,
+        version: declaredPointProtocols(point)[0]?.version,
       },
     });
-    const operations = Object.keys(point?.protocols[0]?.operations ?? {})
+    const operations = Object.keys(declaredPointProtocols(point)[0]?.operations ?? {})
       .sort()
       .map((role) => ({ role }));
     expect(decodeTargetedContributionPointSemantics(CHANNELS_PROVIDER_POINT_REF, {
@@ -198,7 +253,7 @@ describe('Channels core manifest', () => {
         renderer: 'channels-renderer',
       }],
     });
-    expect(ui?.translations[0]?.messages).toMatchObject({
+    expect(ui?.translations?.[0]?.messages).toMatchObject({
       'plugins.channels.surface.saved': 'Saved to your Account. The selected machine will reconcile this policy when it is available.',
       'plugins.channels.surface.stopPending': 'Stop reconciliation pending',
       'plugins.channels.surface.providerFallback': 'Integration provider',
@@ -211,7 +266,7 @@ describe('Channels core manifest', () => {
       'plugins.channels.surface.minute': 'minute',
       'plugins.channels.surface.days': 'days',
     });
-    expect(ui?.translations[0]?.messages).not.toHaveProperty('plugins.channels.surface.backToConnections');
+    expect(ui?.translations?.[0]?.messages).not.toHaveProperty('plugins.channels.surface.backToConnections');
   });
 
   it('declares the Account storage access its C1 reconciliation readers consume', () => {
@@ -377,6 +432,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Create conversation pairing challenge?',
           body: 'This creates a short-lived pairing challenge for the selected connection.',
@@ -392,6 +448,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Finalize conversation pairing?',
           body: 'This saves the authenticated pairing proposal as a paused conversation binding.',
@@ -407,6 +464,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['secondary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Cancel conversation pairing?',
           body: 'This cancels the selected unfinished pairing challenge or proposal.',
@@ -422,6 +480,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Create conversation connection?',
           body: 'This saves the connection and its current transport configuration to this Happier Account.',
@@ -437,6 +496,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Transfer conversation connection?',
           body: 'This replaces the saved provider setup and transport while retaining exact old-stop custody.',
@@ -452,6 +512,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'safe',
+        execution: { target: 'daemon' },
       },
       {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate,
@@ -461,6 +522,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Update conversation connection?',
           body: 'This saves the edited connection policy to this Happier Account.',
@@ -476,6 +538,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Change conversation connection enabled state?',
           body: 'This changes whether the connection may accept or deliver under its saved Account policy.',
@@ -491,6 +554,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Delete conversation connection?',
           body: 'This disables the connection and waits for exact transport-stop proof before cleanup.',
@@ -506,6 +570,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['secondary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Accept possible message loss?',
           body: 'This permits the connection lifecycle to continue without claiming the old physical transport stopped.',
@@ -521,6 +586,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Accept a new conversation history baseline?',
           body: 'This accepts the provider’s current replay baseline and resumes the saved connection without replaying unavailable history.',
@@ -536,6 +602,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Retry this blocked conversation poll?',
           body: 'This clears the saved blocked poll state so the current connection can retry it.',
@@ -551,6 +618,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['secondary'],
         dangerLevel: 'safe',
+        execution: { target: 'daemon' },
         hostAccess: ['account-storage'],
       },
       {
@@ -561,6 +629,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['secondary'],
         dangerLevel: 'safe',
+        execution: { target: 'daemon' },
         hostAccess: ['account-storage'],
       },
       {
@@ -571,6 +640,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Create conversation binding?',
           body: 'This saves the external conversation binding and its target policy to this Happier Account.',
@@ -586,6 +656,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Update conversation binding?',
           body: 'This saves the edited external conversation binding policy to this Happier Account.',
@@ -601,6 +672,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Change conversation binding enabled state?',
           body: 'This changes whether the binding may route eligible external messages to its saved target.',
@@ -616,6 +688,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Delete conversation binding?',
           body: 'This immediately disables new binding effects while retained ingress and delivery custody finish safely.',
@@ -631,6 +704,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Rotate conversation binding target?',
           body: 'This changes the external conversation target and verifies the current Automation template when applicable.',
@@ -646,6 +720,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Retry this blocked conversation input?',
           body: 'This re-enables the same frozen admission request for bounded retry.',
@@ -661,6 +736,7 @@ describe('Channels core manifest', () => {
         surfaces: ['cli', 'ui'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         confirmation: {
           title: 'Record this delivery decision?',
           body: 'This records whether you accept or discard the current delivery outcome. It does not resend the message.',
@@ -675,6 +751,7 @@ describe('Channels core manifest', () => {
         scopes: ['global'],
         surfaces: ['plugin'],
         dangerLevel: 'safe',
+        execution: { target: 'daemon' },
         hostAccess: ['account-storage'],
       },
       {
@@ -684,6 +761,7 @@ describe('Channels core manifest', () => {
         scopes: ['global'],
         surfaces: ['plugin'],
         dangerLevel: 'safe',
+        execution: { target: 'daemon' },
         hostAccess: ['account-storage'],
       },
       {
@@ -693,6 +771,7 @@ describe('Channels core manifest', () => {
         scopes: ['global'],
         surfaces: ['plugin'],
         dangerLevel: 'safe',
+        execution: { target: 'daemon' },
         hostAccess: ['account-storage'],
       },
       {
@@ -702,6 +781,7 @@ describe('Channels core manifest', () => {
         scopes: ['global'],
         surfaces: ['plugin'],
         dangerLevel: 'safe',
+        execution: { target: 'daemon' },
         hostAccess: ['account-storage'],
       },
       {
@@ -711,6 +791,7 @@ describe('Channels core manifest', () => {
         scopes: ['global'],
         surfaces: ['plugin'],
         dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
         hostAccess: ['account-storage'],
       },
     ]);
@@ -719,6 +800,10 @@ describe('Channels core manifest', () => {
         id: 'connections-v1',
         source: 'dynamic',
         kind: 'config',
+        // Declared, not defaulted: the author path requires a dynamic Resource
+        // to name its scope, and `global` is the same value the shipped
+        // artifact already carried.
+        scope: 'global',
         contentType: 'application/json',
         maxBytes: 196_608,
         hostAccess: ['account-storage'],
@@ -727,6 +812,10 @@ describe('Channels core manifest', () => {
         id: 'bindings-v1',
         source: 'dynamic',
         kind: 'config',
+        // Declared, not defaulted: the author path requires a dynamic Resource
+        // to name its scope, and `global` is the same value the shipped
+        // artifact already carried.
+        scope: 'global',
         contentType: 'application/json',
         maxBytes: 212_992,
         hostAccess: ['account-storage'],
@@ -735,6 +824,10 @@ describe('Channels core manifest', () => {
         id: 'pairing-v1',
         source: 'dynamic',
         kind: 'config',
+        // Declared, not defaulted: the author path requires a dynamic Resource
+        // to name its scope, and `global` is the same value the shipped
+        // artifact already carried.
+        scope: 'global',
         contentType: 'application/json',
         maxBytes: 524_288,
         hostAccess: ['account-storage'],
@@ -837,8 +930,8 @@ describe('Channels core manifest', () => {
       payload: {
         ...connectionWithCredential.payload,
         credentialRef: {
-          ...connectionWithCredential.payload.credentialRef,
-          service: { ...connectionWithCredential.payload.credentialRef.service, localId: 'telegram bot' },
+          ...credentialRef,
+          service: { ...credentialRef.service, localId: 'telegram bot' },
         },
       },
     })).toBe(false);

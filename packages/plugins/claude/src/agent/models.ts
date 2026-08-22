@@ -1,5 +1,8 @@
+import {
+    type AgentModelConfig,
+    type AgentModelDescriptor,
+} from '@happier-dev/plugin-sdk/agents';
 import { buildClaudeModelOptions } from '@happier-dev/agents/providers/claude-model-options';
-import type { AgentModelConfig, AgentModelDescriptor } from '@happier-dev/plugin-sdk/agents';
 
 import { isClaude1mContextOptInModelId, toClaude1mModelId } from './contextWindow.js';
 import {
@@ -34,9 +37,21 @@ const CLAUDE_STATIC_MODEL_BASE = [
         contextWindowTokens: 1_000_000,
     },
     {
+        id: 'claude-sonnet-5',
+        name: 'Sonnet 5',
+        description: 'Latest balanced Claude model for coding, agentic work, editing, and analysis.',
+        contextWindowTokens: 1_000_000,
+    },
+    {
         id: 'claude-fable-5',
         name: 'Fable 5',
         description: 'Newest highest-capability generally available Claude model for the hardest coding and reasoning tasks.',
+        contextWindowTokens: 1_000_000,
+    },
+    {
+        id: 'claude-mythos-5',
+        name: 'Mythos 5',
+        description: 'Limited-availability Claude model for approved Project Glasswing customers.',
         contextWindowTokens: 1_000_000,
     },
     {
@@ -82,7 +97,7 @@ export const CLAUDE_STATIC_MODELS: readonly AgentModelDescriptor[] = Object.free
     CLAUDE_STATIC_MODEL_BASE.map(withClaudeModelFacts),
 );
 
-export const CLAUDE_AGENT_MODEL_CONFIG = Object.freeze({
+export const CLAUDE_AGENT_MODEL_CONFIG: AgentModelConfig = Object.freeze({
     supportsSelection: true,
     supportsFreeform: true,
     nonAcpApplyScope: 'next_prompt',

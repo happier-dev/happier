@@ -54,6 +54,15 @@ __pycache__/
 /qa-wave.md
 /LEDGER.md
 
+# Bundled plugin daemon runtime, published by
+# apps/cli/scripts/build-owned/generateBundledPluginEntries.ts beside the tracked plugin
+# manifest. It stays outside the compiler-owned `dist/` tree so the TypeScript compiler and
+# the bundled-plugin publisher never own the same output path. The published tree is the
+# daemon bundle, its `.happier-chunks/`, and one staged leaf per session-runner factory at
+# author-declared relative paths, so ignore everything here except the tracked manifest.
+/packages/plugins/*/.happier-plugin/*
+!/packages/plugins/*/.happier-plugin/plugin.json
+
 # Interrupted package copies, probes, and runner snapshots
 **/.tmp.*/
 /packages/*/.dist.build.*/
@@ -61,8 +70,12 @@ __pycache__/
 **/.restore.*/
 **/.backup.*/
 **/.runner-snapshots/
+# `prepareManagedPluginUiBuildOperation` mkdtemps this operation root inside the
+# plugin project and removes it on completion; a killed build leaves it behind.
+**/.happier-plugin-ui-build-*/
 /.happier-first-party-runner-matrix-*/
 /apps/cli/dist.probe.manual/
+/apps/ui/dist-dperf/
 /apps/cli/prime-isolated-home/
 /apps/cli/.g3-real-child-*/
 /apps/cli/.project-permission-result.json

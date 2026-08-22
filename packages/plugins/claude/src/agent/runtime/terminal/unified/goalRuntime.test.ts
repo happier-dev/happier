@@ -1,30 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import { createClaudeUnifiedGoalRuntime } from './goalRuntime.js';
-
-type MetadataUpdateRequest = Readonly<{
-  kind: 'update';
-  handler: (current: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>;
-  reason?: string;
-}>;
 
 function createHarness(options?: Readonly<{
   injectThrows?: boolean;
   injectDelivery?: Readonly<{ kind: 'queued' | 'sent-to-terminal' | 'provider-turn-started' }>;
 }>) {
   const injected: string[] = [];
-  let metadata: Record<string, unknown> = {};
-  const metadataReasons: string[] = [];
+  let workState: SessionWorkStateV1 | null = null;
   const runtime = createClaudeUnifiedGoalRuntime({
     backendId: 'claude',
     agentId: 'claude',
     getCurrentClaudeSessionId: () => 'claude-1',
-    writeMetadataUpdate: async (request: MetadataUpdateRequest) => {
-      metadata = { ...request.handler(metadata) };
-      if (request.reason) metadataReasons.push(request.reason);
-    },
+    publishWorkStateSnapshot: (snapshot) => { workState = snapshot; },
     injectGoalCommand: async (message: string): Promise<void> => {
       if (options?.injectThrows) throw new Error('inject failed');
       injected.push(message);
@@ -32,12 +22,11 @@ function createHarness(options?: Readonly<{
     },
   });
   const readGoalItems = (): ReadonlyArray<Record<string, unknown>> => {
-    const workState = metadata.sessionWorkStateV1 as { items?: unknown } | undefined;
-    const items = Array.isArray(workState?.items) ? workState.items : [];
+    const items: readonly unknown[] = workState?.items ?? [];
     return items.filter((item): item is Record<string, unknown> =>
       Boolean(item) && typeof item === 'object' && (item as { kind?: unknown }).kind === 'goal');
   };
-  return { runtime, injected, readGoalItems, get metadata() { return metadata; }, metadataReasons };
+  return { runtime, injected, readGoalItems };
 }
 
 describe('createClaudeUnifiedGoalRuntime setGoal (G-1/G-2 unsupported options)', () => {

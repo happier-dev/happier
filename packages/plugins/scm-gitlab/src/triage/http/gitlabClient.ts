@@ -19,9 +19,9 @@ import type {
   ConnectedAccountsService,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
-  materializeForgeAuthorization,
-  type ForgeAuthorizationFailureReason,
-} from '@happier-dev/scm-forge-adapter';
+  materializeTriageSourceAuthorizationV1,
+  type TriageSourceAuthorizationFailureReasonV1,
+} from '@happier-dev/triage-sources/runtime';
 
 import type { GitlabConfiguredOrigin } from '../origin.js';
 import type { GitlabFailure } from '../types.js';
@@ -52,7 +52,7 @@ export type GitlabHttpFetcher = (
  */
 export type GitlabConnectedAccounts = Pick<
   ConnectedAccountsService,
-  'listAccounts' | 'materializeListedAccount'
+  'listAccounts' | 'getBinding' | 'materializeListedAccount'
 >;
 
 export type GitlabAuthorizationInput = Readonly<{
@@ -86,11 +86,11 @@ export type GitlabAuthorizationResult =
 
 /**
  * The exact-account materialization is the shared forge rule and lives in
- * `@happier-dev/scm-forge-adapter`; GitLab's published failure vocabulary is not, so the
+ * `@happier-dev/triage-sources`; GitLab's published failure vocabulary is not, so the
  * neutral refusal reason is mapped here and nowhere else.
  */
 const AUTHORIZATION_FAILURES: Readonly<
-  Record<ForgeAuthorizationFailureReason, GitlabFailure>
+  Record<TriageSourceAuthorizationFailureReasonV1, GitlabFailure>
 > = Object.freeze({
   cancelled: {
     class: 'transient',
@@ -117,7 +117,7 @@ const AUTHORIZATION_FAILURES: Readonly<
 export async function authorizeGitlabInvocation(
   input: GitlabAuthorizationInput,
 ): Promise<GitlabAuthorizationResult> {
-  const authorization = await materializeForgeAuthorization({
+  const authorization = await materializeTriageSourceAuthorizationV1({
     connectedAccounts: input.connectedAccounts,
     purpose: input.purpose,
     account: input.account,

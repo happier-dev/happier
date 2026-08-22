@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { OPENCODE_UI_DESCRIPTOR } from './descriptor.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 
 const FORBIDDEN_NO_EXECUTE_KEYS = new Set([
   'projection',
@@ -52,7 +53,6 @@ describe('OPENCODE_UI_DESCRIPTOR', () => {
         behavior: {
           descriptorId: 'opencode.uiBehavior.v1',
           guidance: { includeInSessionGettingStartedCliExamples: true },
-          mcpServers: { supportsDetectedConfigScan: true },
           newSession: {
             transcriptStorageModesByBackendMode: {
               server: ['persisted', 'direct'],
@@ -60,7 +60,6 @@ describe('OPENCODE_UI_DESCRIPTOR', () => {
             },
           },
           externalSessions: {
-            supportsBackgroundFollow: true,
             browse: {
             order: 30,
             sourceOptions: [
@@ -123,5 +122,15 @@ describe('OPENCODE_UI_DESCRIPTOR', () => {
   it('is a data-only no-execute descriptor', () => {
     expect(collectNoExecuteViolations(OPENCODE_UI_DESCRIPTOR)).toEqual([]);
     expect(JSON.parse(JSON.stringify(OPENCODE_UI_DESCRIPTOR))).toEqual(OPENCODE_UI_DESCRIPTOR);
+  });
+
+  it('leaves detected MCP config scan support to the manifest discovery source', () => {
+    // The screen's scan offer is derived from `contributes.mcp.discoverySources`
+    // (matched by its `metadata.agentId`), so restating it here would be a second
+    // owner free to drift. The manifest still declares the source.
+    expect(OPENCODE_UI_DESCRIPTOR.behavior).not.toHaveProperty('mcpServers');
+    expect(PLUGIN_MANIFEST.contributes?.mcp?.discoverySources).toEqual([
+      expect.objectContaining({ id: 'config', metadata: { agentId: 'opencode' } }),
+    ]);
   });
 });

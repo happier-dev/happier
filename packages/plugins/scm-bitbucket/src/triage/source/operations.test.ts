@@ -37,7 +37,7 @@ const REPOSITORY_UUID = '{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9}';
 const VIEWER_UUID = '{9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19}';
 const SOURCE_CONTRIBUTION = Object.freeze({
   pluginId: 'happier.scm.forge.bitbucket',
-  localId: 'bitbucket-cloud',
+  localId: 'bitbucket-forge',
 });
 
 function configurationToken(workspaceUuid: string): string {
@@ -782,5 +782,43 @@ describe('Bitbucket detail projection', () => {
     expect(overview.fields.every((field) => (
       field.id !== 'bitbucket/reviewers' || field.kind === 'pending'
     ))).toBe(true);
+  });
+});
+
+/**
+ * A reader with no connected Bitbucket account has configured nothing. The host
+ * declines to list an unbound purpose, and reporting that decline as a Bitbucket
+ * failure accuses a provider this source never contacted.
+ */
+describe('Bitbucket listInstances with no connected account', () => {
+  const NOT_SELECTED = Object.assign(new Error('resource not selected'), {
+    code: 'plugin_host_access_resource_not_selected',
+  });
+
+  it('reports an unbound purpose as a complete empty candidate set', async () => {
+    const { connectedAccounts, bindingReads } = createConnectedAccountsStub({
+      accounts: [],
+      listError: NOT_SELECTED,
+      binding: null,
+    });
+    const http = createHttpStub({});
+
+    const result = await listBitbucketSourceInstances(createRuntime(connectedAccounts, http));
+
+    expect(TriageListInstancesResultV1Schema.parse(result)).toEqual(result);
+    expect(result).toEqual({ kind: 'complete', candidates: [], failures: [] });
+    expect(bindingReads).toEqual([BITBUCKET_CONNECTED_ACCOUNT_PURPOSE]);
+  });
+
+  it('still fails a refused listing while the purpose is bound', async () => {
+    const { connectedAccounts } = createConnectedAccountsStub({
+      accounts: [],
+      listError: NOT_SELECTED,
+    });
+    const http = createHttpStub({});
+
+    const result = await listBitbucketSourceInstances(createRuntime(connectedAccounts, http));
+
+    expect(result.kind).toBe('failed');
   });
 });

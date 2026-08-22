@@ -216,7 +216,7 @@
                     "byServerIdSettingId": "opencodeServerBaseUrlByServerIdV1",
                     "constants": {},
                     "field": "baseUrl",
-                    "kind": "agentSetting",
+                    "kind": "agentSettingOverride",
                     "normalization": "httpOrigin",
                     "settingId": "opencodeServerBaseUrl"
                   }
@@ -500,7 +500,7 @@
     "happier": "^0.0.0"
   },
   "entrypoints": {
-    "daemon": "./dist/index.js"
+    "daemon": "./.happier-plugin/daemon.js"
   },
   "hostAccess": {
     "optional": [],

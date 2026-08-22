@@ -1,6 +1,7 @@
 import type { ComposerAttachmentViewV1 } from '@happier-dev/plugin-sdk/ui';
 import { describe, expect, it } from 'vitest';
 
+import { foldTriageSearchValue } from '../projection/entrySearch.js';
 import { selectTriageAttachedEntries } from './attachedEntries.js';
 import { deriveTriageComposerEntryAttachmentKey } from './attachmentValue.js';
 import {
@@ -28,10 +29,15 @@ function row(input: Readonly<{
     instanceId?: string | null;
 }>): TriagePickerCorpusRowV1 {
     const source = input.source ?? SOURCE;
+    const scopeLabel = input.scopeLabel ?? 'acme/web';
     return {
         entryRef: entryRef(input.entryId, source),
         title: input.title,
-        scopeLabel: input.scopeLabel ?? 'acme/web',
+        scopeLabel,
+        // Folded by the one search owner, exactly as `pickerFacts` projects it
+        // from the real observations. `projection/entrySearch.test.ts` proves the
+        // full field set; these synthetic rows carry only what they display.
+        search: [input.title, scopeLabel].map(foldTriageSearchValue),
         instance: input.instanceId === null
             ? { kind: 'none', reason: 'noPresentObservation' }
             : { kind: 'selected', sourceInstanceId: input.instanceId ?? INSTANCE_ID, reason: 'onlyPresent' },
@@ -46,6 +52,7 @@ function facts(overrides: Partial<TriagePickerCorpusFactsV1> = {}): TriagePicker
         freshness: { kind: 'current' },
         refreshRunning: false,
         health: [],
+        refreshBlocked: null,
         nowMs: NOW_MS,
         ...overrides,
     };
@@ -239,6 +246,31 @@ describe('buildTriagePickerView — corpus result state', () => {
             .toEqual({ kind: 'empty' });
     });
 
+    it('never claims exhaustion for a walk that has produced no row yet', () => {
+        // Freshness and coverage are independent facts: a walk can be current
+        // and still be walking. Reading "no rows" from one as "there is nothing
+        // to attach" is the same false exhaustion the query arm already refuses,
+        // and it hides the fact that the reader should keep waiting.
+        const view = buildTriagePickerView({
+            facts: facts({ coverage: 'progressive' }),
+            query: '',
+            attached: [],
+        });
+
+        expect(view.state).toEqual({ kind: 'boundedWindow' });
+        expect(view.coverage).toBe('progressive');
+        // A reader who typed nothing has no match to be waiting for. The
+        // contract is that the two answers differ, asserted against this same
+        // builder's answer for the narrowed window rather than against copy.
+        const narrowed = buildTriagePickerView({
+            facts: facts({ coverage: 'progressive' }),
+            query: 'nothing matches this',
+            attached: [],
+        });
+        expect(narrowed.state).toEqual({ kind: 'noMatchYet' });
+        expect(view.state).not.toEqual(narrowed.state);
+    });
+
     it('separates a query with no match yet from one the completed walk answered', () => {
         const progressive = buildTriagePickerView({
             facts: facts({ rows: ROWS, coverage: 'progressive' }),
@@ -289,64 +321,123 @@ describe('buildTriagePickerView — corpus result state', () => {
         expect(requestTriagePickerRefresh(view)).toEqual({ status: 'refused', reason: 'running' });
     });
 
-    it('names an unavailable source when no cached row can answer', () => {
-        const health = [{
-            sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_ID },
-            displayName: 'acme on Forge',
+    it('names an unavailable source only when every configured connection failed', () => {
+        const failed = (sourceInstanceId: string, displayName: string) => ({
+            sourceInstance: { source: SOURCE, sourceInstanceId },
+            displayName,
             failure: { class: 'permission', code: 'forbidden' },
-        }] as const;
+        } as const);
+        const every = [failed(INSTANCE_ID, 'acme on Forge'), failed(OTHER_INSTANCE_ID, 'widgets on Forge')] as const;
 
         const view = buildTriagePickerView({
-            facts: facts({ rows: [], health: [...health] }),
+            facts: facts({ rows: [], health: [...every] }),
             query: '',
             attached: [],
         });
 
         expect(view.state).toEqual({ kind: 'sourcesUnavailable' });
-        expect(view.health).toEqual(health);
+        expect(view.health).toEqual(every);
     });
 
-    it('shows the exact retry time immediately and keeps Refresh disabled until it passes', () => {
-        const rateLimited = (retryNotBeforeMs: number) => facts({
+    it('does not claim no source could be read while other configured connections are still walking', () => {
+        // `health` is the FAILED SUBSET, never the whole set. Reading its mere
+        // presence as the headline replaces the picker with "No source could be
+        // read" while two of three connections are walking normally — and the
+        // reader loses the search field, the rows and Refresh with it. The
+        // warning banner beside the rows already names the broken one.
+        const health = [{
+            sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_ID },
+            displayName: 'acme on Forge',
+            failure: { class: 'permission', code: 'forbidden' },
+        }] as const;
+        const partial = facts({ configuredSourceInstanceCount: 3, rows: [], health: [...health] });
+
+        // The walk is still running, so the answer is the same one this builder
+        // gives for that window with nothing broken at all.
+        const walking = buildTriagePickerView({
+            facts: { ...partial, coverage: 'progressive' },
+            query: '',
+            attached: [],
+        });
+        expect(walking.state).toEqual(buildTriagePickerView({
+            facts: facts({ configuredSourceInstanceCount: 3, coverage: 'progressive' }),
+            query: '',
+            attached: [],
+        }).state);
+        expect(walking.health).toEqual(health);
+
+        // And a completed walk answers with its own honest empty, still naming
+        // the connection that failed beside it.
+        const complete = buildTriagePickerView({ facts: partial, query: '', attached: [] });
+        expect(complete.state).toEqual({ kind: 'empty' });
+        expect(complete.health).toEqual(health);
+    });
+
+    it('states the coordinator\'s wait immediately and keeps Refresh disabled until it passes', () => {
+        const waiting = (nextEligibleAtMs: number) => facts({
             rows: ROWS,
-            health: [{
-                sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_ID },
-                displayName: 'acme on Forge',
-                failure: { class: 'rateLimit', code: 'secondary-limit', retryNotBeforeMs },
-            }],
+            refreshBlocked: { reason: 'sourceRetryDeadline', nextEligibleAtMs },
         });
 
-        const blocked = buildTriagePickerView({ facts: rateLimited(NOW_MS + 45_000), query: '', attached: [] });
-        const elapsed = buildTriagePickerView({ facts: rateLimited(NOW_MS - 1), query: '', attached: [] });
+        const blocked = buildTriagePickerView({ facts: waiting(NOW_MS + 45_000), query: '', attached: [] });
+        const elapsed = buildTriagePickerView({ facts: waiting(NOW_MS - 1), query: '', attached: [] });
 
-        expect(blocked.refresh).toEqual({ kind: 'blockedUntil', retryNotBeforeMs: NOW_MS + 45_000 });
+        expect(blocked.refresh).toEqual({
+            kind: 'blockedUntil',
+            reason: 'sourceRetryDeadline',
+            nextEligibleAtMs: NOW_MS + 45_000,
+        });
         expect(blocked.rows).toHaveLength(3);
-        expect(requestTriagePickerRefresh(blocked)).toEqual({ status: 'refused', reason: 'rateLimited' });
+        expect(requestTriagePickerRefresh(blocked)).toEqual({ status: 'refused', reason: 'notYetEligible' });
         expect(elapsed.refresh).toEqual({ kind: 'available' });
         expect(requestTriagePickerRefresh(elapsed)).toEqual({ status: 'invoke' });
     });
 
-    it('reports the furthest retry deadline when several sources are limited', () => {
+    /**
+     * The discriminating case for the split this model used to hold: an
+     * aggregate transient backoff carries no rate-limit failure and no provider
+     * deadline, so a local `class === 'rateLimit'` scan reports an available
+     * Refresh while the coordinator refuses it — a press that does nothing and
+     * says nothing.
+     */
+    it('refuses a Refresh the coordinator is blocking for a reason no failure states', () => {
         const view = buildTriagePickerView({
             facts: facts({
                 rows: ROWS,
-                health: [
-                    {
-                        sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_ID },
-                        displayName: 'acme on Forge',
-                        failure: { class: 'rateLimit', code: 'secondary-limit', retryNotBeforeMs: NOW_MS + 10_000 },
-                    },
-                    {
-                        sourceInstance: { source: OTHER_SOURCE, sourceInstanceId: OTHER_INSTANCE_ID },
-                        displayName: 'acme on Tracker',
-                        failure: { class: 'rateLimit', code: 'quota', retryNotBeforeMs: NOW_MS + 60_000 },
-                    },
-                ],
+                health: [{
+                    sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_ID },
+                    displayName: 'acme on Forge',
+                    failure: { class: 'transient', code: 'bad-gateway' },
+                }],
+                refreshBlocked: { reason: 'failureBackoff', nextEligibleAtMs: NOW_MS + 5_000 },
             }),
             query: '',
             attached: [],
         });
 
-        expect(view.refresh).toEqual({ kind: 'blockedUntil', retryNotBeforeMs: NOW_MS + 60_000 });
+        expect(view.refresh).toEqual({
+            kind: 'blockedUntil',
+            reason: 'failureBackoff',
+            nextEligibleAtMs: NOW_MS + 5_000,
+        });
+        expect(requestTriagePickerRefresh(view)).toEqual({ status: 'refused', reason: 'notYetEligible' });
+    });
+
+    it('offers Refresh while a failed source states no deadline of its own', () => {
+        const view = buildTriagePickerView({
+            facts: facts({
+                rows: ROWS,
+                health: [{
+                    sourceInstance: { source: OTHER_SOURCE, sourceInstanceId: OTHER_INSTANCE_ID },
+                    displayName: 'acme on Tracker',
+                    failure: { class: 'permission', code: 'forbidden' },
+                }],
+            }),
+            query: '',
+            attached: [],
+        });
+
+        expect(view.refresh).toEqual({ kind: 'available' });
+        expect(requestTriagePickerRefresh(view)).toEqual({ status: 'invoke' });
     });
 });

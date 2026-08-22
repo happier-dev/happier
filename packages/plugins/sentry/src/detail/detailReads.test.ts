@@ -145,7 +145,34 @@ describe('Sentry issue events page', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.rows).toHaveLength(1);
-    expect(result.value.nextCursor).toBe('0:100:0');
+    expect(result.value.nextPage).toEqual({ kind: 'next', cursor: '0:100:0' });
+  });
+
+  it('reports an ABSENT Link header as a walk that stopped short, not as a finished one', async () => {
+    // The failure this restores: an absent header, a malformed cursor and a
+    // non-advancing cursor all used to collapse into "no next cursor", so a
+    // truncated occurrence list rendered exactly like a complete one while the
+    // scan plane kept the honest vocabulary for the same three situations.
+    const harness = client(respond(
+      [{ eventID: 'e1', title: 'boom', dateCreated: '2026-01-02T00:00:00.000Z' }],
+      {},
+    ));
+    const result = await readSentryIssueEventsPage(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      limit: 100,
+      cursor: null,
+      nowMs: 0,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.nextPage).toEqual({
+      kind: 'stoppedShort',
+      reason: 'paginationHeaderAbsent',
+    });
+    // The rows it did read survive: stopping short is not a failure.
+    expect(result.value.rows).toHaveLength(1);
   });
 
   it('does not follow a next link that leaves this exact route', async () => {
@@ -161,7 +188,12 @@ describe('Sentry issue events page', () => {
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.nextCursor).toBeNull();
+    // A next link pointing somewhere else is a page this build will not follow — which
+    // is a walk that stopped SHORT, not a collection that ended.
+    expect(result.value.nextPage).toEqual({
+      kind: 'stoppedShort',
+      reason: 'paginationCursorMalformed',
+    });
   });
 
   it('ends the walk when the provider says the next page has no results', async () => {
@@ -175,7 +207,9 @@ describe('Sentry issue events page', () => {
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.nextCursor).toBeNull();
+    // The provider itself stated the collection ended: this is `end`, and it must stay
+    // distinguishable from a walk that stopped short.
+    expect(result.value.nextPage).toEqual({ kind: 'end' });
     // A provider-stated empty page is a real page, not a failure.
     expect(result.value.rows).toEqual([]);
   });
@@ -232,7 +266,7 @@ describe('Sentry tag values page', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.rows[0]?.value).toBe('Chrome');
-    expect(result.value.nextCursor).toBe('0:100:0');
+    expect(result.value.nextPage).toEqual({ kind: 'next', cursor: '0:100:0' });
   });
 
   it('refuses a tag key it could not address as one path segment', async () => {

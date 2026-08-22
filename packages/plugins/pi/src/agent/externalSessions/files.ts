@@ -1,4 +1,4 @@
-import { isAbsolute, relative, sep } from 'node:path';
+import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 
 export type PiExternalSessionFileState = Readonly<{
   dev: number | bigint;
@@ -31,11 +31,5 @@ export function isPiSessionFileInside(
   parentPath: string,
   childPath: string,
 ): boolean {
-  const childRelative = relative(parentPath, childPath);
-  return childRelative === ''
-    || (
-      !isAbsolute(childRelative)
-      && childRelative !== '..'
-      && !childRelative.startsWith(`..${sep}`)
-    );
+  return isCanonicalAbsolutePathInsideRoot(parentPath, childPath);
 }

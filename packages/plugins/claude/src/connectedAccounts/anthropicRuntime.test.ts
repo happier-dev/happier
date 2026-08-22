@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/runtime';
+import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { activate } from '../activate.js';
 
@@ -27,7 +27,7 @@ describe('Anthropic API-key Connected Account', () => {
         registerExternalSessionObservation() { return { dispose() {} }; },
       },
       hooks: { register() { return { dispose() {} }; } },
-      mcp: { registerDiscoveryProvider() { return { dispose() {} }; } },
+      mcp: { registerDiscoverySource() { return { dispose() {} }; } },
       connectedAccounts: {
         register(id: string, runtime: PluginConnectedAccountRuntime) {
           registrations.push({ id, runtime });
@@ -73,7 +73,7 @@ describe('Anthropic API-key Connected Account', () => {
         registerExternalSessionObservation() { return { dispose() {} }; },
       },
       hooks: { register() { return { dispose() {} }; } },
-      mcp: { registerDiscoveryProvider() { return { dispose() {} }; } },
+      mcp: { registerDiscoverySource() { return { dispose() {} }; } },
       connectedAccounts: {
         register(id: string, runtime: PluginConnectedAccountRuntime) {
           registrations.push({ id, runtime });

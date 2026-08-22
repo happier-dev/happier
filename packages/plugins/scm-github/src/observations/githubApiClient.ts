@@ -3,7 +3,13 @@ import type {
   ConnectedAccountMaterialization,
   ConnectedAccountRef,
 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { admitForgeRequestUrl, readForgeAuthorization } from '@happier-dev/scm-forge-adapter';
+import {
+  admitForgeRequestUrl,
+  materializeTriageSourceAuthorizationV1,
+  readTriageSourceAuthorizationV1,
+  type TriageSourceAuthorizationFailureReasonV1,
+} from '@happier-dev/triage-sources/runtime';
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
   GITHUB_API_ORIGIN,
@@ -54,11 +60,6 @@ function assertGithubApiUrl(value: string): void {
   }
 }
 
-function readGithubResponseHeader(headers: Readonly<Record<string, string>>, name: string): string | null {
-  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name);
-  return entry?.[1]?.trim() || null;
-}
-
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -99,24 +100,42 @@ function assertGithubCredentialRef(
   }
 }
 
-async function createGithubApiClientFromMaterialization(
+/**
+ * How the shared owner's four neutral refusal reasons are worded here.
+ *
+ * GitHub's vertical reports an unusable credential by throwing rather than by returning a
+ * typed outcome, so the mapping is onto `PluginError` codes that `triage/errors.ts`
+ * already classifies: a host refusal is an `authentication` problem the user fixes by
+ * reconnecting, and a cancellation is transient. The host's own rejection is never echoed
+ * — it can carry the very material it failed to deliver, and its code is not this source's
+ * published failure vocabulary.
+ */
+const LISTED_ACCOUNT_AUTHORIZATION_REFUSALS: Readonly<Record<
+  TriageSourceAuthorizationFailureReasonV1,
+  Readonly<{ code: string; message: string }>
+>> = Object.freeze({
+  cancelled: {
+    code: 'github_request_cancelled',
+    message: 'The GitHub authorization was cancelled before it completed.',
+  },
+  materializationFailed: {
+    code: 'github_credential_unavailable',
+    message: 'The selected GitHub Connected Account could not materialize API authorization.',
+  },
+  unsupportedMaterialization: {
+    code: 'github_credential_unavailable',
+    message: 'GitHub requires HTTP-header materialization.',
+  },
+  authorizationHeaderMissing: {
+    code: 'github_credential_unavailable',
+    message: 'The selected GitHub Connected Account supplied no authorization header.',
+  },
+});
+
+function createGithubApiClientWithAuthorization(
   context: PluginInvocationContext,
-  materialized: ConnectedAccountMaterialization,
-): Promise<GithubApiClientV1> {
-  context.signal.throwIfAborted();
-  // Which materializations are admissible is the shared forge rule, applied identically to
-  // GitHub's two account paths. What GitHub owns is the refusal: this vertical reports an
-  // unusable credential by throwing, not by returning a typed outcome.
-  const authorization = readForgeAuthorization(materialized);
-  if (!authorization.ok) {
-    throw new PluginError({
-      code: 'github_credential_unavailable',
-      message: 'The selected GitHub Connected Account could not materialize API authorization.',
-    });
-  }
-
-  const authorizationHeader: string = authorization.authorization;
-
+  authorizationHeader: string,
+): GithubApiClientV1 {
   async function send(input: Readonly<{
     url: string;
     method?: 'GET' | 'POST';
@@ -156,6 +175,21 @@ async function createGithubApiClientFromMaterialization(
   });
 }
 
+async function createGithubApiClientFromMaterialization(
+  context: PluginInvocationContext,
+  materialized: ConnectedAccountMaterialization,
+): Promise<GithubApiClientV1> {
+  context.signal.throwIfAborted();
+  // Which materializations are admissible is the shared forge rule, applied identically to
+  // GitHub's two account paths. What GitHub owns is the refusal: this vertical reports an
+  // unusable credential by throwing, not by returning a typed outcome.
+  const authorization = readTriageSourceAuthorizationV1(materialized);
+  if (!authorization.ok) {
+    throw new PluginError(LISTED_ACCOUNT_AUTHORIZATION_REFUSALS[authorization.reason]);
+  }
+  return createGithubApiClientWithAuthorization(context, authorization.authorization);
+}
+
 /**
  * Creates a client for one exact Action-owned account. The connected-account
  * owner compares `expectedAccount` with its exact current target, so a stored
@@ -187,19 +221,22 @@ export async function createGithubListedAccountApiClient(
   credentialRef: ConnectedAccountRef,
 ): Promise<GithubApiClientV1> {
   assertGithubCredentialRef(context, credentialRef);
-  const materialized = await context.services.connectedAccounts.materializeListedAccount(
-    {
-      purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
-      account: credentialRef,
-      materialization: {
-        kind: 'httpHeaders',
-        origin: GITHUB_API_ORIGIN,
-        headerNames: ['authorization'],
-      },
-    },
-    { signal: context.signal },
-  );
-  return createGithubApiClientFromMaterialization(context, materialized);
+  // The exact-bound-account materialization request is the shared forge rule, not a
+  // GitHub one: building it here made this the fourth copy of one request shape, and the
+  // rejection then reached `classifyGithubTransportFailure` unclassified — so a revoked
+  // account was reported as `unsupportedContract` where the other three forges report
+  // `authentication`.
+  const authorization = await materializeTriageSourceAuthorizationV1({
+    connectedAccounts: context.services.connectedAccounts,
+    purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+    account: credentialRef,
+    origin: GITHUB_API_ORIGIN,
+    signal: context.signal,
+  });
+  if (!authorization.ok) {
+    throw new PluginError(LISTED_ACCOUNT_AUTHORIZATION_REFUSALS[authorization.reason]);
+  }
+  return createGithubApiClientWithAuthorization(context, authorization.authorization);
 }
 
 export function decodeGithubJsonResponse(response: GithubApiResponseV1): unknown {
@@ -217,12 +254,12 @@ export function readGithubRetryAfterMs(
   headers: Readonly<Record<string, string>>,
   nowMs = Date.now(),
 ): number | null {
-  const retryAfter = readGithubResponseHeader(headers, 'retry-after');
+  const retryAfter = readTriageResponseHeaderV1(headers, 'retry-after');
   if (retryAfter !== null && /^\d+$/u.test(retryAfter)) {
     const seconds = Number(retryAfter);
     if (Number.isSafeInteger(seconds) && seconds >= 0) return seconds * 1_000;
   }
-  const reset = readGithubResponseHeader(headers, 'x-ratelimit-reset');
+  const reset = readTriageResponseHeaderV1(headers, 'x-ratelimit-reset');
   if (reset !== null && /^\d+$/u.test(reset)) {
     const resetAtMs = Number(reset) * 1_000;
     if (Number.isSafeInteger(resetAtMs)) return Math.max(0, resetAtMs - nowMs);
@@ -232,7 +269,7 @@ export function readGithubRetryAfterMs(
 
 export function isGithubRateLimited(response: GithubApiResponseV1): boolean {
   if (response.status !== 403 && response.status !== 429) return false;
-  const remaining = readGithubResponseHeader(response.headers, 'x-ratelimit-remaining');
+  const remaining = readTriageResponseHeaderV1(response.headers, 'x-ratelimit-remaining');
   return response.status === 429
     || remaining === '0'
     || isGithubSecondaryRateLimitResponse(response);

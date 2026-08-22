@@ -8,6 +8,7 @@ import {
   DISCORD_BOT_CREDENTIAL_PURPOSE,
   DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
 } from './discordPluginConstants.js';
+import { DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID } from './discordAutomationEvent.js';
 import { DISCORD_BOT_CONNECTED_ACCOUNT_ID, PLUGIN_MANIFEST } from './manifest.js';
 
 const DISCORD_CHANNEL_ACTION_IDS = Object.freeze({
@@ -96,6 +97,7 @@ describe('Discord Channel plugin activation', () => {
       }]);
       expect(testkit.registrations()).toEqual([
         { family: 'actions', localId: DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID },
+        { family: 'actions', localId: DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID },
         ...Object.values(DISCORD_CHANNEL_ACTION_IDS).map((localId) => ({ family: 'actions' as const, localId })),
         { family: 'backgroundServices', localId: 'gateway-supervisor' },
         { family: 'connectedAccountDescriptors', localId: DISCORD_BOT_CONNECTED_ACCOUNT_ID },
@@ -137,6 +139,7 @@ describe('Discord Channel plugin activation', () => {
     try {
       expect(testkit.registrations()).toEqual([
         { family: 'actions', localId: DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID },
+        { family: 'actions', localId: DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.setup },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.connectionTest },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.endpointResolve },

@@ -191,7 +191,7 @@ describe('Sentry plugin manifest', () => {
       description: 'Declaration-time check of the union-input purpose binding.',
       engines: { happier: '^0.0.0' },
       runtime: { apiVersion: 1 },
-      entrypoints: { daemon: './dist/index.js' },
+      entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: { required: [], optional: [] },
       actions: {
         [SENTRY_ACTION_IDS.scan]: {
@@ -199,6 +199,7 @@ describe('Sentry plugin manifest', () => {
           description: 'Reads one page of the configured Sentry organization issue walk.',
           scopes: ['global'],
           surfaces: sources.operations.scan.declaration.surfaces,
+          execution: { target: 'daemon' },
           dangerLevel: sources.operations.scan.declaration.dangerLevel,
           inputSchema: sources.operations.scan.declaration.input.schema.jsonSchema,
           resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,

@@ -224,6 +224,7 @@ describe('activate', () => {
       title: 'Start a new GitHub repository Event baseline',
       surfaces: ['plugin'],
       dangerLevel: 'writesLocal',
+      execution: { target: 'daemon' },
       confirmation: {
         title: {
           key: 'github.automation.historyGapReset.confirmation.title',

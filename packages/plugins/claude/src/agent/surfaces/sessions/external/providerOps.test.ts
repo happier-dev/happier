@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentExternalSessionsContribution } from '@happier-dev/plugin-sdk/experimental/sessions';
+import type { AgentExternalSessionsContribution } from '@happier-dev/plugin-sdk/sessions/external';
 
 import * as providerOps from './contribution.js';
 
@@ -60,6 +60,34 @@ describe('Claude native External Sessions contribution', () => {
         await Promise.all(roots.splice(0).map(async (root) => {
             await rm(root, { recursive: true, force: true });
         }));
+    });
+
+    it('projects resolved sources onto the bounded Agent contribution DTO', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-source-projection-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const contribution = createClaudeExternalSessionsContribution({
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
+        });
+
+        expect(await contribution.resolveSource({
+            ...invocation(),
+            source: {
+                kind: 'claudeConfig',
+                configDir,
+                projectId: 'project-a',
+                resolvedRoot: '/private/host-owned-root',
+            },
+        })).toEqual({
+            ok: true,
+            value: {
+                source: {
+                    kind: 'claudeConfig',
+                    configDir: expect.any(String),
+                    projectId: 'project-a',
+                },
+            },
+        });
     });
 
     it('discovers, project-qualifies, links, and bounded-reads a Claude JSONL session', async () => {
@@ -148,6 +176,7 @@ describe('Claude native External Sessions contribution', () => {
                 items: expect.arrayContaining([
                     expect.objectContaining({
                         messageRole: 'user',
+                        userProjection: 'source_fact',
                         raw: {
                             role: 'user',
                             content: { type: 'text', text: 'find this project B title' },
@@ -206,6 +235,383 @@ describe('Claude native External Sessions contribution', () => {
             },
         });
         expect(JSON.stringify(after)).toContain('live project B answer');
+    });
+
+    it('pages a Claude transcript forward in chronological order for hosted catch-up', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-forward-page-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const remoteSessionId = 'forward-session';
+        await createTranscript({
+            configDir,
+            projectId: 'forward-project',
+            remoteSessionId,
+            title: 'first prompt',
+        });
+        const contribution = createClaudeExternalSessionsContribution({
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
+        });
+        const source = {
+            kind: 'claudeConfig' as const,
+            configDir,
+            projectId: 'forward-project',
+        };
+
+        const first = await contribution.pageTranscript({
+            ...invocation(),
+            source,
+            remoteSessionId,
+            direction: 'newer',
+            maxItems: 1,
+        });
+        expect(first).toMatchObject({
+            ok: true,
+            value: {
+                items: [expect.objectContaining({
+                    localId: 'claude-jsonl:main:user:forward-project-user',
+                })],
+                nextCursor: expect.any(String),
+                tailCursor: expect.any(String),
+                hasMore: true,
+            },
+        });
+        if (!first.ok || !first.value.nextCursor) return;
+
+        const second = await contribution.pageTranscript({
+            ...invocation(),
+            source,
+            remoteSessionId,
+            direction: 'newer',
+            cursor: first.value.nextCursor,
+            maxItems: 1,
+        });
+        expect(second).toMatchObject({
+            ok: true,
+            value: {
+                items: [expect.objectContaining({
+                    localId: 'claude-jsonl:main:assistant:forward-project-assistant',
+                })],
+                nextCursor: null,
+                tailCursor: expect.any(String),
+                hasMore: false,
+            },
+        });
+    });
+
+    it('projects each supported Claude content semantic or an explicit unsupported marker before advancing the transcript cursor', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-semantic-transcript-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const projectId = 'semantic-project';
+        const remoteSessionId = 'semantic-session';
+        const transcriptDir = join(configDir, 'projects', projectId);
+        await mkdir(transcriptDir, { recursive: true });
+        await writeFile(join(transcriptDir, `${remoteSessionId}.jsonl`), [
+            JSON.stringify({
+                type: 'assistant',
+                uuid: 'tool-only',
+                timestamp: '2026-08-16T00:00:00.000Z',
+                message: {
+                    content: [{ type: 'tool_use', id: 'call-only', name: 'Read', input: { path: 'README.md' } }],
+                },
+            }),
+            JSON.stringify({
+                type: 'user',
+                uuid: 'tool-result-only',
+                timestamp: '2026-08-16T00:00:01.000Z',
+                message: {
+                    content: [{ type: 'tool_result', tool_use_id: 'call-only', content: 'README contents' }],
+                },
+            }),
+            JSON.stringify({
+                type: 'user',
+                uuid: 'image-only',
+                timestamp: '2026-08-16T00:00:02.000Z',
+                message: {
+                    content: [{
+                        type: 'image',
+                        source: { type: 'base64', media_type: 'image/png', data: 'private-image-bytes' },
+                    }],
+                },
+            }),
+            JSON.stringify({
+                type: 'assistant',
+                uuid: 'malformed-text',
+                timestamp: '2026-08-16T00:00:02.500Z',
+                message: { content: [{ type: 'text' }] },
+            }),
+            JSON.stringify({
+                type: 'assistant',
+                uuid: 'mixed',
+                timestamp: '2026-08-16T00:00:03.000Z',
+                message: {
+                    content: [
+                        { type: 'thinking', thinking: 'considering the file' },
+                        { type: 'text', text: 'I will inspect it.' },
+                        { type: 'tool_use', id: 'call-mixed', name: 'Bash', input: { command: 'pwd' } },
+                    ],
+                },
+            }),
+            '',
+        ].join('\n'), 'utf8');
+
+        const contribution = createClaudeExternalSessionsContribution({
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
+        });
+        const page = await contribution.pageTranscript({
+            ...invocation(),
+            source: { kind: 'claudeConfig', configDir, projectId },
+            remoteSessionId,
+            direction: 'newer',
+            maxItems: 10,
+        });
+
+        expect(page).toMatchObject({
+            ok: true,
+            value: {
+                hasMore: false,
+                nextCursor: null,
+                tailCursor: expect.any(String),
+            },
+        });
+        if (!page.ok) return;
+
+        expect(page.value.items.map((item) => ({
+            messageRole: item.messageRole,
+            raw: item.raw,
+        }))).toEqual([
+            {
+                messageRole: 'event',
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        agentId: 'claude',
+                        data: {
+                            type: 'tool-call',
+                            callId: 'call-only',
+                            name: 'Read',
+                            input: { path: 'README.md' },
+                            id: expect.any(String),
+                        },
+                    },
+                },
+            },
+            {
+                messageRole: 'event',
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        agentId: 'claude',
+                        data: {
+                            type: 'tool-result',
+                            callId: 'call-only',
+                            output: 'README contents',
+                            id: expect.any(String),
+                        },
+                    },
+                },
+            },
+            {
+                messageRole: 'event',
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        agentId: 'claude',
+                        data: {
+                            type: 'message',
+                            message: 'Claude emitted an unsupported image content block.',
+                        },
+                    },
+                },
+            },
+            {
+                messageRole: 'event',
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        agentId: 'claude',
+                        data: {
+                            type: 'message',
+                            message: 'Claude emitted an unsupported content block.',
+                        },
+                    },
+                },
+            },
+            {
+                messageRole: 'event',
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        agentId: 'claude',
+                        data: { type: 'thinking', text: 'considering the file' },
+                    },
+                },
+            },
+            {
+                messageRole: 'agent',
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        agentId: 'claude',
+                        data: { type: 'message', message: 'I will inspect it.' },
+                    },
+                },
+            },
+            {
+                messageRole: 'event',
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'acp',
+                        agentId: 'claude',
+                        data: {
+                            type: 'tool-call',
+                            callId: 'call-mixed',
+                            name: 'Bash',
+                            input: { command: 'pwd' },
+                            id: expect.any(String),
+                        },
+                    },
+                },
+            },
+        ]);
+        expect(new Set(page.value.items.map((item) => item.localId)).size).toBe(page.value.items.length);
+        expect(JSON.stringify(page.value)).not.toContain('private-image-bytes');
+    });
+
+    it('emits an explicit marker instead of advancing past a mixed Claude row that exceeds the item limit', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-semantic-item-limit-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const projectId = 'item-limit-project';
+        const remoteSessionId = 'item-limit-session';
+        const transcriptDir = join(configDir, 'projects', projectId);
+        await mkdir(transcriptDir, { recursive: true });
+        await writeFile(join(transcriptDir, `${remoteSessionId}.jsonl`), [
+            JSON.stringify({
+                type: 'assistant',
+                uuid: 'mixed-over-limit',
+                timestamp: '2026-08-16T00:00:00.000Z',
+                message: {
+                    content: [
+                        { type: 'thinking', thinking: 'inspect first' },
+                        { type: 'text', text: 'Inspecting now.' },
+                        { type: 'tool_use', id: 'call-over-limit', name: 'Read', input: { path: 'README.md' } },
+                    ],
+                },
+            }),
+            '',
+        ].join('\n'), 'utf8');
+
+        const contribution = createClaudeExternalSessionsContribution({
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
+        });
+        await expect(contribution.pageTranscript({
+            ...invocation(),
+            source: { kind: 'claudeConfig', configDir, projectId },
+            remoteSessionId,
+            direction: 'newer',
+            maxItems: 1,
+        })).resolves.toMatchObject({
+            ok: true,
+            value: {
+                items: [{
+                    messageRole: 'event',
+                    raw: {
+                        role: 'agent',
+                        content: {
+                            type: 'acp',
+                            agentId: 'claude',
+                            data: {
+                                type: 'message',
+                                message: 'Claude emitted an unsupported content block.',
+                            },
+                        },
+                    },
+                }],
+                nextCursor: null,
+                hasMore: false,
+                tailCursor: expect.any(String),
+            },
+        });
+    });
+
+    it('advances a forward cursor with an explicit marker when a mixed Claude row exceeds the item limit', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-semantic-follow-item-limit-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const projectId = 'follow-item-limit-project';
+        const remoteSessionId = 'follow-item-limit-session';
+        const transcriptPath = await createTranscript({
+            configDir,
+            projectId,
+            remoteSessionId,
+            title: 'existing prompt',
+        });
+        const contribution = createClaudeExternalSessionsContribution({
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
+        });
+        const source = { kind: 'claudeConfig' as const, configDir, projectId };
+        const tail = await contribution.pageTranscript({
+            ...invocation(),
+            source,
+            remoteSessionId,
+            direction: 'older',
+            maxItems: 10,
+        });
+        expect(tail).toMatchObject({
+            ok: true,
+            value: { tailCursor: expect.any(String) },
+        });
+        if (!tail.ok || !tail.value.tailCursor) return;
+
+        await appendFile(transcriptPath, `${JSON.stringify({
+            type: 'assistant',
+            uuid: 'mixed-forward-over-limit',
+            timestamp: '2026-08-16T00:00:00.000Z',
+            message: {
+                content: [
+                    { type: 'thinking', thinking: 'inspect first' },
+                    { type: 'text', text: 'Inspecting now.' },
+                    { type: 'tool_use', id: 'call-forward-over-limit', name: 'Read', input: { path: 'README.md' } },
+                ],
+            },
+        })}\n`, 'utf8');
+
+        await expect(contribution.readAfterTranscript({
+            ...invocation(),
+            source,
+            remoteSessionId,
+            cursor: tail.value.tailCursor,
+            maxItems: 1,
+        })).resolves.toMatchObject({
+            ok: true,
+            value: {
+                outcome: 'advanced',
+                items: [{
+                    messageRole: 'event',
+                    raw: {
+                        role: 'agent',
+                        content: {
+                            type: 'acp',
+                            agentId: 'claude',
+                            data: {
+                                type: 'message',
+                                message: 'Claude emitted an unsupported content block.',
+                            },
+                        },
+                    },
+                }],
+                nextCursor: expect.any(String),
+                boundary: expect.any(String),
+            },
+        });
     });
 
     it('reports malformed source UTF-8 by byte offset without admitting replacement text', async () => {
@@ -336,6 +742,81 @@ describe('Claude native External Sessions contribution', () => {
         })).resolves.toEqual({
             ok: true,
             value: { outcome: 'source_replaced' },
+        });
+    });
+
+    it.each([
+        'identical replacement',
+        'in-place rewrite',
+    ] as const)('refuses to continue a backward page across a same-path %s', async (mutation) => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-backward-rewrite-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const remoteSessionId = 'backward-rewritten-session';
+        const transcriptDir = join(configDir, 'projects', 'backward-rewrite-project');
+        await mkdir(transcriptDir, { recursive: true });
+        const transcriptPath = join(transcriptDir, `${remoteSessionId}.jsonl`);
+        const originalRows = [0, 1, 2, 3].map((index) => JSON.stringify({
+            type: 'user',
+            uuid: `original-${index}`,
+            timestamp: `2026-06-08T00:00:0${index}.000Z`,
+            cwd: '/work/backward-rewrite-project',
+            message: { content: `original row ${index}` },
+        }));
+        await writeFile(transcriptPath, `${originalRows.join('\n')}\n`, 'utf8');
+        const contribution = createClaudeExternalSessionsContribution({
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
+        });
+        const source = {
+            kind: 'claudeConfig' as const,
+            configDir,
+            projectId: 'backward-rewrite-project',
+        };
+
+        const first = await contribution.pageTranscript({
+            ...invocation(),
+            source,
+            remoteSessionId,
+            direction: 'older',
+            maxItems: 1,
+        });
+        expect(first).toMatchObject({ ok: true, value: { hasMore: true, nextCursor: expect.any(String) } });
+        if (!first.ok || !first.value.nextCursor) return;
+
+        if (mutation === 'identical replacement') {
+            const identicalBytes = await readFile(transcriptPath);
+            await rm(transcriptPath);
+            await writeFile(transcriptPath, identicalBytes);
+        } else {
+            await writeFile(
+                transcriptPath,
+                `${[0, 1, 2, 3].map((index) => JSON.stringify({
+                    type: 'user',
+                    uuid: `replacement-${index}`,
+                    timestamp: `2026-06-08T00:00:0${index}.000Z`,
+                    cwd: '/work/backward-rewrite-project',
+                    message: { content: `replacement row ${index}` },
+                })).join('\n')}\n`,
+                'utf8',
+            );
+        }
+
+        // A backward cursor names a byte position inside ONE physical generation
+        // of the file. After a same-path replacement that position means nothing,
+        // so continuing it would splice rows from the replacement in among rows
+        // the caller already received from the original.
+        const second = await contribution.pageTranscript({
+            ...invocation(),
+            source,
+            remoteSessionId,
+            direction: 'older',
+            cursor: first.value.nextCursor,
+            maxItems: 10,
+        });
+
+        expect(second).toMatchObject({
+            ok: true,
+            value: { items: [], nextCursor: null, hasMore: false, truncated: true },
         });
     });
 
@@ -672,5 +1153,119 @@ describe('Claude native External Sessions contribution', () => {
             ok: false,
             code: 'candidate_not_found',
         });
+    });
+    it('fails an older page closed when it consumes an unsupported native record', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-older-unsupported-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const remoteSessionId = 'older-unsupported-session';
+        const transcriptPath = await createTranscript({
+            configDir,
+            projectId: 'older-unsupported',
+            remoteSessionId,
+            title: 'first prompt',
+        });
+        await appendFile(transcriptPath, [
+            JSON.stringify({
+                type: 'future-transcript-message',
+                uuid: 'older-unsupported-future',
+                timestamp: '2026-06-08T00:00:01.500Z',
+                message: { content: 'must not be silently discarded' },
+            }),
+            JSON.stringify({
+                type: 'assistant',
+                uuid: 'older-unsupported-assistant-2',
+                timestamp: '2026-06-08T00:00:02.000Z',
+                message: { content: [{ type: 'text', text: 'later answer' }] },
+            }),
+            '',
+        ].join('\n'), 'utf8');
+        const contribution = createClaudeExternalSessionsContribution({
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
+        });
+
+        const page = await contribution.pageTranscript({
+            ...invocation(),
+            source: { kind: 'claudeConfig', configDir, projectId: 'older-unsupported' },
+            remoteSessionId,
+            direction: 'older',
+            maxItems: 50,
+        });
+        expect(page).toMatchObject({ ok: true, value: { truncated: true } });
+    });
+
+    it('keeps an older page complete across ratified non-transcript records', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-older-known-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const remoteSessionId = 'older-known-session';
+        const transcriptPath = await createTranscript({
+            configDir,
+            projectId: 'older-known',
+            remoteSessionId,
+            title: 'first prompt',
+        });
+        await appendFile(transcriptPath, [
+            JSON.stringify({ type: 'progress', uuid: 'known-progress', timestamp: '2026-06-08T00:00:01.100Z' }),
+            JSON.stringify({ type: 'system', uuid: 'known-system', subtype: 'init', timestamp: '2026-06-08T00:00:01.200Z' }),
+            JSON.stringify({ type: 'queue-operation', operation: 'enqueue', timestamp: '2026-06-08T00:00:01.300Z' }),
+            JSON.stringify({ type: 'file-history-snapshot', messageId: 'known-snapshot', snapshot: {} }),
+            JSON.stringify({ type: 'last-prompt', lastPrompt: 'hi', leafUuid: 'known-leaf' }),
+            JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'r1' } }),
+            JSON.stringify({
+                type: 'attachment',
+                uuid: 'known-attachment',
+                attachment: { type: 'deferred_tools_delta', addedNames: ['WebFetch'] },
+            }),
+            JSON.stringify({
+                type: 'result',
+                subtype: 'success',
+                uuid: 'known-result',
+                session_id: remoteSessionId,
+                usage: {},
+                modelUsage: {},
+            }),
+            '',
+        ].join('\n'), 'utf8');
+        const contribution = createClaudeExternalSessionsContribution({
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
+        });
+
+        const page = await contribution.pageTranscript({
+            ...invocation(),
+            source: { kind: 'claudeConfig', configDir, projectId: 'older-known' },
+            remoteSessionId,
+            direction: 'older',
+            maxItems: 50,
+        });
+        expect(page.ok).toBe(true);
+        if (!page.ok) return;
+        expect(page.value.truncated).toBeFalsy();
+        expect(page.value.items.length).toBe(2);
+    });
+
+    it('rejects a malformed backward cursor instead of restarting at the tail', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-bad-cursor-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const remoteSessionId = 'bad-cursor-session';
+        await createTranscript({
+            configDir,
+            projectId: 'bad-cursor',
+            remoteSessionId,
+            title: 'first prompt',
+        });
+        const contribution = createClaudeExternalSessionsContribution({
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
+        });
+
+        expect(await contribution.pageTranscript({
+            ...invocation(),
+            source: { kind: 'claudeConfig', configDir, projectId: 'bad-cursor' },
+            remoteSessionId,
+            direction: 'older',
+            cursor: 'not-a-claude-backward-cursor',
+            maxItems: 50,
+        })).toMatchObject({ ok: false, code: 'invalid_request' });
     });
 });

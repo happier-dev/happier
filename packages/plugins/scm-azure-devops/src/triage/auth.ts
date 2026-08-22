@@ -1,8 +1,8 @@
 import type { QualifiedConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
-  materializeForgeAuthorization,
-  type ForgeAuthorizationFailureReason,
-} from '@happier-dev/scm-forge-adapter';
+  materializeTriageSourceAuthorizationV1,
+  type TriageSourceAuthorizationFailureReasonV1,
+} from '@happier-dev/triage-sources/runtime';
 
 import { createAzureDevOpsFailure } from './failures.js';
 import type {
@@ -29,7 +29,7 @@ export async function materializeAzureDevOpsListedAuthorization(input: Readonly<
   origin: AzureDevOpsOrigin;
   signal: AbortSignal;
 }>): Promise<AzureDevOpsAuthorizationResult> {
-  const authorization = await materializeForgeAuthorization({
+  const authorization = await materializeTriageSourceAuthorizationV1({
     connectedAccounts: input.connectedAccounts,
     purpose: input.purpose,
     account: input.account,
@@ -53,7 +53,7 @@ export async function materializeAzureDevOpsListedAuthorization(input: Readonly<
  * captured by a paging frontier, or written into any result, log line, or failure detail.
  */
 const AUTHORIZATION_FAILURES: Readonly<
-  Record<ForgeAuthorizationFailureReason, ReturnType<typeof createAzureDevOpsFailure>>
+  Record<TriageSourceAuthorizationFailureReasonV1, ReturnType<typeof createAzureDevOpsFailure>>
 > = Object.freeze({
   cancelled: createAzureDevOpsFailure({
     failureClass: 'cancelled',

@@ -18,6 +18,7 @@ const captured = vi.hoisted(() => ({
         choices?: readonly string[];
       }>[];
     }>): Promise<unknown>;
+    resolveMcpServers(): Promise<readonly unknown[]>;
   },
 }));
 
@@ -37,7 +38,10 @@ vi.mock('../localharness/runtime/sessionRuntime.js', async (importOriginal) => {
   };
 });
 
-import { createAntigravityNativeSessionRuntime } from './nativeSession.js';
+import {
+  createAntigravityNativeExecutionRunRuntime,
+  createAntigravityNativeSessionRuntime,
+} from './nativeSession.js';
 
 const request: AgentSessionOpenRequest = {
   kind: 'create',
@@ -158,5 +162,29 @@ describe('Antigravity native transient interactions', () => {
       ],
     });
     expect(unavailable).toEqual({ status: 'cancelled' });
+  });
+
+  it('does not give a detached execution run MCP from the generic invocation bag', async () => {
+    const genericMcp = {
+      list: vi.fn(() => {
+        throw new Error('generic MCP must not resolve native-session launch servers');
+      }),
+    };
+    const context = {
+      signal: new AbortController().signal,
+      services: {
+        exec: {},
+        interactions: {
+          confirm: vi.fn(),
+          askQuestions: vi.fn(),
+        },
+        mcp: genericMcp,
+      },
+    } as unknown as AgentRuntimeContext;
+
+    createAntigravityNativeExecutionRunRuntime({ mode: 'sdk', request, context });
+
+    await expect(captured.runtimeDeps?.resolveMcpServers()).resolves.toEqual([]);
+    expect(genericMcp.list).not.toHaveBeenCalled();
   });
 });

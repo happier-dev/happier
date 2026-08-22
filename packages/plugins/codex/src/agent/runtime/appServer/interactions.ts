@@ -17,6 +17,8 @@ import type { DisposableCodexAppServerClient } from './client.js';
 import {
   buildCodexRequestUserInputAnswers,
   looksLikeCodexApprovalRequestUserInput,
+  resolveCodexApprovalQuestionChoice,
+  type CodexApprovalOutcome,
 } from '../core/requestUserInputQuestions.js';
 
 type InteractionUi = Pick<AgentRuntimeContext['services']['interactions'], 'requestApproval' | 'askQuestions'>;
@@ -239,22 +241,11 @@ async function askQuestions(
   }
 }
 
-function chooseApprovalLabel(
-  questions: readonly CodexQuestion[],
-  result: InteractionTransientApprovalResultV1,
-): string | null {
-  const labels = questions.flatMap((question) => question.options.map((option) => option.value));
-  const pick = (pattern: RegExp) => labels.find((label) => pattern.test(label)) ?? null;
+function approvalOutcome(result: InteractionTransientApprovalResultV1): CodexApprovalOutcome {
   if (result.status === 'approved') {
-    return pick(/\bapprove\b|\ballow\b|\baccept\b/i) ?? labels[0] ?? null;
+    return result.persistence === 'session' ? 'approve_for_session' : 'approve_once';
   }
-  if (result.status !== 'declined' && result.status !== 'unavailable') {
-    return pick(/\bcancel\b|\babort\b|\bstop\b/i)
-      ?? pick(/\bdeny\b|\breject\b|\bdecline\b/i)
-      ?? labels.at(-1)
-      ?? null;
-  }
-  return pick(/\bdeny\b|\breject\b|\bdecline\b/i) ?? labels.at(-1) ?? null;
+  return result.status === 'declined' || result.status === 'unavailable' ? 'deny' : 'cancel';
 }
 
 export function registerCodexAppServerInteractionHandlers(params: Readonly<{
@@ -350,9 +341,12 @@ export function registerCodexAppServerInteractionHandlers(params: Readonly<{
           params: raw,
           allowSessionPersistence: true,
         });
-        const choice = chooseApprovalLabel(questions, result);
+        const choice = resolveCodexApprovalQuestionChoice({
+          questions: raw.questions,
+          outcome: approvalOutcome(result),
+        });
         return choice
-          ? { answers: { [questions[0]!.id]: { answers: [choice] } } }
+          ? { answers: { [choice.questionId]: { answers: [choice.label] } } }
           : { answers: {} };
       }
       const answers = await askQuestions(params.ui, questions, 'Codex question');

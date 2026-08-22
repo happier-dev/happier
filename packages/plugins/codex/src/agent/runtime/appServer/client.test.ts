@@ -40,12 +40,12 @@ function createCapturingExec(
 ): Readonly<{
     exec: ExecService;
     specs: PluginProtocolClientSpec[];
-    requests: Array<Readonly<{ method: string; params: unknown; timeoutMs?: number }>>;
+    requests: Array<Readonly<{ method: string; params: unknown; timeoutMs?: number | null }>>;
     notifications: Array<Readonly<{ method: string; params: unknown }>>;
     emitExit(result: PluginProcessResult): void;
 }> {
     const specs: PluginProtocolClientSpec[] = [];
-    const requests: Array<Readonly<{ method: string; params: unknown; timeoutMs?: number }>> = [];
+    const requests: Array<Readonly<{ method: string; params: unknown; timeoutMs?: number | null }>> = [];
     const notifications: Array<Readonly<{ method: string; params: unknown }>> = [];
     let settleExit: ((result: PluginProcessResult) => void) | null = null;
     const wait = new Promise<PluginProcessResult>((resolve) => {
@@ -342,9 +342,25 @@ describe('createCodexAppServerClient', () => {
                     experimentalApi: true,
                 },
             },
-            timeoutMs: 4321,
+            timeoutMs: 45_000,
         });
         expect(capture.notifications).toContainEqual({ method: 'initialized', params: {} });
+    });
+
+    it('disables local request timers only while creating a fork-only app-server client', async () => {
+        const capture = createCapturingExec();
+
+        const client = await createCodexNativeAppServerClient({
+            exec: capture.exec,
+            processEnv: {},
+            forkOnly: true,
+        });
+        await client.dispose();
+
+        expect(capture.requests).toContainEqual(expect.objectContaining({
+            method: 'initialize',
+            timeoutMs: null,
+        }));
     });
 
     it.each([

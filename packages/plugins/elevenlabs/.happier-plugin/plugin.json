@@ -48,6 +48,9 @@
     "voiceProviders": [
       {
         "capabilities": {
+          "tools": {
+            "effectCalls": "none"
+          },
           "turn": {
             "bargeIn": false,
             "cancelResponse": false,
@@ -58,7 +61,7 @@
         "client": {
           "artifactId": "voice-runtime",
           "exportName": "activate",
-          "modulePath": "./voiceRuntime"
+          "modulePath": "./ui/voice"
         },
         "credentials": {
           "hostMediated": {

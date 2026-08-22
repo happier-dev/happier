@@ -59,7 +59,7 @@ describe('triage refresh coordinator', () => {
 
         const request = harness.coordinator.request({
             sourceInstanceId: INSTANCE_A,
-            trigger: 'sourceConfigured',
+            trigger: 'manual',
         });
         expect(request.disposition).toBe('started');
         expect(harness.passes).toHaveLength(1);
@@ -203,9 +203,11 @@ describe('triage refresh coordinator', () => {
         await view.settled;
         await harness.settleMicrotasks();
 
-        // The retired instance's late failure cannot pace a freshly configured
-        // instance of the same id.
-        expect(harness.coordinator.request({ sourceInstanceId: INSTANCE_A, trigger: 'sourceConfigured' }).disposition)
+        // The retired instance's late failure cannot pace a later explicit
+        // refresh of the same id. `manual` is the discriminating trigger here:
+        // it bypasses the shared interval but still honours a failure backoff,
+        // so a retained deadline would refuse it.
+        expect(harness.coordinator.request({ sourceInstanceId: INSTANCE_A, trigger: 'manual' }).disposition)
             .toBe('started');
         expect(harness.passes).toHaveLength(2);
     });

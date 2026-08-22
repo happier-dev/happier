@@ -1,4 +1,5 @@
 import type {
+    AgentExternalSessionCandidate,
     AgentExternalSessionLinkData,
     AgentExternalSessionLinkDataValue,
     AgentExternalSessionSource,
@@ -9,9 +10,7 @@ import type {
     AgentExternalSessionsReadAfterTranscriptResult,
     AgentExternalSessionsResult,
     AgentExternalSessionsTranscriptPage,
-    ExternalSessionsSource,
-    ExternalSessionTranscriptRawMessageV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
     ClaudeCandidateInvalidCursorError,
@@ -20,8 +19,13 @@ import {
     listClaudeExternalSessionCandidates as listClaudeJsonlSessionCandidates,
 } from './candidates.js';
 import { isSafeClaudeJsonlPathSegment, resolveClaudeJsonlSessionFile } from './files.js';
-import { validateClaudeExternalSessionSource } from './source.js';
 import {
+    projectClaudeExternalSessionSource,
+    validateClaudeExternalSessionSource,
+    type ClaudeExternalSessionSource,
+} from './source.js';
+import {
+    ClaudeTranscriptInvalidCursorError,
     ClaudeTranscriptResultBudgetTooSmallError,
     pageClaudeExternalSessionTranscript as pageClaudeJsonlExternalSessionTranscript,
     readAfterClaudeExternalSessionTranscript as readAfterClaudeJsonlExternalSessionTranscript,
@@ -76,20 +80,9 @@ function readOptionalString(value: AgentExternalSessionLinkDataValue | undefined
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function toLegacyClaudeSource(source: AgentExternalSessionSource): ExternalSessionsSource | null {
-    if (source.kind !== 'claudeConfig') return null;
-    const configDir = readOptionalString(source.configDir);
-    const projectId = readOptionalString(source.projectId);
-    return {
-        kind: 'claudeConfig',
-        ...(configDir ? { configDir } : {}),
-        ...(projectId ? { projectId } : {}),
-    };
-}
-
 function toPublicClaudeSource(params: Readonly<{
     source: AgentExternalSessionSource;
-    validatedSource: ExternalSessionsSource;
+    validatedSource: ClaudeExternalSessionSource;
     projectId?: string | null;
 }>): AgentExternalSessionSource {
     const configDir = params.validatedSource.kind === 'claudeConfig'
@@ -99,13 +92,7 @@ function toPublicClaudeSource(params: Readonly<{
         ? readOptionalString(params.validatedSource.projectId as AgentExternalSessionLinkDataValue | undefined)
         : null;
     const projectId = params.projectId === undefined ? sourceProjectId : params.projectId;
-    const {
-        configDir: _discardedConfigDir,
-        projectId: _discardedProjectId,
-        ...sourceWithoutIdentityFields
-    } = params.source;
     return {
-        ...sourceWithoutIdentityFields,
         kind: 'claudeConfig',
         ...(configDir ? { configDir } : {}),
         ...(projectId ? { projectId } : {}),
@@ -116,10 +103,10 @@ function validateSource(params: Readonly<{
     source: AgentExternalSessionSource;
     env: NodeJS.ProcessEnv;
 }>): AgentExternalSessionsResult<Readonly<{
-    legacySource: ExternalSessionsSource;
+    legacySource: ClaudeExternalSessionSource;
     publicSource: AgentExternalSessionSource;
 }>> {
-    const legacySource = toLegacyClaudeSource(params.source);
+    const legacySource = projectClaudeExternalSessionSource(params.source);
     if (!legacySource) {
         return failed('source_invalid', 'provider/source mismatch');
     }
@@ -168,7 +155,7 @@ function isLinkData(value: unknown): value is AgentExternalSessionLinkData {
 }
 
 function mapTranscriptItem(
-    item: ExternalSessionTranscriptRawMessageV1,
+    item: Awaited<ReturnType<typeof pageClaudeJsonlExternalSessionTranscript>>['items'][number],
 ): AgentExternalSessionTranscriptItem | null {
     if (!isLinkData(item.raw)) return null;
     return {
@@ -176,13 +163,14 @@ function mapTranscriptItem(
         createdAtMs: item.createdAtMs,
         ...(item.localId !== undefined ? { localId: item.localId } : {}),
         ...(item.messageRole !== undefined ? { messageRole: item.messageRole } : {}),
+        ...(item.userProjection !== undefined ? { userProjection: item.userProjection } : {}),
         raw: item.raw,
     };
 }
 
 function mapTranscriptPage(
     page: Readonly<{
-        items: readonly ExternalSessionTranscriptRawMessageV1[];
+        items: readonly Awaited<ReturnType<typeof pageClaudeJsonlExternalSessionTranscript>>['items'][number][];
         nextCursor: string | null;
         tailCursor?: string | null;
         hasMore?: boolean;
@@ -240,14 +228,7 @@ function mapCandidate(candidate: Readonly<{
     createdAtMs?: number;
     archived?: boolean;
     details?: unknown;
-}>): Readonly<{
-    remoteSessionId: string;
-    title?: string;
-    updatedAtMs: number;
-    createdAtMs?: number;
-    archived?: boolean;
-    linkData?: AgentExternalSessionLinkData;
-}> {
+}>): AgentExternalSessionCandidate {
     const details = isPlainObject(candidate.details) ? candidate.details : null;
     const projectId = typeof details?.projectId === 'string' ? details.projectId : null;
     return {
@@ -323,7 +304,7 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                 const after = invocationFailure(request);
                 if (after) return after;
                 if (error instanceof ClaudeCandidateResultBudgetTooSmallError) {
-                    return failed('invalid_request', error.message);
+                    return failed('agent_error', error.message, false);
                 }
                 if (error instanceof ClaudeCandidateInvalidCursorError) {
                     return failed('invalid_request', error.message);
@@ -352,7 +333,7 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                 validatedSource: validation.value.legacySource,
                 projectId: requestedProjectId,
             });
-            const legacySource = toLegacyClaudeSource(source);
+            const legacySource = projectClaudeExternalSessionSource(source);
             if (!legacySource) return failed('source_invalid', 'provider/source mismatch');
             try {
                 const resolved = await resolveClaudeJsonlSessionFile({
@@ -438,12 +419,15 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                 const mapped = mapTranscriptPage(page);
                 return serializedByteLength(mapped) <= request.maxSerializedBytes
                     ? mapped
-                    : failed('invalid_request', 'Claude transcript result byte budget cannot fit the page envelope.');
+                    : failed('agent_error', 'Claude transcript result byte budget cannot fit the page envelope.', false);
             } catch (error) {
                 const after = invocationFailure(request);
                 if (after) return after;
-                if (error instanceof ClaudeTranscriptResultBudgetTooSmallError) {
+                if (error instanceof ClaudeTranscriptInvalidCursorError) {
                     return failed('invalid_request', error.message);
+                }
+                if (error instanceof ClaudeTranscriptResultBudgetTooSmallError) {
+                    return failed('agent_error', error.message, false);
                 }
                 return failed(
                     'agent_unavailable',
@@ -484,12 +468,12 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                 const mapped = mapReadAfterPage(page);
                 return serializedByteLength(mapped) <= request.maxSerializedBytes
                     ? mapped
-                    : failed('invalid_request', 'Claude transcript result byte budget cannot fit the page envelope.');
+                    : failed('agent_error', 'Claude transcript result byte budget cannot fit the page envelope.', false);
             } catch (error) {
                 const after = invocationFailure(request);
                 if (after) return after;
                 if (error instanceof ClaudeTranscriptResultBudgetTooSmallError) {
-                    return failed('invalid_request', error.message);
+                    return failed('agent_error', error.message, false);
                 }
                 return ok({ outcome: 'read_failed' });
             }
@@ -497,4 +481,4 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
     });
 }
 
-export const claudeExternalSessionsContribution = createClaudeExternalSessionsContribution();
+export const claudeExternalSessionsContribution: AgentExternalSessionsContribution = createClaudeExternalSessionsContribution();

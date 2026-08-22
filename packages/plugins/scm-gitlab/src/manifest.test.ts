@@ -6,6 +6,7 @@ import { PLUGIN_MANIFEST } from './manifest.js';
 import {
   GITLAB_CONNECTED_ACCOUNT_ID,
   GITLAB_CONNECTED_ACCOUNT_PURPOSE,
+  GITLAB_NETWORK_HOST_ACCESS_ID,
   GITLAB_TRIAGE_ACTION_IDS,
   GITLAB_TRIAGE_DETAIL_ACTION_IDS,
   GITLAB_TRIAGE_DETAIL_RENDERER_ID,
@@ -145,5 +146,20 @@ describe('GitLab plugin manifest', () => {
     expect(declaration).not.toContain('glpat-');
     expect(declaration).not.toContain('composerReferences');
     expect(declaration).not.toContain('composerControls');
+  });
+});
+
+describe('GitLab network authority', () => {
+  it('requests read-only verbs, because nothing in this plugin writes over the host network', () => {
+    const network = PLUGIN_MANIFEST.hostAccess.required
+      .find((entry) => entry.id === GITLAB_NETWORK_HOST_ACCESS_ID);
+
+    // Every host-network call this plugin makes hard-codes `GET`
+    // (`triage/invocation.ts` and `auth/connectedAccountRuntime.ts`); its only
+    // merge-request write runs through the declared `glab` process capability.
+    // A granted verb nothing exercises is authority the user approved for
+    // nothing, so a write verb may only appear here together with the exact
+    // human-confirmed mutation that needs it.
+    expect(network?.scope).toMatchObject({ methods: ['GET'] });
   });
 });

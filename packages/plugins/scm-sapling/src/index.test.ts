@@ -16,7 +16,7 @@ describe('scm-sapling public API', () => {
 
     it('declares the strict target backend and exact executable access', () => {
         expect(publicApi.PLUGIN_MANIFEST).toMatchObject({
-            entrypoints: { daemon: './dist/index.js' },
+            entrypoints: { daemon: './.happier-plugin/daemon.js' },
             hostAccess: { required: [{ capability: 'process', scope: { executables: [{ kind: 'managedDependency', id: 'sapling-cli' }] } }], optional: [] },
             contributes: {
                 scmBackends: [{ id: 'sapling', title: 'Sapling', kind: 'sapling', capabilities: expect.arrayContaining(['detect', 'status', 'diff', 'commit']) }],
@@ -29,5 +29,24 @@ describe('scm-sapling public API', () => {
         expect(publicApi.PLUGIN_MANIFEST).not.toHaveProperty('activationEvents');
         expect(ingestPluginManifestV2(publicApi.PLUGIN_MANIFEST)).toMatchObject({ ok: true });
         expect(createSaplingScmBackendRegistration().id).toBe(publicApi.PLUGIN_MANIFEST.contributes.scmBackends[0]?.id);
+    });
+
+    it('registers only the manifest-local backend through the public activation ABI', () => {
+        const registrations: Array<Readonly<{ id: string; runtime: unknown }>> = [];
+
+        publicApi.activate({
+            scm: {
+                registerBackend(id: string, runtime: unknown) {
+                    registrations.push({ id, runtime });
+                },
+            },
+        } as Parameters<typeof publicApi.activate>[0]);
+
+        expect(registrations.map(({ id }) => id))
+            .toEqual(publicApi.PLUGIN_MANIFEST.contributes.scmBackends.map(({ id }) => id));
+        expect(registrations[0]?.runtime).toEqual(expect.objectContaining({
+            runtime: expect.objectContaining({ repoModes: ['.sl', '.git'] }),
+            handlers: expect.objectContaining({ detection: expect.any(Object) }),
+        }));
     });
 });

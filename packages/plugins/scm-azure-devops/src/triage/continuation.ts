@@ -1,5 +1,6 @@
 import {
-  MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
+  decodeTriagePagingTokenV1,
+  encodeTriagePagingTokenV1,
   type TriageScanContinuationV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -19,6 +20,9 @@ import {
  * therefore carries exactly the invocation-local frontier — page geometry, the provider-issued
  * project token, and the repository/lane offsets — and no credential, account ref, viewer
  * identity, delivered-id history, accumulated row array, or target timestamp.
+ *
+ * The bounded JSON envelope is the protocol's; the frontier record inside it and every
+ * field check on the way back in stay here.
  */
 const CONTINUATION_VERSION = 1;
 const LANE_IDS: readonly AzureInvolvementLaneId[] = ['authored', 'reviewer'];
@@ -26,7 +30,7 @@ const LANE_IDS: readonly AzureInvolvementLaneId[] = ['authored', 'reviewer'];
 export function encodeAzureScanContinuation(
   frontier: AzureScanFrontier,
 ): TriageScanContinuationV1 | null {
-  const token = JSON.stringify({
+  const token = encodeTriagePagingTokenV1({
     v: CONTINUATION_VERSION,
     scanLimit: frontier.scanLimit,
     nativePageSize: frontier.nativePageSize,
@@ -45,8 +49,7 @@ export function encodeAzureScanContinuation(
     // nothing double-counts a walk's omissions.
     walkHealth: [...frontier.walkHealth],
   });
-  if (new TextEncoder().encode(token).length > MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1) return null;
-  return { v: 1, token };
+  return token === null ? null : { v: 1, token };
 }
 
 /**
@@ -57,13 +60,7 @@ export function encodeAzureScanContinuation(
 export function decodeAzureScanContinuation(
   continuation: TriageScanContinuationV1,
 ): AzureScanFrontier | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(continuation.token);
-  } catch {
-    return null;
-  }
-  const record = readRecord(parsed);
+  const record = decodeTriagePagingTokenV1(continuation.token);
   if (record === null || record.v !== CONTINUATION_VERSION) return null;
 
   const scanLimit = readCount(record.scanLimit, 1);

@@ -16,7 +16,6 @@ import {
 } from '../corpus/collections/ids.js';
 import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
-import { createTriageInitialScanOwner } from '../corpus/configuration/initialScan.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testkit/observations.test-support.js';
 import { createTriageListEntriesActionHandler } from './listEntries.js';
@@ -30,8 +29,8 @@ import { createTriageAdministerSourceInstanceActionHandler } from './administerS
  *
  * The request carries no source, plugin or contribution identity: the host
  * stamps the caller and this handler resolves the caller's own currently
- * admitted V1 source contribution before either the writer or the initial pass
- * runs.
+ * admitted V1 source contribution before the writer runs. It reads no provider
+ * of its own; the aggregate list read is the one producer of observations.
  */
 
 const SOURCE = Object.freeze({ pluginId: 'happier.example.source', localId: 'example-forge' });
@@ -155,22 +154,11 @@ async function readRows(
 }
 
 describe('the source administration Action handler', () => {
-    it('configures a source end to end: one row written by the Action, one scan, one visible entry', async () => {
+    it('configures a source end to end: one row written by the Action, no provider read, one visible entry', async () => {
         const { collections } = createTestkitCorpusCollections();
-        const initialScan = createTriageInitialScanOwner({ nowMs: () => 1_000 });
-        const settled: Promise<void>[] = [];
         const scanned: unknown[] = [];
 
         const handler = createTriageAdministerSourceInstanceActionHandler({
-            initialScan: {
-                request: (request) => {
-                    const promise = initialScan.request(request);
-                    settled.push(promise);
-                    return promise;
-                },
-                retire: (id) => initialScan.retire(id),
-                dispose: () => initialScan.dispose(),
-            },
             mintSourceInstanceId: () => INSTANCE_ID,
             nowMs: () => 1_000,
         });
@@ -189,15 +177,16 @@ describe('the source administration Action handler', () => {
         expect(rows[0]?.lifecycle).toBe(CORPUS_SOURCE_INSTANCE_LIFECYCLE.active);
         expect(rows[0]?.configured.instance.sourceInstanceId).toBe(INSTANCE_ID);
 
-        // Exactly one bounded pass follows explicit configuration.
-        await Promise.all(settled);
-        expect(scanned).toEqual([SCAN_HANDLE]);
+        // Configuring a source performs no provider read of its own: the
+        // aggregate list Action below is the one producer, and it runs when the
+        // list is opened or refreshed.
+        expect(scanned).toEqual([]);
 
         // And the composed aggregate list now returns that source's entries,
         // which it structurally could not do before a row existed.
         const listed = await createTriageListEntriesActionHandler()(
             { v: 1, sources: { kind: 'allConfigured' }, limit: 10, order: 'newest' },
-            createContext({ collections }),
+            createContext({ collections, onScan: (op) => scanned.push(op) }),
         );
         expect(listed.configuredSources).toEqual([{
             sourceInstanceId: INSTANCE_ID,
@@ -207,18 +196,13 @@ describe('the source administration Action handler', () => {
         }]);
         expect(listed.window.rows.map((row) => row.entryRef.entryId)).toEqual(['17']);
 
-        initialScan.dispose();
+        // And that composed read is what reached the provider.
+        expect(scanned).toEqual([SCAN_HANDLE]);
     });
 
     it('rejects a caller with no currently admitted V1 source contribution before any write', async () => {
         const { collections } = createTestkitCorpusCollections();
-        const requested: string[] = [];
         const handler = createTriageAdministerSourceInstanceActionHandler({
-            initialScan: {
-                request: async (request) => { requested.push(request.sourceInstanceId); },
-                retire: () => {},
-                dispose: () => {},
-            },
             mintSourceInstanceId: () => INSTANCE_ID,
             nowMs: () => 1_000,
         });
@@ -242,19 +226,11 @@ describe('the source administration Action handler', () => {
         )).toEqual({ kind: 'invalidCaller' });
 
         expect(await readRows(collections)).toHaveLength(0);
-        expect(requested).toEqual([]);
     });
 
-    it('retires the instance on remove and schedules no pass for it', async () => {
+    it('retires the instance on remove', async () => {
         const { collections } = createTestkitCorpusCollections();
-        const requested: string[] = [];
-        const retired: string[] = [];
         const handler = createTriageAdministerSourceInstanceActionHandler({
-            initialScan: {
-                request: async (request) => { requested.push(request.sourceInstanceId); },
-                retire: (id) => { retired.push(id); },
-                dispose: () => {},
-            },
             mintSourceInstanceId: () => INSTANCE_ID,
             nowMs: () => 1_000,
         });
@@ -267,8 +243,6 @@ describe('the source administration Action handler', () => {
         );
 
         expect(removed).toEqual({ kind: 'removed', sourceInstanceId: INSTANCE_ID });
-        expect(requested).toEqual([INSTANCE_ID]);
-        expect(retired).toEqual([INSTANCE_ID]);
 
         const rows = await readRows(collections);
         expect(rows[0]?.lifecycle).toBe(CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired);

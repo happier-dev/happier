@@ -45,6 +45,9 @@ describe('ElevenLabs public Voice settings declaration', () => {
       'tts',
       'agentId',
     ]);
+    expect(declaration.capabilities).toMatchObject({
+      tools: { effectCalls: 'none' },
+    });
     expect(declaration.capabilities).not.toHaveProperty('readiness');
     expect(declaration.credentials).toMatchObject({
       slot: { id: 'api_key', purpose: 'voice.client-auth.elevenlabs' },

@@ -14,9 +14,11 @@ import type {
   DiscordGuildMemberRoleEvidence,
 } from './discordApi.js';
 import {
+  DISCORD_DEFAULT_RECONNECT_DELAY_BOUNDS,
   calculateDiscordReconnectDelayMs,
   createDiscordGatewaySession,
   type DiscordGatewayEffect,
+  type DiscordGatewayReconnectDelayBounds,
   type DiscordGatewayResumeState,
   type DiscordGatewaySession,
   type DiscordGatewaySessionStartLimit,
@@ -28,6 +30,7 @@ import type {
 } from './discordGatewayIdentifyConcurrency.js';
 import { parseDiscordMessageDispatch } from './discordMessage.js';
 import { mapDiscordMessageToSocketIngress } from './discordObservation.js';
+import { createDiscordChannelEndpointId } from './discordPluginConstants.js';
 import { calculateDiscordGatewayIntents } from './discordSetup.js';
 
 /**
@@ -82,6 +85,16 @@ export type DiscordGatewayWorkerResult =
       failure: ConversationProviderFailureV1;
       transportFact?: Extract<ConversationTransportFactReportInputV1['fact'], Readonly<{ kind: 'historyGap' }>>;
     }>;
+
+/**
+ * Why Discord ended a session for good. `authenticationFailed` is the one
+ * reason a person can repair without changing the Channel connection: it means
+ * the selected Connected Account's bot token is wrong.
+ */
+export type DiscordGatewayTerminalReason = Extract<
+  DiscordGatewayWorkerResult,
+  Readonly<{ kind: 'terminal' }>
+>['reason'];
 
 export type DiscordGatewayWorkerClock = Readonly<{
   now(): number;
@@ -333,7 +346,7 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
       const messageContentIntentEnabled = messageContentIntent.gatewayIntentActive;
       const task = scheduler.schedule({
         connectionId: input.connection.connectionId,
-        endpointId: `discord:channel:${channelId}`,
+        endpointId: createDiscordChannelEndpointId(channelId),
         signal,
         async run(taskSignal) {
           const admissionSignal = taskSignal ?? signal;
@@ -451,6 +464,7 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
           permit?.release();
         };
         let reconnectRequested = false;
+        let reconnectDelayBounds: DiscordGatewayReconnectDelayBounds = DISCORD_DEFAULT_RECONNECT_DELAY_BOUNDS;
         let controlResult: DiscordGatewayWorkerResult | null = null;
         let session: DiscordGatewaySession;
         try {
@@ -508,6 +522,13 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
                 break;
               }
               case 'dispatch':
+                if (effect.event === 'READY' || effect.event === 'RESUMED') {
+                  // Discord accepted this session. The next disconnect starts a
+                  // fresh backoff ramp instead of inheriting the ramp that
+                  // preceded it, so a long-lived socket that Discord recycles
+                  // does not accumulate a permanent maximum-delay outage.
+                  reconnectAttempt = 0;
+                }
                 if (
                   (effect.event === 'READY' || effect.event === 'RESUMED')
                   && messageContentIntent.coreDemand
@@ -543,6 +564,7 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
                 break;
               case 'reconnect':
                 reconnectRequested = true;
+                reconnectDelayBounds = { minDelayMs: effect.minDelayMs, maxDelayMs: effect.maxDelayMs };
                 break;
               case 'blocked':
                 controlResult = { kind: 'blocked', reason: effect.reason, retryAtMs: effect.retryAtMs };
@@ -647,7 +669,7 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
         }
         if (!reconnectRequested) reconnectRequested = true;
         if (reconnectRequested) {
-          const delayMs = calculateDiscordReconnectDelayMs(reconnectAttempt);
+          const delayMs = calculateDiscordReconnectDelayMs(reconnectAttempt, reconnectDelayBounds);
           reconnectAttempt += 1;
           try {
             await clock.sleep(delayMs, signal);

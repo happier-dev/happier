@@ -35,6 +35,13 @@ const FAILURE_PROJECTION: Readonly<Record<AzureDevOpsFailureClass, Readonly<{
   server: { class: 'transient', code: 'azure-devops/server-error' },
   transport: { class: 'transient', code: 'azure-devops/transport-error' },
   cancelled: { class: 'transient', code: 'azure-devops/cancelled' },
+  /**
+   * Deliberately its own code rather than `cancelled`. Both arrive as an aborted
+   * signal, but only one of them is something the reader can act on: a deadline
+   * leaves them looking at a panel that can be retried, while a cancellation is
+   * a mount that is already gone.
+   */
+  timedOut: { class: 'transient', code: 'azure-devops/timed-out' },
   unexpectedRedirect: { class: 'unsupportedContract', code: 'azure-devops/unexpected-redirect' },
   malformedResponse: { class: 'unsupportedContract', code: 'azure-devops/malformed-response' },
 };

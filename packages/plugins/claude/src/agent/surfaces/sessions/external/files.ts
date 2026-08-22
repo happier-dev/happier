@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import { opendir, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
+import { compareExternalSessionCandidatePrecedence } from '@happier-dev/plugin-sdk/sessions/external';
 
-import { resolveClaudeConfigDir } from './source.js';
+import { resolveClaudeConfigDir, type ClaudeExternalSessionSource } from './source.js';
 
 export type ResolvedClaudeJsonlSessionFile = Readonly<{
     filePath: string;
@@ -22,7 +22,18 @@ export type DiscoveredClaudeJsonlSession = Readonly<{
 export type ClaudeJsonlSessionTraversalEntry = DiscoveredClaudeJsonlSession & Readonly<{
     traversalKey: string;
     scanPosition: ClaudeJsonlSessionScanPosition;
+    /** Source generation scoped to this entry's own resume point. */
+    sourceGeneration: string;
 }>;
+
+export type ClaudeJsonlSessionScanPoint = Readonly<{
+    scanPosition: ClaudeJsonlSessionScanPosition;
+    sourceGeneration: string;
+}>;
+
+export class ClaudeCandidateSourceChangedError extends Error {
+    readonly name = 'ClaudeCandidateSourceChangedError';
+}
 
 export type ClaudeJsonlSessionScanPosition = Readonly<{
     projectId: string;
@@ -59,25 +70,44 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
     signal?.throwIfAborted();
 }
 
-async function resolveCandidateSourceGeneration(
+/**
+ * Fingerprints the enumerated project set. This is the whole answer for lookups
+ * whose result IS every project, so any project appearing or disappearing must
+ * invalidate them.
+ */
+function resolveProjectListGeneration(projectIds: readonly string[]): string {
+    const hash = createHash('sha256');
+    hash.update(`projects:${projectIds.length}\n`);
+    for (const projectId of projectIds) {
+        hash.update(`${projectId}\n`);
+    }
+    return hash.digest('base64url');
+}
+
+/**
+ * Fingerprints exactly what a resume point depends on: the directory whose raw
+ * `opendir` entry offsets the cursor resumes at. Resumption anchors on the resume
+ * project name plus an offset inside that one directory, so projects created or
+ * removed anywhere else cannot shift the anchor and must not invalidate the
+ * cursor.
+ */
+async function resolveResumeProjectGeneration(
     projectsDir: string,
-    projectIds: readonly string[],
+    resumeProjectId: string | null,
     signal?: AbortSignal,
 ): Promise<string> {
+    throwIfAborted(signal);
     const hash = createHash('sha256');
-    const root = await stat(projectsDir, { bigint: true });
-    hash.update(`${root.dev}:${root.ino}:${root.mtimeNs}:${root.ctimeNs}\n`);
-    for (const projectId of projectIds) {
-        throwIfAborted(signal);
-        const project = await stat(join(projectsDir, projectId), { bigint: true }).catch(() => null);
-        if (!project?.isDirectory()) {
-            hash.update(`${projectId}:missing\n`);
-            continue;
-        }
-        hash.update(
-            `${projectId}:${project.dev}:${project.ino}:${project.mtimeNs}:${project.ctimeNs}\n`,
-        );
+    hash.update('resume\n');
+    if (!resumeProjectId) {
+        hash.update('none\n');
+        return hash.digest('base64url');
     }
+    const project = await stat(join(projectsDir, resumeProjectId), { bigint: true }).catch(() => null);
+    throwIfAborted(signal);
+    hash.update(project?.isDirectory()
+        ? `${resumeProjectId}:${project.dev}:${project.ino}:${project.mtimeNs}:${project.ctimeNs}\n`
+        : `${resumeProjectId}:missing\n`);
     return hash.digest('base64url');
 }
 
@@ -87,7 +117,7 @@ async function resolveCandidateSourceGeneration(
  * caller's candidate chunk; exact recency ordering remains the host index's job.
  */
 export async function pageClaudeJsonlSessionFiles(params: Readonly<{
-    source: ExternalSessionsSource;
+    source: ClaudeExternalSessionSource;
     env: NodeJS.ProcessEnv;
     afterTraversalKey?: string | null;
     scanPosition?: ClaudeJsonlSessionScanPosition | null;
@@ -97,8 +127,9 @@ export async function pageClaudeJsonlSessionFiles(params: Readonly<{
 }>): Promise<Readonly<{
     entries: readonly ClaudeJsonlSessionTraversalEntry[];
     hasMore: boolean;
+    /** Source generation scoped to the resume point this chunk was asked to continue from. */
     sourceGeneration: string;
-    nextScanPosition: ClaudeJsonlSessionScanPosition | null;
+    nextScanPoint: ClaudeJsonlSessionScanPoint | null;
     scanned: number;
 }>> {
     throwIfAborted(params.signal);
@@ -120,25 +151,35 @@ export async function pageClaudeJsonlSessionFiles(params: Readonly<{
             entries: [],
             hasMore: false,
             sourceGeneration: createHash('sha256').update('empty').digest('base64url'),
-            nextScanPosition: null,
+            nextScanPoint: null,
             scanned: 0,
         };
     }
-    const sourceGeneration = await resolveCandidateSourceGeneration(
-        projectsDir,
-        projectIds,
-        params.signal,
-    );
+    const capturedGenerations = new Map<string, string>();
+    const captureSourceGeneration = async (resumeProjectId: string | null): Promise<string> => {
+        const key = resumeProjectId ?? '';
+        const captured = capturedGenerations.get(key);
+        if (captured !== undefined) return captured;
+        const generation = await resolveResumeProjectGeneration(
+            projectsDir,
+            resumeProjectId,
+            params.signal,
+        );
+        capturedGenerations.set(key, generation);
+        return generation;
+    };
+    const sourceGeneration = await captureSourceGeneration(params.scanPosition?.projectId ?? null);
     const selected: ClaudeJsonlSessionTraversalEntry[] = [];
     let skipped = 0;
     let hasMore = false;
-    let nextScanPosition: ClaudeJsonlSessionScanPosition | null = null;
+    let nextScanPoint: ClaudeJsonlSessionScanPoint | null = null;
     for (const projectId of projectIds) {
         throwIfAborted(params.signal);
         if (params.scanPosition && projectId.localeCompare(params.scanPosition.projectId) < 0) {
             continue;
         }
         const projectPath = join(projectsDir, projectId);
+        const projectSourceGeneration = await captureSourceGeneration(projectId);
         const directory = await opendir(projectPath).catch(() => null);
         if (!directory) continue;
         let sessionEntryOffset = 0;
@@ -174,8 +215,12 @@ export async function pageClaudeJsonlSessionFiles(params: Readonly<{
                 updatedAtMs: 0,
                 traversalKey,
                 scanPosition: { projectId, sessionEntryOffset },
+                sourceGeneration: projectSourceGeneration,
             });
-            nextScanPosition = { projectId, sessionEntryOffset };
+            nextScanPoint = {
+                scanPosition: { projectId, sessionEntryOffset },
+                sourceGeneration: projectSourceGeneration,
+            };
         }
         if (hasMore) break;
     }
@@ -195,31 +240,58 @@ export async function pageClaudeJsonlSessionFiles(params: Readonly<{
         }
     }
     throwIfAborted(params.signal);
-    const finalSourceGeneration = await resolveCandidateSourceGeneration(
-        projectsDir,
-        projectIds,
-        params.signal,
-    );
-    if (finalSourceGeneration !== sourceGeneration) {
-        throw new Error('Claude candidate source changed during the bounded scan chunk.');
+    for (const [resumeKey, captured] of capturedGenerations) {
+        const current = await resolveResumeProjectGeneration(
+            projectsDir,
+            resumeKey === '' ? null : resumeKey,
+            params.signal,
+        );
+        if (current !== captured) {
+            throw new ClaudeCandidateSourceChangedError(
+                'Claude candidate source changed during the bounded scan chunk.',
+            );
+        }
     }
     return {
         entries,
         hasMore,
         sourceGeneration,
-        nextScanPosition: hasMore ? nextScanPosition : null,
+        nextScanPoint: hasMore ? nextScanPoint : null,
         scanned: selected.length,
     };
 }
 
-function resolvePreferredProjectId(source: ExternalSessionsSource): string | null {
+function resolvePreferredProjectId(source: ClaudeExternalSessionSource): string | null {
     if (source.kind !== 'claudeConfig') return null;
     const projectId = typeof source.projectId === 'string' ? source.projectId.trim() : '';
     return isSafeClaudeJsonlPathSegment(projectId) ? projectId : null;
 }
 
+/**
+ * An unqualified Claude reference must resolve the same private candidate that
+ * the host Browse index presents first. The shared precedence owner carries the
+ * opaque linkData tie-break; this leaf supplies only Claude's project identity.
+ */
+function compareClaudeJsonlSessionPrecedence(
+    left: DiscoveredClaudeJsonlSession,
+    right: DiscoveredClaudeJsonlSession,
+): number {
+    return compareExternalSessionCandidatePrecedence(
+        {
+            remoteSessionId: left.remoteSessionId,
+            updatedAtMs: left.updatedAtMs,
+            linkData: { projectId: left.projectId },
+        },
+        {
+            remoteSessionId: right.remoteSessionId,
+            updatedAtMs: right.updatedAtMs,
+            linkData: { projectId: right.projectId },
+        },
+    );
+}
+
 export async function resolveClaudeJsonlSessionFile(params: Readonly<{
-    source: ExternalSessionsSource;
+    source: ClaudeExternalSessionSource;
     env: NodeJS.ProcessEnv;
     remoteSessionId: string;
     signal?: AbortSignal;
@@ -255,7 +327,10 @@ export async function resolveClaudeJsonlSessionFile(params: Readonly<{
     }
 
     const projectEntries = await readdir(projectsDir, { withFileTypes: true }).catch(() => []);
-    let newest: Readonly<{ resolved: ResolvedClaudeJsonlSessionFile; updatedAtMs: number }> | null = null;
+    let newest: Readonly<{
+        resolved: ResolvedClaudeJsonlSessionFile;
+        candidate: DiscoveredClaudeJsonlSession;
+    }> | null = null;
     for (const entry of projectEntries) {
         throwIfAborted(params.signal);
         if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
@@ -265,9 +340,14 @@ export async function resolveClaudeJsonlSessionFile(params: Readonly<{
         try {
             const file = await stat(resolved.filePath);
             throwIfAborted(params.signal);
-            const updatedAtMs = Math.trunc(file.mtimeMs);
-            if (!newest || updatedAtMs > newest.updatedAtMs) {
-                newest = { resolved, updatedAtMs };
+            const candidate = {
+                remoteSessionId,
+                projectId,
+                filePath: resolved.filePath,
+                updatedAtMs: Math.trunc(file.mtimeMs),
+            } satisfies DiscoveredClaudeJsonlSession;
+            if (!newest || compareClaudeJsonlSessionPrecedence(candidate, newest.candidate) < 0) {
+                newest = { resolved, candidate };
             }
         } catch {
             throwIfAborted(params.signal);
@@ -278,7 +358,7 @@ export async function resolveClaudeJsonlSessionFile(params: Readonly<{
 }
 
 export async function findClaudeJsonlSessionsById(params: Readonly<{
-    source: ExternalSessionsSource;
+    source: ClaudeExternalSessionSource;
     env: NodeJS.ProcessEnv;
     remoteSessionId: string;
     signal?: AbortSignal;
@@ -314,7 +394,7 @@ export async function findClaudeJsonlSessionsById(params: Readonly<{
             .filter((projectId) => isSafeClaudeJsonlPathSegment(projectId))
             .sort((left, right) => left.localeCompare(right));
     const candidateSourceGeneration = projectIds.length > 0
-        ? await resolveCandidateSourceGeneration(projectsDir, projectIds, params.signal)
+        ? resolveProjectListGeneration(projectIds)
         : createHash('sha256').update('empty').digest('base64url');
     const generation = createHash('sha256');
     generation.update(`${candidateSourceGeneration}\n${remoteSessionId}\n`);
@@ -359,7 +439,7 @@ export async function findClaudeJsonlSessionsById(params: Readonly<{
 }
 
 export async function discoverClaudeJsonlSessions(params: Readonly<{
-    source: ExternalSessionsSource;
+    source: ClaudeExternalSessionSource;
     env: NodeJS.ProcessEnv;
 }>): Promise<readonly DiscoveredClaudeJsonlSession[]> {
     const configDir = resolveClaudeConfigDir({ source: params.source, env: params.env });

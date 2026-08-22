@@ -1,7 +1,11 @@
-import type { TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
+import type {
+  TriageLinkedSessionProjectionV1,
+  TriageSourceDescriptorV1,
+} from '@happier-dev/triage-protocol/v1';
 
 import type { ProjectedObservationV1 } from '../../corpus/fold/projectedObservation.js';
 import type { TriageListLaneV1, TriageListRowV1 } from '../../projection/listWindow.js';
+import { readTriageLaneFailure } from '../../projection/sourceHealth.js';
 
 /**
  * The aggregate-owned common header of one selected entry.
@@ -17,17 +21,28 @@ import type { TriageListLaneV1, TriageListRowV1 } from '../../projection/listWin
  * placeholder: a connection with no display label loses the label rather than
  * showing an internal UUID.
  *
- * **The source's own name, and its name for this entry kind, are deliberately
- * absent.** §2.2 puts them in this header and the only place they exist is the
- * contributor's declared descriptor, which reaches a mounted surface as raw
- * JSON in the admission snapshot. Decoding it here is exactly the cold UI
- * semantic projection `SDK-EU-26` reserves for the SDK owner, and `PLAN.md`
- * §5.2 forbids a shell-local decoder. The fields land with their producer;
- * they are not carried as always-null members in the meantime.
+ * The source's own name and its own name for this entry kind come from the
+ * contributor's declared descriptor, and this shell decodes none of it: the
+ * host parses that descriptor with the target's own schema during cold
+ * admission, and `entries/read-detail-v1` carries the already-typed value out
+ * of the admitted snapshot. What is left here is the naming — which of the
+ * declared kinds this entry is, and what the source calls it — and that is the
+ * §2.2 decision this projection exists to make in one place.
  */
 
 export type TriageDetailHeaderV1 = Readonly<{
   title: string;
+  /** What the source calls itself, when its contribution is currently admitted. */
+  sourceLabel: string | null;
+  /**
+   * What the source calls this entry's kind.
+   *
+   * `null` covers both "no admitted contribution to ask" and "admitted, and its
+   * declared vocabulary does not contain this kind". The raw `kindId` is never
+   * substituted: it is a routing token the source chose, and showing it would
+   * present an internal identifier as the source's own word for the thing.
+   */
+  kindLabel: string | null;
   scopeLabel: string | null;
   /** The provider's own state word when it sent one. */
   stateLabel: string | null;
@@ -37,8 +52,16 @@ export type TriageDetailHeaderV1 = Readonly<{
   attention: Readonly<{ level: 'required' | 'suggested'; reasonLabel: string }> | null;
   /** How the aggregate's own knowledge of this entry stands right now. */
   presence: 'present' | 'absent' | 'unresolved';
-  /** The selected connection's own health, when it is not answering. */
-  sourceUnhealthy: boolean;
+  /**
+   * The connection this detail is read through answered the last pass with a
+   * typed failure.
+   *
+   * A connection the pass never asked is not one of these and never will be:
+   * `projection/sourceHealth.ts` owns that distinction, and collapsing it here
+   * is how the header came to tell a reader that a connection nothing asked
+   * "did not answer".
+   */
+  sourceReadFailed: boolean;
   webUrl: string | null;
   linkedSessions: readonly TriageLinkedSessionProjectionV1[];
 }>;
@@ -69,6 +92,12 @@ export type TriageDetailHeaderInputV1 = Readonly<{
   lanes: readonly TriageListLaneV1[];
   /** The configured connection's display label, when the aggregate knows one. */
   connectionLabel: string | null;
+  /**
+   * The entry's source's declared descriptor, as the target parsed it from the
+   * admitted snapshot. `null` while the detail read has not answered, and for a
+   * source with no currently admitted V1 contribution.
+   */
+  sourceDescriptor: TriageSourceDescriptorV1 | null;
   linkedSessions: readonly TriageLinkedSessionProjectionV1[];
 }>;
 
@@ -83,10 +112,15 @@ export function projectTriageDetailHeaderV1(
     ? undefined
     : input.lanes.find((candidate) => candidate.sourceInstanceId === selectedInstanceId);
 
+  const descriptor = input.sourceDescriptor;
+  const kind = descriptor?.kinds.find((candidate) => candidate.id === row.entryRef.kindId);
+
   return Object.freeze({
     // An entry with no present answer anywhere still has an identity, and its
     // own provider id is the only truthful thing left to name it by.
     title: present?.snapshot.title ?? row.entryRef.entryId,
+    sourceLabel: descriptor?.displayName ?? null,
+    kindLabel: kind?.displayName ?? null,
     scopeLabel: present?.snapshot.scopeLabel ?? null,
     stateLabel: present?.snapshot.state.nativeLabel ?? null,
     connectionLabel: input.connectionLabel,
@@ -95,10 +129,11 @@ export function projectTriageDetailHeaderV1(
       reasonLabel: row.attention.reasonLabel,
     }),
     presence: row.presence.kind,
-    // Only the connection this detail runs under. Another connection failing is
-    // aggregate list health and is already said there; repeating it in a
-    // detail header would attribute it to the entry on screen.
-    sourceUnhealthy: lane?.health.kind === 'failed' || lane?.health.kind === 'unavailable',
+    // Only the connection this detail runs under, and only through the one
+    // health owner. Another connection failing is aggregate list health and is
+    // already said beside the list; repeating it here would attribute it to the
+    // entry on screen.
+    sourceReadFailed: readTriageLaneFailure(lane) !== null,
     webUrl: present?.locator.webUrl ?? null,
     linkedSessions: input.linkedSessions,
   });

@@ -2,6 +2,7 @@
 import {
   type VoiceClientAuthArtifact,
 } from '@happier-dev/plugin-sdk/voice/client';
+import { parseTimestampMs } from '@happier-dev/plugin-sdk';
 import {
   classifyVoiceProviderHttpFailure,
   type VoiceAccountOperationService,
@@ -27,8 +28,8 @@ function assertProviderHttpSuccess(status: number): void {
 function readExpiryMs(record: Record<string, unknown>, now: number): number {
   const raw = record.expires_at ?? record.expiresAt;
   if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
-    const value = raw < 10_000_000_000 ? Math.floor(raw * 1_000) : Math.floor(raw);
-    if (value > now + 1_000 && value <= now + 10 * 60_000) return value;
+    const value = parseTimestampMs(raw);
+    if (value !== null && value > now + 1_000 && value <= now + 10 * 60_000) return value;
   }
   // xAI's endpoint accepts a requested 300-second lifetime but its public example
   // does not promise an expiry field in the response. Bound the artifact locally.

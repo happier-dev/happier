@@ -139,6 +139,23 @@ describe('answerClaudeUnifiedRegisteredDialog', () => {
     expect(port.sentLiteral).toEqual([]);
   });
 
+  it('waits through delayed terminal redraws after Claude accepts the numbered shortcut', async () => {
+    const port = createFakeControlPort({
+      captures: [EFFORT_DIALOG, EFFORT_DIALOG, EFFORT_DIALOG, IDLE_COMPOSER],
+    });
+    const result = await answerClaudeUnifiedRegisteredDialog({
+      port,
+      dialogId: 'effort_change',
+      option: confirmOption('effort_change'),
+      settleMs: 0,
+      wait: async () => undefined,
+    });
+
+    expect(result).toEqual({ status: 'answered' });
+    expect(port.captureCount()).toBe(4);
+    expect(port.sentLiteral).toEqual(['1']);
+  });
+
   it('fails when the same dialog is still visible after answering', async () => {
     const port = createFakeControlPort({ captures: [EFFORT_DIALOG, EFFORT_DIALOG] });
     const result = await answerClaudeUnifiedRegisteredDialog({

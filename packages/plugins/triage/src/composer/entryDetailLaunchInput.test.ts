@@ -27,6 +27,15 @@ const ENTRY_REF = Object.freeze({
 });
 const SOURCE_INSTANCE = Object.freeze({ source: SOURCE, sourceInstanceId: INSTANCE_ID });
 
+/** Exactly the five arms the host publishes — this input admits no sixth. */
+const COMPOSER_SCOPES = Object.freeze([
+    { kind: 'session', sessionId: 'session-1' },
+    { kind: 'newSession', instanceId: 'composer-instance-1' },
+    { kind: 'pendingMessage', sessionId: 'session-1', localId: 'pending-1' },
+    { kind: 'participantMessage', sessionId: 'session-1', instanceId: 'composer-instance-1' },
+    { kind: 'automationAuthoring', sessionId: 'session-1', instanceId: 'composer-instance-1' },
+] as const);
+
 function launchInput(overrides: Readonly<Record<string, unknown>> = {}) {
     return { v: 1, kind: 'entryDetail', entryRef: ENTRY_REF, sourceInstance: SOURCE_INSTANCE, ...overrides };
 }
@@ -60,16 +69,14 @@ describe('the Triage entry-detail launch input', () => {
     });
 
     it('refuses anything the closed shape does not name', () => {
-        // Deliberately load-bearing: `originComposer` is the field this input
-        // will gain once the canonical composable Composer-ref projection
-        // exists. Until then it must be REFUSED rather than carried as opaque
-        // JSON, because a Triage-local mirror of that ref is exactly what the
-        // program forbids.
-        expect(parseTriageEntryDetailLaunchInput(launchInput({
-            originComposer: { kind: 'session', sessionId: 'session-1' },
-        }))).toEqual({ status: 'invalid', reason: 'shape' });
-
+        // `originComposer` is now declared (see below) through the canonical
+        // `ProtocolComposerRefV1Schema`, so the field this test still has to
+        // hold shut is any OTHER unnamed one: a closed shape that quietly
+        // grows a second carrier is how a Triage-local mirror slips in.
         expect(parseTriageEntryDetailLaunchInput(launchInput({ refreshedAtMs: 1 })))
+            .toEqual({ status: 'invalid', reason: 'shape' });
+
+        expect(parseTriageEntryDetailLaunchInput(launchInput({ launchOrigin: 'composer' })))
             .toEqual({ status: 'invalid', reason: 'shape' });
     });
 
@@ -86,5 +93,76 @@ describe('the Triage entry-detail launch input', () => {
         expect(parseTriageEntryDetailLaunchInput(launchInput({
             sourceInstance: { source: SOURCE, sourceInstanceId: 'not-a-uuid' },
         }))).toEqual({ status: 'invalid', reason: 'shape' });
+    });
+});
+
+/**
+ * `originComposer` is the ONE field a Composer-origin launch adds
+ * (`core/COMPOSER.md` §2.1, PEP `03d1` §17.8). The Composer-origin launch slice
+ * has landed: the field is declared here, on the CLOSED private launch input,
+ * through the canonical composable projection `ProtocolComposerRefV1Schema`
+ * published by `@happier-dev/plugin-sdk/protocol` — never a Triage copy.
+ *
+ * It lives here rather than on the `additive-open/drop` detail surface envelope
+ * because it is an ADDRESS. The destination resolves it with an exact
+ * `get(originComposer)`, so a policy that silently drops what it does not know
+ * would hand that destination a launch it cannot trace back to its origin, with
+ * no signal at all. Closed refuses loudly instead.
+ */
+describe('a Composer-origin entry-detail launch', () => {
+    it('carries the exact mounted Composer scope, on every host arm', () => {
+        for (const originComposer of COMPOSER_SCOPES) {
+            expect(parseTriageEntryDetailLaunchInput(launchInput({ originComposer })))
+                .toEqual({ status: 'valid', input: { ...launchInput(), originComposer } });
+        }
+    });
+
+    it('omits the field entirely on an ordinary app-origin launch', () => {
+        const built = buildTriageEntryDetailLaunchInput({
+            entryRef: ENTRY_REF,
+            sourceInstance: SOURCE_INSTANCE,
+        });
+
+        expect(Object.hasOwn(built, 'originComposer')).toBe(false);
+    });
+
+    it('round-trips the exact ref the builder was given', () => {
+        const originComposer = { kind: 'pendingMessage', sessionId: 'session-1', localId: 'pending-1' } as const;
+        const built = buildTriageEntryDetailLaunchInput({
+            entryRef: ENTRY_REF,
+            sourceInstance: SOURCE_INSTANCE,
+            originComposer,
+        });
+
+        expect(built.originComposer).toEqual(originComposer);
+        expect(parseTriageEntryDetailLaunchInput(built)).toEqual({ status: 'valid', input: built });
+    });
+
+    it('refuses a scope the host never stamps rather than dropping it', () => {
+        // Each of these is a plausible near-miss: an arm missing its required
+        // member, an invented arm, an arm carrying a member from another one,
+        // and an identity the host's own grammar rejects.
+        for (const originComposer of [
+            { kind: 'session' },
+            { kind: 'sessionDraft', sessionId: 'session-1' },
+            { kind: 'pendingMessage', sessionId: 'session-1' },
+            { kind: 'session', sessionId: 'session-1', localId: 'pending-1' },
+            { kind: 'newSession', instanceId: ' leading-whitespace' },
+            { kind: 'session', sessionId: 'session-1', unknownArmField: true },
+        ]) {
+            expect(
+                parseTriageEntryDetailLaunchInput(launchInput({ originComposer })),
+                JSON.stringify(originComposer),
+            ).toEqual({ status: 'invalid', reason: 'shape' });
+        }
+    });
+
+    it('never lets an origin Composer excuse a mismatched entry and connection', () => {
+        // The address says where the reader came FROM. It cannot vouch for what
+        // they are being shown.
+        expect(parseTriageEntryDetailLaunchInput(launchInput({
+            originComposer: { kind: 'session', sessionId: 'session-1' },
+            sourceInstance: { source: OTHER_SOURCE, sourceInstanceId: INSTANCE_ID },
+        }))).toEqual({ status: 'invalid', reason: 'sourceMismatch' });
     });
 });

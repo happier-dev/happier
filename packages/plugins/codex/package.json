@@ -380,10 +380,6 @@
       "types": "./dist/agent/auth/services/home/sync/configEntries.d.ts",
       "default": "./dist/agent/auth/services/home/sync/configEntries.js"
     },
-    "./agent/auth/services/home/sync/stateEntries": {
-      "types": "./dist/agent/auth/services/home/sync/stateEntries.d.ts",
-      "default": "./dist/agent/auth/services/home/sync/stateEntries.js"
-    },
     "./agent/auth/services/home/sync/settings": {
       "types": "./dist/agent/auth/services/home/sync/settings.d.ts",
       "default": "./dist/agent/auth/services/home/sync/settings.js"
@@ -403,7 +399,7 @@
   },
   "files": [
     "dist",
-    ".happier-plugin/plugin.json",
+    ".happier-plugin",
     "package.json"
   ],
   "scripts": {
@@ -415,7 +411,6 @@
     "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
     "zod": "4.3.6"
   },

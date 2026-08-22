@@ -101,6 +101,19 @@ describe('resolvePiShellBridgeAvailability', () => {
     )).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
   });
 
+  it('expands either home separator spelling through the canonical SDK path helper', () => {
+    expect(normalizePiShellPath(
+      '~\\tools/bash',
+      'linux',
+      '/home/alice',
+    )).toBe('/home/alice/tools/bash');
+    expect(normalizePiShellPath(
+      '~/tools\\bash.exe',
+      'win32',
+      'C:\\Users\\alice',
+    )).toBe('C:\\Users\\alice\\tools\\bash.exe');
+  });
+
   it('lets a trusted empty project shellPath override a configured global path and select Bash fallback', () => {
     const configuredShellPath = resolveEffectivePiConfiguredShellPath({
       globalShellPath: 'D:\\global\\bash.exe',

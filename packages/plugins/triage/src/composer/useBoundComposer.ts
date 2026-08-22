@@ -21,9 +21,17 @@ import { useComposer, type ComposerHandle, type ComposerRefV1 } from '@happier-d
  * therefore fails at `read`/`apply` with the host's own verdict rather than
  * being guessed at here.
  */
+type TriageBoundComposerV1 = Readonly<{
+    /** The scope key this handle was resolved under, never a later one. */
+    key: string | null;
+    handle: ComposerHandle | null;
+}>;
+
+const UNBOUND: TriageBoundComposerV1 = Object.freeze({ key: null, handle: null });
+
 export function useTriageBoundComposer(composer: ComposerRefV1 | null): ComposerHandle | null {
     const composers = useComposer();
-    const [handle, setHandle] = React.useState<ComposerHandle | null>(null);
+    const [bound, setBound] = React.useState<TriageBoundComposerV1>(UNBOUND);
 
     // The ref is a small closed value the host re-stamps on every mount, so its
     // identity changes without its meaning changing. Keying the effect on the
@@ -33,23 +41,28 @@ export function useTriageBoundComposer(composer: ComposerRefV1 | null): Composer
 
     React.useEffect(() => {
         if (composer === null) {
-            setHandle(null);
+            setBound(UNBOUND);
             return;
         }
         let active = true;
         void composers.get(composer).then((next) => {
-            if (active) setHandle(next);
+            if (active) setBound({ key: composerKey, handle: next });
         }, () => {
-            if (active) setHandle(null);
+            if (active) setBound(UNBOUND);
         });
         return () => {
             active = false;
             // A replacement mount must not render the previous draft's state for
             // even one committed frame.
-            setHandle(null);
+            setBound(UNBOUND);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by value, see above.
     }, [composers, composerKey]);
 
-    return handle;
+    // The handle is answered only for the scope it was resolved under. State
+    // alone cannot carry that: an effect runs AFTER the render that first
+    // carries a replacement ref has committed, so a bare handle addresses the
+    // previous draft for exactly one frame — and an Attach pressed in that
+    // frame writes the message the reader already left.
+    return bound.key === composerKey ? bound.handle : null;
 }

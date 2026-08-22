@@ -1,5 +1,7 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 
+import type { CorpusCollectionsV1 } from '../collections/bindCorpusCollections.js';
 import { CORPUS_USER_MARKS_INDEX_ID } from '../collections/ids.js';
 import type { CorpusUserMarkRowV1 } from '../collections/rows.js';
 import { deriveUserMarkTag } from '../identity/tags.js';
@@ -12,6 +14,69 @@ import { testkitEntryRef } from '../testkit/observations.test-support.js';
 import { setPinned } from './setPinned.js';
 
 const DISPLAY = { title: 'Replace the duplicated normalizer', scopeLabel: 'example/repository' } as const;
+
+/**
+ * A second writer that commits between this call's read and its `absent` put.
+ *
+ * The Collection is a network-backed store and therefore a genuine system
+ * boundary; this wraps that boundary to land a concurrent commit inside the
+ * exact window the CAS put exists to detect. Nothing internal is stubbed — the
+ * real in-memory store answers both writes.
+ */
+function racingCollection(
+    base: CorpusCollectionsV1['userMarks'],
+    commitFirst: () => void,
+): CorpusCollectionsV1['userMarks'] {
+    let raced = false;
+    return {
+        ...base,
+        async batch(operations, options) {
+            if (!raced) {
+                raced = true;
+                commitFirst();
+            }
+            return await base.batch(operations, options);
+        },
+    };
+}
+
+/**
+ * A second writer that commits between Unpin's read and its conditional delete.
+ *
+ * Same boundary, same reason as `racingCollection`: the store is a network-backed
+ * system boundary, so the concurrent commit is landed inside the exact window the
+ * `expectedRevision` delete exists to detect. The real in-memory store raises the
+ * real `plugin_collection_conflict` `PluginError` the host raises.
+ */
+function racingDeleteCollection(
+    base: CorpusCollectionsV1['userMarks'],
+    commitFirst: () => void,
+): CorpusCollectionsV1['userMarks'] {
+    let raced = false;
+    return {
+        ...base,
+        async delete(rowId, options) {
+            if (!raced) {
+                raced = true;
+                commitFirst();
+            }
+            return await base.delete(rowId, options);
+        },
+    };
+}
+
+/** The store answering an Unpin with a refusal that is not a revision conflict. */
+function refusingDeleteCollection(
+    base: CorpusCollectionsV1['userMarks'],
+    error: unknown,
+): CorpusCollectionsV1['userMarks'] {
+    return {
+        ...base,
+        async delete() {
+            throw error;
+        },
+    };
+}
 
 async function liveMarks(fixture: TestkitCorpusCollections): Promise<readonly CorpusUserMarkRowV1[]> {
     const page = await fixture.collections.userMarks.query({
@@ -139,6 +204,34 @@ describe('setPinned', () => {
         });
     });
 
+    it('reports the pin that another device committed in the same window, not a failure', async () => {
+        // The race: two devices pin one entry, and the loser's `absent` put
+        // conflicts with a live row that is already the pin it wanted. Telling
+        // that reader "That pin was changed somewhere else" — the warning the
+        // surface shows for `conflict` — is false twice over: nothing they can
+        // act on changed, and the pin they asked for exists.
+        const fixture = createTestkitCorpusCollections();
+        const entryRef = testkitEntryRef();
+        const markTag = await deriveUserMarkTag(fixture.collections.userMarks, entryRef);
+        const userMarks = racingCollection(fixture.collections.userMarks, () => {
+            fixture.control.userMarks.seed({
+                markTag,
+                pinned: true,
+                markedAtMs: 5,
+                entryRef,
+                displayAtMark: { title: 'Pinned on the other device', scopeLabel: 'example/repository' },
+            });
+        });
+
+        expect(await setPinned({
+            collections: { userMarks },
+            entryRef,
+            pinned: true,
+            displayAtMark: DISPLAY,
+            nowMs: 6,
+        })).toEqual({ status: 'pinned', markTag });
+    });
+
     it('reports a conflict instead of overwriting a newer live mark revision', async () => {
         const fixture = createTestkitCorpusCollections();
         const entryRef = testkitEntryRef();
@@ -159,5 +252,61 @@ describe('setPinned', () => {
             displayAtMark: DISPLAY,
             nowMs: 6,
         })).toEqual({ status: 'conflict', markTag });
+    });
+
+    it('reports a conflict only when the store says another writer moved the mark revision', async () => {
+        const fixture = createTestkitCorpusCollections();
+        const entryRef = testkitEntryRef();
+        const markTag = await deriveUserMarkTag(fixture.collections.userMarks, entryRef);
+        await setPinned({
+            collections: fixture.collections,
+            entryRef,
+            pinned: true,
+            displayAtMark: DISPLAY,
+            nowMs: 1_000,
+        });
+
+        // Another device re-pins between this Unpin's read and its delete, so the
+        // revision this call holds is stale and the store refuses it.
+        const userMarks = racingDeleteCollection(fixture.collections.userMarks, () => {
+            fixture.control.userMarks.seed({
+                markTag,
+                pinned: true,
+                markedAtMs: 2_000,
+                entryRef,
+                displayAtMark: { title: 'Re-pinned on the other device', scopeLabel: 'example/repository' },
+            });
+        });
+
+        expect(await setPinned({ collections: { userMarks }, entryRef, pinned: false, nowMs: 3_000 }))
+            .toEqual({ status: 'conflict', markTag });
+        // The mark the other device committed is still live: a lost race never
+        // removes the row it did not own.
+        expect(fixture.control.userMarks.inspect(markTag)?.deleted).toBe(false);
+    });
+
+    it('surfaces an Unpin refusal that is not a revision conflict as itself', async () => {
+        // The failure this excludes: the store is unreachable, the write is
+        // refused for good, and the reader is told their pin "was changed
+        // somewhere else" and offered a retry that cannot succeed. The mounted
+        // control reads a rejection as "your account could not be reached" and
+        // says so, which is the only honest answer here.
+        const fixture = createTestkitCorpusCollections();
+        const entryRef = testkitEntryRef();
+        await setPinned({
+            collections: fixture.collections,
+            entryRef,
+            pinned: true,
+            displayAtMark: DISPLAY,
+            nowMs: 1_000,
+        });
+        const unavailable = new PluginError({
+            code: 'plugin_account_storage_unavailable',
+            message: 'Account plugin data storage is unavailable',
+        });
+        const userMarks = refusingDeleteCollection(fixture.collections.userMarks, unavailable);
+
+        await expect(setPinned({ collections: { userMarks }, entryRef, pinned: false, nowMs: 2_000 }))
+            .rejects.toBe(unavailable);
     });
 });

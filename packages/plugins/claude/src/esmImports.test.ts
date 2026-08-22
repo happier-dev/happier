@@ -26,6 +26,20 @@ function isDisallowedFirstPartyRuntimeImport(specifier: string): boolean {
   );
 }
 
+function isCanonicalExternalSessionTranscriptWireTypeImport(
+  node: ts.ImportDeclaration,
+): boolean {
+  const clause = node.importClause;
+  const bindings = clause?.namedBindings;
+  return clause?.isTypeOnly === true
+    && ts.isNamedImports(bindings)
+    && bindings.elements.length === 1
+    && bindings.elements[0]?.propertyName === undefined
+    && bindings.elements[0]?.name.text === 'ExternalSessionTranscriptRawMessageV1'
+    && ts.isStringLiteral(node.moduleSpecifier)
+    && node.moduleSpecifier.text === '@happier-dev/protocol';
+}
+
 function listProductionTypeScriptFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
@@ -90,6 +104,7 @@ describe('Claude plugin ESM imports', () => {
           && node.moduleSpecifier
           && ts.isStringLiteral(node.moduleSpecifier)
           && isDisallowedFirstPartyRuntimeImport(node.moduleSpecifier.text)
+          && !isCanonicalExternalSessionTranscriptWireTypeImport(node)
         ) {
           importViolations.push(`${relative(SOURCE_ROOT, path)} -> ${node.moduleSpecifier.text}`);
         }

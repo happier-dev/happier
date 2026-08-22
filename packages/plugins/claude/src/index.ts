@@ -1,4 +1,5 @@
 export * from './manifest.js';
+export { PLUGIN_MANIFEST as manifest } from './manifest.js';
 export * from './activate.js';
 export * from './cli.js';
 export * from './agent/index.js';

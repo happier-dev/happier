@@ -31,9 +31,11 @@ describe('Claude plugin manifest', () => {
         }, {
           id: 'oauth',
           kind: 'oauthAuthorizationCode',
+          callbackUrl: 'https://platform.claude.com/oauth/code/callback',
           scopes: [
-            'user:inference',
+            'org:create_api_key',
             'user:profile',
+            'user:inference',
             'user:sessions:claude_code',
             'user:mcp_servers',
             'user:file_upload',

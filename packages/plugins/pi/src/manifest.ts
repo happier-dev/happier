@@ -1,6 +1,7 @@
-import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 
-import { PI_DIRECT_AUTH_ENV_KEYS, PI_LAUNCH_ENV_KEYS } from './agent/launchEnvironment.js';
 import {
   PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
   PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
@@ -10,7 +11,15 @@ import {
   PI_OPENAI_API_KEY_PURPOSE_ID,
   PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES,
 } from './agent/auth/services/qualifiedPurposes.js';
+import { AGENT_DEFINITION } from './agent/definition.js';
+import { piExternalSessionsContribution } from './agent/externalSessions/contribution.js';
+import { piExternalSessionObservationContribution } from './agent/externalSessions/observation.js';
+import { piExternalSessionTakeoverContribution } from './agent/externalSessions/takeover.js';
+import { resolvePiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
+import { PI_DIRECT_AUTH_ENV_KEYS, PI_LAUNCH_ENV_KEYS } from './agent/launchEnvironment.js';
+import { createPiAgentRuntime } from './agent/runtime/engine.js';
 import { PI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
+import { PI_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
 export {
   PI_ANTHROPIC_API_KEY_PURPOSE_ID,
@@ -19,13 +28,20 @@ export {
   PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
 };
 
-export const PLUGIN_MANIFEST = {
-  schemaVersion: 2,
+const resolvePiDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
+  resolvePiDaemonSpawnPrerequisites(event, context);
+
+const {
+  id: PI_AGENT_SETTINGS_CONTRIBUTION_ID,
+  ...PI_AGENT_SETTINGS_DECLARATION
+} = PI_AGENT_SETTINGS_CONTRIBUTION;
+
+export const PI_PLUGIN = definePlugin({
   id: 'happier.agent.pi',
   version: '0.0.0',
   displayName: 'Pi',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
       id: 'pi-workspace',
@@ -46,95 +62,124 @@ export const PLUGIN_MANIFEST = {
     }],
     optional: [],
   },
-  contributes: {
-    agents: [{
-      id: 'pi',
-      title: 'Pi',
-      runtime: { kind: 'custom' },
-      cli: {
-        displayName: 'Pi Coding Agent CLI',
-        executable: {
-          binaryName: 'pi',
-          knownUserBinDirSuffixes: null,
-          sourcePreference: 'system-first',
-        },
-        install: {
-          managed: {
-            kind: 'managed_package',
-            packageName: '@earendil-works/pi-coding-agent',
+  agents: {
+    pi: {
+      declaration: {
+        title: 'Pi',
+        runtime: { kind: 'custom' },
+        cli: {
+          displayName: 'Pi Coding Agent CLI',
+          executable: {
             binaryName: 'pi',
+            knownUserBinDirSuffixes: null,
+            sourcePreference: 'system-first',
           },
-          manual: { kind: 'command' },
-          guideUrl: 'https://github.com/badlogic/pi-mono',
-          docsUrl: null,
-        },
-        auth: {
-          support: 'status_only',
-          probe: {
-            parser: 'piEnvOnly',
-            backgroundChecks: 'safe',
-            statusArgs: null,
-            envVars: [...PI_DIRECT_AUTH_ENV_KEYS],
+          install: {
+            managed: {
+              kind: 'managed_package',
+              packageName: '@earendil-works/pi-coding-agent',
+              binaryName: 'pi',
+            },
+            manual: { kind: 'command' },
+            guideUrl: 'https://github.com/badlogic/pi-mono',
+            docsUrl: null,
           },
-          loginLaunches: [],
-        },
-      },
-      primary: 'sessions',
-      connectedAccounts: PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.map((declaration) => ({
-        ...declaration,
-        service: { ...declaration.service },
-        materializationKinds: [...declaration.materializationKinds],
-      })),
-      capabilities: {
-        surfaces: ['externalSessions'],
-        sessions: {
-          open: ['create', 'resume'],
-          delivery: ['newTurn', 'steer', 'followUp'],
-          cancel: true,
-          configuration: true,
-          compaction: { events: true, manual: true },
-          usageLimitRecovery: { active: ['checkNow'], inactive: ['checkNow'] },
-        },
-        executionRuns: { open: ['create'], checkpoint: false, stop: true },
-      },
-      surfaces: {
-        externalSession: {
-          externalLinkedTakeover: { writerSafety: 'unsupported' },
-          sources: [{
-            sourceKind: 'piAgentDir',
-            schema: {
-              fields: [
-                { kind: 'literal', name: 'kind', value: 'piAgentDir' },
-                { kind: 'string', name: 'agentDir', min: 1, max: 10_000, nullish: true },
-              ],
+          auth: {
+            support: 'status_only',
+            probe: {
+              parser: 'piEnvOnly',
+              backgroundChecks: 'safe',
+              statusArgs: null,
+              envVars: [...PI_DIRECT_AUTH_ENV_KEYS],
             },
-            key: {
-              segments: [
-                { kind: 'literal', value: 'piAgentDir' },
-                { kind: 'field', field: 'agentDir' },
-              ],
-            },
-            instances: [{ kind: 'default', constants: {} }, {
-              kind: 'agentSettingOverride',
-              settingId: 'piAgentDir',
-              field: 'agentDir',
-              normalization: 'configuredPath',
-              constants: {},
+            loginLaunches: [],
+          },
+        },
+        primary: 'sessions',
+        connectedAccounts: PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.map((declaration) => ({
+          ...declaration,
+          service: { ...declaration.service },
+          materializationKinds: [...declaration.materializationKinds],
+        })),
+        capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
+          surfaces: ['externalSessions'],
+          sessions: {
+            open: ['create', 'resume'],
+            delivery: ['newTurn', 'steer', 'followUp'],
+            cancel: true,
+            configuration: true,
+            compaction: { events: true, manual: true },
+            usageLimitRecovery: { active: ['checkNow'], inactive: ['checkNow'] },
+          },
+          executionRuns: { open: ['create'], checkpoint: false, stop: true },
+        }),
+        surfaces: {
+          externalSession: {
+            externalLinkedTakeover: { writerSafety: 'unsupported' },
+            sources: [{
+              sourceKind: 'piAgentDir',
+              schema: {
+                fields: [
+                  { kind: 'literal', name: 'kind', value: 'piAgentDir' },
+                  { kind: 'string', name: 'agentDir', min: 1, max: 10_000, nullish: true },
+                  // Resolved carrier, not a logical source identity: `resolveLinkIdentity`
+                  // pins the exact session file it verified inside the agent directory and
+                  // every later read path (`pageTranscript`, `readAfterTranscript`,
+                  // observation, takeover) reads it back off the source the host persisted
+                  // and revalidates. It is deliberately absent from `key.segments`, so two
+                  // sources differing only by session file keep one source identity.
+                  { kind: 'string', name: 'sessionFile', min: 1, max: 10_000, nullish: true },
+                ],
+              },
+              key: {
+                segments: [
+                  { kind: 'literal', value: 'piAgentDir' },
+                  { kind: 'field', field: 'agentDir' },
+                ],
+              },
+              instances: [{ kind: 'default', constants: {} }, {
+                kind: 'agentSettingOverride',
+                settingId: 'piAgentDir',
+                field: 'agentDir',
+                normalization: 'configuredPath',
+                constants: {},
+              }],
             }],
-          }],
+          },
         },
       },
-    }],
-    systemTools: [{ id: 'pi-cli', title: 'Pi coding-agent CLI', executableNames: ['pi'] }],
-    hooks: [{
-      id: 'resolve-prerequisites',
-      on: 'agent.resolvePrerequisites',
-      hookApiVersion: 1,
-      category: 'decision',
-      scope: 'agent',
-      filters: { agentId: 'pi' },
-      executionKind: 'decide',
-    }],
-    settings: [PI_AGENT_SETTINGS_CONTRIBUTION],
+      factory: createPiAgentRuntime,
+      sessionRunnerFactory: {
+        module: './agent/runtime/engine',
+        export: 'createPiAgentRuntime',
+        runtimeApiVersion: 1,
+        externalSessionsExport: 'piExternalSessionsContribution',
+      },
+      externalSessions: piExternalSessionsContribution,
+      externalSessionTakeover: piExternalSessionTakeoverContribution,
+      externalSessionObservation: piExternalSessionObservationContribution,
+    },
   },
-} satisfies PluginManifest;
+  systemTools: {
+    'pi-cli': { title: 'Pi coding-agent CLI', executableNames: ['pi'] },
+  },
+  hooks: {
+    'resolve-prerequisites': {
+      declaration: {
+        on: 'agent.resolvePrerequisites',
+        hookApiVersion: 1,
+        category: 'decision',
+        scope: 'agent',
+        filters: { agentId: 'pi' },
+        executionKind: 'decide',
+      },
+      handler: resolvePiDaemonSpawnPrerequisitesHook,
+    },
+  },
+  settings: {
+    [PI_AGENT_SETTINGS_CONTRIBUTION_ID]: PI_AGENT_SETTINGS_DECLARATION,
+  },
+  ui: { translations: PI_UI_TRANSLATION_BUNDLES },
+});
+
+export const PLUGIN_MANIFEST = PI_PLUGIN.manifest;

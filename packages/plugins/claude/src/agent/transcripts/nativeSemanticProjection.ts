@@ -1,5 +1,8 @@
 import { readSessionHookSidechainAgentId } from '../hooks/sidechain.js';
-import { INTERNAL_CLAUDE_EVENT_TYPES } from './internalEventTypes.js';
+import {
+  CLAUDE_NON_TRANSCRIPT_RECORD_TYPES,
+  INTERNAL_CLAUDE_EVENT_TYPES,
+} from './internalEventTypes.js';
 import {
   resolveClaudeTranscriptMessageRole,
   type ClaudeTranscriptMessageRole,
@@ -19,11 +22,35 @@ const CLAUDE_SYNTHETIC_NO_RESPONSE_TEXT = 'No response requested.';
 
 export type ClaudeNativeTranscriptContent =
   | Readonly<{ kind: 'none' }>
-  | Readonly<{ kind: 'message' }>
+  | Readonly<{ kind: 'message'; text: string | null }>
   | Readonly<{ kind: 'compact_summary'; text: string }>
   | Readonly<{ kind: 'slash_command'; text: string }>
   | Readonly<{ kind: 'local_command_output'; text: string }>
   | Readonly<{ kind: 'opaque'; original: unknown }>;
+
+/**
+ * Recipient-safe Claude message semantics. The native envelope stays private;
+ * only these canonical fields may leave the Claude projection owner.
+ */
+export type ClaudeNativeTranscriptContentPart =
+  | Readonly<{ kind: 'text'; text: string }>
+  | Readonly<{ kind: 'thinking'; text: string }>
+  | Readonly<{
+      kind: 'tool_use';
+      callId: string;
+      name: string;
+      input: unknown;
+    }>
+  | Readonly<{
+      kind: 'tool_result';
+      callId: string;
+      output: unknown;
+      isError?: boolean;
+    }>
+  | Readonly<{
+      kind: 'unsupported';
+      source: 'content' | 'image' | 'thinking' | 'tool_result' | 'tool_use';
+    }>;
 
 export type ClaudeNativeTranscriptLifecycleMeaning =
   | Readonly<{ kind: 'none' }>
@@ -48,6 +75,7 @@ export type ClaudeNativeTranscriptRowClassification = Readonly<{
   messageRole: ClaudeTranscriptMessageRole;
   sidechain: boolean;
   content: ClaudeNativeTranscriptContent;
+  semanticParts: readonly ClaudeNativeTranscriptContentPart[];
   lifecycle: ClaudeNativeTranscriptLifecycleMeaning;
   nativeBoundary: ClaudeNativeTranscriptBoundary | null;
 }>;
@@ -108,6 +136,77 @@ function readTextContentParts(value: unknown): string | null {
   return parts.length > 0 ? parts.join('') : null;
 }
 
+function readMessageContentParts(value: unknown): readonly ClaudeNativeTranscriptContentPart[] {
+  const directText = readTextContent(value);
+  if (directText !== null) return [{ kind: 'text', text: directText }];
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return [{ kind: 'unsupported', source: 'content' }];
+
+  const parts: ClaudeNativeTranscriptContentPart[] = [];
+  const textParts: string[] = [];
+  const flushText = () => {
+    if (textParts.length === 0) return;
+    parts.push({ kind: 'text', text: textParts.join('') });
+    textParts.length = 0;
+  };
+
+  for (const valuePart of value) {
+    if (!isRecord(valuePart)) {
+      flushText();
+      parts.push({ kind: 'unsupported', source: 'content' });
+      continue;
+    }
+    const type = typeof valuePart.type === 'string' ? valuePart.type : null;
+    if (type === 'text') {
+      const text = readTextContent(valuePart.text);
+      if (text !== null) {
+        textParts.push(text);
+        continue;
+      }
+      flushText();
+      parts.push({ kind: 'unsupported', source: 'content' });
+      continue;
+    }
+
+    flushText();
+    if (type === 'thinking') {
+      const text = readTextContent(valuePart.thinking);
+      parts.push(text === null
+        ? { kind: 'unsupported', source: 'thinking' }
+        : { kind: 'thinking', text });
+      continue;
+    }
+    if (type === 'tool_use') {
+      const callId = readString(valuePart.id);
+      const name = readString(valuePart.name);
+      parts.push(callId === null || name === null
+        ? { kind: 'unsupported', source: 'tool_use' }
+        : {
+            kind: 'tool_use',
+            callId,
+            name,
+            input: valuePart.input ?? {},
+          });
+      continue;
+    }
+    if (type === 'tool_result') {
+      const callId = readString(valuePart.tool_use_id);
+      parts.push(callId === null
+        ? { kind: 'unsupported', source: 'tool_result' }
+        : {
+            kind: 'tool_result',
+            callId,
+            output: valuePart.content ?? '',
+            ...(typeof valuePart.is_error === 'boolean' ? { isError: valuePart.is_error } : {}),
+          });
+      continue;
+    }
+    parts.push({ kind: 'unsupported', source: type === 'image' ? 'image' : 'content' });
+  }
+  flushText();
+  return parts;
+}
+
 function readSingleTextContentBlock(value: unknown): string | null {
   if (!Array.isArray(value) || value.length !== 1) return null;
   const block = value[0];
@@ -134,11 +233,20 @@ function createBaseClassification(params: Readonly<{
   visibility: ClaudeNativeTranscriptRowClassification['visibility'];
   messageRole: ClaudeTranscriptMessageRole;
   content: ClaudeNativeTranscriptContent;
+  semanticParts?: readonly ClaudeNativeTranscriptContentPart[];
 }>): ClaudeNativeTranscriptRowClassification {
   return {
     ...params,
-    knownNonTranscriptRecord: params.row?.type === 'progress',
+    // A record is a safe skip only when the pinned CLI ratifies it as
+    // non-transcript, or when it is a conversation row this projection
+    // deliberately hides. Everything else stays unsupported so the paging
+    // owner reports the loss instead of advancing past user data.
+    knownNonTranscriptRecord:
+      (params.rawType !== null && CLAUDE_NON_TRANSCRIPT_RECORD_TYPES.has(params.rawType))
+      || ((params.rawType === 'user' || params.rawType === 'assistant')
+        && params.visibility === 'hidden'),
     sidechain: params.row?.isSidechain === true,
+    semanticParts: params.semanticParts ?? [],
     lifecycle: { kind: 'none' },
     nativeBoundary: null,
   };
@@ -239,7 +347,8 @@ export function classifyClaudeNativeTranscriptRow(
     row,
     visibility: 'visible',
     messageRole: resolveClaudeTranscriptMessageRole(row),
-    content: { kind: 'message' },
+    content: { kind: 'message', text: readTextContentParts(readMessageRecord(row)?.content) },
+    semanticParts: readMessageContentParts(readMessageRecord(row)?.content),
   });
 
   if (row.type === 'system' && readString((row as Record<string, unknown>).subtype) === 'compact_boundary') {

@@ -17,6 +17,8 @@
  * to start a timer.
  */
 
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+
 export type SentryRateLimitSnapshotV1 = Readonly<{
   /** null when the header was absent — never 0, which would mean "exhausted". */
   limit: number | null;
@@ -52,20 +54,12 @@ export const SENTRY_MAX_RETRY_HINT_HORIZON_MS = 60 * 60 * 1000;
 
 const INTEGER_PATTERN = /^-?\d+$/u;
 
-function readHeaderCaseInsensitive(
-  headers: Readonly<Record<string, string>>,
-  name: string,
-): string | undefined {
-  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name);
-  return entry?.[1];
-}
-
 function readInteger(
   headers: Readonly<Record<string, string>>,
   name: string,
 ): number | null {
-  const raw = readHeaderCaseInsensitive(headers, name)?.trim();
-  if (raw === undefined || raw === '' || !INTEGER_PATTERN.test(raw)) return null;
+  const raw = readTriageResponseHeaderV1(headers, name);
+  if (raw === null || !INTEGER_PATTERN.test(raw)) return null;
   const parsed = Number.parseInt(raw, 10);
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
@@ -74,7 +68,7 @@ export function readSentryRateLimitSnapshot(
   headers: Readonly<Record<string, string>>,
 ): SentryRateLimitSnapshotV1 {
   const anyHeaderPresent = Object.values(RATE_LIMIT_HEADERS)
-    .some((name) => readHeaderCaseInsensitive(headers, name) !== undefined);
+    .some((name) => readTriageResponseHeaderV1(headers, name) !== null);
   const resetSeconds = readInteger(headers, RATE_LIMIT_HEADERS.reset);
 
   return Object.freeze({

@@ -4,8 +4,9 @@ import type {
   ExecService,
   PluginProcessResult,
 } from '@happier-dev/plugin-sdk/exec';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 
-import { createOpenCodeHandoffSurfaceForExec } from './descriptor.js';
+import { openCodeHandoffSurface } from './descriptor.js';
 
 function encodeExportPayload(value: unknown): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
@@ -69,6 +70,19 @@ function createExecFixture(
   };
 }
 
+function createHandoffInvocationContext(exec: ExecService): PluginInvocationContext {
+  return {
+    plugin: { id: 'happier.opencode', version: '1.0.0' },
+    contribution: {
+      id: 'opencode',
+      qualifiedId: 'happier.opencode/agents/opencode',
+    },
+    surface: 'agent',
+    signal: new AbortController().signal,
+    services: { exec },
+  } as PluginInvocationContext;
+}
+
 function processResult(params: Readonly<{
   exitCode: number;
   stdout?: string;
@@ -86,15 +100,15 @@ function processResult(params: Readonly<{
   };
 }
 
-describe('createOpenCodeHandoffSurfaceForExec', () => {
+describe('openCodeHandoffSurface', () => {
   it('skips vendor import and returns canonical session-state updates when the target export is semantically identical', async () => {
     const execRun = vi.fn(async () => processResult({
       exitCode: 0,
       stdout: JSON.stringify(buildVendorExport({ projectID: 'target-project' })),
     }));
-    const surface = createOpenCodeHandoffSurfaceForExec(createExecFixture(execRun));
+    const context = createHandoffInvocationContext(createExecFixture(execRun));
 
-    const result = await surface.importBundle({
+    const result = await openCodeHandoffSurface.importBundle({
       bundle: {
         agentId: 'opencode',
         remoteSessionId: 'oc-import-1',
@@ -106,15 +120,18 @@ describe('createOpenCodeHandoffSurfaceForExec', () => {
         },
       },
       targetDirectory: '/repo',
-    });
+    }, context);
 
     expect(execRun).toHaveBeenCalledOnce();
-    expect(execRun).toHaveBeenCalledWith({
-      executable: { kind: 'systemTool', id: 'opencode-cli' },
-      args: ['export', 'oc-import-1'],
-      cwd: { root: 'workspace', relativePath: '' },
-      maxStdoutBytes: 16 * 1024 * 1024,
-    });
+    expect(execRun).toHaveBeenCalledWith(
+      {
+        executable: { kind: 'systemTool', id: 'opencode-cli' },
+        args: ['export', 'oc-import-1'],
+        cwd: { root: 'workspace', relativePath: '' },
+        maxStdoutBytes: 16 * 1024 * 1024,
+      },
+      { signal: context.signal },
+    );
     expect(result).toMatchObject({
       ok: true,
       value: {
@@ -164,9 +181,9 @@ describe('createOpenCodeHandoffSurfaceForExec', () => {
         partText: 'divergent target content',
       })),
     }));
-    const surface = createOpenCodeHandoffSurfaceForExec(createExecFixture(execRun));
+    const context = createHandoffInvocationContext(createExecFixture(execRun));
 
-    const result = await surface.importBundle({
+    const result = await openCodeHandoffSurface.importBundle({
       bundle: {
         agentId: 'opencode',
         remoteSessionId: 'oc-import-1',
@@ -178,7 +195,7 @@ describe('createOpenCodeHandoffSurfaceForExec', () => {
         },
       },
       targetDirectory: '/repo',
-    });
+    }, context);
 
     expect(result).toEqual({
       ok: false,
@@ -207,9 +224,9 @@ describe('createOpenCodeHandoffSurfaceForExec', () => {
       }
       throw new Error(`unexpected OpenCode command: ${input.args?.join(' ')}`);
     });
-    const surface = createOpenCodeHandoffSurfaceForExec(createExecFixture(execRun));
+    const context = createHandoffInvocationContext(createExecFixture(execRun));
 
-    const result = await surface.importBundle({
+    const result = await openCodeHandoffSurface.importBundle({
       bundle: {
         agentId: 'opencode',
         remoteSessionId: 'oc-import-1',
@@ -221,7 +238,7 @@ describe('createOpenCodeHandoffSurfaceForExec', () => {
         },
       },
       targetDirectory: '/repo',
-    });
+    }, context);
 
     expect(result).toEqual({
       ok: false,
@@ -229,17 +246,23 @@ describe('createOpenCodeHandoffSurfaceForExec', () => {
       message: 'OpenCode 1.14.41 cannot safely create an absent handoff target',
     });
     expect(execRun.mock.calls).toEqual([
-      [{
-        executable: { kind: 'systemTool', id: 'opencode-cli' },
-        args: ['export', 'oc-import-1'],
-        cwd: { root: 'workspace', relativePath: '' },
-        maxStdoutBytes: 16 * 1024 * 1024,
-      }],
-      [{
-        executable: { kind: 'systemTool', id: 'opencode-cli' },
-        args: ['--version'],
-        cwd: { root: 'workspace', relativePath: '' },
-      }],
+      [
+        {
+          executable: { kind: 'systemTool', id: 'opencode-cli' },
+          args: ['export', 'oc-import-1'],
+          cwd: { root: 'workspace', relativePath: '' },
+          maxStdoutBytes: 16 * 1024 * 1024,
+        },
+        { signal: context.signal },
+      ],
+      [
+        {
+          executable: { kind: 'systemTool', id: 'opencode-cli' },
+          args: ['--version'],
+          cwd: { root: 'workspace', relativePath: '' },
+        },
+        { signal: context.signal },
+      ],
     ]);
     expect(execRun.mock.calls.some(([input]) => input.args?.[0] === 'import')).toBe(false);
   });
@@ -249,9 +272,9 @@ describe('createOpenCodeHandoffSurfaceForExec', () => {
       exitCode: 1,
       stderr: 'OpenCode database is unavailable',
     }));
-    const surface = createOpenCodeHandoffSurfaceForExec(createExecFixture(execRun));
+    const context = createHandoffInvocationContext(createExecFixture(execRun));
 
-    const result = await surface.importBundle({
+    const result = await openCodeHandoffSurface.importBundle({
       bundle: {
         agentId: 'opencode',
         remoteSessionId: 'oc-import-1',
@@ -263,7 +286,7 @@ describe('createOpenCodeHandoffSurfaceForExec', () => {
         },
       },
       targetDirectory: '/repo',
-    });
+    }, context);
 
     expect(result).toEqual({
       ok: false,
@@ -278,9 +301,9 @@ describe('createOpenCodeHandoffSurfaceForExec', () => {
     const execRun = vi.fn(async () => {
       throw new Error('spawn cwd ENOENT');
     });
-    const surface = createOpenCodeHandoffSurfaceForExec(createExecFixture(execRun));
+    const context = createHandoffInvocationContext(createExecFixture(execRun));
 
-    const result = await surface.importBundle({
+    const result = await openCodeHandoffSurface.importBundle({
       bundle: {
         agentId: 'opencode',
         remoteSessionId: 'oc-import-missing-target',
@@ -294,7 +317,7 @@ describe('createOpenCodeHandoffSurfaceForExec', () => {
         },
       },
       targetDirectory: '/missing/repo',
-    });
+    }, context);
 
     expect(result).toEqual({
       ok: false,

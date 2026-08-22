@@ -1,6 +1,8 @@
 import type { ConversationProviderSetupResultV1 } from '@happier-dev/channels-protocol/v1';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 
+import { DISCORD_MESSAGE_MAXIMUM_CODE_POINTS } from './discordDelivery.js';
+
 export const DISCORD_MESSAGE_CONTENT_INTENT = 1 << 15;
 export const DISCORD_GUILDS_INTENT = 1 << 0;
 export const DISCORD_BASE_GATEWAY_INTENTS = DISCORD_GUILDS_INTENT | (1 << 9) | (1 << 12);
@@ -175,6 +177,6 @@ export function createDiscordSetupResult(
     recommendedTransport: 'socket',
     overlapSafety: 'safe',
     replayContinuity: 'sessionBound',
-    outboundTextLimit: { maximum: 2_000, unit: 'unicodeCodePoints' },
+    outboundTextLimit: { maximum: DISCORD_MESSAGE_MAXIMUM_CODE_POINTS, unit: 'unicodeCodePoints' },
   };
 }

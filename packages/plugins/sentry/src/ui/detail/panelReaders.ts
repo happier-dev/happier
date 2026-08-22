@@ -390,6 +390,9 @@ export function useSentryOccurrences(
         omittedRowCount: parsed.data.omittedRowCount,
         projectionTruncated: parsed.data.projectionTruncated,
         continuation: parsed.data.continuation ?? null,
+        // A walk that stopped short says so; absent means the walk ended at the
+        // end of the collection, which is a different answer.
+        incomplete: parsed.data.incomplete ?? null,
       },
     };
   }, [execute, instance, localRef]);
@@ -439,6 +442,9 @@ export function useSentryTagValues(
         omittedRowCount: parsed.data.omittedRowCount,
         projectionTruncated: parsed.data.projectionTruncated,
         continuation: parsed.data.continuation ?? null,
+        // A walk that stopped short says so; absent means the walk ended at the
+        // end of the collection, which is a different answer.
+        incomplete: parsed.data.incomplete ?? null,
       },
     };
   }, [execute, instance, localRef, tagKey]);

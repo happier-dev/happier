@@ -4,9 +4,9 @@ import type {
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import {
-  materializeForgeAuthorization,
-  type ForgeAuthorizationFailureReason,
-} from '@happier-dev/scm-forge-adapter';
+  materializeTriageSourceAuthorizationV1,
+  type TriageSourceAuthorizationFailureReasonV1,
+} from '@happier-dev/triage-sources/runtime';
 
 import {
   BITBUCKET_CLOUD_API_ORIGIN,
@@ -53,7 +53,7 @@ export function classifyBitbucketAuthorizationThrow(error: unknown): BitbucketTr
  * invite a blind retry.
  */
 const AUTHORIZATION_FAILURES: Readonly<
-  Record<ForgeAuthorizationFailureReason, BitbucketTriageFailure>
+  Record<TriageSourceAuthorizationFailureReasonV1, BitbucketTriageFailure>
 > = Object.freeze({
   cancelled: createBitbucketFailure('cancelled', 'invocation-cancelled'),
   materializationFailed: createBitbucketFailure('authentication', 'account-materialization-failed'),
@@ -81,7 +81,7 @@ export async function createAuthorizedBitbucketClient(
   runtime: BitbucketSourceRuntime,
   request: Readonly<{ purpose: string; account: ConnectedAccountRef }>,
 ): Promise<BitbucketAuthorizedClientOutcome> {
-  const authorization = await materializeForgeAuthorization({
+  const authorization = await materializeTriageSourceAuthorizationV1({
     connectedAccounts: runtime.connectedAccounts,
     purpose: request.purpose,
     account: request.account,

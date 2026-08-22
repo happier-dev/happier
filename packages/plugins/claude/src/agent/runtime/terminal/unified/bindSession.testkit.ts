@@ -1,16 +1,17 @@
 import type { TerminalHostPreference } from '@happier-dev/agents';
-import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
   DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY,
-  normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy,
   type ClaudeUnifiedTerminalWorkspaceTrustPolicy,
-} from '@happier-dev/agents';
+} from '../../../../agentSettings/definition.js';
+import { normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy } from '../../../../protocol/remoteSettings.js';
 import { join } from 'node:path';
 
 import { resolveMetadataStringOverrideV1 } from '@happier-dev/agents';
 
 import { isolateClaudeRuntimeAuthEnv } from '../../../auth/services/runtime/env.js';
-import { getClaudeProjectPath, resolveClaudeConfigDirOverride } from '../../../surfaces/sessions/handoff/path.js';
+import { resolveClaudeConfigDirOverride } from '../../../environment.js';
+import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js';
 import { resolveClaudePermissionModeFromRuntimeMode } from '../../permissionMode.js';
 import {
   DEFAULT_CLAUDE_UNIFIED_RESUME_CHOICE,
@@ -298,6 +299,9 @@ export async function bindClaudeUnifiedTerminalSession(params: Readonly<{
       initialMetadata,
     }),
     initialWorkflowActivityHeadline: initialMetadata?.sessionWorkflowActivityHeadlineV1,
+    // Its agent-scoped half. Both keys are written in one metadata update, and only this one names
+    // the agents a killed process left running — without it crash recovery is count-only.
+    initialAgentActivityHeadline: initialMetadata?.sessionAgentActivityHeadlineV1,
     knownProviderSession: explicitResumeBinding
       ?? resolveKnownClaudeTranscriptBinding({
         directory,

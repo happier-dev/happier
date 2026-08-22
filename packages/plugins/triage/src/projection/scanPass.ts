@@ -1,3 +1,4 @@
+import { raceWithTimeout, type RaceWithTimeoutResult } from '@happier-dev/plugin-sdk/async';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import {
@@ -31,17 +32,26 @@ import type { TriageListLaneHealthV1, TriageListLaneV1 } from './listWindow.js';
  *
  * A page is qualified atomically. An admitted source contribution is trusted
  * code holding an admitted operation handle, so a page it returns that violates
- * the host-plugin contract — a local ref outside the published grammar, or a
- * kind its own descriptor never declared — is a defect in that source rather
- * than a bad provider row it was supposed to filter. Tolerance for untrusted
- * provider rows belongs inside the source, which is why salvaging the valid
- * siblings here would publish a conforming-looking lane for a source that is
- * not conforming: its walk evidence would read healthy while its contract
- * defect stayed invisible. The whole page is therefore rejected, the lane is
+ * the host-plugin contract — a local ref outside the published grammar, a kind
+ * its own descriptor never declared, or more rows than the limit this pass
+ * submitted — is a defect in that source rather than a bad provider row it was
+ * supposed to filter. Tolerance for untrusted provider rows belongs inside the
+ * source, which is why salvaging the valid siblings here would publish a
+ * conforming-looking lane for a source that is not conforming: its walk
+ * evidence would read healthy while its contract defect stayed invisible. The whole page is therefore rejected, the lane is
  * marked failed with the closed `unsupportedContract` class, and neither the
  * page's evidence nor any observation this lane produced in this pass is
  * adopted — so the consumer keeps its last-known-good rather than a silently
  * partial view of a broken source.
+ *
+ * A page that neither answers nor fails is the third outcome, and it is not a
+ * contract violation: it is bounded by this owner's private per-page deadline
+ * (`CONTRACT.md` §5.2, `PLAN.md` `REQ-13`). Reaching it settles the lane as a
+ * classified `transient` failure and leaves the rotation, and it stops the
+ * provider work we stopped waiting for — but it keeps every page that lane
+ * already gave, because an unanswered page says nothing about the ones that
+ * answered. The pass schedules no wake and retries nothing: a later view or
+ * manual trigger asks again, after the shared pacing policy's bounded backoff.
  */
 
 /** One configured source instance, bound to the exact admitted `scan` it is read through. */
@@ -67,7 +77,49 @@ type LaneState = {
     health: TriageListLaneHealthV1;
     exhausted: boolean;
     active: boolean;
+    /**
+     * Provider rows this lane has consumed across the whole walk — qualified
+     * observations plus tolerantly-omitted rows. It is the only quantity that
+     * bounds a walk whose pages all answer promptly, so it is carried per lane
+     * rather than recomputed per page.
+     */
+    charged: number;
 };
+
+/**
+ * How long this owner waits for one submitted scan page before it stops
+ * waiting.
+ *
+ * It bounds one `scan` invocation, which is the several provider round trips a
+ * source makes to fill one page — so a single request timeout would be too
+ * tight — and it is a third of `TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS`, the
+ * interval measured from a read's *start* that decides when the next
+ * view-triggered pass may run. A page allowed to outlast that interval would
+ * still be hanging when the next pass is already eligible.
+ *
+ * It is private implementation discretion, never public source ABI, a
+ * per-source override, or a generic host timer: a source owns its own deadlines
+ * for the mounted detail reads and provider operations it starts.
+ *
+ * The deadline alone does NOT bound the pass, and must not be read as if it
+ * did: it bounds how long one page may take, not how many pages a source may
+ * offer. A source answering every page instantly while never converging is
+ * bounded separately, by the non-progress exits beside the continuation arm
+ * below — without them that shape spins entirely inside the microtask queue and
+ * starves the event loop rather than hanging one Action.
+ *
+ * The bounded ceiling it assumes is one lane per deadline, not one page per
+ * deadline — a lane that reaches it leaves the rotation — so a pass over N configured
+ * instances that all hang settles in N deadlines rather than unboundedly.
+ * `pageDeadlineMs` exists so owner tests inject a short one.
+ */
+const TRIAGE_SCAN_PAGE_DEADLINE_MS = 10_000;
+
+/**
+ * Every way one returned page can fail the V1 page contract: the per-observation
+ * qualification reasons, plus the page-level bound only this caller knows.
+ */
+type TriageScanPageViolationV1 = CorpusQualificationRejectionV1 | 'pageLimitExceeded' | 'nonProgressingWalk';
 
 /**
  * The lane health a contract violation produces.
@@ -77,7 +129,7 @@ type LaneState = {
  * reason is carried as the code so the failure names which invariant broke
  * without echoing any provider value.
  */
-function contractFailure(reason: CorpusQualificationRejectionV1): TriageListLaneHealthV1 {
+function contractFailure(reason: TriageScanPageViolationV1): TriageListLaneHealthV1 {
     return {
         kind: 'failed',
         failure: {
@@ -86,6 +138,37 @@ function contractFailure(reason: CorpusQualificationRejectionV1): TriageListLane
             detail: 'The source returned a page that does not satisfy the V1 observation contract.',
         },
     };
+}
+
+/**
+ * The lane health an unanswered page produces.
+ *
+ * `transient` is the class the shared pacing policy reads as a provider that is
+ * busy rather than as a user-actionable refusal, so a later view or manual
+ * Refresh retries after a bounded backoff instead of being parked behind a
+ * connection the user cannot fix.
+ */
+const SCAN_PAGE_DEADLINE_FAILURE_V1: TriageListLaneHealthV1 = Object.freeze({
+    kind: 'failed',
+    failure: Object.freeze({
+        class: 'transient',
+        code: 'triage/scanPageDeadline',
+        detail: 'The source did not answer this scan page before the aggregate deadline.',
+    }),
+});
+
+/**
+ * How much of the submitted limit one returned page spent.
+ *
+ * A provider row the source omitted while decoding still consumed provider
+ * position, so it is charged here exactly as `CONTRACT.md` §5.1 charges it. The
+ * published result schema can only enforce the global ceiling; the contextual
+ * limit this pass actually submitted is enforced nowhere unless it is enforced
+ * here.
+ */
+function chargedAgainstLimit(result: Extract<TriageScanResultV1, { kind: 'page' | 'complete' }>): number {
+    return result.observations.length
+        + (result.evidence.kind === 'partial' ? result.evidence.omittedItemCount ?? 0 : 0);
 }
 
 function scanInputFor(state: LaneState, pageLimit: number): TriageScanInputV1 {
@@ -102,8 +185,11 @@ export async function runTriageScanPass(input: Readonly<{
     observationBudget: number;
     nowMs: () => number;
     signal?: AbortSignal;
+    /** Owner-private per-page deadline; owner tests inject a short one. */
+    pageDeadlineMs?: number;
 }>): Promise<TriageScanPassResultV1> {
     const pageLimit = Math.max(1, Math.min(input.pageLimit, MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1));
+    const pageDeadlineMs = input.pageDeadlineMs ?? TRIAGE_SCAN_PAGE_DEADLINE_MS;
     const states: LaneState[] = input.lanes.map((lane) => ({
         lane,
         continuation: null,
@@ -111,6 +197,7 @@ export async function runTriageScanPass(input: Readonly<{
         health: { kind: 'unavailable' },
         exhausted: false,
         active: true,
+        charged: 0,
     }));
     const observations: CorpusQualifiedObservationV1[] = [];
     /** Lanes whose page violated the contract; nothing they produced is adopted. */
@@ -130,19 +217,65 @@ export async function runTriageScanPass(input: Readonly<{
                 continue;
             }
 
-            let result: TriageScanResultV1;
+            // One controller per invocation: it carries our deadline, and it
+            // composes with the caller's canonical signal so retirement,
+            // reconfiguration and shutdown still reach the source unchanged.
+            const deadline = new AbortController();
+            const options: PluginCancellationOptions = {
+                signal: input.signal
+                    ? AbortSignal.any([input.signal, deadline.signal])
+                    : deadline.signal,
+            };
+            let settled: RaceWithTimeoutResult<TriageScanResultV1>;
             try {
-                const options = input.signal ? { signal: input.signal } : undefined;
-                result = await state.lane.scan(scanInputFor(state, pageLimit), options);
-            } catch {
+                settled = await raceWithTimeout(
+                    state.lane.scan(scanInputFor(state, pageLimit), options),
+                    pageDeadlineMs,
+                );
+            } catch (error) {
+                // A synchronous throw is the same defect as a rejection.
+                settled = { type: 'rejected', error };
+            } finally {
+                // However this invocation ended, it is over for us. Aborting
+                // releases the composed signal and, on a deadline, stops the
+                // provider work we stopped waiting for — otherwise the pass
+                // that replaces this one starts a second walk beside a first
+                // that is still running.
+                deadline.abort();
+            }
+
+            if (settled.type === 'timeout') {
+                // Neither an answer nor a failure. The lane leaves the rotation
+                // as a classified transient failure, and every page it already
+                // gave stays: an unanswered page is not evidence against the
+                // ones that answered.
+                state.health = SCAN_PAGE_DEADLINE_FAILURE_V1;
+                state.active = false;
+                continue;
+            }
+            if (settled.type === 'rejected') {
                 // A rejected invocation is not provider evidence about the source.
                 state.health = { kind: 'unavailable' };
                 state.active = false;
                 continue;
             }
+            const result = settled.value;
 
             if (result.kind === 'failed') {
                 state.health = { kind: 'failed', failure: result.failure };
+                state.active = false;
+                continue;
+            }
+
+            const charged = chargedAgainstLimit(result);
+            if (charged > pageLimit) {
+                // Over-limit is a source-contract failure of the whole lane, not
+                // partially valid data: truncating would publish a conforming
+                // page for a source whose accounting is not conforming, and
+                // dropping the excess would lose rows silently.
+                contractFailed.add(state.lane.sourceInstanceId);
+                state.health = contractFailure('pageLimitExceeded');
+                state.exhausted = false;
                 state.active = false;
                 continue;
             }
@@ -181,6 +314,40 @@ export async function runTriageScanPass(input: Readonly<{
             state.health = result.evidence;
             if (result.kind === 'complete') {
                 state.exhausted = true;
+                state.active = false;
+                continue;
+            }
+
+            /*
+             * A walk has to end. The per-page deadline bounds how long ONE page
+             * may take; it cannot bound a source that answers every page
+             * instantly and never finishes, and that shape does not merely hang
+             * this Action — the whole loop settles in the microtask queue, so it
+             * starves the event loop the daemon runs on.
+             *
+             * Two exits, both derived from what the page already reports rather
+             * than from a new budget:
+             *
+             *  - A page that qualifies nothing AND charges no provider row has
+             *    consumed nothing at all, yet asks to be called again. That is
+             *    non-progress by construction, whatever the provider holds.
+             *  - Otherwise the walk is bounded by what it could ever need: a
+             *    source cannot require more rows than the observation budget it
+             *    is filling plus one final page. Past that it is not converging.
+             *
+             * Both are source-contract defects, so they take the same failure
+             * builder as the other contract violations and drop the lane's
+             * partial pages with them, rather than publishing a healthy-looking
+             * lane. This is conformance, not defence: an admitted source is
+             * trusted code, and a defect in it must be visible rather than
+             * silently salvaged (see the rationale above).
+             */
+            state.charged += charged;
+            const consumedNothing = page.length === 0 && charged === 0;
+            if (consumedNothing || state.charged > input.observationBudget + pageLimit) {
+                contractFailed.add(state.lane.sourceInstanceId);
+                state.health = contractFailure('nonProgressingWalk');
+                state.exhausted = false;
                 state.active = false;
                 continue;
             }

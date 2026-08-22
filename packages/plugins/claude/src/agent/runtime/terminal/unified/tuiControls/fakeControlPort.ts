@@ -4,7 +4,7 @@ import type {
   TerminalControlSendResult,
   TerminalSpecialKey,
   TerminalHostKind,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 /**
  * TEST-ONLY scripted {@link TerminalControlPort}. Not exported from index.ts and never imported by

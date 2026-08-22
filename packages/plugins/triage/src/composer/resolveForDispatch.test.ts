@@ -10,8 +10,15 @@ import type { TriageAdmittedSourceV1 } from '../actions/listEntries.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
+import { CORPUS_SESSION_LINKS_INDEX_ID } from '../corpus/collections/ids.js';
+import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
+import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
+import { deriveSessionLinkEntryTag, deriveUserMarkTag } from '../corpus/identity/tags.js';
+import { setPinned } from '../corpus/marks/setPinned.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testkit/observations.test-support.js';
+import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
+import { TESTKIT_LINK_DISPLAY } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import { resolveTriageEntryForDispatch } from './resolveForDispatch.js';
 
 /**
@@ -110,6 +117,10 @@ function createHarness(options: Readonly<{
                 contributionId: source.localId,
                 immutableGenerationId: 'generation-1',
             },
+            // The descriptor the source actually publishes. The merge path
+            // qualifies the named successor against exactly these declared
+            // kinds, so a harness without one would qualify nothing.
+            descriptor: { v: 1, kinds: [{ id: LOCAL_REF.kindId }] },
             operations: { listInstances: {}, scan: {}, get: handle },
         } as unknown as TriageAdmittedSourceV1;
     }
@@ -118,8 +129,11 @@ function createHarness(options: Readonly<{
 
     return {
         calls,
+        collections,
+        control,
         deps: {
             sourceInstances: collections.sourceInstances,
+            sessionLinks: collections.sessionLinks,
             readAdmittedSources: async () => admitted,
             executeGet: async (operation: unknown, input: TriageGetInputV1) => {
                 if (!handles.has(operation as object)) {
@@ -371,5 +385,75 @@ describe('resolving an attached Triage entry for dispatch', () => {
             .toEqual(['attachment-1', 'attachment-2']);
         expect(result.attachments[0]?.status).toBe('notFound');
         expect(result.attachments[1]?.status).toBe('ready');
+    });
+    /**
+     * The one durable effect an authoritative `merged(successor)` has
+     * (`core/CORPUS.md` §3.3), proved through the real dispatch path rather
+     * than by calling the reconciler: the source answers `merged` to the exact
+     * `get` this resolution issued, and the user's Session link stops pointing
+     * at a predecessor nobody will open again.
+     */
+    it('retargets the predecessor Session link when its source answers merged', async () => {
+        const successorLocalRef = { ...LOCAL_REF, entryId: '43' };
+        const successorEntryRef = { source: SOURCE, ...successorLocalRef };
+        const harness = createHarness({
+            get: async () => ({ kind: 'merged', localRef: LOCAL_REF, successor: successorLocalRef }),
+        });
+
+        // The real link writer commits the relationship, and the real mark
+        // writer commits the pin: both are the collections' only creators.
+        const linked = await linkEntryToSession({
+            collections: harness.collections,
+            entryRef: ENTRY_REF,
+            display: TESTKIT_LINK_DISPLAY,
+            sessionId: 'session-a',
+            nowMs: 1_760_000_900_000,
+            mintCardPublicationId: () => 'publication-a',
+        });
+        if (linked.status !== 'linked') throw new Error('the link fixture did not commit');
+        await setPinned({
+            collections: harness.collections,
+            entryRef: ENTRY_REF,
+            pinned: true,
+            displayAtMark: { title: 'Replace the duplicated normalizer', scopeLabel: 'example/repository' },
+            nowMs: 1_760_000_900_000,
+        });
+        const markTag = await deriveUserMarkTag(harness.collections.userMarks, ENTRY_REF);
+        const markBefore = harness.control.userMarks.inspect(markTag);
+
+        const result = await resolveTriageEntryForDispatch(
+            { attachments: [attachment()] },
+            harness.deps as never,
+        );
+
+        // The attachment itself is still blocked: the successor is a different
+        // entry and the model never receives one the user did not attach.
+        expect(result.attachments[0]).toMatchObject({ status: 'notFound', retryable: false });
+
+        const rowsOn = async (entryRef: typeof ENTRY_REF): Promise<readonly CorpusSessionLinkRowV1[]> => {
+            const entryTag = await deriveSessionLinkEntryTag(harness.collections.sessionLinks, entryRef);
+            const page = await harness.collections.sessionLinks.query({
+                index: CORPUS_SESSION_LINKS_INDEX_ID.byEntry,
+                prefix: [entryTag],
+                order: 'asc',
+            });
+            return page.rows.map((stored) => fromCorpusStoredRow<CorpusSessionLinkRowV1>(stored).value);
+        };
+
+        expect(await rowsOn(ENTRY_REF)).toEqual([]);
+        const moved = await rowsOn(successorEntryRef);
+        expect(moved).toHaveLength(1);
+        // In place: same row, same relationship, same published card. Only the
+        // current entry ref and its projected index tag moved.
+        expect(moved[0]?.linkTag).toBe(linked.linkTag);
+        expect(moved[0]?.sessionId).toBe('session-a');
+        expect(moved[0]?.cardPublicationId).toBe('publication-a');
+        expect(moved[0]?.linkedAtMs).toBe(1_760_000_900_000);
+        expect(moved[0]?.entryRef).toEqual(successorEntryRef);
+        expect(moved[0]?.identityEntryRef).toEqual(ENTRY_REF);
+
+        // A pin is a user's own fact and this path is not its writer: the mark
+        // row is untouched, still addressed to the predecessor.
+        expect(harness.control.userMarks.inspect(markTag)).toEqual(markBefore);
     });
 });

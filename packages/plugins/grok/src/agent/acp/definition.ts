@@ -9,7 +9,7 @@ import { selectGrokAuthentication } from './auth.js';
 import { GROK_PROMPT_COMPLETE_METHODS, handleGrokPromptComplete } from './completion.js';
 import { GROK_MCP_SERVERS_UPDATED_METHOD, handleGrokMcpServersUpdated } from './mcpServersUpdated.js';
 import {
-  projectGrokModelOptions,
+  projectGrokModel,
   projectGrokSetModelResponse,
   resolveGrokReasoningEffortUpdate,
 } from './modelControls.js';
@@ -21,6 +21,11 @@ import {
 } from './questions.js';
 import { projectGrokGeneratedMedia } from './generatedMedia.js';
 import { GROK_ACP_HISTORY } from './historyControls.js';
+import { GROK_PROMPT_USAGE } from './usage.js';
+import {
+  createGrokSessionNotificationObserver,
+  GROK_SESSION_NOTIFICATION_METHODS,
+} from './sessionNotifications.js';
 
 export function buildGrokAcpRuntimeDefinition(
   launchEnvironment: Readonly<Record<string, string>>,
@@ -32,18 +37,16 @@ export function buildGrokAcpRuntimeDefinition(
     parameterizedModelPicker: true,
     acceptsVerifiedImageInput: true,
     toolNameInference: createAcpToolNameInferencePreset(),
+    toolUpdates: {
+      minInProgressIntervalMs: 250,
+      maxStringChars: 8_192,
+    },
     models: {
       projectModel(rawModel, normalizedModel) {
         const modelRecord = rawModel !== null && typeof rawModel === 'object' && !Array.isArray(rawModel)
           ? rawModel as Readonly<Record<string, unknown>>
           : {};
-        return {
-          ...normalizedModel,
-          modelOptions: projectGrokModelOptions(
-            modelRecord,
-            normalizedModel.modelOptions ?? [],
-          ),
-        };
+        return projectGrokModel(modelRecord, normalizedModel);
       },
       projectUpdate({ configId, value, currentModel }) {
         return resolveGrokReasoningEffortUpdate({ configId, value, currentModel });
@@ -55,6 +58,25 @@ export function buildGrokAcpRuntimeDefinition(
     generatedMedia: {
       projectTerminalOutput: projectGrokGeneratedMedia,
     },
+    delivery: {
+      steer: {
+        method: 'x.ai/interject',
+        buildParams({ providerSessionId, inputIds, input }) {
+          return {
+            sessionId: providerSessionId,
+            text: input.text,
+            interjectionId: inputIds[0],
+          };
+        },
+        isAccepted(response) {
+          return response !== null
+            && typeof response === 'object'
+            && !Array.isArray(response)
+            && Reflect.get(response, 'status') === 'queued';
+        },
+      },
+    },
+    usage: GROK_PROMPT_USAGE,
     history: GROK_ACP_HISTORY,
     mcp: { policy: 'pass_through' as const },
   });
@@ -65,9 +87,14 @@ export const GROK_ACP_RUNTIME_DEFINITION: AgentAcpRuntimeDefinition =
 
 export function createGrokAcpRuntimeExtensions(
   context: Readonly<{
-    services: Pick<AgentSessionRuntimeContext['services'], 'interactions'>;
+    services: AgentSessionRuntimeContext['services'];
+    session: AgentSessionRuntimeContext['session'];
+    workState: AgentSessionRuntimeContext['workState'];
   }>,
 ): AgentAcpRuntimeExtensions {
+  const sessionNotification = createGrokSessionNotificationObserver({
+    context: context as AgentSessionRuntimeContext,
+  });
   const askQuestion = async (
     params: Parameters<NonNullable<AgentAcpRuntimeExtensions['requests']>[string]>[0],
     extensionContext: Parameters<NonNullable<AgentAcpRuntimeExtensions['requests']>[string]>[1],
@@ -105,6 +132,7 @@ export function createGrokAcpRuntimeExtensions(
         },
       ])),
       [GROK_MCP_SERVERS_UPDATED_METHOD]: handleGrokMcpServersUpdated,
+      ...Object.fromEntries(GROK_SESSION_NOTIFICATION_METHODS.map((method) => [method, sessionNotification])),
     }),
   });
 }

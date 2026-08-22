@@ -11,3 +11,18 @@ export const TELEGRAM_CHANNEL_ACTION_IDS = Object.freeze({
   observationsPoll: 'telegram/poll-updates',
   messageDeliver: 'telegram/post-message',
 });
+
+/**
+ * Telegram's `getUpdates` stream is single-consumer: an `offset` confirms and
+ * discards every earlier update. The Channels ingress already owns that one
+ * cycle, so Automation Event occurrences are admitted from inside that same
+ * poll rather than from a second observer that would steal its updates.
+ *
+ * The declaration that would project these ids is WITHHELD (see `plugin.ts`):
+ * the inline admission holds no durable obligation, so nothing arms a Telegram
+ * chat source yet. The ids stay canonical here for the withheld declaration and
+ * for the admission that is still exercised through `pollTelegramObservations`.
+ */
+export const TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID = 'automation/chat-message-v1';
+export const TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID = 'telegram/setup-chat-event-source';
+export const TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION = 1;

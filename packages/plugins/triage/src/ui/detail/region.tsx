@@ -1,4 +1,6 @@
 import * as React from 'react';
+
+import { deriveTriageDetailMountInstanceKey } from './mountKey.js';
 import {
   Badge,
   Banner,
@@ -16,12 +18,16 @@ import {
   Stack,
   Status,
   TargetedSurface,
+  usePluginTranslation,
   useSurfaceContext,
   type MetadataEntry,
 } from '@happier-dev/plugin-ui';
 import type { TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
 
-import type { TriageListLaneV1, TriageListRowV1 } from '../../projection/listWindow.js';
+import {
+  type TriageListLaneV1,
+  type TriageListRowV1,
+} from '../../projection/listWindow.js';
 import { projectTriageDetailHeaderV1, type TriageDetailHeaderV1 } from './header.js';
 import { readTriageSourceDetailContributionV1 } from './sourceSurface.js';
 import { useTriageEntryDetail } from './useTriageEntryDetail.js';
@@ -57,12 +63,23 @@ export type TriageDetailRegionProps = Readonly<{
   onClose: () => void;
 }>;
 
-function headerEntries(header: TriageDetailHeaderV1): readonly MetadataEntry[] {
+function headerEntries(
+  header: TriageDetailHeaderV1,
+  text: (key: string, fallback?: string) => string,
+): readonly MetadataEntry[] {
   const entries: MetadataEntry[] = [];
-  if (header.scopeLabel !== null) entries.push({ label: 'Scope', value: header.scopeLabel });
-  if (header.stateLabel !== null) entries.push({ label: 'State', value: header.stateLabel });
+  // §2.2's Source and Type, in the source's own words. Absent rather than
+  // guessed: a source with no currently admitted contribution loses the rows.
+  if (header.sourceLabel !== null) {
+    entries.push({ label: text('plugins.triage.surface.detail.source', 'Source'), value: header.sourceLabel });
+  }
+  if (header.kindLabel !== null) {
+    entries.push({ label: text('plugins.triage.surface.detail.type', 'Type'), value: header.kindLabel });
+  }
+  if (header.scopeLabel !== null) entries.push({ label: text('plugins.triage.surface.detail.scope', 'Scope'), value: header.scopeLabel });
+  if (header.stateLabel !== null) entries.push({ label: text('plugins.triage.surface.detail.state', 'State'), value: header.stateLabel });
   if (header.connectionLabel !== null) {
-    entries.push({ label: 'Connection', value: header.connectionLabel });
+    entries.push({ label: text('plugins.triage.surface.detail.connection', 'Connection'), value: header.connectionLabel });
   }
   return entries;
 }
@@ -79,18 +96,19 @@ const PRESENCE_COPY = Object.freeze({
 function LinkedSessions(props: Readonly<{
   sessions: readonly TriageLinkedSessionProjectionV1[];
 }>): React.ReactElement | null {
+  const text = usePluginTranslation();
   if (props.sessions.length === 0) return null;
   return (
     <Stack gap="small">
-      <Label value="Sessions" />
-      <ItemGroup accessibilityLabel="Sessions">
+      <Label value={text('plugins.triage.surface.detail.sessions', 'Sessions')} />
+      <ItemGroup accessibilityLabel={text('plugins.triage.surface.detail.sessions', 'Sessions')}>
         {props.sessions.map((session) => (
           <Item
             key={session.sessionId}
             // A retained link whose Session the host cannot answer for keeps
             // its row: dropping it would say the entry was never worked on.
-            title={session.displayTitle ?? 'Session'}
-            accessibilityLabel={session.displayTitle ?? 'Session'}
+            title={session.displayTitle ?? text('plugins.triage.surface.detail.session', 'Session')}
+            accessibilityLabel={session.displayTitle ?? text('plugins.triage.surface.detail.session', 'Session')}
           />
         ))}
       </ItemGroup>
@@ -100,6 +118,7 @@ function LinkedSessions(props: Readonly<{
 
 export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactElement {
   const context = useSurfaceContext();
+  const text = usePluginTranslation();
   const lookup = readTriageSourceDetailContributionV1(context, props.row.entryRef.source);
 
   const selection = React.useMemo(() => (
@@ -130,21 +149,27 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     selection === null || observation === null ? null : { selection, observation },
   );
   const linkedSessions = detail?.kind === 'ready' ? detail.input.linkedSessions : EMPTY_SESSIONS;
+  const sourceDescriptor = detail?.kind === 'ready' ? detail.sourceDescriptor : null;
   const header = React.useMemo(() => projectTriageDetailHeaderV1({
     row: props.row,
     lanes: props.lanes,
     connectionLabel: props.connectionLabel,
+    sourceDescriptor,
     linkedSessions,
-  }), [linkedSessions, props.connectionLabel, props.lanes, props.row]);
+  }), [linkedSessions, props.connectionLabel, props.lanes, props.row, sourceDescriptor]);
 
-  const entries = headerEntries(header);
-  const presenceCopy = PRESENCE_COPY[header.presence];
+  const entries = headerEntries(header, text);
+  const presenceCopy = header.presence === 'present'
+    ? null
+    : header.presence === 'absent'
+      ? text('plugins.triage.surface.detail.entryAbsent', PRESENCE_COPY.absent ?? '')
+      : text('plugins.triage.surface.detail.entryUnresolved', PRESENCE_COPY.unresolved ?? '');
 
   return (
     <Stack gap="small">
       <Row justify="space-between" align="center">
         <Heading level={2} value={header.title} />
-        <Button title="Close" variant="secondary" onPress={props.onClose} />
+        <Button titleKey="plugins.triage.surface.close" title="Close" variant="secondary" onPress={props.onClose} />
       </Row>
 
       {header.attention === null ? null : (
@@ -158,40 +183,58 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
 
       {presenceCopy === null ? null : <Status tone="warning" label={presenceCopy} />}
 
-      {header.sourceUnhealthy ? (
-        <Status tone="muted" label="This connection did not answer in the last pass." />
+      {header.sourceReadFailed ? (
+        <Status
+          tone="muted"
+          labelKey="plugins.triage.surface.detail.connectionUnhealthy"
+          label="This connection could not be read in the last pass."
+        />
       ) : null}
 
-      {header.webUrl === null ? null : <Link title="Open at the source" url={header.webUrl} />}
+      {header.webUrl === null ? null : (
+        <Link
+          titleKey="plugins.triage.surface.detail.openAtSource"
+          title="Open at the source"
+          url={header.webUrl}
+        />
+      )}
 
       <LinkedSessions sessions={header.linkedSessions} />
 
       {detail === null ? (
         <EmptyState
+          titleKey="plugins.triage.surface.detail.noConnection.title"
           title="No connection to open this through"
+          descriptionKey="plugins.triage.surface.detail.noConnection.description"
           description="No configured connection currently observes this entry, so there is nothing to read it with."
         />
       ) : detail.kind === 'reading' ? (
-        <LoadingState title="Reading this entry" />
+        <LoadingState titleKey="plugins.triage.surface.detail.reading" title="Reading this entry" />
       ) : detail.kind === 'unavailable' ? (
         <EmptyState
+          titleKey="plugins.triage.surface.detail.removedConnection.title"
           title="This connection is no longer configured"
+          descriptionKey="plugins.triage.surface.detail.removedConnection.description"
           description="The connection this entry was read through has been removed or replaced, so its details cannot be opened."
         />
       ) : detail.kind === 'unreachable' ? (
         <ErrorState
+          titleKey="plugins.triage.surface.detail.accountError.title"
           title="Your account could not be read"
+          descriptionKey="plugins.triage.surface.detail.accountError.description"
           description="Happier could not reach your account, so this entry's details are unavailable right now."
         />
       ) : detail.kind === 'refused' ? (
         <Banner
           tone="warning"
-          title="These details could not be prepared"
-          description="What Happier holds for this entry does not fit what a source detail is allowed to receive, so it was not handed over."
+          title={text('plugins.triage.surface.detail.prepareError.title', 'These details could not be prepared')}
+          description={text('plugins.triage.surface.detail.prepareError.description', 'What Happier holds for this entry does not fit what a source detail is allowed to receive, so it was not handed over.')}
         />
       ) : lookup.kind !== 'admitted' ? (
         <EmptyState
+          titleKey="plugins.triage.surface.detail.noDetail.title"
           title="This source has no detail view"
+          descriptionKey="plugins.triage.surface.detail.noDetail.description"
           description="The source that owns this entry does not currently contribute a detail surface."
         />
       ) : (
@@ -201,11 +244,21 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
           // Remounts on entry and on connection, and on nothing else: a refresh
           // that re-reads the same selection must not throw away the tab, scroll
           // and parser state the source body is holding.
-          instanceKey={`${props.row.entryRef.entryId}:${detail.input.instance.instance.sourceInstanceId}`}
+          //
+          // The entry half is the CANONICAL reference, through the one encoder
+          // the fold and the pinned-row join already share. `entryId` alone is
+          // not the entry: GitLab issue #5 and merge request !5 in one project
+          // differ only by `kindId`, and two sources can answer for the same
+          // number in different scopes. A key that named only the number folded
+          // those into one mount identity, and spelling the join here a second
+          // time would be a second encoder for one key.
+          instanceKey={deriveTriageDetailMountInstanceKey(props.row.entryRef, detail.input.instance.instance.sourceInstanceId)}
           fallback={(
             <EmptyState
               // §2.3: the host's mount lifecycle is not source-domain status.
+              titleKey="plugins.triage.surface.detail.mountError.title"
               title="This source's detail view is unavailable"
+              descriptionKey="plugins.triage.surface.detail.mountError.description"
               description="Happier could not mount the source's own view of this entry. The facts above are what the aggregate already knows."
             />
           )}

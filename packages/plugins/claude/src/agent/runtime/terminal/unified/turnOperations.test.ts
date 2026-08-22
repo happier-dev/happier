@@ -14,6 +14,7 @@ import { createClaudeUnifiedTerminalTurnOperations } from './turnOperations.test
 import {
   createClaudeUnifiedTerminalTurnOperations as createClaudeUnifiedTerminalProviderOperations,
 } from './turnOperations.js';
+import { createClaudeNativeSessionRuntimeFromOperations } from '../../nativeRuntime.js';
 import { createFakeControlPort } from './tuiControls/fakeControlPort.js';
 
 const RESUME_CHOICE_DIALOG = [
@@ -160,7 +161,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     };
   }
 
-  it('publishes Provider-bound terminal usage without Claude estimates and keeps upstream cost', async () => {
+  it('keeps Provider-bound terminal usage cost unavailable without billing provenance', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const transcripts = createManualTranscriptFollowFixture();
@@ -226,11 +227,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         }),
         expect.objectContaining({
           source: 'claude-sdk-result',
-          cost: expect.objectContaining({
-            reportedUsd: 0.25,
-            estimatedUsd: 0,
-            costSource: 'provider_reported',
-          }),
+          cost: null,
         }),
       ]);
     } finally {
@@ -238,10 +235,29 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
-  it('uses the successfully applied Provider descriptor for the first terminal reasoning controls', async () => {
+  it('rejects a model-only Provider descriptor change before a stale effort can reach terminal launch', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const ctx = createPluginContextFixture(terminalHost.service, events.service);
+    const currentBinding = {
+      connectionId: ProviderConnectionIdSchema.parse('pc_deepseek'),
+      model: {
+        id: 'deepseek-ai/DeepSeek-V3.1',
+        name: 'DeepSeek V3.1',
+        capabilities: { reasoningControls: 'supported' as const },
+        modelOptions: [{
+          id: 'reasoning_effort',
+          name: 'Reasoning',
+          type: 'select',
+          currentValue: 'high',
+          options: [
+            { value: 'high', name: 'High' },
+            { value: 'xhigh', name: 'XHigh' },
+          ],
+        }],
+      },
+      materialization: { v: 1 as const, kind: 'spawnEnv' as const },
+    };
     const operations = createClaudeUnifiedTerminalProviderOperations({
       ctx,
       directory: '/tmp/claude-project',
@@ -249,49 +265,50 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       hostPreference: 'zellij',
       launchEnv: {},
       permissionMode: 'default',
-      providerModel: {
-        id: 'deepseek-ai/DeepSeek-V3.1',
-        name: 'DeepSeek V3.1',
-        capabilities: { reasoningControls: 'unknown' },
-      },
-      initialModelId: 'deepseek-ai/DeepSeek-V3.1',
+      providerModel: currentBinding.model,
+      initialModelId: currentBinding.model.id,
+      initialEffort: 'xhigh',
     });
     const nextBinding = {
-      connectionId: ProviderConnectionIdSchema.parse('pc_deepseek'),
+      ...currentBinding,
       model: {
         id: 'deepseek-ai/DeepSeek-V3.2',
         name: 'DeepSeek V3.2',
         capabilities: { reasoningControls: 'supported' as const },
         modelOptions: [{
-          id: 'ultracode',
-          name: 'Ultracode',
-          type: 'boolean',
-          currentValue: 'false',
+          id: 'reasoning_effort',
+          name: 'Reasoning',
+          type: 'select',
+          currentValue: 'high',
+          options: [{ value: 'high', name: 'High' }],
         }],
       },
-      materialization: { v: 1 as const, kind: 'spawnEnv' as const },
     };
+    const baseConfiguration = {
+      mode: { value: null, updatedAtMs: 1 },
+      model: { value: currentBinding.model.id, updatedAtMs: 1 },
+      permissionIntent: { value: 'default' as const, updatedAtMs: 1 },
+      options: {
+        reasoning_effort: { value: 'xhigh', updatedAtMs: 1 },
+      },
+    };
+    const session = createClaudeNativeSessionRuntimeFromOperations(operations, {
+      kind: 'create',
+      sessionId: 'happy-provider-terminal-reasoning-switch',
+      cwd: '/tmp/claude-project',
+      configuration: baseConfiguration,
+      providerBinding: currentBinding,
+    });
 
     try {
-      await operations.updateProviderConfiguration({
-        modelId: nextBinding.model.id,
-        configOption: { id: 'ultracode', value: true },
+      await expect(session.updateConfiguration?.({
+        ...baseConfiguration,
+        model: { value: nextBinding.model.id, updatedAtMs: 2 },
         providerBinding: nextBinding,
-      });
-      await operations.startProviderSession();
-
-      expect(terminalHost.service.createOrAttachHost).toHaveBeenCalledWith(expect.objectContaining({
-        launch: expect.objectContaining({
-          args: expect.arrayContaining([
-            '--model',
-            nextBinding.model.id,
-            '--settings',
-            '{"ultracode":true}',
-          ]),
-        }),
-      }));
+      })).resolves.toMatchObject({ status: 'unsupported' });
+      expect(terminalHost.service.createOrAttachHost).not.toHaveBeenCalled();
     } finally {
-      await operations.disposeProviderSession();
+      await session.dispose();
     }
   });
 
@@ -475,6 +492,10 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       const launchArgs = readLaunchArgs(terminalHost);
       expect(countArg(launchArgs, '--allow-dangerously-skip-permissions')).toBe(1);
       expect(hasSplitFlagValue(launchArgs, '--permission-mode', 'bypassPermissions')).toBe(true);
+      expect(countArg(launchArgs, '--settings')).toBe(1);
+      expect(JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!)).toEqual({
+        skipDangerousModePermissionPrompt: true,
+      });
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }
@@ -873,6 +894,133 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
           hook_event_name: 'SessionStart',
         });
         expect(runtimeEvents.filter((event) => event.kind === 'session-id-publish')).toHaveLength(1);
+      } finally {
+        await runtime.resetOrDisposeRuntime().catch(() => undefined);
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('withholds proof for a deferred bind and republishes the SAME id once its transcript attaches', async () => {
+      const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const tempDir = await mkdtemp(join(tmpdir(), 'claude-unified-matched-proof-'));
+      const transcriptPath = join(tempDir, 'claude-matched-proof.jsonl');
+
+      const terminalHost = createTerminalHostFixture();
+      const events = createEventsFixture();
+      const sessionHooks = createStatuslineSessionHooksFixture();
+      const ctx = createPluginContextFixture(terminalHost.service, events.service, {
+        sessionHooks: sessionHooks.service,
+        transcriptFileFollowAllowedPathRoots: [tempDir],
+      });
+      const runtime = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
+        ctx,
+        directory: '/tmp/claude-project',
+        happierSessionId: 'happy-session-matched-proof',
+        hostPreference: 'zellij',
+        launchEnv: {},
+        permissionMode: 'default',
+      })).operations;
+      const runtimeEvents: ClaudeProviderEvent[] = [];
+      runtime.subscribeRuntimeEvents((event) => runtimeEvents.push(event));
+      const publishes = () => runtimeEvents.filter((event) => event.kind === 'session-id-publish');
+
+      try {
+        await runtime.startProviderSession();
+        const options = sessionHooks.startServerOptions[0] as {
+          onSessionHook?: (providerSessionId: string, data: Record<string, unknown>) => void | Promise<void>;
+        };
+        const sessionStartHook = {
+          session_id: 'claude-matched-proof-session',
+          transcript_path: transcriptPath,
+          hook_event_name: 'SessionStart',
+        };
+
+        // The transcript file does not exist yet, so the bind is `deferred`: the id is
+        // published as identity only and that unattached path is NEVER proof.
+        await options.onSessionHook?.('claude-matched-proof-session', sessionStartHook);
+        expect(publishes()).toHaveLength(1);
+        expect(publishes()[0]).toEqual(expect.objectContaining({
+          publishedSessionId: 'claude-matched-proof-session',
+        }));
+        expect(publishes()[0]).not.toHaveProperty('nativeSessionLogPath');
+
+        // Same id, now attachable: an id-keyed dedupe would swallow the update that
+        // actually carries the proof, so the matched pair must republish.
+        await writeFile(transcriptPath, '', 'utf8');
+        await options.onSessionHook?.('claude-matched-proof-session', sessionStartHook);
+        expect(publishes()).toHaveLength(2);
+        expect(publishes()[1]).toEqual(expect.objectContaining({
+          publishedSessionId: 'claude-matched-proof-session',
+          nativeSessionLogPath: transcriptPath,
+        }));
+
+        // The identical proven pair is published exactly once.
+        await options.onSessionHook?.('claude-matched-proof-session', sessionStartHook);
+        expect(publishes()).toHaveLength(2);
+      } finally {
+        await runtime.resetOrDisposeRuntime().catch(() => undefined);
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('never lets a re-keyed provider session id inherit the previous id transcript proof', async () => {
+      const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const tempDir = await mkdtemp(join(tmpdir(), 'claude-unified-rekey-proof-'));
+      const provenTranscriptPath = join(tempDir, 'claude-first-session.jsonl');
+      const unreadableTranscriptPath = join(tempDir, 'claude-second-session.jsonl');
+      await writeFile(provenTranscriptPath, '', 'utf8');
+
+      const terminalHost = createTerminalHostFixture();
+      const events = createEventsFixture();
+      const sessionHooks = createStatuslineSessionHooksFixture();
+      const ctx = createPluginContextFixture(terminalHost.service, events.service, {
+        sessionHooks: sessionHooks.service,
+        transcriptFileFollowAllowedPathRoots: [tempDir],
+      });
+      const runtime = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
+        ctx,
+        directory: '/tmp/claude-project',
+        happierSessionId: 'happy-session-rekey-proof',
+        hostPreference: 'zellij',
+        launchEnv: {},
+        permissionMode: 'default',
+      })).operations;
+      const runtimeEvents: ClaudeProviderEvent[] = [];
+      runtime.subscribeRuntimeEvents((event) => runtimeEvents.push(event));
+      const publishes = () => runtimeEvents.filter((event) => event.kind === 'session-id-publish');
+
+      try {
+        await runtime.startProviderSession();
+        const options = sessionHooks.startServerOptions[0] as {
+          onSessionHook?: (providerSessionId: string, data: Record<string, unknown>) => void | Promise<void>;
+        };
+
+        await options.onSessionHook?.('claude-first-session', {
+          session_id: 'claude-first-session',
+          transcript_path: provenTranscriptPath,
+          hook_event_name: 'SessionStart',
+        });
+        expect(publishes().at(-1)).toEqual(expect.objectContaining({
+          publishedSessionId: 'claude-first-session',
+          nativeSessionLogPath: provenTranscriptPath,
+        }));
+
+        // A second Claude session takes over. Its own transcript is not attachable, so the
+        // new id must publish unproven rather than inherit the first id's proof.
+        await options.onSessionHook?.('claude-second-session', {
+          session_id: 'claude-second-session',
+          transcript_path: unreadableTranscriptPath,
+          hook_event_name: 'SessionStart',
+        });
+        const rekeyed = publishes().at(-1);
+        expect(rekeyed).toEqual(expect.objectContaining({
+          publishedSessionId: 'claude-second-session',
+        }));
+        expect(rekeyed).not.toHaveProperty('nativeSessionLogPath');
       } finally {
         await runtime.resetOrDisposeRuntime().catch(() => undefined);
         await rm(tempDir, { recursive: true, force: true });
@@ -1538,7 +1686,14 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       directory: '/tmp/claude-project',
       happierSessionId: 'happy-session-auth',
       hostPreference: 'zellij',
-      launchEnv: {},
+      launchEnv: {
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+          kind: 'profile',
+          serviceId: 'claude-subscription',
+          profileId: 'profile-1',
+          credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        }]),
+      },
       permissionMode: 'default',
     }));
     const runtime = envelope.operations;
@@ -1571,7 +1726,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
-  it('does not route a sidechain auth StopFailure, nor a usage-limit StopFailure, into runtime-auth recovery', async () => {
+  it('routes only definitive sidechain OAuth revocation, not generic or usage-limit evidence, into runtime-auth recovery', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const refreshRuntimeAuth = vi.fn(async () => ({ status: 'unavailable' as const, reason: 'runtime_auth_selection_unavailable' as const }));
@@ -1583,7 +1738,14 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       directory: '/tmp/claude-project',
       happierSessionId: 'happy-session-auth-neg',
       hostPreference: 'zellij',
-      launchEnv: {},
+      launchEnv: {
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+          kind: 'profile',
+          serviceId: 'claude-subscription',
+          profileId: 'profile-1',
+          credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        }]),
+      },
       permissionMode: 'default',
     }));
     const runtime = envelope.operations;
@@ -1592,17 +1754,32 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }>;
     try {
       await runtime.sendTurnPrompt('first prompt');
-      // Sidechain auth StopFailure must never drive parent-session recovery.
+      // A definitive provider-owned revocation is account-level evidence even when the failing
+      // request belonged to a sidechain. It may repair auth, but must not fail the parent turn.
       await nativeRuntime.observeTerminalLifecycle({
         agentId: 'claude',
         type: 'turn_failed',
         turnId: null,
         reason: 'stop_failure_hook',
-        detail: 'subagent OAuth token expired',
-        evidence: { error: 'invalid_grant', message: 'OAuth token has expired' },
+        detail: 'Please run /login · API Error: 401 OAuth access token has been revoked.',
+        evidence: { error: 'invalid_grant', message: 'OAuth access token has been revoked.' },
         source: 'hook',
         sidechainAgentId: 'agent-x',
       });
+      await vi.waitFor(() => expect(refreshRuntimeAuth).toHaveBeenCalledTimes(1));
+      refreshRuntimeAuth.mockClear();
+      await nativeRuntime.observeTerminalLifecycle({
+        agentId: 'claude',
+        type: 'turn_failed',
+        turnId: null,
+        reason: 'stop_failure_hook',
+        detail: 'Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue.',
+        evidence: { error: 'authentication_failed', message: 'OAuth access token has expired. Re-authenticate to continue.' },
+        source: 'hook',
+        sidechainAgentId: 'agent-y',
+      });
+      await vi.waitFor(() => expect(refreshRuntimeAuth).toHaveBeenCalledTimes(1));
+      refreshRuntimeAuth.mockClear();
       // Usage-limit StopFailure stays on the usage path, not auth recovery.
       const completion = runtime.waitForTurnCompletion();
       completion.catch(() => undefined);
@@ -3374,41 +3551,23 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
-  it('clears only the armed resume-summary /compact residue after generation before injecting Pending', async () => {
-    vi.useFakeTimers();
+  it('does not interrupt the provider-owned native resume turn before exact terminal evidence', async () => {
     const terminalHost = createTerminalHostFixture();
-    let screen: 'resume_dialog' | 'generating_compact' | 'idle_compact' | 'empty' = 'resume_dialog';
-    const renderScreen = (): string => {
-      if (screen === 'resume_dialog') return RESUME_CHOICE_DIALOG;
-      if (screen === 'generating_compact') return '✻ Pondering… (esc to interrupt)\n│ > /compact  │';
-      if (screen === 'idle_compact') return '│ > /compact  │';
-      return IDLE_COMPOSER;
-    };
     terminalHost.service.captureInputState = vi.fn(async () => ({
       stable: true,
-      currentInput: renderScreen(),
+      currentInput: IDLE_COMPOSER,
       observedAt: Date.now(),
     }));
-    const fakePort = createFakeControlPort({
-      captures: [RESUME_CHOICE_DIALOG, '✻ Pondering… (esc to interrupt)\n│ > /compact  │'],
-      onSendLiteralText: (text) => {
-        if (text === '1') screen = 'generating_compact';
-      },
-    });
-    terminalHost.service.controlPort = vi.fn(async () => fakePort);
-    let clearAttempts = 0;
-    terminalHost.service.interruptTurn = vi.fn(async () => {
-      clearAttempts += 1;
-      screen = clearAttempts === 1 ? 'idle_compact' : 'empty';
-    });
+    terminalHost.service.interruptTurn = vi.fn(async () => undefined);
     const events = createEventsFixture();
     const ctx = createPluginContextFixture(terminalHost.service, events.service);
-    const runtime = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
+    const envelope = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
       ctx,
       directory: '/tmp/claude-project',
-      happierSessionId: 'happy-session-resume-summary-compact-residue',
+      happierSessionId: 'happy-session-resume-summary-compaction',
       hostPreference: 'zellij',
       launchEnv: {},
+      launchIntent: { kind: 'resume_native', providerSessionId: 'claude-resume-summary-session' },
       permissionMode: 'default',
       resumeChoice: 'resume_from_summary',
       tuiControl: { timings: { commandSettleMs: 0 } },
@@ -3418,27 +3577,22 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         progressGraceMs: 400,
         pollIntervalMs: 100,
       },
-    })).operations;
+    }));
+    const runtime = envelope.operations;
+    const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
+      canInterruptForPendingInput(): boolean;
+      observeTerminalLifecycle(observation: unknown): Promise<void>;
+    }>;
 
     try {
-      runtime.beginTurnLifecycle();
-      await runtime.sendTurnPrompt('queued Pending prompt');
-      await vi.advanceTimersByTimeAsync(300);
-
-      expect(fakePort.sentLiteral).toEqual(['1']);
-      expect(fakePort.sentKeys).toEqual([]);
-      expect(terminalHost.service.interruptTurn).not.toHaveBeenCalled();
-      expect(terminalHost.service.injectUserPrompt).not.toHaveBeenCalled();
-
-      screen = 'idle_compact';
-      await vi.advanceTimersByTimeAsync(300);
-
-      expect(terminalHost.service.interruptTurn).toHaveBeenCalledTimes(2);
-      expect(terminalHost.service.injectUserPrompt).toHaveBeenCalledTimes(1);
-      expect(terminalHost.service.injectUserPrompt).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ text: 'queued Pending prompt' }),
-      );
+      await runtime.startProviderSession();
+      expect(nativeRuntime.canInterruptForPendingInput()).toBe(false);
+      await nativeRuntime.observeTerminalLifecycle({
+        agentId: 'claude',
+        type: 'completion_candidate',
+        source: 'hook',
+      });
+      expect(nativeRuntime.canInterruptForPendingInput()).toBe(true);
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }
@@ -3832,6 +3986,9 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
   });
 
   it('continues the same retained head once a generic dialog disappears without a runtime-config outcome', async () => {
+    // The vanished-dialog path debounces one command-settle window and re-captures before it
+    // cancels the outstanding decision; the test owns that window so it can drive the fake clock.
+    const DIALOG_SETTLE_MS = 50;
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     const terminalHost = createTerminalHostFixture();
@@ -3859,6 +4016,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       hostPreference: 'zellij',
       launchEnv: {},
       permissionMode: 'default',
+      tuiControl: { timings: { commandSettleMs: DIALOG_SETTLE_MS } },
       dialogResolution: { injectionBlockEscalationMs: 1_000 },
     }));
     const runtime = envelope.operations;
@@ -3895,7 +4053,10 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       expect(terminalHost.service.injectUserPrompt).not.toHaveBeenCalled();
 
       currentScreen = IDLE_COMPOSER;
-      await runtime.startProviderSession();
+      await Promise.all([
+        runtime.startProviderSession(),
+        vi.advanceTimersByTimeAsync(DIALOG_SETTLE_MS),
+      ]);
       await runtime.startProviderSession();
       await vi.advanceTimersByTimeAsync(0);
 
@@ -4545,9 +4706,10 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         expect(completionSettled).toBe(false);
 
         // The screen finally proves the turn ended; the restarted window expires → reconcile.
+        // Readiness needs a CAPTURED composer, not just the fresh-session placeholder line.
         terminalHost.service.captureInputState = vi.fn(async () => ({
           stable: true,
-          currentInput: 'What would you like to work on?',
+          currentInput: IDLE_COMPOSER,
           observedAt: 300,
         }));
         await vi.advanceTimersByTimeAsync(1_500);
@@ -4657,9 +4819,11 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
           agentState = request.handler(agentState);
         }
       });
-      const sessionSend = vi.fn(async () => ({ ok: true }));
+      const publishSessionEvent = vi.fn(async () => ({ status: 'custodied' as const }));
+      const markSourceFactConsumed = vi.fn(async () => ({ status: 'custodied' as const }));
       const ctx = createPluginContextFixture(terminalHost.service, events.service, {
-        sessionSend,
+        publishSessionEvent,
+        markSourceFactConsumed,
         sessionWriteAgentState: writeAgentState,
       });
       const envelope = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
@@ -4673,8 +4837,41 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         ...(options?.startupReadiness ? { startupReadiness: options.startupReadiness } : {}),
       }));
       const capabilities = () => (agentState.capabilities ?? {}) as Readonly<Record<string, unknown>>;
-      return { terminalHost, ctx, envelope, runtime: envelope.operations, sessionSend, capabilities };
+      return {
+        terminalHost,
+        ctx,
+        envelope,
+        runtime: envelope.operations,
+        publishSessionEvent,
+        markSourceFactConsumed,
+        capabilities,
+      };
     }
+
+    it('durably reserves the Claude source fact for an accepted Happier prompt echo', async () => {
+      const { runtime, envelope, markSourceFactConsumed } = createDraftRuntime();
+      const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
+        observeTerminalLifecycle(observation: unknown): Promise<void>;
+      }>;
+      try {
+        await runtime.sendTurnPrompt('queued prompt');
+        await nativeRuntime.observeTerminalLifecycle({
+          agentId: 'claude',
+          type: 'prompt_submitted',
+          promptText: 'queued prompt',
+          observedAtMs: 123,
+          turnId: 'user-echo-1',
+          source: 'transcript',
+        });
+
+        expect(markSourceFactConsumed).toHaveBeenCalledWith({
+          localId: 'claude-jsonl:main:user:user-echo-1',
+          reason: 'host_prompt_echo',
+        });
+      } finally {
+        await runtime.resetOrDisposeRuntime().catch(() => undefined);
+      }
+    });
 
     it('clears an OWN exact-match leftover draft on a non-generating screen and injects the queued prompt', async () => {
       const { terminalHost, runtime, envelope } = createDraftRuntime();
@@ -4707,6 +4904,59 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         expect((terminalHost.service.injectUserPrompt as ReturnType<typeof vi.fn>).mock.calls[1]?.[1]).toMatchObject({
           text: 'second prompt',
         });
+      } finally {
+        await runtime.resetOrDisposeRuntime().catch(() => undefined);
+      }
+    });
+
+    it('withholds exact prompt bytes when an own effort residue clear is followed by no composer', async () => {
+      const { terminalHost, runtime, envelope } = createDraftRuntime({
+        startupReadiness: {
+          baseTimeoutMs: 120_000,
+          extendedTimeoutMs: 120_000,
+          progressGraceMs: 120_000,
+          pollIntervalMs: 1_000,
+        },
+      });
+      const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
+        observeTerminalLifecycle(observation: unknown): Promise<void>;
+      }>;
+      const pendingPrompt = 'exact pending prompt that must wait for the composer'.padEnd(310, '.');
+      expect(Buffer.byteLength(pendingPrompt, 'utf8')).toBe(310);
+      try {
+        await runtime.sendTurnPrompt('first prompt');
+        await nativeRuntime.observeTerminalLifecycle({
+          agentId: 'claude',
+          type: 'prompt_submitted',
+          promptText: 'first prompt',
+          observedAtMs: 123,
+          source: 'hook',
+        });
+        await nativeRuntime.observeTerminalLifecycle({ agentId: 'claude', type: 'completion_candidate' });
+        await runtime.waitForTurnCompletion();
+
+        const captures = [
+          '│ > /effort low │',
+          [
+            'Applied runtime control; transcript is redrawing',
+            '  ⏵⏵ accept edits on (shift+tab to cycle)',
+          ].join('\n'),
+        ];
+        terminalHost.service.captureInputState = vi.fn(async () => ({
+          stable: true,
+          currentInput: captures.shift() ?? [
+            'Applied runtime control; transcript is redrawing',
+            '  ⏵⏵ accept edits on (shift+tab to cycle)',
+          ].join('\n'),
+          observedAt: 300,
+        }));
+        terminalHost.service.interruptTurn = vi.fn(async () => undefined);
+
+        await runtime.sendTurnPrompt(pendingPrompt);
+
+        expect(terminalHost.service.interruptTurn).toHaveBeenCalledTimes(1);
+        expect((terminalHost.service.injectUserPrompt as ReturnType<typeof vi.fn>).mock.calls)
+          .not.toContainEqual([expect.anything(), expect.objectContaining({ text: pendingPrompt })]);
       } finally {
         await runtime.resetOrDisposeRuntime().catch(() => undefined);
       }
@@ -4796,7 +5046,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
 
     it('blocks sustained plain contextual placeholder captures as capture-style unavailable', async () => {
       vi.useFakeTimers();
-      const { terminalHost, runtime, sessionSend, envelope } = createDraftRuntime({
+      const { terminalHost, runtime, publishSessionEvent, envelope } = createDraftRuntime({
         startupReadiness: { baseTimeoutMs: 5_000, extendedTimeoutMs: 5_000, progressGraceMs: 0, pollIntervalMs: 1_000 },
       });
       const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
@@ -4838,8 +5088,8 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         expect(published.filter(
           (event) => event.kind === 'backend-error' && event.error?.code === 'claude_unified_terminal_user_draft_blocking',
         )).toHaveLength(0);
-        expect(sessionSend.mock.calls.filter(
-          ([request]) => (request as { event?: { type?: string } }).event?.type === 'terminal-composer-draft-blocked',
+        expect(publishSessionEvent.mock.calls.filter(
+          ([event]) => (event as { type?: string }).type === 'terminal-composer-draft-blocked',
         )).toHaveLength(1);
         expect(rejected).toEqual([]);
       } finally {
@@ -4847,9 +5097,37 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       }
     });
 
+    it('retries the same capture-style blocked notice when durable custody rejects once', async () => {
+      vi.useFakeTimers();
+      const { terminalHost, runtime, publishSessionEvent } = createDraftRuntime({
+        startupReadiness: { baseTimeoutMs: 5_000, extendedTimeoutMs: 5_000, progressGraceMs: 0, pollIntervalMs: 1_000 },
+      });
+      publishSessionEvent
+        .mockRejectedValueOnce(new Error('durable custody rejected'))
+        .mockResolvedValue({ status: 'custodied' as const });
+
+      try {
+        terminalHost.service.captureInputState = vi.fn(async () => ({
+          stable: true,
+          currentInput: '✻ Welcome\n❯ check the output',
+          observedAt: 300,
+        }));
+
+        await runtime.sendTurnPrompt('queued prompt');
+        await vi.advanceTimersByTimeAsync(7_000);
+
+        expect(publishSessionEvent.mock.calls.filter(
+          ([event]) => (event as { type?: string }).type === 'terminal-composer-draft-blocked',
+        )).toHaveLength(2);
+        expect(terminalHost.service.injectUserPrompt).not.toHaveBeenCalled();
+      } finally {
+        await runtime.resetOrDisposeRuntime().catch(() => undefined);
+      }
+    });
+
     it('keeps sustained active-turn user-draft starvation transient', async () => {
       vi.useFakeTimers();
-      const { terminalHost, runtime, sessionSend, envelope } = createDraftRuntime({
+      const { terminalHost, runtime, publishSessionEvent, envelope } = createDraftRuntime({
         startupReadiness: { baseTimeoutMs: 120_000, extendedTimeoutMs: 120_000, progressGraceMs: 120_000 },
       });
       const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
@@ -4893,12 +5171,9 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         await vi.advanceTimersByTimeAsync(20_000);
 
         expect(rejected).toEqual([]);
-        expect(sessionSend).toHaveBeenCalledWith(expect.objectContaining({
-          kind: 'sessionEvent',
-          event: expect.objectContaining({
-            type: 'terminal-composer-draft-blocked',
-            reason: 'idle_draft_guard',
-          }),
+        expect(publishSessionEvent).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'terminal-composer-draft-blocked',
+          reason: 'idle_draft_guard',
         }));
       } finally {
         await runtime.resetOrDisposeRuntime().catch(() => undefined);
@@ -4934,7 +5209,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
 
     it('escalates ONCE per episode after sustained draft starvation with an honest blocking notice', async () => {
       vi.useFakeTimers();
-      const { terminalHost, runtime, sessionSend, capabilities, envelope } = createDraftRuntime({
+      const { terminalHost, runtime, publishSessionEvent, capabilities, envelope } = createDraftRuntime({
         // Keep the startup-readiness window from terminalizing the prompt while the draft blocks:
         // the real incident host had SessionStart evidence holding the wait to the ceiling.
         startupReadiness: { baseTimeoutMs: 120_000, extendedTimeoutMs: 120_000, progressGraceMs: 120_000 },
@@ -4978,14 +5253,11 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         );
         expect(escalations).toHaveLength(1);
         expect(escalations[0]?.error?.cause).toMatchObject({ ownDraft: false, draftLength: 18 });
-        expect(sessionSend).toHaveBeenCalledWith(expect.objectContaining({
-          kind: 'sessionEvent',
-          event: expect.objectContaining({
-            type: 'terminal-composer-draft-blocked',
-            reason: 'idle_draft_guard',
-            stateAtMs: expect.any(Number),
-            message: expect.any(String),
-          }),
+        expect(publishSessionEvent).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'terminal-composer-draft-blocked',
+          reason: 'idle_draft_guard',
+          stateAtMs: expect.any(Number),
+          message: expect.any(String),
         }));
         expect(capabilities().terminalComposerDraftPresent).toBe(true);
         expect(capabilities().inFlightSteerUnavailableReason).toBe('turn_settling');
@@ -5000,9 +5272,61 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         expect(published.filter(
           (event) => event.kind === 'backend-error' && event.error?.code === 'claude_unified_terminal_user_draft_blocking',
         )).toHaveLength(1);
-        expect(sessionSend.mock.calls.filter(
-          ([request]) => (request as { event?: { type?: string } }).event?.type === 'terminal-composer-draft-blocked',
+        expect(publishSessionEvent.mock.calls.filter(
+          ([event]) => (event as { type?: string }).type === 'terminal-composer-draft-blocked',
         )).toHaveLength(1);
+      } finally {
+        await runtime.resetOrDisposeRuntime().catch(() => undefined);
+      }
+    });
+
+    it('retries the same user-draft escalation when durable custody rejects once', async () => {
+      vi.useFakeTimers();
+      const { terminalHost, runtime, publishSessionEvent, envelope } = createDraftRuntime({
+        startupReadiness: { baseTimeoutMs: 120_000, extendedTimeoutMs: 120_000, progressGraceMs: 120_000 },
+      });
+      publishSessionEvent
+        .mockRejectedValueOnce(new Error('durable custody rejected'))
+        .mockResolvedValue({ status: 'custodied' as const });
+      const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
+        setOnPromptTerminallyRejectedBeforeProvider(
+          handler: (info: Readonly<{
+            localIds?: readonly string[];
+            userMessageSeq: number | null;
+            deliveryBlockedReason?: string;
+          }>) => void,
+        ): void;
+      }>;
+      const rejected: Array<{
+        localIds?: readonly string[];
+        userMessageSeq: number | null;
+        deliveryBlockedReason?: string;
+      }> = [];
+      nativeRuntime.setOnPromptTerminallyRejectedBeforeProvider((info) => rejected.push({ ...info }));
+
+      try {
+        terminalHost.service.captureInputState = vi.fn(async () => ({
+          stable: true,
+          currentInput: '│ > my own typed draft │',
+          cursor: { x: 24, y: 0 },
+          observedAt: 300,
+        }));
+
+        await runtime.sendTurnPrompt('queued prompt behind the draft', {
+          localId: 'local-terminal-composer-draft-retry',
+          localIds: ['local-terminal-composer-draft-retry'],
+          userMessageSeq: null,
+        });
+        await vi.advanceTimersByTimeAsync(20_000);
+
+        expect(publishSessionEvent.mock.calls.filter(
+          ([event]) => (event as { type?: string }).type === 'terminal-composer-draft-blocked',
+        )).toHaveLength(2);
+        expect(rejected).toEqual([{
+          localIds: ['local-terminal-composer-draft-retry'],
+          userMessageSeq: null,
+          deliveryBlockedReason: 'terminal_composer_draft',
+        }]);
       } finally {
         await runtime.resetOrDisposeRuntime().catch(() => undefined);
       }
@@ -5092,6 +5416,36 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         expect(capabilities().inFlightSteerAvailable).toBe(false);
         expect(capabilities().inFlightSteerUnavailableReason).toBe('unsafe_window');
         expect(typeof capabilities().inFlightSteerStateAt).toBe('number');
+      } finally {
+        await runtime.resetOrDisposeRuntime().catch(() => undefined);
+      }
+    });
+
+    it('vetoes mid-turn steer when a mode footer leaves inputBoxInteractive stale without a composer', async () => {
+      const { terminalHost, runtime, envelope, capabilities } = createSteerCapabilityRuntime();
+      const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
+        observeTerminalLifecycle(observation: unknown): Promise<void>;
+        steerPrompt(prompt: string): Promise<void>;
+      }>;
+      try {
+        await runtime.sendTurnPrompt('first prompt');
+        await nativeRuntime.observeTerminalLifecycle({
+          agentId: 'claude', type: 'prompt_submitted', promptText: 'first prompt', observedAtMs: 123, source: 'hook',
+        });
+        terminalHost.service.captureInputState = vi.fn(async () => ({
+          stable: true,
+          currentInput: [
+            'Applied runtime control; transcript is redrawing',
+            '  ⏵⏵ accept edits on (shift+tab to cycle)',
+          ].join('\n'),
+          observedAt: 300,
+        }));
+
+        await expect(nativeRuntime.steerPrompt('exact pending prompt')).rejects.toThrow(/no_interactive_composer/u);
+
+        expect(terminalHost.service.injectUserPrompt).toHaveBeenCalledTimes(1);
+        expect(capabilities().inFlightSteerAvailable).toBe(false);
+        expect(capabilities().inFlightSteerUnavailableReason).toBe('unsafe_window');
       } finally {
         await runtime.resetOrDisposeRuntime().catch(() => undefined);
       }
@@ -5450,7 +5804,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
           kind: 'transcript-user-text',
           sessionId: 'happy-session-repeat-transcript-origin',
           text: 'repeat prompt',
-          localId: 'happy-session-repeat-transcript-origin:claude-terminal-origin-provider:terminal-row-2',
+          localId: 'claude-jsonl:main:user:terminal-row-2',
           meta: expect.objectContaining({
             provider: 'claude',
             terminalOrigin: true,

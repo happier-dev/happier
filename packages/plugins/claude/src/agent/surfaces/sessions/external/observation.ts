@@ -4,14 +4,18 @@ import { join } from 'node:path';
 
 import {
     deriveExternalSessionActivity,
-    type AgentExternalSessionObservationContribution,
-    type AgentExternalSessionsResolvedIdentity,
-    type ExternalAgentObservationLinkEvidenceBatchV1,
-    type ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
+    AgentExternalSessionObservationContribution,
+    AgentExternalSessionsResolvedIdentity,
+    AgentExternalSessionObservationLinkEvidenceBatchV1,
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import { isSafeClaudeJsonlPathSegment } from './files.js';
-import { validateClaudeExternalSessionSource } from './source.js';
+import {
+    validateClaudeExternalSessionSource,
+    type ClaudeExternalSessionSource,
+} from './source.js';
 
 const RESOURCE_KEY_PREFIX = 'claude-jsonl-resource-v1:';
 const LINK_KEY_PREFIX = 'claude-jsonl-link-v1:';
@@ -23,7 +27,7 @@ type ResolvedClaudeObservationIdentity = Readonly<{
     remoteSessionId: string;
 }>;
 type ExternalAgentObservationLeafFact =
-    ExternalAgentObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
+    AgentExternalSessionObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
 
 function hashOpaqueIdentity(value: unknown): string {
     return createHash('sha256')
@@ -63,7 +67,7 @@ function resolveIdentity(
         identity.remoteSessionId,
         'native session id',
     );
-    const source: ExternalSessionsSource = {
+    const source: ClaudeExternalSessionSource = {
         kind: 'claudeConfig',
         ...(typeof identity.source.configDir === 'string'
             ? { configDir: identity.source.configDir }

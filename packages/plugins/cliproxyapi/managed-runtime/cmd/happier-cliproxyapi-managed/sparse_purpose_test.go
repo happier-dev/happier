@@ -20,7 +20,7 @@ func TestMaterializeGatewayConfigDerivesOnlyTheBoundPurposeFamilies(t *testing.T
 	}{
 		{
 			name:          "OpenAI only",
-			purposeConfig: `{"v":2,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigin":"https://chatgpt.com","protocols":["openai-chat","openai-responses"]}]}`,
+			purposeConfig: `{"v":2,"modelListEnabled":true,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigin":"https://chatgpt.com","protocols":["openai-chat","openai-responses"]}]}`,
 			wantProtocols: []managedruntime.ProviderProtocol{
 				managedruntime.ProtocolOpenAIChat,
 				managedruntime.ProtocolOpenAIResponses,
@@ -30,7 +30,7 @@ func TestMaterializeGatewayConfigDerivesOnlyTheBoundPurposeFamilies(t *testing.T
 		},
 		{
 			name:          "Claude only",
-			purposeConfig: `{"v":2,"purposes":[{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["anthropic"]}]}`,
+			purposeConfig: `{"v":2,"modelListEnabled":true,"purposes":[{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["anthropic"]}]}`,
 			wantProtocols: []managedruntime.ProviderProtocol{
 				managedruntime.ProtocolAnthropic,
 			},
@@ -39,7 +39,7 @@ func TestMaterializeGatewayConfigDerivesOnlyTheBoundPurposeFamilies(t *testing.T
 		},
 		{
 			name:          "both families",
-			purposeConfig: `{"v":2,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigin":"https://chatgpt.com","protocols":["openai-chat","openai-responses"]},{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["anthropic"]}]}`,
+			purposeConfig: `{"v":2,"modelListEnabled":true,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigin":"https://chatgpt.com","protocols":["openai-chat","openai-responses"]},{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["anthropic"]}]}`,
 			wantProtocols: []managedruntime.ProviderProtocol{
 				managedruntime.ProtocolOpenAIChat,
 				managedruntime.ProtocolOpenAIResponses,
@@ -86,10 +86,10 @@ func TestMaterializeGatewayConfigRejectsAnEmptyOrForgedPurposeSnapshot(t *testin
 	t.Parallel()
 
 	for _, purposeConfig := range []string{
-		`{"v":2,"purposes":[]}`,
-		`{"v":2,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigin":"https://chatgpt.com","protocols":["openai-chat","openai-responses"],"credential":"forged"}]}`,
-		`{"v":2,"purposes":[{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["unsupported"]}]}`,
-		`{"v":2,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigin":"https://chatgpt.com","protocols":["openai-chat","openai-responses"]},{"id":"codex-duplicate","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-other","allowedHttpsOrigin":"https://chatgpt.com","protocols":["anthropic"]}]}`,
+		`{"v":2,"modelListEnabled":true,"purposes":[]}`,
+		`{"v":2,"modelListEnabled":true,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigin":"https://chatgpt.com","protocols":["openai-chat","openai-responses"],"credential":"forged"}]}`,
+		`{"v":2,"modelListEnabled":true,"purposes":[{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["unsupported"]}]}`,
+		`{"v":2,"modelListEnabled":true,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigin":"https://chatgpt.com","protocols":["openai-chat","openai-responses"]},{"id":"codex-duplicate","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-other","allowedHttpsOrigin":"https://chatgpt.com","protocols":["anthropic"]}]}`,
 		`{"v":1,"purposes":["openai-upstream"],"protocols":["openai-chat","openai-responses"]}`,
 	} {
 		capabilityPath := filepath.Join(t.TempDir(), "capability.json")

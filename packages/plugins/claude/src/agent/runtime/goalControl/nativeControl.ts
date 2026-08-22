@@ -3,7 +3,7 @@ import type {
   AgentSessionGoalControlContext,
   AgentSessionGoalMutation,
   AgentSessionGoalMutationResult,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { CLAUDE_GOAL_WORK_STATE_ITEM_ID } from '../../transcripts/goalStatus.js';
 

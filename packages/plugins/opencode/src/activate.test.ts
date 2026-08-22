@@ -29,6 +29,18 @@ function createUnboundConnectedAccounts() {
 }
 
 describe('activate', () => {
+  it('reexports the activation compiled by its canonical public plugin definition', async () => {
+    expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
+      'agents',
+      'mcp',
+      'settings',
+      'systemTools',
+    ]);
+    expect(await import('./manifest.js')).toEqual(expect.objectContaining({
+      OPENCODE_PLUGIN: expect.objectContaining({ manifest: PLUGIN_MANIFEST, activate }),
+    }));
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
   });

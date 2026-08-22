@@ -1,8 +1,3 @@
-import type { PluginApi } from '@happier-dev/plugin-sdk';
+import { GIT_PLUGIN } from './manifest.js';
 
-import { createGitScmBackendRuntimeRegistration } from './backend.js';
-
-export function activate(api: PluginApi): void {
-  const { id, ...runtime } = createGitScmBackendRuntimeRegistration();
-  api.scm.registerBackend(id, runtime);
-}
+export const activate = GIT_PLUGIN.activate;

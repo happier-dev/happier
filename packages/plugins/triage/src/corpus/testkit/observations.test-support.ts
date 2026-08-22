@@ -35,12 +35,20 @@ export function testkitEntryRef(overrides: Partial<TriageEntryRefV1> = {}): Tria
 }
 
 export function testkitLocator(overrides: Partial<TriageEntryLocatorV1> = {}): TriageEntryLocatorV1 {
-    return Object.freeze({
+    const candidate: Record<string, unknown> = {
         v: 1,
         webUrl: 'https://example.test/example/repository/pull/17',
         displayPath: 'example/repository #17',
         ...overrides,
-    }) as TriageEntryLocatorV1;
+    };
+    // An explicitly `undefined` override omits the optional member, exactly as
+    // a source that never emitted it would. A key carrying `undefined` is not
+    // what crosses the Action boundary — it disappears in transit — so leaving
+    // it here would make a fixture the declared input schema rejects.
+    for (const [key, value] of Object.entries(candidate)) {
+        if (value === undefined) delete candidate[key];
+    }
+    return Object.freeze(candidate) as TriageEntryLocatorV1;
 }
 
 export function testkitSnapshot(overrides: Partial<TriageSourceEntrySnapshotV1> = {}): TriageSourceEntrySnapshotV1 {

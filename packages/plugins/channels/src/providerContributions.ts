@@ -6,16 +6,32 @@ import {
 } from '@happier-dev/plugin-sdk';
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
 
-import {
-  CHANNELS_PROVIDER_POINT_REF,
-  type ChannelsProviderContributionV1,
-} from './manifest.js';
+import type { ChannelsProviderContributionV1 } from './manifest.js';
 import type { PersistedConversationProviderContributionSelection } from './collections.js';
 
 type ProviderContributionReadContext = Readonly<{
   targetedContributions: TargetedContributionsService;
   signal: AbortSignal;
 }>;
+
+/**
+ * `definePlugin` owns both the declared point and the live reference, so the
+ * reference lives in the module that also composes every daemon handler. This
+ * owner is reached from the mounted Settings surface through the delivery
+ * projections it reads, and a static edge would put that whole activation
+ * spine in the React Native artifact. The concrete reference is therefore
+ * loaded only when a provider contribution is actually resolved — the same
+ * deferred-module shape the delivery owner already uses for the Collection
+ * declarations.
+ */
+type ChannelsManifestModule = typeof import('./manifest.js');
+
+let channelsManifestModulePromise: Promise<ChannelsManifestModule> | undefined;
+
+async function readChannelsProviderPointRef(): Promise<ChannelsManifestModule['CHANNELS_PROVIDER_POINT_REF']> {
+  channelsManifestModulePromise ??= import('./manifest.js');
+  return (await channelsManifestModulePromise).CHANNELS_PROVIDER_POINT_REF;
+}
 
 /**
  * One ephemeral observation of the admitted provider selection. Callers may
@@ -70,16 +86,19 @@ function unavailableSelectedProviderContribution(
   }
 }
 
-function hasCurrentPointProtocol(contribution: ChannelsProviderContributionV1): boolean {
-  return contribution.protocol.id === CHANNELS_PROVIDER_POINT_REF.protocol.id
-    && contribution.protocol.version === CHANNELS_PROVIDER_POINT_REF.protocol.version;
+function hasCurrentPointProtocol(
+  contribution: ChannelsProviderContributionV1,
+  point: ChannelsManifestModule['CHANNELS_PROVIDER_POINT_REF'],
+): boolean {
+  return contribution.protocol.id === point.protocol.id
+    && contribution.protocol.version === point.protocol.version;
 }
 
 async function readCurrentProviderSnapshot(
   context: ProviderContributionReadContext,
 ): Promise<TargetedContributionSnapshot<ChannelsProviderContributionV1>> {
   const observation = context.targetedContributions.observeForSelf(
-    CHANNELS_PROVIDER_POINT_REF,
+    await readChannelsProviderPointRef(),
     { onInvalidated: () => {} },
   );
   try {
@@ -100,7 +119,7 @@ export async function readSelectedCurrentProviderContribution(input: Readonly<{
 }>): Promise<ChannelsProviderContributionV1> {
   const result = await selectCurrentTargetedContribution({
     service: input.context.targetedContributions,
-    point: CHANNELS_PROVIDER_POINT_REF,
+    point: await readChannelsProviderPointRef(),
     selection: input.selection,
     signal: input.context.signal,
   });
@@ -120,9 +139,10 @@ export async function readCurrentProviderContributionWitnessForPersistedSelectio
   providerPluginId: string;
   providerContributionSelection: PersistedConversationProviderContributionSelection;
 }>): Promise<CurrentProviderContributionWitness> {
+  const point = await readChannelsProviderPointRef();
   const snapshot = await readCurrentProviderSnapshot(input.context);
   const matches = snapshot.contributions.filter((contribution) => (
-    hasCurrentPointProtocol(contribution)
+    hasCurrentPointProtocol(contribution, point)
     && contribution.contributor.pluginId === input.providerPluginId
     && contribution.contributor.contributionId
       === input.providerContributionSelection.contributionId

@@ -1,3 +1,5 @@
+import { parseTimestampMs } from '@happier-dev/plugin-sdk';
+
 export function asOpenCodeProjectionRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -28,6 +30,12 @@ export function readOpenCodeTimestampMs(
   value: unknown,
   opts: Readonly<{ allowSecondsNumber: boolean }>,
 ): number | null {
+  // OpenCode's legacy `created`/`created_at` fields are the same mixed
+  // seconds-or-milliseconds timestamp contract as the public SDK parser.
+  // Keep the explicit-ms fields below separate: a field named `*Ms` must not
+  // reinterpret a small value as seconds.
+  if (opts.allowSecondsNumber) return parseTimestampMs(value);
+
   if (typeof value === 'string' && value.trim()) {
     const ms = Date.parse(value);
     return Number.isFinite(ms) && ms >= 0 ? Math.trunc(ms) : null;
@@ -35,9 +43,7 @@ export function readOpenCodeTimestampMs(
 
   const numberValue = readOpenCodeFiniteInteger(value);
   if (numberValue === null || numberValue < 0) return null;
-  return opts.allowSecondsNumber && numberValue < 1_000_000_000_000
-    ? numberValue * 1000
-    : numberValue;
+  return numberValue;
 }
 
 export function readOpenCodeNestedRecord(

@@ -54,10 +54,13 @@ describe('createClaudePermissionEngine', () => {
         });
     });
 
-    it('carries structured AskUserQuestion answers into Claude updated input', async () => {
+    it('projects single- and multi-select AskUserQuestion arrays into Claude answer strings', async () => {
         const requestDecision = vi.fn(async () => ({
             decision: 'approved' as const,
-            answers: { 'Continue with cleanup?': 'Keep the files' },
+            answers: {
+                'Continue with cleanup?': ['Keep the files'],
+                'Which checks?': ['Unit tests', 'Typecheck'],
+            },
         }));
         const ctx = createContextWithRequestDecision(requestDecision);
         const engine = createClaudePermissionEngine(ctx);
@@ -72,7 +75,10 @@ describe('createClaudePermissionEngine', () => {
             behavior: 'allow',
             updatedInput: {
                 questions: [{ question: 'Continue with cleanup?' }],
-                answers: { 'Continue with cleanup?': 'Keep the files' },
+                answers: {
+                    'Continue with cleanup?': 'Keep the files',
+                    'Which checks?': 'Unit tests, Typecheck',
+                },
             },
         });
     });
@@ -80,7 +86,7 @@ describe('createClaudePermissionEngine', () => {
     it('carries structured ask_user_question answers into Claude updated input', async () => {
         const requestDecision = vi.fn(async () => ({
             decision: 'approved' as const,
-            answers: { 'Remove scratch files?': 'Keep them' },
+            answers: { 'Remove scratch files?': ['Keep them'] },
         }));
         const ctx = createContextWithRequestDecision(requestDecision);
         const engine = createClaudePermissionEngine(ctx);

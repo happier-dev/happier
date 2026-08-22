@@ -1,4 +1,7 @@
-import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
+import {
+  decodeTriagePagingTokenV1,
+  encodeTriagePagingTokenV1,
+} from '@happier-dev/triage-protocol/v1';
 
 import {
   readGithubScanStickyReason,
@@ -31,6 +34,10 @@ import { GITHUB_SCAN_LANE_ORDER_V1, type GithubScanLaneIdV1 } from './query.js';
  * currentness: GitHub search sorts on a mutating `updated` field, so a resumed page is the
  * next page of a moving set, never a proof about what changed.
  *
+ * The bounded JSON envelope is the protocol's (`encodeTriagePagingTokenV1` /
+ * `decodeTriagePagingTokenV1`); what stays here is the frontier record inside it and
+ * every field check that decides what this walk may resume from.
+ *
  * The lane QUERY is deliberately absent from the token. It is rebuilt at decode from the
  * exact configured instance, and each stored next URL must revalidate against that rebuilt
  * query — so a token minted for one configured instance can never redirect a walk running
@@ -57,10 +64,6 @@ export type GithubScanResumeV1 = Readonly<{
   }>[];
 }>;
 
-function utf8ByteLength(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
-}
-
 /**
  * Projects the live frontier into its token. `null` means the walk cannot be resumed —
  * the caller then settles `complete` with `partial { continuation-unavailable }` rather
@@ -75,7 +78,7 @@ export function encodeGithubScanContinuation(
     pagesConsumed: lane.pagesConsumed,
     ended: lane.ended,
   }));
-  const token = JSON.stringify({
+  return encodeTriagePagingTokenV1({
     v: CONTINUATION_VERSION,
     scanLimit: frontier.scanLimit,
     nativePageSize: frontier.nativePageSize,
@@ -86,7 +89,6 @@ export function encodeGithubScanContinuation(
     walkHealth: readGithubScanWalkHealth(frontier),
     lanes,
   });
-  return utf8ByteLength(token) > MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 ? null : token;
 }
 
 /**
@@ -104,13 +106,7 @@ export function decodeGithubScanContinuation(
     maxScanLimit: number;
   }>,
 ): GithubScanResumeV1 | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(token);
-  } catch {
-    return null;
-  }
-  const record = readRecord(parsed);
+  const record = decodeTriagePagingTokenV1(token);
   if (record === null || record.v !== CONTINUATION_VERSION) return null;
 
   const scanLimit = readCount(record.scanLimit, 1);

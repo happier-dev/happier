@@ -43,6 +43,19 @@ function settled(
 }
 
 describe('posthogActivityReducer', () => {
+    it('keeps Load more mounted and busy while the next page is in flight', () => {
+        // The shared owner's rule (`triage-protocol` pagedPanel.ts): "the affordance
+        // stays mounted in its busy state rather than vanishing". Dropping it for the
+        // whole in-flight page unmounts the control the reader just pressed and makes
+        // the Button's own `busy` prop unreachable.
+        const held = settled(started(posthogActivityInitialState(), 1), 1, [record('a')], 'p2');
+        const inFlight = started(held, 2);
+
+        expect(inFlight.canLoadMore).toBe(true);
+        expect(inFlight.pending).toBe(true);
+        expect(inFlight.kind).toBe('ready');
+    });
+
     it('appends validated pages and stops when the provider states no next', () => {
         let state = settled(started(posthogActivityInitialState(), 1), 1, [record('a')], 'p2');
         expect(state.kind).toBe('ready');
@@ -50,7 +63,7 @@ describe('posthogActivityReducer', () => {
 
         state = settled(started(state, 2), 2, [record('b')], null);
 
-        expect(state.records.map((row) => row.id)).toEqual(['a', 'b']);
+        expect(state.rows.map((row) => row.id)).toEqual(['a', 'b']);
         expect(state.canLoadMore).toBe(false);
         expect(state.pending).toBe(false);
     });
@@ -61,7 +74,7 @@ describe('posthogActivityReducer', () => {
         // An issue with no recorded activity is a real answer. It must be visibly
         // different from a read that failed and from a tab that was never built.
         expect(state.kind).toBe('ready');
-        expect(state.records).toEqual([]);
+        expect(state.rows).toEqual([]);
         expect(state.failure).toBeNull();
     });
 
@@ -72,7 +85,7 @@ describe('posthogActivityReducer', () => {
         );
 
         expect(state.kind).toBe('unavailable');
-        expect(state.records).toEqual([]);
+        expect(state.rows).toEqual([]);
         // A 403 stays a permission failure the reader can see: no stable
         // missing-scope discriminator is characterized, so status alone never hides
         // this plane.
@@ -88,7 +101,7 @@ describe('posthogActivityReducer', () => {
         });
 
         expect(state.kind).toBe('ready');
-        expect(state.records.map((row) => row.id)).toEqual(['a']);
+        expect(state.rows.map((row) => row.id)).toEqual(['a']);
         // The authentication failure renders beside the rows that are still on screen;
         // it does not blank them.
         expect(state.failure).toEqual(UNAUTHORIZED);

@@ -124,6 +124,21 @@ export function decodeSentryDetailContinuation(token: string): SentryDetailFront
   return Object.freeze({ v: 1 as const, cursor, limit });
 }
 
+/**
+ * Why a paged detail walk stopped before the end of its collection.
+ *
+ * A page that ends the walk carries neither this nor a continuation; a page that
+ * carries this ended the walk WITHOUT reaching the end of the collection, and the
+ * panel must say so rather than presenting a truncated list as a complete one
+ * (`REQ-04`). The three names are the scan plane's own, because a cursor this
+ * source will not follow means the same thing on both planes.
+ */
+const SentryIncompleteReasonSchema = defineProtocolUnion([
+  defineProtocolLiteral('paginationHeaderAbsent'),
+  defineProtocolLiteral('paginationCursorMalformed'),
+  defineProtocolLiteral('paginationCursorNotAdvancing'),
+]);
+
 const SentryBooleanSchema = defineProtocolUnion([
   defineProtocolLiteral(true),
   defineProtocolLiteral(false),
@@ -317,6 +332,8 @@ export const SentryIssueEventsResultV1Schema = defineProtocolUnion([
     projectionTruncated: SentryBooleanSchema,
     /** Absent when this page ends the walk. */
     continuation: ContinuationSchema.optional(),
+    /** Present only when the walk stopped SHORT of the collection. */
+    incomplete: SentryIncompleteReasonSchema.optional(),
   }, { policy: 'closed' }),
   SentryUnavailableSchema,
 ]);
@@ -345,6 +362,8 @@ export const SentryTagValuesResultV1Schema = defineProtocolUnion([
     omittedRowCount: CountSchema,
     projectionTruncated: SentryBooleanSchema,
     continuation: ContinuationSchema.optional(),
+    /** Present only when the walk stopped SHORT of the collection. */
+    incomplete: SentryIncompleteReasonSchema.optional(),
   }, { policy: 'closed' }),
   SentryUnavailableSchema,
 ]);

@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-    ProviderAccountUsageSnapshotV1Schema,
-    buildProviderAccountUsageRecordId,
-} from '@happier-dev/plugin-sdk/experimental/cloud/usage';
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import { createClaudeSubscriptionQuotaFetcher } from '../quota/subscriptionFetcher.js';
 import { mapClaudeRuntimeRateLimitsToUsageObservation } from '../runtime/usage.js';
@@ -42,7 +38,7 @@ describe('Claude provider account usage snapshots', () => {
             accountLabel: 'alice@example.com',
         });
 
-        const parsed = ProviderAccountUsageSnapshotV1Schema.parse(snapshot);
+        const parsed = snapshot;
         expect(parsed).toMatchObject({
             v: 1,
             providerId: 'claude',
@@ -60,13 +56,13 @@ describe('Claude provider account usage snapshots', () => {
                 resetsAt: Date.parse('2026-02-16T00:00:00Z'),
             })],
         });
-        expect(parsed.recordId).toBe(buildProviderAccountUsageRecordId(parsed.recordKey));
+        expect(parsed).not.toHaveProperty('recordId');
     });
 
     it('projects Claude OAuth usage fetch results to canonical provider HTTP snapshots', async () => {
         const moduleRecord = await loadSnapshotModule();
         expect(moduleRecord).toEqual(expect.objectContaining({
-            mapClaudeQuotaSnapshotToProviderAccountUsageSnapshot: expect.any(Function),
+            mapClaudeProviderHttpUsageSnapshot: expect.any(Function),
         }));
         if (!moduleRecord) throw new Error('snapshot module missing');
 
@@ -102,33 +98,26 @@ describe('Claude provider account usage snapshots', () => {
                 arrayBuffer: async () => new ArrayBuffer(0),
             }),
         });
-        const quotaSnapshot = await fetcher.loadQuota({
+        const snapshot = await fetcher.loadQuota({
             record,
             now,
             signal: new AbortController().signal,
         });
-        if (!quotaSnapshot) throw new Error('quota snapshot missing');
+        if (!snapshot) throw new Error('usage snapshot missing');
 
-        const snapshot = moduleRecord.mapClaudeQuotaSnapshotToProviderAccountUsageSnapshot({
-            subject: resolveClaudeUsageSubjectRef({
-                subscriptionId: 'subscription-1',
-                accountLabel: 'alice@example.com',
-            }),
-            quotaSnapshot,
-            observedAtMs: now,
-        });
-
-        expect(ProviderAccountUsageSnapshotV1Schema.parse(snapshot)).toMatchObject({
+        expect(snapshot).toMatchObject({
             providerId: 'claude',
             source: 'providerHttp',
-            confidence: 'confirmed',
+            confidence: 'unknown',
             state: 'loaded_data',
             accountSubject: {
-                kind: 'providerSubject',
-                id: 'subscription-1',
+                kind: 'provisionalLocalSubject',
             },
             accountLabel: 'alice@example.com',
         });
+        expect(snapshot).not.toHaveProperty('recordId');
+        expect(snapshot).not.toHaveProperty('serviceId');
+        expect(snapshot).not.toHaveProperty('profileId');
     });
 
     it('keeps missing Claude provider subject records provisional even when labels match', async () => {
@@ -164,6 +153,6 @@ describe('Claude provider account usage snapshots', () => {
             accountLabel: 'same@example.com',
         });
 
-        expect(nativeSnapshot.recordId).not.toBe(connectedSnapshot.recordId);
+        expect(nativeSnapshot.recordKey).not.toEqual(connectedSnapshot.recordKey);
     });
 });

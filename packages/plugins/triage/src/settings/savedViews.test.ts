@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { PluginError } from '@happier-dev/plugin-sdk';
+
 import type { SurfaceFilterSelectionV1 } from '../projection/listWindow.js';
 import { TRIAGE_LIST_NO_FILTERS_V1 } from '../projection/listWindow.js';
 import { CORPUS_DEFAULT_SMART_POLICY_V1 } from '../corpus/query/smartPolicy.js';
@@ -333,6 +335,47 @@ describe('mutateTriageSavedViews', () => {
         // no hidden local copy.
         expect(fixture.read(TRIAGE_SAVED_VIEWS_SETTING_ID_V1))
             .toEqual({ v: 1, views: [], selectedViewId: null });
+    });
+
+    it('surfaces a non-conflict Settings failure instead of reporting it as a conflict', async () => {
+        // The host raises five distinguishable codes plus abort and store
+        // failures from this one call. Reporting any of them as `conflict`
+        // tells the user their views were changed elsewhere and to retry, when
+        // in fact the write is refused for a reason retrying cannot resolve.
+        const failures: readonly Error[] = [
+            new PluginError({
+                code: 'plugin_settings_validation_failed',
+                message: "Plugin setting 'triage.savedViews' failed schema validation",
+            }),
+            new PluginError({
+                code: 'plugin_settings_scope_unavailable',
+                message: "Plugin settings scope 'account' has no bound daemon persistence owner",
+            }),
+            // Not every refusal is a PluginError: an abort or a store failure
+            // reaches the caller as itself.
+            new Error('account settings store unavailable'),
+        ];
+
+        for (const failure of failures) {
+            const fixture = createTestkitAccountSettings();
+            const deps = {
+                settings: {
+                    snapshot: fixture.settings.snapshot.bind(fixture.settings),
+                    set: async () => {
+                        throw failure;
+                    },
+                },
+                mintViewId: mintIds(),
+            };
+
+            await expect(mutateTriageSavedViews(deps, {
+                kind: 'create',
+                label: 'Mine',
+                filters: filters(),
+                order: 'newest',
+                smartPolicy: CORPUS_DEFAULT_SMART_POLICY_V1,
+            })).rejects.toBe(failure);
+        }
     });
 
     it('refuses to write over a stored value it cannot read', async () => {

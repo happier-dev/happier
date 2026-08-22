@@ -84,8 +84,17 @@ export const CORPUS_SOURCE_INSTANCE_LIFECYCLE = {
 export type CorpusSourceInstanceLifecycleV1 =
     (typeof CORPUS_SOURCE_INSTANCE_LIFECYCLE)[keyof typeof CORPUS_SOURCE_INSTANCE_LIFECYCLE];
 
+/**
+ * Why a configured row is retired. These are the two the writer produces, and
+ * the writer is the only one: `userRemoved` is the person removing the source
+ * in Settings, `reconfigured` is the predecessor a reconfiguration moved off.
+ *
+ * Losing the source contribution is deliberately not one of them. Nothing
+ * retires a row for it: the configuration stays stored, a mount with no
+ * admitted contribution renders as temporarily unavailable, and reinstalling
+ * the same qualified source resumes the exact preexisting row.
+ */
 export const CORPUS_SOURCE_INSTANCE_RETIRED_REASONS = [
-    'sourceUninstalled',
     'userRemoved',
     'reconfigured',
 ] as const;

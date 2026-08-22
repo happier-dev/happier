@@ -1,4 +1,4 @@
-import { PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginActionInputById, PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -6,6 +6,8 @@ import type { PluginEventAutomationHistoryGapResetActionResultV1 } from '@happie
 import type {
   PluginCollectionRow,
 } from '@happier-dev/plugin-sdk/collections';
+import { parseForgeLinkHeader } from '@happier-dev/triage-sources/runtime';
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
   GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
@@ -222,13 +224,8 @@ function readOccurredAtMs(value: unknown): number {
   return occurredAtMs;
 }
 
-function readHeader(headers: Readonly<Record<string, string>>, name: string): string | null {
-  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name);
-  return entry?.[1]?.trim() || null;
-}
-
 function readGithubPollIntervalMs(headers: Readonly<Record<string, string>>): number | null {
-  const raw = readHeader(headers, 'x-poll-interval');
+  const raw = readTriageResponseHeaderV1(headers, 'x-poll-interval');
   if (raw === null || !/^[1-9][0-9]*$/u.test(raw)) return null;
   const seconds = Number(raw);
   if (!Number.isSafeInteger(seconds)) return null;
@@ -293,19 +290,16 @@ function validateRepositoryEventsPageUrl(
   return url.toString();
 }
 
+/**
+ * The RFC 8288 grammar is a provider-published standard rather than a GitHub rule, so
+ * it is parsed by the shared forge owner. What stays here is GitHub's own validation.
+ */
 function parseNextPageUrl(
   headers: Readonly<Record<string, string>>,
   repository: GithubRepositorySourceConfigV1,
 ): string | null {
-  const link = readHeader(headers, 'link');
-  if (link === null) return null;
-  for (const part of link.split(',')) {
-    const match = /^\s*<([^>]+)>\s*;\s*rel="([^"]+)"\s*$/u.exec(part);
-    if (match?.[2].split(/\s+/u).includes('next')) {
-      return validateRepositoryEventsPageUrl(match[1]!, repository);
-    }
-  }
-  return null;
+  const next = parseForgeLinkHeader(readTriageResponseHeaderV1(headers, 'link')).next;
+  return next === undefined ? null : validateRepositoryEventsPageUrl(next, repository);
 }
 
 function credentialRequestKey(credentialRef: ConnectedAccountRef): string {
@@ -549,7 +543,7 @@ async function pollRepositoryEvents(input: Readonly<{
       }
       return Object.freeze({
         kind: 'page' as const,
-        etag: readHeader(response.headers, 'etag'),
+        etag: readTriageResponseHeaderV1(response.headers, 'etag'),
         nextUrl: parseNextPageUrl(response.headers, input.source.repository),
         events: Object.freeze(payload.map((event) => normalizeRepositoryEvent(event, input.source.repository))),
         pollIntervalMs: readGithubPollIntervalMs(response.headers),
@@ -620,7 +614,7 @@ function createCheckpointRow(input: Readonly<{
 export type GithubAutomationEventHistoryGapBaselineResultV1 = PluginEventAutomationHistoryGapResetActionResultV1;
 
 function isCollectionCurrentnessConflict(error: unknown): boolean {
-  return error instanceof PluginError && error.code === 'plugin_collection_conflict';
+  return isPluginError(error) && error.code === 'plugin_collection_conflict';
 }
 
 function checkpointNeedsRetirement(input: Readonly<{
@@ -630,8 +624,16 @@ function checkpointNeedsRetirement(input: Readonly<{
   const checkpoint = input.row.value;
   if (!isGithubAutomationEventCheckpointRowV1(checkpoint)) return false;
   const desired = input.desiredCheckpointsByRowId.get(input.row.rowId);
-  if (desired === undefined) return true;
-  if (desired === null) return false;
+  // The source catalog is scoped to ONE watcher materialization and to
+  // currently enabled, undeleted Automations, while this checkpoint row is
+  // Account-scoped and addressed by Automation/event/selector alone. Absence
+  // from that caller-scoped catalog therefore proves nothing about the row: it
+  // may belong to another Machine's watcher, to a temporarily disabled
+  // Automation whose continuity a re-enable still needs, or to a watcher that
+  // has just moved to the materialization which will resume from this exact
+  // cursor. Only an explicitly present, same-identity-but-incompatible fact is
+  // retirement authority this observer owns.
+  if (desired === undefined || desired === null) return false;
   const payload = checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.payload];
   return checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId] !== desired.automationId
     || checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId] !== desired.sourceSelectorId
@@ -640,9 +642,12 @@ function checkpointNeedsRetirement(input: Readonly<{
 }
 
 /**
- * The source catalog Action already establishes Account and provider scope.
- * Once that exact catalog revision is fully adopted, retire only this
- * provider's stale checkpoint rows through their existing Collection CAS.
+ * Once an exact catalog revision is fully adopted, retire the checkpoint rows
+ * this observer positively knows are incompatible with the current source
+ * definition, through their existing Collection CAS. Contraction of rows whose
+ * Automation no longer exists is deliberately NOT done here: the caller-scoped
+ * catalog carries no positive retirement fact, and inferring one from absence
+ * is how one watcher deletes another watcher's continuity.
  */
 async function reconcileCheckpointRows(input: Readonly<{
   context: BackgroundServiceContext;

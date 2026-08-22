@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { classifyAzureDevOpsResponse } from './failures.js';
 import {
-  MAX_AZURE_RETRY_HORIZON_MS,
   readAzureDevOpsRateLimitEvidence,
   resolveAzureDevOpsRetryNotBeforeMs,
 } from './rateLimit.js';
@@ -88,12 +87,21 @@ describe('resolveAzureDevOpsRetryNotBeforeMs', () => {
     expect(resolveAzureDevOpsRetryNotBeforeMs(evidence, NOW_MS)).toBeNull();
   });
 
-  it('clamps an implausibly distant reset to the source-owned horizon', () => {
+  it('reports an implausibly distant reset as Azure stated it, bounding nothing here', () => {
+    // How far ahead a provider statement may push our pacing is one policy owned by the
+    // single consumer that honours it (`plugins/triage` `refresh/refreshEligibility.ts`).
+    const statedMs = NOW_MS + (30 * 24 * 60 * 60 * 1000);
     const evidence = readAzureDevOpsRateLimitEvidence({
-      'x-ratelimit-reset': String((NOW_MS + 30 * 24 * 60 * 60 * 1000) / 1000),
+      'x-ratelimit-reset': String(statedMs / 1000),
     });
-    expect(resolveAzureDevOpsRetryNotBeforeMs(evidence, NOW_MS))
-      .toBe(NOW_MS + MAX_AZURE_RETRY_HORIZON_MS);
+    expect(resolveAzureDevOpsRetryNotBeforeMs(evidence, NOW_MS)).toBe(statedMs);
+  });
+
+  it('emits a whole millisecond even when the provider sent a fractional delta', () => {
+    // `TriageSourceFailureV1.retryNotBeforeMs` is declared integer, and the header is
+    // provider text rather than a validated integer.
+    const evidence = readAzureDevOpsRateLimitEvidence({ 'retry-after': '1.5005' });
+    expect(resolveAzureDevOpsRetryNotBeforeMs(evidence, NOW_MS)).toBe(NOW_MS + 1_501);
   });
 });
 

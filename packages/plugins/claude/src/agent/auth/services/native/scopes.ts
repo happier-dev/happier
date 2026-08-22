@@ -5,8 +5,9 @@ export const CLAUDE_CODE_REQUIRED_OAUTH_SCOPES = [
 ] as const;
 
 export const CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES = [
-    'user:inference',
+    'org:create_api_key',
     'user:profile',
+    'user:inference',
     'user:sessions:claude_code',
     'user:mcp_servers',
     'user:file_upload',

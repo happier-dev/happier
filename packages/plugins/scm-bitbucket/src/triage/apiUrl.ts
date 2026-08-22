@@ -1,4 +1,4 @@
-import { admitForgeRequestUrl } from '@happier-dev/scm-forge-adapter';
+import { admitForgeRequestUrl } from '@happier-dev/triage-sources/runtime';
 
 export const BITBUCKET_CLOUD_API_ORIGIN = 'https://api.bitbucket.org';
 export const BITBUCKET_CLOUD_API_BASE_URL = `${BITBUCKET_CLOUD_API_ORIGIN}/2.0`;

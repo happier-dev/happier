@@ -12,11 +12,11 @@
  *
  * The header grammar itself is RFC 8288 rather than a GitLab rule, and the credential
  * gate on a URL GitLab supplied is the same gate every forge needs, so both come from
- * `@happier-dev/scm-forge-adapter`. What a `next` MEANS here — keyset, verbatim, never
+ * `@happier-dev/triage-sources`. What a `next` MEANS here — keyset, verbatim, never
  * reconstructed — stays this source's decision.
  */
 
-import { admitForgeRequestUrl, parseForgeLinkHeader } from '@happier-dev/scm-forge-adapter';
+import { admitForgeRequestUrl, parseForgeLinkHeader } from '@happier-dev/triage-sources/runtime';
 
 import type { GitlabResponseHeaders } from './gitlabHeaders.js';
 

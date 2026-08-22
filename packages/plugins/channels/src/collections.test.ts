@@ -14,8 +14,6 @@ import { AutomationResultDeliverySourceV1JsonSchema } from '@happier-dev/plugin-
 
 import {
   CHANNEL_ACCOUNT_COLLECTIONS,
-  CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS,
-  CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS,
   CHANNEL_DELIVERIES_COLLECTION,
   CHANNEL_STATE_COLLECTION,
   CHANNEL_STATE_FIELD,
@@ -24,7 +22,16 @@ import {
   ConversationProviderContributionSelectionJsonSchema,
   isCanonicalChannelStateRecordIdentity,
 } from './collections.js';
-import { PLUGIN_MANIFEST } from './manifest.js';
+import { collectionMigrations, PLUGIN_MANIFEST } from './manifest.js';
+
+/**
+ * The shipped static declarations and their executable half, both projected by
+ * the one `definePlugin` owner. Asserting them here rather than a package-local
+ * pre-projection is what keeps this file measuring what a host installs.
+ */
+const CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS =
+  PLUGIN_MANIFEST.contributes?.accountCollections ?? [];
+const CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS = collectionMigrations;
 
 function containsSchemaReference(
   schema: PluginJsonSchema,

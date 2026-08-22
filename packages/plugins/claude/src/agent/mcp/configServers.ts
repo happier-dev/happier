@@ -1,17 +1,16 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type { DaemonMcpServersDetectWarningV1, DetectedMcpServerV1 } from '@happier-dev/plugin-sdk/experimental/mcp';
+import type { DetectedMcpServerV1, DiscoveryWarning as McpDiscoveryWarningV1 } from '@happier-dev/plugin-sdk/mcp';
 
-import { resolveClaudeConfigDirOverride } from '../surfaces/sessions/handoff/path.js';
+import { resolveClaudeConfigDir } from '../environment.js';
 
 export type ReadClaudeMcpConfigServersResult = Readonly<{
     servers: ReadonlyArray<DetectedMcpServerV1>;
-    warnings: ReadonlyArray<DaemonMcpServersDetectWarningV1>;
+    warnings: ReadonlyArray<McpDiscoveryWarningV1>;
 }>;
 
-function safeReadJson(path: string): { ok: true; value: unknown } | { ok: false; warning: DaemonMcpServersDetectWarningV1 } {
+function safeReadJson(path: string): { ok: true; value: unknown } | { ok: false; warning: McpDiscoveryWarningV1 } {
     try {
         const raw = readFileSync(path, 'utf8');
         return { ok: true, value: JSON.parse(raw) };
@@ -91,7 +90,7 @@ export async function readClaudeMcpConfigServers(params: Readonly<{
     env?: NodeJS.ProcessEnv;
 }>): Promise<ReadClaudeMcpConfigServersResult> {
     const env = params.env ?? process.env;
-    const configDir = resolveClaudeConfigDirOverride(env) ?? join(homedir(), '.claude');
+    const configDir = resolveClaudeConfigDir(env);
 
     const candidates: Array<Readonly<{ kind: 'user' | 'project'; path: string }>> = [
         { kind: 'user', path: join(configDir, 'settings.json') },
@@ -104,7 +103,7 @@ export async function readClaudeMcpConfigServers(params: Readonly<{
     }
 
     const servers: DetectedMcpServerV1[] = [];
-    const warnings: DaemonMcpServersDetectWarningV1[] = [];
+    const warnings: McpDiscoveryWarningV1[] = [];
 
     for (const candidate of candidates) {
         if (!existsSync(candidate.path)) continue;

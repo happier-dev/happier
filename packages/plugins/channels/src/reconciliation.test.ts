@@ -40,6 +40,20 @@ function caller(input: Readonly<{
 function reconciliationConnectionState(
   overrides: Partial<ConversationReconciliationConnectionStateV1> = {},
 ): ConversationReconciliationConnectionStateV1 {
+  const { deletionState = 'none', enabled = true, ...rest } = {
+    ...reconciliationConnectionStateBase(),
+    ...overrides,
+  };
+  // The retained snapshot correlates deletion state with enablement: only a
+  // connection with no deletion in flight may be enabled. Rebuilding the pair
+  // here keeps the fixture on a real union member. The case that proves an
+  // enabled deleting snapshot is rejected builds its own literal instead.
+  return deletionState === 'none'
+    ? { ...rest, deletionState, enabled }
+    : { ...rest, deletionState, enabled: false };
+}
+
+function reconciliationConnectionStateBase() {
   return {
     v: 1,
     connectionId: 'connection-1',
@@ -62,8 +76,7 @@ function reconciliationConnectionState(
         pluginId: 'happier.channel.discord',
       },
     },
-    ...overrides,
-  };
+  } as const;
 }
 
 describe('Conversation provider reconciliation', () => {
@@ -317,7 +330,7 @@ describe('Conversation provider reconciliation', () => {
         { connectionId: 'direct-addressed', enabled: true, endpointAudience: 'direct', inputMode: 'addressedMessages' },
         { connectionId: 'disabled-shared-all', enabled: false, endpointAudience: 'shared', inputMode: 'allAllowedMessages' },
         { connectionId: 'other-connection', enabled: true, endpointAudience: 'shared', inputMode: 'allAllowedMessages' },
-      ],
+      ] as const,
     };
 
     const result = listConversationProviderConnectionsForCaller(invocation);

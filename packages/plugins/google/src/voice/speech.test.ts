@@ -336,6 +336,33 @@ describe('Google daemon voice providers', () => {
     expect(VoiceProviderCatalogItemSchema.safeParse(voices[0]).success).toBe(true);
   });
 
+  it('separates a real empty catalog from a malformed catalog payload', async () => {
+    const gemini = createGoogleGeminiSttRuntime();
+    const cloud = createGoogleCloudTtsRuntime();
+
+    await expect(gemini.catalog!.list(
+      { catalog: 'models' },
+      credentialContext('AIzaSy-empty-models', undefined, undefined, vi.fn(async () => jsonHttpResponse({ models: [] }))),
+    )).resolves.toEqual([]);
+    await expect(cloud.catalog!.list(
+      { catalog: 'voices' },
+      credentialContext('AIzaSy-empty-voices', undefined, undefined, vi.fn(async () => jsonHttpResponse({ voices: [] }))),
+    )).resolves.toEqual([]);
+
+    for (const malformed of [{}, { models: null }, { models: { a: 1 } }]) {
+      await expect(gemini.catalog!.list(
+        { catalog: 'models' },
+        credentialContext('AIzaSy-bad-models', undefined, undefined, vi.fn(async () => jsonHttpResponse(malformed))),
+      )).rejects.toMatchObject({ code: 'provider_response_invalid' });
+    }
+    for (const malformed of [{}, { voices: null }, { voices: { a: 1 } }]) {
+      await expect(cloud.catalog!.list(
+        { catalog: 'voices' },
+        credentialContext('AIzaSy-bad-voices', undefined, undefined, vi.fn(async () => jsonHttpResponse(malformed))),
+      )).rejects.toMatchObject({ code: 'provider_response_invalid' });
+    }
+  });
+
   it('rejects cross-catalog calls before provider HTTP', async () => {
     const geminiHttp = vi.fn();
     const cloudHttp = vi.fn();

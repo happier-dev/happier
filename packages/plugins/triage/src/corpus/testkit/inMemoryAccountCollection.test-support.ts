@@ -253,6 +253,30 @@ export function createInMemoryAccountCollection<TDefinition extends PluginAccoun
             changeCursor += 1;
             return { status: 'updated' as const, results, changeCursor };
         },
+        async limits() {
+            // The corpus never plans multi-batch work, so this boundary reports
+            // the platform's shipped deployment policy unchanged.
+            return {
+                maxRowEncodedBytes: 512 * 1024,
+                maxBatchBytes: 16 * 1024 * 1024,
+                maxBatchRows: 100,
+                maxAccountRows: 10_000,
+                maxAccountBytes: 256 * 1024 * 1024,
+                basis: 'default' as const,
+            };
+        },
+        async measureBatch(operations: readonly PluginCollectionMutation<Readonly<Record<string, JsonValue>>>[]) {
+            if (operations.length === 0) {
+                throw invalidValueError('Collection batch measurement requires at least one operation');
+            }
+            const encodedBytes = (value: unknown): number => (
+                new TextEncoder().encode(JSON.stringify(value)).byteLength
+            );
+            return {
+                overheadEncodedBytes: encodedBytes({ pluginId, collectionId: definition.id, operations: [] }),
+                operationEncodedBytes: operations.map((operation) => 1 + encodedBytes(operation)),
+            };
+        },
         watch() {
             // Watches are level-triggered invalidations the corpus rereads
             // through; no test here depends on an invalidation stream.

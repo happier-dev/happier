@@ -31,14 +31,12 @@ describe('OpenRouter plugin manifest', () => {
     const providerFamily = PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'providers');
     expect(providerFamily).toMatchObject({
       identityKind: 'delegatedDomain',
-      stability: 'delegated',
       disposition: 'delegated',
       activationDemand: 'conditional',
       allowedRuntimeRegistration: 'providers',
     });
     expect(providerFamily?.projectIntrospection(PLUGIN_MANIFEST.contributes.providers[0])).toMatchObject({
       localId: null,
-      stability: 'delegated',
       registration: 'notRequired',
     });
   });

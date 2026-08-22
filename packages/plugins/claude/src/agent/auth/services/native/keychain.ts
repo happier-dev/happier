@@ -3,10 +3,11 @@ import { homedir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import type {
-    ManagedExecutableRef,
-    PluginExecService,
+    ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
+import type {
+    ExecService,
     PluginProcessResult,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/exec';
 
 import {
     readClaudeCodeNativeCredentialPayload,
@@ -68,7 +69,7 @@ export type ClaudeCodeMacOsKeychainSweepResult = Readonly<{
     skipped: readonly ClaudeCodeMacOsKeychainSweepSkippedEntry[];
 }>;
 
-async function resolveSecurityExecutable(exec: PluginExecService, purpose: string): Promise<ManagedExecutableRef> {
+async function resolveSecurityExecutable(exec: ExecService, purpose: string): Promise<ManagedExecutableRef> {
     const resolved = await exec.systemTools.resolve({
         toolId: CLAUDE_MACOS_SECURITY_SYSTEM_TOOL_ID,
         purpose,
@@ -106,7 +107,7 @@ function classifyKeychainSweepEntry(params: Readonly<{
 }
 
 export async function sweepStaleClaudeCodeMacOsKeychainCredentials(params: Readonly<{
-    exec: PluginExecService;
+    exec: ExecService;
     username?: string | null | undefined;
     homeDir?: string | null | undefined;
 }>): Promise<ClaudeCodeMacOsKeychainSweepResult> {
@@ -160,7 +161,7 @@ export async function sweepStaleClaudeCodeMacOsKeychainCredentials(params: Reado
 }
 
 export async function deleteClaudeCodeMacOsKeychainCredential(params: Readonly<{
-    exec: PluginExecService;
+    exec: ExecService;
     claudeConfigDir: string;
     homeDir?: string | null | undefined;
     username?: string | null | undefined;
@@ -196,7 +197,7 @@ export async function deleteClaudeCodeMacOsKeychainCredential(params: Readonly<{
 }
 
 export async function readClaudeCodeMacOsKeychainCredential(params: Readonly<{
-    exec: PluginExecService;
+    exec: ExecService;
     claudeConfigDir: string;
     homeDir?: string | null | undefined;
 }>): Promise<ClaudeCodeNativeCredentialPayload | null> {

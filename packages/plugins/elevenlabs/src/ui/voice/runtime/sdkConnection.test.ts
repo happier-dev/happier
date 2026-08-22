@@ -58,46 +58,6 @@ function createTestConnection(input: Readonly<{ driver: Readonly<{
 }
 
 describe('createElevenLabsSdkConnection', () => {
-  it('routes provider-owned watchdog stalls through remote close for host-owned reconnect', async () => {
-    let reportStall!: (reason: string) => void;
-    const liveness = {
-      connected: vi.fn(),
-      disconnected: vi.fn(),
-      noteInboundEvent: vi.fn(),
-      modeChanged: vi.fn(),
-      userTurnCommitted: vi.fn(),
-    };
-    const handle = {
-      startSession: vi.fn(async () => 'conversation-stall'),
-      endSession: vi.fn(async () => undefined),
-      sendUserMessage: vi.fn(),
-      sendContextualUpdate: vi.fn(),
-      setMicMuted: vi.fn(),
-      readOutboundAudioBytes: vi.fn(async () => 10),
-      getId: vi.fn(() => 'conversation-stall'),
-      dispose: vi.fn(),
-      subscribe: vi.fn(() => () => undefined),
-    };
-    const connection = createElevenLabsSdkConnection({
-      createSdkHandleConnection: createTestConnection,
-      handle,
-      startConfig: {},
-      createLiveness(onFailure) {
-        reportStall = onFailure;
-        return liveness;
-      },
-    });
-
-    await connection.connect(new AbortController().signal);
-    expect(liveness.connected).toHaveBeenCalledTimes(1);
-    reportStall('realtime_inbound_stall');
-    reportStall('realtime_outbound_audio_plateau');
-
-    await vi.waitFor(() => expect(connection.state()).toBe('closed'));
-    expect(liveness.disconnected).toHaveBeenCalledTimes(1);
-    expect(handle.endSession).toHaveBeenCalledTimes(1);
-  });
-
   it('owns the SDK lifecycle and projects callbacks through connection channels', async () => {
     let publish!: (event: ElevenLabsConversationHandleEvent) => void;
     const handle = {

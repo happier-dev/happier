@@ -80,6 +80,34 @@ describe('createCodexForkSurface', () => {
     }));
   });
 
+  it('propagates an indeterminate app-server fork instead of selecting another fork path', async () => {
+    const failure = Object.assign(new Error('fork outcome is unknown'), {
+      name: 'CodexAppServerNativeForkFailure',
+      outcome: 'indeterminate_after_dispatch',
+    });
+    const forkNative = vi.fn(async () => {
+      throw failure;
+    });
+    const onDiagnostic = vi.fn();
+    const surface = createCodexForkSurface({ forkNative, onDiagnostic });
+
+    await expect(surface.fork?.({
+      parentSessionId: 'parent-session',
+      directory: '/repo',
+      forkPoint: { kind: 'latest' },
+      parentMetadata: {
+        providerSessionId: 'parent-thread',
+        codexBackendMode: 'appServer',
+      },
+    })).rejects.toBe(failure);
+
+    expect(forkNative).toHaveBeenCalledOnce();
+    expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'failed',
+      error: failure,
+    }));
+  });
+
   it('uses typed ACP operations for ACP-backed latest forks', async () => {
     const forkNative = vi.fn(async () => {
       throw new Error('ACP forks must not start the app-server native fork client');

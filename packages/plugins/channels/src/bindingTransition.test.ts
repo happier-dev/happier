@@ -265,7 +265,10 @@ describe('Conversation binding transition', () => {
       current,
       requested: {
         ...current,
-        endpoint: { ...current.endpoint, audience: 'shared' },
+        // The same provider thread, now shared: spreading the endpoint union
+        // instead would offer `direct` kinds a `shared` audience they cannot
+        // carry, which is not the transition this case fences.
+        endpoint: { kind: 'thread' as const, audience: 'shared' as const, id: current.endpoint.id },
       },
     })).toMatchObject({
       kind: 'updated',

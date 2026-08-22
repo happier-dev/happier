@@ -53,7 +53,7 @@
   },
   "files": [
     "dist",
-    ".happier-plugin/plugin.json",
+    ".happier-plugin",
     "package.json"
   ],
   "scripts": {
@@ -72,6 +72,7 @@
     "@happier-dev/plugin-sdk": "0.0.0"
   },
   "devDependencies": {
+    "@happier-dev/protocol": "0.0.0",
     "@happier-dev/tests": "0.0.0",
     "pi-ai-0810": "npm:@earendil-works/pi-ai@0.81.0",
     "pi-ai-0811": "npm:@earendil-works/pi-ai@0.81.1",

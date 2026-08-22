@@ -1,14 +1,23 @@
-/** Codex V3 realtime control decoding and canonical event projection. */
+/** Codex V3 realtime control codec and canonical event projection. */
 import type {
+  VoiceClientToolDefinition,
   VoiceRealtimeCanonicalEvent } from '@happier-dev/plugin-sdk/voice/client';
 import type {
   VoiceRealtimeJsonValue,
+  VoiceRealtimeToolResult,
 } from '@happier-dev/plugin-sdk/voice';
-import { VoiceTranscriptCanonicalEventV1Schema } from '@happier-dev/plugin-sdk/voice/client';
+import {
+  VoiceRealtimeJsonValueSchema,
+  VoiceRealtimeToolCallV1Schema,
+  VoiceRealtimeToolResultV1Schema,
+  VoiceTranscriptCanonicalEventV1Schema,
+} from '@happier-dev/plugin-sdk/voice/client';
 
 const PROVIDER_NAMESPACE = 'codex-v3';
 const MAX_UPSTREAM_TURN_ID_CODE_UNITS = 192;
 const MAX_TRANSCRIPT_CODE_UNITS = 64 * 1024;
+const MAX_PENDING_TOOL_RESPONSES = 128;
+const MAX_COMPLETED_TOOL_RESPONSES = 512;
 
 type CodexV3TurnDone = Readonly<{
   upstreamTurnId: string;
@@ -38,6 +47,22 @@ export type CodexV3ControlDecoder = ((
   finalize(): void;
 }>;
 
+/**
+ * Terminality is a semantic fact, not a shape check. Codex's Agent-session data
+ * channel carries the OpenAI Realtime control wire, whose response status is
+ * optional: a `response.done` reporting a nonterminal status must not close the
+ * response or consume its accumulated tool calls, while an omitted status must
+ * still close it. This mirrors the same rule the OpenAI realtime provider codec
+ * applies to its own transport; each plugin owns its provider-native codec, so
+ * the fact is restated here rather than shared through a host seam.
+ */
+const TERMINAL_RESPONSE_STATUSES: ReadonlySet<string> = new Set([
+  'completed',
+  'cancelled',
+  'failed',
+  'incomplete',
+]);
+
 const KNOWN_INERT_EVENT_TYPES = new Set([
   'session.started',
   'session.updated',
@@ -52,6 +77,78 @@ function record(value: VoiceRealtimeJsonValue): Readonly<Record<string, VoiceRea
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, VoiceRealtimeJsonValue>>
     : null;
+}
+
+function stableText(value: VoiceRealtimeJsonValue): string | null {
+  return typeof value === 'string' && value.length > 0 && value.trim() === value ? value : null;
+}
+
+function parseFunctionArguments(value: VoiceRealtimeJsonValue): VoiceRealtimeJsonValue {
+  if (typeof value !== 'string') return null;
+  try {
+    return VoiceRealtimeJsonValueSchema.parse(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
+function deleteOldest<T>(setOrMap: Set<T> | Map<T, unknown>): void {
+  const oldest = setOrMap.keys().next();
+  if (!oldest.done) setOrMap.delete(oldest.value);
+}
+
+/**
+ * Codex's Agent-session data channel uses the OpenAI Realtime control wire.
+ * The host owns tool eligibility and execution; this leaf only serializes the
+ * already-authorized read-only tool catalog for that provider transport.
+ */
+export function createCodexV3ToolSessionUpdate(
+  tools: readonly VoiceClientToolDefinition[],
+): VoiceRealtimeJsonValue {
+  return VoiceRealtimeJsonValueSchema.parse({
+    type: 'session.update',
+    session: {
+      type: 'realtime',
+      tools: tools.map((tool) => ({
+        type: 'function',
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      })),
+      tool_choice: 'auto',
+    },
+  });
+}
+
+export function encodeCodexV3ToolResult(result: VoiceRealtimeToolResult): VoiceRealtimeJsonValue {
+  const parsed = VoiceRealtimeToolResultV1Schema.parse(result);
+  return VoiceRealtimeJsonValueSchema.parse({
+    type: 'conversation.item.create',
+    item: {
+      type: 'function_call_output',
+      call_id: parsed.callId,
+      output: JSON.stringify(
+        parsed.status === 'success'
+          ? parsed.output
+          : { ok: false, errorCode: parsed.errorCode },
+      ),
+    },
+  });
+}
+
+export function encodeCodexV3ToolContinuation(): VoiceRealtimeJsonValue {
+  return VoiceRealtimeJsonValueSchema.parse({ type: 'response.create' });
+}
+
+export function encodeCodexV3ContextUpdate(text: string): VoiceRealtimeJsonValue {
+  return VoiceRealtimeJsonValueSchema.parse({
+    type: 'conversation.item.create',
+    item: {
+      type: 'message',
+      role: 'system',
+      content: [{ type: 'input_text', text: `[Context update]\n${text}` }],
+    },
+  });
 }
 
 function decodeTurnDone(value: VoiceRealtimeJsonValue): CodexV3TurnDone | null {
@@ -94,6 +191,8 @@ export function createCodexV3ControlDecoder(input: Readonly<{
     ? String(input.attemptId)
     : null;
   const finalizedTurns = new Set<string>();
+  const pendingToolCalls = new Map<string, Map<string, ReturnType<typeof VoiceRealtimeToolCallV1Schema.parse>>>();
+  const completedToolResponses = new Set<string>();
   const emittedDiagnosticCodes = new Set<CodexV3ControlDiagnosticCode>();
   let upstreamStarted = false;
   let terminal = false;
@@ -111,6 +210,54 @@ export function createCodexV3ControlDecoder(input: Readonly<{
     if (!event || typeof event.type !== 'string') {
       diagnoseOnce('codex_v3_malformed_control_event');
       return Object.freeze([]);
+    }
+    if (event.type === 'response.function_call_arguments.done') {
+      const responseId = stableText(event.response_id);
+      const callId = stableText(event.call_id);
+      const toolName = stableText(event.name);
+      if (responseId && callId && toolName && !completedToolResponses.has(responseId)) {
+        const calls = pendingToolCalls.get(responseId) ?? new Map();
+        if (!calls.has(callId)) {
+          const order = typeof event.output_index === 'number'
+            && Number.isInteger(event.output_index)
+            && event.output_index >= 0
+            ? event.output_index
+            : calls.size;
+          const parsed = VoiceRealtimeToolCallV1Schema.safeParse({
+            v: 1,
+            responseId,
+            callId,
+            toolName,
+            order,
+            arguments: parseFunctionArguments(event.arguments),
+          });
+          if (parsed.success) calls.set(callId, parsed.data);
+        }
+        pendingToolCalls.set(responseId, calls);
+        while (pendingToolCalls.size > MAX_PENDING_TOOL_RESPONSES) deleteOldest(pendingToolCalls);
+      }
+      return Object.freeze([]);
+    }
+    if (event.type === 'response.done') {
+      const response = record(event.response);
+      const status = response?.status;
+      if (typeof status === 'string' && !TERMINAL_RESPONSE_STATUSES.has(status)) {
+        return Object.freeze([]);
+      }
+      const responseId = stableText(response?.id ?? null) ?? stableText(event.response_id);
+      if (!responseId || completedToolResponses.has(responseId)) return Object.freeze([]);
+      const calls = pendingToolCalls.get(responseId);
+      pendingToolCalls.delete(responseId);
+      completedToolResponses.add(responseId);
+      while (completedToolResponses.size > MAX_COMPLETED_TOOL_RESPONSES) deleteOldest(completedToolResponses);
+      if (!calls?.size) return Object.freeze([]);
+      return Object.freeze([{
+        type: 'tool_calls',
+        responseId,
+        calls: Object.freeze([...calls.values()].sort(
+          (left, right) => left.order - right.order || left.callId.localeCompare(right.callId),
+        )),
+      }]);
     }
     if (event.type !== 'turn.done') {
       if (!KNOWN_INERT_EVENT_TYPES.has(event.type)) {

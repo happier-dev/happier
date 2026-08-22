@@ -13,7 +13,7 @@ import {
   type ConversationProviderFailureV1,
   type ConversationProviderSetupResultV1,
 } from '@happier-dev/channels-protocol/v1';
-import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { createDiscordBotApi, type DiscordApiFailure, type DiscordBotApi, type DiscordBotIdentity } from './discordApi.js';
@@ -36,10 +36,11 @@ import {
   DISCORD_BOT_CONNECTED_ACCOUNT_ID,
   DISCORD_BOT_CREDENTIAL_PURPOSE,
   DISCORD_BOT_TOKEN_ENVIRONMENT_KEY,
+  DISCORD_PLUGIN_ID,
+  readDiscordChannelEndpointId,
 } from './discordPluginConstants.js';
 
 const CHANNELS_CORE_PLUGIN_ID = 'happier.channels';
-const DISCORD_CHANNEL_PLUGIN_ID = 'happier.channel.discord';
 const DISCORD_CONNECTION_KEY_PREFIX = 'discord:application:';
 
 type DiscordSetupInput = Readonly<{ credentialRef: ConnectedAccountRef }>;
@@ -110,7 +111,7 @@ function readSetupInput(input: unknown): DiscordSetupInput {
 
 function isDiscordCredential(credentialRef: ConnectedAccountRef | null): credentialRef is ConnectedAccountRef {
   return credentialRef !== null
-    && credentialRef.service.pluginId === DISCORD_CHANNEL_PLUGIN_ID
+    && credentialRef.service.pluginId === DISCORD_PLUGIN_ID
     && credentialRef.service.localId === DISCORD_BOT_CONNECTED_ACCOUNT_ID;
 }
 
@@ -120,7 +121,7 @@ function throwIfAborted(signal: AbortSignal): void {
 }
 
 function materializationFailure(error: unknown): ConversationProviderFailureV1 {
-  if (error instanceof PluginError) {
+  if (isPluginError(error)) {
     // The exact-account host uses this refusal when the invocation generation
     // is no longer current. It cannot become an independent delivery retry.
     if (error.code === 'plugin_final_generation_retired') throw error;
@@ -265,13 +266,6 @@ async function readyConnection(
     return invalidConfiguration('The selected Discord bot no longer matches this Channel connection.');
   }
   return { api, identity };
-}
-
-function discordChannelId(endpointId: string): string | null {
-  const prefix = 'discord:channel:';
-  if (!endpointId.startsWith(prefix)) return null;
-  const channelId = endpointId.slice(prefix.length).trim();
-  return channelId || null;
 }
 
 function permissionLabels(permissionIds: readonly string[]): string {
@@ -500,7 +494,7 @@ export async function deliverDiscordMessage(input: unknown, context: PluginInvoc
   const request = ConversationDeliveryInputV1Schema.parse(input);
   const ready = await readyConnection(context, request);
   if ('kind' in ready) return preSendFailureResult(ready);
-  const channelId = discordChannelId(request.endpoint.id);
+  const channelId = readDiscordChannelEndpointId(request.endpoint.id);
   if (!channelId) return { kind: 'notDelivered', retry: 'never' };
   const endpointThreadId = request.endpoint.kind === 'thread' ? channelId : undefined;
   const requestedThreadId = request.replyContext !== undefined && 'threadId' in request.replyContext

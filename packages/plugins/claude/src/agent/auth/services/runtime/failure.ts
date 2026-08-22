@@ -1,10 +1,11 @@
 import { readFile } from 'node:fs/promises';
 
 import type {
-  ConnectedServiceCredentialRecordV1,
-  ConnectedServiceLimitCategoryV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+    OauthCredentialRecord,
+    TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import { parseCredentialRecord } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import {
   buildClaudeCodeCredentialPayload,
@@ -35,13 +36,37 @@ export type ClaudeConnectedServiceRuntimeFailureKind =
   | 'account_disabled'
   | 'unknown';
 
+export function containsDefinitiveClaudeOAuthRevocationEvidence(value: unknown, depth = 0): boolean {
+  if (depth > 5 || value === null || value === undefined) return false;
+  if (typeof value === 'string') {
+    return /\boauth(?: access)? token (?:has been (?:revoked|expired)|has expired)\b/i.test(value);
+  }
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsDefinitiveClaudeOAuthRevocationEvidence(entry, depth + 1));
+  }
+  if (typeof value !== 'object') return false;
+  return Object.values(value as Record<string, unknown>).some((entry) =>
+    containsDefinitiveClaudeOAuthRevocationEvidence(entry, depth + 1),
+  );
+}
+
 export type ClaudeConnectedServiceRuntimeFailureClassification = Readonly<{
   kind: ClaudeConnectedServiceRuntimeFailureKind;
-  limitCategory?: ConnectedServiceLimitCategoryV1;
+  limitCategory?:
+    | 'usage_limit'
+    | 'rate_limit'
+    | 'capacity'
+    | 'temporary_throttle'
+    | 'auth_invalid'
+    | 'plan_invalid'
+    | 'validation_failed'
+    | 'disabled'
+    | 'unknown';
   serviceId: string;
   profileId: string | null;
   groupId: string | null;
   groupGeneration?: number | null;
+  expectedCredentialRevision?: string | null;
   sourceProviderAccountId?: string | null;
   sourceAccountLabel?: string | null;
   resetsAtMs: number | null;
@@ -132,6 +157,7 @@ export type ClassifyClaudeConnectedServiceRuntimeAuthFailureInput = Readonly<{
   profileId: string | null;
   groupId: string | null;
   groupGeneration?: number | null;
+  credentialRevision?: string | null;
   sourceProviderAccountId?: string | null;
   sourceAccountLabel?: string | null;
   error: unknown;
@@ -154,37 +180,38 @@ function readNonnegativeInteger(value: unknown): number | null {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
-function readCredentialRecord(value: unknown): ConnectedServiceCredentialRecordV1 | null {
+function readCredentialRecord(value: unknown): OauthCredentialRecord | TokenCredentialRecord | null {
+  const parsed = parseCredentialRecord(value);
+  if (!parsed || (parsed.kind !== 'oauth' && parsed.kind !== 'token')) return null;
   const record = readRecord(value);
   if (!record) return null;
   const serviceId = readString(record.serviceId);
   const profileId = readString(record.profileId);
-  const kind = readString(record.kind);
-  if (!serviceId || !profileId || (kind !== 'oauth' && kind !== 'token')) return null;
-  return record as unknown as ConnectedServiceCredentialRecordV1;
+  if (!serviceId || !profileId) return null;
+  return parsed;
 }
 
-function readCredentialProviderAccountId(record: ConnectedServiceCredentialRecordV1 | null): string | null {
+function readCredentialProviderAccountId(record: OauthCredentialRecord | TokenCredentialRecord | null): string | null {
   if (!record) return null;
   return record.kind === 'oauth'
     ? readString(record.oauth.providerAccountId)
     : readString(record.token.providerAccountId);
 }
 
-function readCredentialProviderEmail(record: ConnectedServiceCredentialRecordV1 | null): string | null {
+function readCredentialProviderEmail(record: OauthCredentialRecord | TokenCredentialRecord | null): string | null {
   if (!record) return null;
   return record.kind === 'oauth'
     ? readString(record.oauth.providerEmail)
     : readString(record.token.providerEmail);
 }
 
-function readExecRuntimeService(value: unknown): PluginExecService | null {
+function readExecRuntimeService(value: unknown): ExecService | null {
   const record = readRecord(value);
   return typeof record?.run === 'function'
     && typeof record.spawn === 'function'
     && typeof readRecord(record.clients)?.spawn === 'function'
     && typeof readRecord(record.systemTools)?.resolve === 'function'
-    ? record as unknown as PluginExecService
+    ? record as unknown as ExecService
     : null;
 }
 
@@ -263,6 +290,7 @@ function runtimeFailureIdentity(
     ...(input.groupGeneration !== undefined && input.groupGeneration !== null
       ? { groupGeneration: input.groupGeneration }
       : {}),
+    ...(input.credentialRevision ? { expectedCredentialRevision: input.credentialRevision } : {}),
     ...(input.sourceProviderAccountId ? { sourceProviderAccountId: input.sourceProviderAccountId } : {}),
     ...(input.sourceProviderAccountId && input.sourceAccountLabel ? { sourceAccountLabel: input.sourceAccountLabel } : {}),
   };
@@ -330,6 +358,7 @@ function readMaterializedClaudeConfigDir(input: Readonly<{
     readString(selectionTargetMaterializedEnv?.CLAUDE_CONFIG_DIR)
     ?? readString(selectionMaterializedEnv?.CLAUDE_CONFIG_DIR)
     ?? readString(selectionEnv?.CLAUDE_CONFIG_DIR)
+    ?? readString(selection?.targetMaterializedRoot)
     ?? input.targetMaterializedEnv?.CLAUDE_CONFIG_DIR
     ?? input.materializedEnv?.CLAUDE_CONFIG_DIR
     ?? input.env?.CLAUDE_CONFIG_DIR
@@ -354,8 +383,12 @@ function readSelectionIds(selection: unknown): Readonly<{
     groupId: readString(record?.groupId),
     groupGeneration: readNonnegativeInteger(record?.groupGeneration ?? record?.generation),
     credentialRevision: readString(record?.credentialRevision),
-    sourceProviderAccountId: readCredentialProviderAccountId(credential),
-    sourceAccountLabel: readCredentialProviderEmail(credential),
+    sourceProviderAccountId:
+      readString(record?.sourceProviderAccountId)
+      ?? readCredentialProviderAccountId(credential),
+    sourceAccountLabel:
+      readString(record?.sourceAccountLabel)
+      ?? readCredentialProviderEmail(credential),
   };
 }
 
@@ -376,7 +409,7 @@ function isClaudeSubscriptionGroupOAuthSelection(selection: unknown): selection 
 }
 
 async function materializedCredentialMatchesRecord(params: Readonly<{
-  record: ConnectedServiceCredentialRecordV1;
+  record: OauthCredentialRecord | TokenCredentialRecord;
   claudeConfigDir: string;
 }>): Promise<boolean> {
   const built = buildClaudeCodeCredentialPayload(params.record);
@@ -392,7 +425,7 @@ async function materializedCredentialMatchesRecord(params: Readonly<{
 }
 
 function buildSharedGroupVerification(params: Readonly<{
-  record: ConnectedServiceCredentialRecordV1;
+  record: OauthCredentialRecord | TokenCredentialRecord;
   groupId: string;
   generationApplication?: Readonly<{
     generation: number;
@@ -423,7 +456,7 @@ function buildSharedGroupVerification(params: Readonly<{
 
 async function verifyClaudeSharedGroupApplication(params: Readonly<{
   claudeConfigDir: string;
-  record: ConnectedServiceCredentialRecordV1;
+  record: OauthCredentialRecord | TokenCredentialRecord;
   groupId: string;
   generation: number;
   credentialRevision: string;

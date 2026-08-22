@@ -134,4 +134,74 @@ describe('createCodexRequestUserInputBridge', () => {
     expect(requestPermissionDecision).not.toHaveBeenCalled();
     expect(continueSession).not.toHaveBeenCalled();
   });
+
+  it('never resumes Codex with a positive option after a denied decision', async () => {
+    const requestPermissionDecision = vi
+      .fn()
+      .mockResolvedValue({ decision: 'denied' }) satisfies NonNullable<RequestPermissionDecision>;
+    const continueSession = vi.fn().mockResolvedValue(undefined);
+    const logger = { debug: vi.fn() };
+
+    const bridge = createCodexRequestUserInputBridge({
+      requestPermissionDecision,
+      continueSession,
+      logger,
+    });
+
+    await bridge.onCodexEvent({
+      type: 'request_user_input',
+      call_id: 'call_deny_only_positive',
+      turn_id: '1',
+      questions: [
+        {
+          id: 'mcp_tool_call_approval_call_deny_only_positive',
+          header: 'Approve app tool call?',
+          question: 'Allow this action?',
+          options: [{ label: 'Approve Once', description: 'Run the tool and continue.' }],
+        },
+      ],
+    });
+
+    expect(requestPermissionDecision).toHaveBeenCalled();
+    expect(continueSession).not.toHaveBeenCalled();
+  });
+
+  it('resolves the decline label from the approval question, not a sibling question', async () => {
+    const requestPermissionDecision = vi
+      .fn()
+      .mockResolvedValue({ decision: 'denied' }) satisfies NonNullable<RequestPermissionDecision>;
+    const continueSession = vi.fn().mockResolvedValue(undefined);
+    const logger = { debug: vi.fn() };
+
+    const bridge = createCodexRequestUserInputBridge({
+      requestPermissionDecision,
+      continueSession,
+      logger,
+    });
+
+    await bridge.onCodexEvent({
+      type: 'request_user_input',
+      call_id: 'call_sibling',
+      turn_id: '1',
+      questions: [
+        {
+          id: 'note',
+          header: 'Note',
+          question: 'Any release note?',
+          options: [{ label: 'Approve the design doc' }],
+        },
+        {
+          id: 'mcp_tool_call_approval_call_sibling',
+          header: 'Approve app tool call?',
+          question: 'Allow this action?',
+          options: [
+            { label: 'Approve Once', description: 'Run the tool and continue.' },
+            { label: 'Deny', description: 'Decline this tool call and continue.' },
+          ],
+        },
+      ],
+    });
+
+    expect(continueSession).toHaveBeenCalledWith('Deny');
+  });
 });

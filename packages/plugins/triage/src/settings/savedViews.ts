@@ -1,3 +1,4 @@
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type { ScopedSettingsService } from '@happier-dev/plugin-sdk/settings';
@@ -467,6 +468,13 @@ function applyCommand(
  * writes it against the revision it read. A losing write returns the typed
  * `conflict` and the caller re-reads: there is no last-writer-wins merge, no
  * hidden local copy, and no Collection fallback for a Settings value.
+ *
+ * `conflict` means exactly one thing — the host refused this write because
+ * another writer moved the revision. Every other refusal the Settings service
+ * raises, and an abort or a store failure, surfaces as itself: folding them all
+ * into `conflict` would tell the user their views changed elsewhere and to
+ * retry, when the write is in fact refused for a reason retrying cannot
+ * resolve. The read half declines to reinterpret its failures the same way.
  */
 export async function mutateTriageSavedViews(
     deps: CorpusSavedViewsDepsV1,
@@ -493,8 +501,11 @@ export async function mutateTriageSavedViews(
             expectedRevision: snapshot.revision,
             ...(deps.signal ? { signal: deps.signal } : {}),
         });
-    } catch {
-        return { status: 'conflict' };
+    } catch (error) {
+        if (isPluginError(error) && error.code === 'plugin_settings_revision_conflict') {
+            return { status: 'conflict' };
+        }
+        throw error;
     }
     return applied;
 }

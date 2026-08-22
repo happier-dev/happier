@@ -27,9 +27,9 @@ describe('MiniMax plugin manifest', () => {
 
   it('keeps providers delegated to the first-class provider domain without runtime registration', () => {
     const family = PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'providers');
-    expect(family).toMatchObject({ identityKind: 'delegatedDomain', stability: 'delegated', disposition: 'delegated', activationDemand: 'conditional', allowedRuntimeRegistration: 'providers' });
+    expect(family).toMatchObject({ identityKind: 'delegatedDomain', disposition: 'delegated', activationDemand: 'conditional', allowedRuntimeRegistration: 'providers' });
     for (const contribution of PLUGIN_MANIFEST.contributes.providers) {
-      expect(family?.projectIntrospection(contribution)).toMatchObject({ localId: null, stability: 'delegated', registration: 'notRequired' });
+      expect(family?.projectIntrospection(contribution)).toMatchObject({ localId: null, registration: 'notRequired' });
     }
   });
 });

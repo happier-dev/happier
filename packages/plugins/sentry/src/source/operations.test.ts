@@ -54,6 +54,7 @@ function host(options: Readonly<{
   origins?: readonly string[];
   listStatus?: 'complete' | 'truncated';
   responses?: readonly RecordedResponse[];
+  binding?: unknown;
 }> = {}) {
   const responses = options.responses ?? [];
   let call = 0;
@@ -71,6 +72,9 @@ function host(options: Readonly<{
     kind: 'httpHeaders' as const,
     headers: { authorization: 'Bearer test-token-value' },
   }));
+  // The host answers the same authorized-target read two ways: `listAccounts` throws
+  // for a purpose it holds no selection for, and `getBinding` answers `null` there.
+  const getBinding = vi.fn(async () => options.binding ?? null);
   const request = vi.fn(async (input: Readonly<{ url: string }>) => {
     const recorded = responses[call++];
     if (recorded === undefined) throw new Error(`unexpected request ${input.url}`);
@@ -85,12 +89,13 @@ function host(options: Readonly<{
     context: {
       signal: new AbortController().signal,
       services: {
-        connectedAccounts: { listAccounts, materializeListedAccount },
+        connectedAccounts: { listAccounts, materializeListedAccount, getBinding },
         http: { request },
       },
     } as unknown as PluginInvocationContext,
     listAccounts,
     materializeListedAccount,
+    getBinding,
     request,
   };
 }
@@ -115,6 +120,36 @@ function configuredInstance(origin: string) {
 }
 
 describe('Sentry Triage source operations', () => {
+  it('reports a first run with no selected account as an empty listing, not a Sentry failure', async () => {
+    // The host declines to list a purpose it holds no selection for, and that refusal
+    // is a throw. Mapping it into this source's provider vocabulary would accuse a
+    // Sentry deployment no request was ever sent to, and hide the one thing the
+    // reader can act on.
+    const harness = host();
+    harness.listAccounts.mockRejectedValue(new Error('purpose has no selected account'));
+
+    const result = await listSentryInstances({ v: 1 }, harness.context);
+
+    expect(() => TriageListInstancesResultV1Schema.parse(result)).not.toThrow();
+    expect(result).toEqual({ kind: 'complete', candidates: [], failures: [] });
+    expect(harness.getBinding).toHaveBeenCalledWith(
+      SENTRY_CONNECTED_ACCOUNT_PURPOSE,
+      { signal: harness.context.signal },
+    );
+    expect(harness.request).not.toHaveBeenCalled();
+  });
+
+  it('lets a listing refusal that is not an unbound purpose keep propagating', async () => {
+    // A source that learned nothing must not claim it learned that there is nothing:
+    // a confirmed binding means the listing failed for some other reason.
+    const harness = host({ binding: { account: ACCOUNT } });
+    const refusal = new Error('connected accounts unavailable');
+    harness.listAccounts.mockRejectedValue(refusal);
+
+    await expect(listSentryInstances({ v: 1 }, harness.context)).rejects.toBe(refusal);
+    expect(harness.request).not.toHaveBeenCalled();
+  });
+
   it('discovers candidates through the exact listed account, on the origin the host projected', async () => {
     const harness = host({
       origins: ['https://de.sentry.io'],

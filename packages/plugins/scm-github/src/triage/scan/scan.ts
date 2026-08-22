@@ -1,6 +1,9 @@
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+
 import {
   decodeGithubJsonResponse,
   isGithubRateLimited,
+  readGithubRetryAfterMs,
   type GithubApiClientV1,
   type GithubApiResponseV1,
 } from '../../observations/githubApiClient.js';
@@ -141,36 +144,30 @@ function resolvePartialEvidence(
   return null;
 }
 
-function readHeader(
-  headers: Readonly<Record<string, string>>,
-  name: string,
-): string | null {
-  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name);
-  return entry?.[1]?.trim() || null;
-}
-
 /** `x-ratelimit-remaining: 0` means the next request would be rejected; settle now. */
 function isGithubBudgetExhausted(response: GithubApiResponseV1): boolean {
-  return readHeader(response.headers, 'x-ratelimit-remaining') === '0';
+  return readTriageResponseHeaderV1(response.headers, 'x-ratelimit-remaining') === '0';
 }
 
 /**
  * A successful response whose remaining budget is zero: the next request would be
- * rejected, so the invocation settles now with GitHub's own reset as the deadline. It
- * never sleeps until reset, retries, or returns a deferred arm.
+ * rejected, so the invocation settles now with GitHub's own retry evidence as the
+ * deadline. It never sleeps until reset, retries, or returns a deferred arm.
+ *
+ * The evidence is read by `readGithubRetryAfterMs`, the one place this plugin turns
+ * GitHub's rate-limit headers into a wait. This arm used to re-read
+ * `x-ratelimit-reset` and re-spell the same arithmetic, which is how one plugin ends
+ * up answering "how long until we may retry" twice.
  */
 function budgetExhaustedFailure(
   response: GithubApiResponseV1,
   nowMs: number,
 ): GithubTriageFailureV1 {
-  const reset = readHeader(response.headers, 'x-ratelimit-reset');
-  const resetAtMs = reset !== null && /^\d+$/u.test(reset) ? Number(reset) * 1_000 : null;
+  const durationMs = readGithubRetryAfterMs(response.headers, nowMs);
   return Object.freeze({
     class: 'rateLimit',
     code: 'github_rate_limit_budget_exhausted',
-    ...(resetAtMs === null || !Number.isSafeInteger(resetAtMs)
-      ? {}
-      : { retryNotBeforeMs: nowMs + Math.max(0, resetAtMs - nowMs) }),
+    ...(durationMs === null ? {} : { retryNotBeforeMs: nowMs + durationMs }),
   });
 }
 

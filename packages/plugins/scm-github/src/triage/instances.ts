@@ -1,5 +1,6 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 import {
   MAX_TRIAGE_INSTANCE_DRAFTS_V1,
   type TriageListInstancesResultV1,
@@ -39,6 +40,13 @@ import type { GithubTriageFailureV1 } from './types.js';
  * a candidate stays a Settings choice until the user invokes the target-owned
  * administration Action. A truncated listing is reported as `incomplete` rather
  * than silently dropping an account the user has configured.
+ *
+ * A purpose with no selected account is an empty `complete` set, not a failure.
+ * The host declines to list an unbound purpose, and the shared listing owner
+ * separates that decline from a real refusal by re-asking the same authorized
+ * target through the nullable question. Calling it a GitHub failure would accuse
+ * a provider this source never contacted, and would hide the one thing the
+ * reader can act on: connecting an account.
  */
 
 export type GithubTriageInstancesDependenciesV1 = Readonly<{
@@ -136,20 +144,23 @@ export async function listGithubTriageInstances(
   dependencies: GithubTriageInstancesDependenciesV1 = {},
 ): Promise<TriageListInstancesResultV1> {
   const now = dependencies.now ?? Date.now;
-  let listed;
-  try {
-    listed = await context.services.connectedAccounts.listAccounts(
-      { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, limit: MAX_TRIAGE_INSTANCE_DRAFTS_V1 },
-      { signal: context.signal },
-    );
-  } catch (error) {
+  const listing = await readTriageSourceAccountListingV1({
+    connectedAccounts: context.services.connectedAccounts,
+    purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+    limit: MAX_TRIAGE_INSTANCE_DRAFTS_V1,
+    signal: context.signal,
+  });
+  if (listing.kind === 'failed') {
     // The source learned nothing about its configured accounts, which is not the
     // same as learning that there are none.
     return Object.freeze({
       kind: 'failed' as const,
-      failure: toTriageFailure(classifyGithubTransportFailure(error)),
+      failure: toTriageFailure(classifyGithubTransportFailure(listing.error)),
     });
   }
+  const listed = listing.kind === 'unbound'
+    ? Object.freeze({ status: 'complete' as const, accounts: Object.freeze([]) })
+    : listing.listing;
 
   const candidates: TriageSourceInstanceDraftV1[] = [];
   const failures: Array<Readonly<{

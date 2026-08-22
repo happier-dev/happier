@@ -1,4 +1,4 @@
-import type { TerminalHostKind } from '@happier-dev/agents';
+import type { TerminalHostKind } from '@happier-dev/plugin-sdk/agents/runtime';
 
 /**
  * Claude owns the native queued-input Escape semantics. Supported terminal-host adapters own

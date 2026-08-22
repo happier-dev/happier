@@ -66,14 +66,14 @@ export function createClaudeStatuslineApplier(params: Readonly<{
     readIdentity: () => ClaudeStatuslineIdentity;
     onRuntimeTruth?: (truth: ClaudeStatuslineRuntimeTruth) => void;
     onEffectiveModel?: (evidence: ClaudeEffectiveModelEvidence) => void;
-    onModelChanged?: (change: ClaudeEffectiveModelChange) => void;
+    onModelChanged?: (change: ClaudeEffectiveModelChange) => void | Promise<void>;
 }>): Readonly<{
-    apply(payload: ClaudeStatuslinePayload): void;
+    apply(payload: ClaudeStatuslinePayload): Promise<void>;
     applyModelEvidence(input: Readonly<{
         modelId: string | null;
         displayName?: string | null | undefined;
         contextWindowTokens?: number | null | undefined;
-    }>): void;
+    }>): Promise<void>;
 }> {
     let lastModelKey: string | null = null;
     let lastCanaryKey: string | null = null;
@@ -81,11 +81,11 @@ export function createClaudeStatuslineApplier(params: Readonly<{
     let lastObservedModelId: string | null = null;
     const publishedModelChangeEventIds = new Set<string>();
 
-    const maybeAdoptModelAndWindow = (input: Readonly<{
+    const maybeAdoptModelAndWindow = async (input: Readonly<{
         modelId: string | null;
         displayName?: string | null | undefined;
         contextWindowTokens?: number | null | undefined;
-    }>): void => {
+    }>): Promise<void> => {
         const modelId = readString(input.modelId);
         if (!modelId) return;
         const contextWindowTokens = readPositiveTokens(input.contextWindowTokens);
@@ -95,22 +95,21 @@ export function createClaudeStatuslineApplier(params: Readonly<{
         // model/window) must not spam metadata writes.
         const modelKey = `${modelId}|${contextWindowTokens ?? ''}`;
         if (modelKey === lastModelKey) return;
-        lastModelKey = modelKey;
-
         params.onEffectiveModel?.({
             modelId,
             ...(displayName ? { displayName } : {}),
             ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
         });
         const previousModelId = lastObservedModelId;
-        lastObservedModelId = modelId;
         if (params.onModelChanged && previousModelId !== null && previousModelId !== modelId) {
             const eventId = `claude-model-changed:${previousModelId}:${modelId}`;
             if (!publishedModelChangeEventIds.has(eventId)) {
+                await params.onModelChanged({ modelId, previousModelId, eventId });
                 publishedModelChangeEventIds.add(eventId);
-                params.onModelChanged({ modelId, previousModelId, eventId });
             }
         }
+        lastModelKey = modelKey;
+        lastObservedModelId = modelId;
     };
 
     const maybeFeedRuntimeTruth = (payload: ClaudeStatuslinePayload): void => {
@@ -142,7 +141,7 @@ export function createClaudeStatuslineApplier(params: Readonly<{
     };
 
     return {
-        apply(payload) {
+        async apply(payload) {
             if (!matchesSession(params.readIdentity(), payload)) {
                 params.logger.debug('[ClaudeStatusline] ignoring statusline payload from foreign/stale Claude session', {
                     payloadSessionId: payload.session_id ?? null,
@@ -150,7 +149,7 @@ export function createClaudeStatuslineApplier(params: Readonly<{
                 });
                 return;
             }
-            maybeAdoptModelAndWindow({
+            await maybeAdoptModelAndWindow({
                 modelId: payload.model?.id ?? null,
                 displayName: payload.model?.display_name ?? null,
                 contextWindowTokens: payload.context_window?.context_window_size ?? null,
@@ -158,8 +157,8 @@ export function createClaudeStatuslineApplier(params: Readonly<{
             maybeFeedRuntimeTruth(payload);
             maybeLogRuntimeCanary(payload);
         },
-        applyModelEvidence(input) {
-            maybeAdoptModelAndWindow(input);
+        async applyModelEvidence(input) {
+            await maybeAdoptModelAndWindow(input);
         },
     };
 }

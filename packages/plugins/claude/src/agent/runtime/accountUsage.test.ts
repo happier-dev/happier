@@ -1,24 +1,33 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { recordClaudeRuntimeProviderAccountUsageSnapshot } from './accountUsage.js';
 
 describe('Claude runtime provider account usage recording', () => {
   it('passes connected-service source context when recording runtime usage evidence', async () => {
+    const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-usage-'));
+    await writeFile(join(claudeConfigDir, '.claude.json'), JSON.stringify({
+      oauthAccount: {
+        accountUuid: 'live-claude-account',
+        emailAddress: 'live@example.com',
+      },
+    }));
     const launchEnv = {
-      CLAUDE_CONFIG_DIR: '/tmp/claude-connected-profile',
-      HAPPIER_CONNECTED_SERVICE_SELECTIONS: '[]',
+      CLAUDE_CONFIG_DIR: claudeConfigDir,
+      HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: '[{"serviceId":"claude-subscription"}]',
     };
     const source = {
       serviceId: 'claude-subscription',
       profileId: 'work',
       bindingKind: 'group_member',
       groupId: 'claude-team',
-      groupGeneration: 7,
     } as const;
     const resolveSourceContext = vi.fn(async () => source);
-    const recordSnapshot = vi.fn(async (input: Readonly<{ snapshot: Readonly<{ recordId: string }> }>) => ({
+    const recordSnapshot = vi.fn(async () => ({
       status: 'recorded' as const,
-      recordId: input.snapshot.recordId,
     }));
 
     await recordClaudeRuntimeProviderAccountUsageSnapshot({
@@ -46,13 +55,25 @@ describe('Claude runtime provider account usage recording', () => {
 
     expect(resolveSourceContext).toHaveBeenCalledWith({
       serviceId: 'claude-subscription',
-      env: launchEnv,
+      env: {
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: '[{"serviceId":"claude-subscription"}]',
+      },
     });
     expect(recordSnapshot).toHaveBeenCalledWith({
       sessionId: 'happy-session-claude',
-      source,
+      source: {
+        serviceId: 'claude-subscription',
+        env: {
+          HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: '[{"serviceId":"claude-subscription"}]',
+        },
+      },
       snapshot: expect.objectContaining({
         providerId: 'claude',
+        accountSubject: {
+          kind: 'providerSubject',
+          id: 'live-claude-account',
+        },
+        accountLabel: 'live@example.com',
         source: 'runtimeSignal',
         state: 'loaded_data',
         meters: [expect.objectContaining({

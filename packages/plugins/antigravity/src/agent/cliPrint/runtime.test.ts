@@ -112,6 +112,7 @@ describe('Antigravity cliPrint native session runtime', () => {
 
   it('aborts an in-flight one-shot through the native cancel contract', async () => {
     let signal: AbortSignal | undefined;
+    const events: Array<{ kind: string }> = [];
     const runtime = createAntigravityCliPrintSessionRuntime({
       sessionId: 'session-1',
       cwd: '/repo',
@@ -120,11 +121,15 @@ describe('Antigravity cliPrint native session runtime', () => {
       runOneShot: vi.fn(async (input) => {
         signal = input.signal;
         await new Promise<void>((_resolve, reject) => input.signal?.addEventListener('abort', () => {
-          reject(new AntigravityCliPrintOneShotError('antigravity_cliprint_cancelled', 'cancelled'));
+          reject(new AntigravityCliPrintOneShotError({
+            code: 'antigravity_cliprint_cancelled',
+            message: 'cancelled',
+          }));
         }, { once: true }));
         return { status: 'completed', stdout: '', stderr: '' };
       }),
     });
+    runtime.watch((event) => events.push(event));
 
     const send = runtime.send(sendRequest('long running'));
     await vi.waitFor(() => expect(signal).toBeDefined());
@@ -134,6 +139,40 @@ describe('Antigravity cliPrint native session runtime', () => {
     });
     expect(signal?.aborted).toBe(true);
     await expect(send).resolves.toMatchObject({ status: 'unavailable' });
+    // A one-shot killed before it produced output never proves the provider took the prompt:
+    // the CLI carries it in argv of a process that may have written nothing, and the aborted
+    // run discovers no conversation id, so the next send opens a fresh conversation. Custody
+    // must therefore stay unknown — an `input-accepted` here would admit the prompt upstream
+    // and retire a replay activation seed whose text no provider ever received.
+    expect(events.map((event) => event.kind)).toEqual(['turn-cancelled', 'input-custody-unknown']);
+  });
+
+  it('keeps a delivered one-shot admitted when cancel lands after provider output', async () => {
+    const events: Array<{ kind: string }> = [];
+    let cancelResult: unknown;
+    const runtime = createAntigravityCliPrintSessionRuntime({
+      sessionId: 'session-1',
+      cwd: '/repo',
+      executable: 'agy',
+      promptTimeoutMs: 1_000,
+      // The real host exec races the abort against process exit: the CLI can produce its
+      // output and exit 0 while the cancel is in flight. Cancelling here, immediately before
+      // the completed result, models that race and covers the whole post-delivery window.
+      runOneShot: vi.fn(async () => {
+        cancelResult = await runtime.cancel?.({ turnId: 'turn-1', reason: 'user' });
+        return { status: 'completed', stdout: 'answer', stderr: '' } as const;
+      }),
+      discoverConversationId: vi.fn(async () => ({ status: 'not_found' } as const)),
+    });
+    runtime.watch((event) => events.push(event));
+
+    // The incident shape: the provider took the prompt, then the turn was aborted. Delivery
+    // is confirmed, so the input stays admitted, `sendTurnPrompt` resolves, and the host
+    // retires the replay seed — the next prompt must not carry it a second time.
+    await expect(runtime.send(sendRequest('hello'))).resolves.toEqual({ status: 'admitted' });
+    expect(cancelResult).toEqual({ status: 'requested', turnId: 'turn-1' });
+    expect(events.map((event) => event.kind)).toContain('input-accepted');
+    expect(events.map((event) => event.kind)).not.toContain('input-custody-unknown');
   });
 
   it('reports unknown custody when one-shot launch outcome is unknown', async () => {

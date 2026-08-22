@@ -21,7 +21,6 @@ export {
   type BitbucketTriageApiClient,
 } from './apiClient.js';
 export {
-  BITBUCKET_RATE_LIMIT_WINDOW_MS,
   isBitbucketRateLimitedStatus,
   readBitbucketRateLimitTelemetry,
   readBitbucketRetryNotBeforeMs,

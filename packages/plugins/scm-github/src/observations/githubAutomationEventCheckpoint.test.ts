@@ -16,26 +16,36 @@ import {
 } from './githubAutomationEventCheckpoint.js';
 
 describe('GitHub Automation Event checkpoint identity', () => {
-  // Two pinned vectors over the same encoder. The first is the historical
-  // `happier.scm.hosting.github` identity and still hashes to its established
-  // value, so a change to the length-delimited encoding or the domain constant
-  // fails here rather than silently rekeying every checkpoint row; the second
-  // pins the current forge identity the plugin actually emits.
-  it.each([
-    ['happier.scm.hosting.github', '5EStHbj8sHB6-koXZwHi8DyaWxkafxgBmQQ1KtW-oEo'],
-    ['happier.scm.forge.github', '1qG7cjvTIW4qmiqAYEnbVsAMm4IdMyxlA7emUoyTQb0'],
-  ])('preserves the established canonical domain-separated opaque row ID for %s', (
-    pluginId,
-    rowId,
-  ) => {
-    expect(createGithubAutomationEventCheckpointRowId({
+  const checkpointRowId = (pluginId: string): string =>
+    createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
       eventRef: {
         pluginId,
         localId: 'automation/repository-event-v1',
       },
       sourceSelectorId: '00000000-0000-4000-8000-000000000001',
-    })).toBe(rowId);
+    });
+
+  // One pinned vector, over the identity the plugin actually emits: a change to
+  // the length-delimited encoding or the domain constant fails here rather than
+  // silently rekeying every checkpoint row. The predecessor `happier.scm.*`
+  // spelling is deliberately not pinned. The forge cut was pre-publication, and
+  // `isGithubAutomationEventCheckpointRowV1` rejects any row whose
+  // `eventPluginId` is not the current `GITHUB_PLUGIN_ID`, so no stored row can
+  // address the retired identity and a vector for it would only keep a retired
+  // product identity alive in shipped source.
+  it('preserves the established canonical opaque row ID', () => {
+    expect(checkpointRowId('happier.scm.forge.github'))
+      .toBe('1qG7cjvTIW4qmiqAYEnbVsAMm4IdMyxlA7emUoyTQb0');
+  });
+
+  // The encoder is domain-separated by the contributing plugin identity, so an
+  // encoder that dropped `eventRef.pluginId` would collide two plugins'
+  // checkpoints onto one row. Asserted as a property, which needs no second
+  // pinned digest and therefore no second product identity in this file.
+  it('domain-separates the row ID by contributing plugin identity', () => {
+    expect(checkpointRowId('happier.scm.forge.github'))
+      .not.toBe(checkpointRowId('happier.scm.forge.gitlab'));
   });
 
   it('produces rows accepted by the compiled declared checkpoint collection schema', () => {

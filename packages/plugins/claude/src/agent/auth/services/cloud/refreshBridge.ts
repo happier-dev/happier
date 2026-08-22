@@ -1,9 +1,8 @@
-import {
-  ConnectedServiceAuthGroupIdSchema,
-  ConnectedServiceProfileIdSchema,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+
+const connectedServiceProfileIdSchema = z.string().min(1);
+const connectedServiceAuthGroupIdSchema = z.string().trim().min(1);
 
 /**
  * Daemon access-token bridge schema for the OpenCode Claude broker plugin. Sibling of the Codex
@@ -16,14 +15,14 @@ export const ClaudeSubscriptionAuthTokensRefreshSelectionSchema = z.discriminate
   z.object({
     kind: z.literal('profile'),
     serviceId: z.literal('claude-subscription'),
-    profileId: ConnectedServiceProfileIdSchema,
+    profileId: connectedServiceProfileIdSchema,
   }),
   z.object({
     kind: z.literal('group'),
     serviceId: z.literal('claude-subscription'),
-    groupId: ConnectedServiceAuthGroupIdSchema,
-    activeProfileId: ConnectedServiceProfileIdSchema,
-    fallbackProfileId: ConnectedServiceProfileIdSchema,
+    groupId: connectedServiceAuthGroupIdSchema,
+    activeProfileId: connectedServiceProfileIdSchema,
+    fallbackProfileId: connectedServiceProfileIdSchema,
     generation: z.number().int().nonnegative(),
   }),
 ]);

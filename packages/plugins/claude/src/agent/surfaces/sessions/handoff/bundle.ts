@@ -1,27 +1,32 @@
-import { access, lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { access, link, lstat, mkdir, open, readFile, unlink } from 'node:fs/promises';
+import { join, relative, resolve, sep } from 'node:path';
 
-import { PluginError } from '@happier-dev/plugin-sdk';
-import { readLinkedExternalSessionV1FromMetadata } from '@happier-dev/plugin-sdk/experimental/sessions';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
+import type { HandoffExportSessionMetadata } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { getClaudeProjectPath, resolveClaudeConfigDirOverride, resolveClaudeProjectId } from './path.js';
+import { resolveClaudeConfigDir, resolveClaudeConfigDirOverride } from '../../../environment.js';
+import { getClaudeProjectPath, resolveClaudeProjectId } from './path.js';
 import {
     ClaudeSessionBundleSchema,
     type ClaudeSessionBundle,
     type ImportedClaudeSessionHandoffBundle,
 } from './types.js';
 
+function throwIfAborted(signal: AbortSignal | undefined): void {
+    if (!signal?.aborted) return;
+    throw signal.reason instanceof Error
+        ? signal.reason
+        : new Error('Claude handoff operation was cancelled');
+}
+
 function resolveExternalSessionSourceTranscriptPath(params: Readonly<{
-    metadata: Record<string, unknown>;
+    metadata: HandoffExportSessionMetadata;
     remoteSessionId: string;
 }>): string | null {
-    const externalSession = readLinkedExternalSessionV1FromMetadata(params.metadata);
-    if (externalSession?.agentId !== 'claude') {
-        return null;
-    }
-    const source = externalSession.source;
-    if (source.kind !== 'claudeConfig') {
+    const source = params.metadata.externalSessionSource;
+    if (source?.kind !== 'claudeConfig') {
         return null;
     }
     const configDir = typeof source.configDir === 'string' ? source.configDir.trim() : '';
@@ -33,7 +38,7 @@ function resolveExternalSessionSourceTranscriptPath(params: Readonly<{
 }
 
 function resolveTranscriptPath(params: Readonly<{
-    metadata: Record<string, unknown>;
+    metadata: HandoffExportSessionMetadata;
     remoteSessionId: string;
     env: NodeJS.ProcessEnv;
 }>): string {
@@ -61,7 +66,7 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 async function resolveReadableTranscriptPath(params: Readonly<{
-    metadata: Record<string, unknown>;
+    metadata: HandoffExportSessionMetadata;
     remoteSessionId: string;
     env: NodeJS.ProcessEnv;
 }>): Promise<string> {
@@ -119,8 +124,11 @@ async function preflightClaudeTranscriptTarget(params: Readonly<{
     projectDir: string;
     transcriptPath: string;
     transcript: Buffer;
+    signal?: AbortSignal;
 }>): Promise<'absent' | 'identical'> {
+    throwIfAborted(params.signal);
     await assertExistingClaudeProjectParentsAreSafe(params);
+    throwIfAborted(params.signal);
 
     let entry;
     try {
@@ -131,6 +139,7 @@ async function preflightClaudeTranscriptTarget(params: Readonly<{
         }
         throw targetIdentityConflict();
     }
+    throwIfAborted(params.signal);
     if (!entry.isFile()) {
         throw targetIdentityConflict();
     }
@@ -141,6 +150,7 @@ async function preflightClaudeTranscriptTarget(params: Readonly<{
     } catch {
         throw targetIdentityConflict();
     }
+    throwIfAborted(params.signal);
 
     let entryAfterRead;
     try {
@@ -148,6 +158,7 @@ async function preflightClaudeTranscriptTarget(params: Readonly<{
     } catch {
         throw targetIdentityConflict();
     }
+    throwIfAborted(params.signal);
     if (!entryAfterRead.isFile() || !isSameFileIdentity(entry, entryAfterRead)) {
         throw targetIdentityConflict();
     }
@@ -168,36 +179,36 @@ function isSameFileIdentity(before: Awaited<ReturnType<typeof lstat>>, after: Aw
 async function assertExistingClaudeProjectParentsAreSafe(params: Readonly<{
     configDir: string;
     projectDir: string;
+    signal?: AbortSignal;
 }>): Promise<void> {
     // The configured Claude directory is the caller-selected trust root and may itself be a
     // deliberate symlink. Descendants are native handoff-owned paths and must be real directories.
     const configRoot = resolve(params.configDir);
     const resolvedProjectDir = resolve(params.projectDir);
     const projectRelativePath = relative(configRoot, resolvedProjectDir);
-    if (
-        projectRelativePath === '..'
-        || projectRelativePath.startsWith(`..${sep}`)
-        || isAbsolute(projectRelativePath)
-    ) {
+    if (!isCanonicalAbsolutePathInsideRoot(configRoot, resolvedProjectDir)) {
         throw targetIdentityConflict();
     }
 
     let currentPath = configRoot;
     for (const segment of projectRelativePath.split(sep)) {
+        throwIfAborted(params.signal);
         if (!segment) continue;
         currentPath = join(currentPath, segment);
+        let entry: Awaited<ReturnType<typeof lstat>>;
         try {
-            const entry = await lstat(currentPath);
-            if (!entry.isDirectory()) {
-                throw targetIdentityConflict();
-            }
+            entry = await lstat(currentPath);
         } catch (error) {
-            if (error instanceof PluginError) {
+            if (isPluginError(error)) {
                 throw error;
             }
             if (readErrorCode(error) === 'ENOENT') {
                 return;
             }
+            throw targetIdentityConflict();
+        }
+        throwIfAborted(params.signal);
+        if (!entry.isDirectory()) {
             throw targetIdentityConflict();
         }
     }
@@ -208,32 +219,62 @@ async function createClaudeTranscriptIfAbsent(params: Readonly<{
     projectDir: string;
     transcriptPath: string;
     transcript: Buffer;
+    signal?: AbortSignal;
 }>): Promise<void> {
+    throwIfAborted(params.signal);
     const targetState = await preflightClaudeTranscriptTarget(params);
+    throwIfAborted(params.signal);
     if (targetState === 'identical') {
         return;
     }
 
+    throwIfAborted(params.signal);
     await mkdir(params.projectDir, { recursive: true });
+    throwIfAborted(params.signal);
     await assertExistingClaudeProjectParentsAreSafe(params);
+    throwIfAborted(params.signal);
+    const temporaryPath = join(params.projectDir, `.happier-import-${randomUUID()}.tmp`);
+    let temporaryCreated = false;
     try {
-        await writeFile(params.transcriptPath, params.transcript, { flag: 'wx' });
-    } catch (error) {
-        const racedTargetState = await preflightClaudeTranscriptTarget(params);
-        if (racedTargetState === 'identical') {
-            return;
+        throwIfAborted(params.signal);
+        const temporaryFile = await open(temporaryPath, 'wx');
+        temporaryCreated = true;
+        try {
+            throwIfAborted(params.signal);
+            await temporaryFile.writeFile(params.transcript);
+            throwIfAborted(params.signal);
+        } finally {
+            await temporaryFile.close();
         }
-        throw error;
+        throwIfAborted(params.signal);
+        try {
+            await link(temporaryPath, params.transcriptPath);
+        } catch (error) {
+            const racedTargetState = await preflightClaudeTranscriptTarget(params);
+            if (racedTargetState === 'identical') {
+                return;
+            }
+            throw error;
+        }
+        throwIfAborted(params.signal);
+    } finally {
+        if (temporaryCreated) {
+            await unlink(temporaryPath).catch(() => undefined);
+        }
     }
 }
 
 export async function exportClaudeSessionBundle(params: Readonly<{
-    metadata: Record<string, unknown>;
+    metadata: HandoffExportSessionMetadata;
     remoteSessionId: string;
     env: NodeJS.ProcessEnv;
+    signal?: AbortSignal;
 }>): Promise<ClaudeSessionBundle> {
+    throwIfAborted(params.signal);
     const transcriptPath = await resolveReadableTranscriptPath(params);
+    throwIfAborted(params.signal);
     const transcript = await readFile(transcriptPath, 'utf8');
+    throwIfAborted(params.signal);
     return {
         agentId: 'claude',
         remoteSessionId: params.remoteSessionId,
@@ -245,11 +286,11 @@ export async function importClaudeSessionBundle(params: Readonly<{
     bundle: unknown;
     targetPath: string;
     env: NodeJS.ProcessEnv;
-    sessionStorageMode?: 'direct' | 'persisted';
+    signal?: AbortSignal;
 }>): Promise<ImportedClaudeSessionHandoffBundle> {
+    throwIfAborted(params.signal);
     const bundle = ClaudeSessionBundleSchema.parse(params.bundle);
-    const explicitClaudeConfigDir = resolveClaudeConfigDirOverride(params.env);
-    const resolvedClaudeConfigDir = explicitClaudeConfigDir ?? join(homedir(), '.claude');
+    const resolvedClaudeConfigDir = resolveClaudeConfigDir(params.env);
     const projectId = resolveClaudeProjectId(params.targetPath);
     const projectDir = getClaudeProjectPath(params.targetPath, resolvedClaudeConfigDir);
     const transcriptPath = resolveClaudeTranscriptPath(projectDir, bundle.remoteSessionId);
@@ -260,24 +301,22 @@ export async function importClaudeSessionBundle(params: Readonly<{
         projectDir,
         transcriptPath,
         transcript,
+        signal: params.signal,
     });
+    throwIfAborted(params.signal);
 
     return {
-        remoteSessionId: bundle.remoteSessionId,
+        providerSessionId: bundle.remoteSessionId,
         directSource: {
             kind: 'claudeConfig',
             configDir: resolvedClaudeConfigDir,
             projectId,
         },
-        resume: {
+        launch: {
             directory: params.targetPath,
-            agent: 'claude',
-            resume: bundle.remoteSessionId,
             environmentVariables: {
                 CLAUDE_CONFIG_DIR: resolvedClaudeConfigDir,
             },
-            transcriptStorage: params.sessionStorageMode === 'persisted' ? 'persisted' : 'direct',
-            approvedNewDirectoryCreation: true,
         },
     };
 }

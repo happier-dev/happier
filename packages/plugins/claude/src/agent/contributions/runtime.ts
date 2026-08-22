@@ -1,14 +1,15 @@
 import { open, readFile, readdir, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
-import { AGENTS_CORE } from '@happier-dev/plugin-sdk/experimental/agents';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import {
-  ConnectedServiceCredentialRevisionV1Schema,
-  type ConnectedServiceCredentialRecordV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
+    CLAUDE_SUBSCRIPTION_OAUTH_PROFILE,
+    parseCredentialRecord,
+    type OauthCredentialRecord,
+    type TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import { AGENT_DEFINITION } from '../definition.js';
+import { resolveClaudeConfigDir } from '../environment.js';
 import {
   diagnoseClaudeCodeNativeAuthMaterialization,
   materializeClaudeCodeNativeAuth,
@@ -42,13 +43,6 @@ import {
   buildClaudeRuntimeLocalHandoffMetadata,
 } from '../surfaces/sessions/handoff/runtimeLocalMetadata.js';
 import { prepareClaudeQualifiedPurposeRoot } from '../auth/services/qualifiedPurposeRoot.js';
-import { claudeHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
-import {
-  CLAUDE_SUBSCRIPTION_OAUTH_AUTHORIZATION_URL,
-  CLAUDE_SUBSCRIPTION_OAUTH_CALLBACK_URL,
-  CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID,
-  CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL,
-} from '../../connectedAccounts/claudeSubscriptionRuntime.js';
 
 export const CLAUDE_SUPPORTED_AUTH_SERVICE_IDS = Object.freeze([
   'claude-subscription',
@@ -75,6 +69,11 @@ function readOptionalSafeString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function readCredentialRevision(value: unknown): string | null {
+  const revision = readOptionalSafeString(value);
+  return revision && /^csr_[A-Za-z0-9_-]{22,64}$/u.test(revision) ? revision : null;
 }
 
 export function readClaudeConnectedServiceId(selection: unknown): ClaudeSupportedAuthServiceId | null {
@@ -146,35 +145,19 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function readCredentialRecord(value: unknown): ConnectedServiceCredentialRecordV1 | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as ConnectedServiceCredentialRecordV1
-    : null;
+function readCredentialRecord(value: unknown): OauthCredentialRecord | TokenCredentialRecord | null {
+  const record = parseCredentialRecord(value);
+  if (!record) return null;
+  return record.kind === 'oauth' || record.kind === 'token' ? record : null;
 }
 
-function readExecRuntimeService(value: unknown): PluginExecService | null {
+function readExecRuntimeService(value: unknown): ExecService | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const candidate = value as Partial<PluginExecService>;
+  const candidate = value as Partial<ExecService>;
   return typeof candidate.run === 'function'
     && typeof candidate.systemTools?.resolve === 'function'
-    ? candidate as PluginExecService
+    ? candidate as ExecService
     : null;
-}
-
-function resolveClaudeConfigDirForAuthMaterialization(env: NodeJS.ProcessEnv): string {
-  const explicitClaudeConfigDir = readString(env.CLAUDE_CONFIG_DIR);
-  if (explicitClaudeConfigDir) return explicitClaudeConfigDir;
-  const happierClaudeConfigDir = readString(env[HAPPIER_CLAUDE_CONFIG_DIR_ENV]);
-  if (happierClaudeConfigDir) return happierClaudeConfigDir;
-  const home =
-    readString(env.HOME)
-    ?? readString(env.USERPROFILE)
-    ?? homedir();
-  return join(home, '.claude');
-}
-
-function resolveClaudeConnectedServiceConfigSourceRoot(env: NodeJS.ProcessEnv): string {
-  return resolveClaudeConfigDirForAuthMaterialization(env);
 }
 
 function readRootDir(input: Readonly<Record<string, unknown>>): string {
@@ -191,17 +174,39 @@ function readProcessEnv(value: unknown): NodeJS.ProcessEnv | null {
     : null;
 }
 
+type ClaudeConnectedAccountMaterializationAuthority =
+  | 'qualified'
+  | 'legacy_unfenced_one_shot';
+
+function readClaudeConnectedAccountMaterializationAuthority(
+  input: Readonly<Record<string, unknown>>,
+): ClaudeConnectedAccountMaterializationAuthority {
+  const authority = input.connectedAccountMaterializationAuthority;
+  if (authority !== 'qualified' && authority !== 'legacy_unfenced_one_shot') {
+    throw new Error('Claude connected-service materialization requires an exact materialization authority');
+  }
+  if (
+    authority === 'legacy_unfenced_one_shot'
+    && input.requestAuth !== null
+    && input.requestAuth !== undefined
+  ) {
+    throw new Error('Claude legacy one-shot materialization cannot receive request-auth authority');
+  }
+  return authority;
+}
+
 export async function materializeClaudeAuthEnvironment(input: Readonly<Record<string, unknown>>): Promise<Readonly<{
   env: Readonly<Record<string, string>>;
   diagnostics?: readonly unknown[];
 }>> {
+  const materializationAuthority = readClaudeConnectedAccountMaterializationAuthority(input);
   const claudeConfigDir = readRootDir(input);
   await prepareClaudeQualifiedPurposeRoot({
     rootDir: claudeConfigDir,
     processEnv: readProcessEnv(input.processEnv) ?? process.env,
     sessionDirectory: readString(input.sessionDirectory),
   });
-  if (input.qualifiedPurposeMaterialization === true) {
+  if (materializationAuthority === 'qualified') {
     return { env: { CLAUDE_CONFIG_DIR: claudeConfigDir } };
   }
 
@@ -241,7 +246,7 @@ export async function materializeClaudeAuthEnvironment(input: Readonly<Record<st
 export async function isClaudeMaterializedHomeStale(input: Readonly<{
   serviceId: string;
   materializedRootDir: string;
-  record: ConnectedServiceCredentialRecordV1;
+  record: OauthCredentialRecord | TokenCredentialRecord;
   now: number;
   refreshWindowMs: number;
 }>): Promise<boolean> {
@@ -351,7 +356,7 @@ export async function verifyClaudeResumeReachability(input: Readonly<{
     return { ok: false, reason: 'claude_session_not_in_native_store' };
   }
 
-  const claudeConfigDir = resolveClaudeConfigDirForAuthMaterialization(
+  const claudeConfigDir = resolveClaudeConfigDir(
     (input.targetMaterializedEnv as NodeJS.ProcessEnv | null | undefined) ?? process.env,
   );
   const projectsDir = join(claudeConfigDir, 'projects');
@@ -401,13 +406,13 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   cloudConnect: {
     displayName: 'Claude',
     vendorDisplayName: 'Anthropic Claude',
-    vendorKey: AGENTS_CORE.claude.cloudConnect?.vendorKey,
-    status: AGENTS_CORE.claude.cloudConnect?.status,
+    vendorKey: AGENT_DEFINITION.core.cloudConnect.vendorKey,
+    status: AGENT_DEFINITION.core.cloudConnect.status,
     oauthAuthorizationCode: {
-      clientId: CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID,
-      authorizeUrl: CLAUDE_SUBSCRIPTION_OAUTH_AUTHORIZATION_URL,
-      tokenUrl: CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL,
-      redirectUri: CLAUDE_SUBSCRIPTION_OAUTH_CALLBACK_URL,
+      clientId: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.clientId,
+      authorizeUrl: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.authorizeUrl,
+      tokenUrl: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.tokenUrl,
+      redirectUri: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.callbackUrl,
       scope: CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE,
     },
   },
@@ -442,15 +447,25 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     },
   },
   sessionHandoff: {
-    surface: () => claudeHandoffSurface,
     runtimeLocalMetadata: {
       build: (params: Readonly<{
-        metadata: Readonly<Record<string, unknown>>;
-        trackedSession: ClaudeRuntimeLocalHandoffSession;
+        machineId: string | null;
+        workingDirectory: string | null;
+        transcriptStorage: string | null;
+        environmentVariables: Readonly<Record<string, string | undefined>> | null;
         vendorResumeId: string;
       }>) => buildClaudeRuntimeLocalHandoffMetadata({
-        metadata: params.metadata,
-        session: params.trackedSession,
+        metadata: {
+          ...(params.machineId ? { machineId: params.machineId } : {}),
+          ...(params.workingDirectory ? { path: params.workingDirectory } : {}),
+        },
+        session: {
+          vendorResumeId: params.vendorResumeId,
+          spawnOptions: {
+            transcriptStorage: params.transcriptStorage,
+            environmentVariables: params.environmentVariables,
+          },
+        },
         vendorResumeId: params.vendorResumeId,
       }),
     },
@@ -489,7 +504,7 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     materializedRootSubdir: 'claude-config',
     materializedHomeCredentialEntries: CLAUDE_MATERIALIZED_HOME_CREDENTIAL_ENTRIES,
     resolveStateSharingSourceRoot: ({ env }: Readonly<{ env: NodeJS.ProcessEnv }>) =>
-      resolveClaudeConnectedServiceConfigSourceRoot(env),
+      resolveClaudeConfigDir(env),
     runtimeAuthAdapter: createClaudeConnectedServiceRuntimeAuthAdapter(),
     resolveVendorResumeIdFromImportedFile: resolveClaudeVendorResumeIdFromImportedFile,
     readConnectedServiceId: readClaudeConnectedServiceId,
@@ -500,6 +515,7 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     stateSharingDescriptor: claudeAuthStateSharingDescriptor,
     quotaFetcherDescriptor: claudeSubscriptionQuotaFetcherDescriptor,
     daemonAuthBridge: {
+      serviceIds: ['claude-subscription'],
       refresh: async (input: Readonly<{
         serviceId: string;
         request: Readonly<Record<string, unknown>>;
@@ -516,16 +532,14 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
           throw new Error(`Claude daemon auth bridge cannot refresh unsupported service '${input.serviceId}'`);
         }
         const failingAccessTokenFingerprint = readOptionalSafeString(input.request.failingAccessTokenFingerprint);
-        const expectedCredentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(
-          input.request.expectedCredentialRevision,
-        );
+        const expectedCredentialRevision = readCredentialRevision(input.request.expectedCredentialRevision);
         const result = await input.refreshCoordinator.refreshClaudeSubscriptionTokensForBridge({
           selection: ClaudeSubscriptionAuthTokensRefreshSelectionSchema.parse(input.request.selection),
           forceRefresh: input.request.forceRefresh === true,
           // Existing scoped broker clients predate revision forwarding. Session runtime-auth always
           // supplies the revision; remove this optional branch once the broker request schema requires it.
-          ...(expectedCredentialRevision.success
-            ? { expectedCredentialRevision: expectedCredentialRevision.data }
+          ...(expectedCredentialRevision
+            ? { expectedCredentialRevision }
             : {}),
           ...(failingAccessTokenFingerprint
             ? {

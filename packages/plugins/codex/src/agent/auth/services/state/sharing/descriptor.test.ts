@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { codexStateSharingDescriptor } from './descriptor.js';
 
 describe('codexStateSharingDescriptor', () => {
-  it('declares Codex config, state, auth, and SQLite sharing facts', () => {
+  it('declares Codex config, non-SQLite state, and auth sharing facts', () => {
     expect(codexStateSharingDescriptor.providerId).toBe('codex');
     expect(codexStateSharingDescriptor.config.entries).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: 'config.toml', mode: 'force_copied' }),
@@ -17,6 +17,6 @@ describe('codexStateSharingDescriptor', () => {
       mode: 'materialized_home',
       secretEntries: ['auth.json', 'accounts'],
     });
-    expect(codexStateSharingDescriptor.dynamicEntryPatterns).toBeUndefined();
+    expect(codexStateSharingDescriptor).not.toHaveProperty('dynamicEntryPatterns');
   });
 });

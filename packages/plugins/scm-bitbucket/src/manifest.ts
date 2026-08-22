@@ -14,6 +14,8 @@
  */
 
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { BITBUCKET_RENDER_UI_TRANSLATIONS } from './ui/renderTranslations.js';
+import { BITBUCKET_ADDITIONAL_UI_TRANSLATIONS } from './ui/additionalTranslations.js';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -59,7 +61,7 @@ import {
 } from './triage/source/detailContracts.js';
 
 /** The local id of this plugin's one Triage source contribution. */
-export const BITBUCKET_TRIAGE_CONTRIBUTION_ID = 'bitbucket-cloud';
+export const BITBUCKET_TRIAGE_CONTRIBUTION_ID = 'bitbucket-forge';
 
 /** The network host-access request that owns this plugin's Bitbucket origins. */
 export const BITBUCKET_NETWORK_HOST_ACCESS_ID = 'bitbucket-api';
@@ -96,7 +98,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
   description: 'Detects Bitbucket Cloud remotes, provides repository operations, and brings its pull requests into PRs & Issues.',
   engines: { happier: '^0.0.0' },
   runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
       id: BITBUCKET_NETWORK_HOST_ACCESS_ID,
@@ -158,15 +160,19 @@ export const BITBUCKET_PLUGIN = definePlugin({
       defaultRank: 10,
       renderer: BITBUCKET_TRIAGE_SETTINGS_RENDERER_ID,
     }],
-    translations: [{
-      locale: 'en',
-      messages: {
-        'plugins.bitbucket.settings.group': 'Bitbucket Cloud',
-        'plugins.bitbucket.settings.sources': 'PRs & Issues',
-        'plugins.bitbucket.settings.sources.subtitle':
-          'Choose which Bitbucket Cloud accounts and workspaces appear in PRs & Issues.',
-      },
-    }],
+    translations: [
+      { locale: 'en', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["en"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["en"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PRs & Issues', 'plugins.bitbucket.settings.sources.subtitle': 'Choose which Bitbucket Cloud accounts and workspaces appear in PRs & Issues.' } },
+      { locale: 'ru', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["ru"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["ru"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR и задачи', 'plugins.bitbucket.settings.sources.subtitle': 'Выберите учетные записи и рабочие пространства Bitbucket Cloud, которые будут отображаться в разделе PR и задач.' } },
+      { locale: 'pl', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["pl"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["pl"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR-y i zgłoszenia', 'plugins.bitbucket.settings.sources.subtitle': 'Wybierz konta i obszary robocze Bitbucket Cloud wyświetlane w sekcji PR-ów i zgłoszeń.' } },
+      { locale: 'es', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["es"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["es"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR e incidencias', 'plugins.bitbucket.settings.sources.subtitle': 'Elige qué cuentas y espacios de trabajo de Bitbucket Cloud aparecen en PR e incidencias.' } },
+      { locale: 'fr', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["fr"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["fr"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR et tickets', 'plugins.bitbucket.settings.sources.subtitle': 'Choisissez les comptes et espaces de travail Bitbucket Cloud affichés dans PR et tickets.' } },
+      { locale: 'it', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["it"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["it"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR e segnalazioni', 'plugins.bitbucket.settings.sources.subtitle': 'Scegli gli account e gli spazi di lavoro Bitbucket Cloud da mostrare in PR e segnalazioni.' } },
+      { locale: 'pt', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["pt"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["pt"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PRs e problemas', 'plugins.bitbucket.settings.sources.subtitle': 'Escolha as contas e os espaços de trabalho Bitbucket Cloud apresentados em PRs e problemas.' } },
+      { locale: 'ca', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["ca"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["ca"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR i incidències', 'plugins.bitbucket.settings.sources.subtitle': 'Tria els comptes i espais de treball de Bitbucket Cloud que es mostren a PR i incidències.' } },
+      { locale: 'zh-Hans', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["zh-Hans"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["zh-Hans"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR 和问题', 'plugins.bitbucket.settings.sources.subtitle': '选择要在 PR 和问题中显示的 Bitbucket Cloud 帐户和工作区。' } },
+      { locale: 'zh-Hant', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["zh-Hant"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["zh-Hant"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR 與問題', 'plugins.bitbucket.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 Bitbucket Cloud 帳戶和工作區。' } },
+      { locale: 'ja', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["ja"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["ja"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR と課題', 'plugins.bitbucket.settings.sources.subtitle': 'PR と課題に表示する Bitbucket Cloud アカウントとワークスペースを選択します。' } },
+    ],
   },
   actions: {
     [BITBUCKET_TRIAGE_ACTION_IDS.listInstances]: {
@@ -174,6 +180,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Enumerates the workspaces reachable by each authorized Bitbucket Cloud account.',
       scopes: ['global'],
       surfaces: sources.operations.listInstances.declaration.surfaces,
+      execution: { target: 'daemon' },
       dangerLevel: sources.operations.listInstances.declaration.dangerLevel,
       inputSchema: sources.operations.listInstances.declaration.input.schema.jsonSchema,
       resultSchema: sources.operations.listInstances.declaration.resultSchema.jsonSchema,
@@ -185,6 +192,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Reads one bounded page of pull requests for one configured Bitbucket Cloud workspace.',
       scopes: ['global'],
       surfaces: sources.operations.scan.declaration.surfaces,
+      execution: { target: 'daemon' },
       dangerLevel: sources.operations.scan.declaration.dangerLevel,
       inputSchema: sources.operations.scan.declaration.input.schema.jsonSchema,
       resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
@@ -197,6 +205,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Reads one pull request authoritatively through one exact configured Bitbucket Cloud instance.',
       scopes: ['global'],
       surfaces: sources.operations.get.declaration.surfaces,
+      execution: { target: 'daemon' },
       dangerLevel: sources.operations.get.declaration.dangerLevel,
       inputSchema: sources.operations.get.declaration.input.schema.jsonSchema,
       resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,
@@ -213,6 +222,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
         + ' of one pull request.',
       scopes: ['global'],
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: BitbucketActivityInputV1Schema.jsonSchema,
       resultSchema: BitbucketActivityResultV1Schema.jsonSchema,
@@ -226,6 +236,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
         + ' request, with a rollup only when that page is the whole collection.',
       scopes: ['global'],
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: BitbucketBuildsInputV1Schema.jsonSchema,
       resultSchema: BitbucketBuildsResultV1Schema.jsonSchema,
@@ -239,6 +250,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
         + ' order, with their real resolution tri-state.',
       scopes: ['global'],
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: BitbucketCommentsInputV1Schema.jsonSchema,
       resultSchema: BitbucketCommentsResultV1Schema.jsonSchema,

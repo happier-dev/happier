@@ -7,7 +7,7 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    ".happier-plugin/plugin.json",
+    ".happier-plugin",
     "package.json"
   ],
   "scripts": {

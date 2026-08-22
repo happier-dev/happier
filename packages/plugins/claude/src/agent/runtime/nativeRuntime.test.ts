@@ -7,7 +7,7 @@ import type {
   AgentSessionProviderBinding,
   AgentSessionRuntimeContext,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
 import {
@@ -19,8 +19,10 @@ import {
   type ClaudeNativeSessionOperations,
   type ClaudeNativeSessionFactory,
 } from './nativeRuntime.js';
+import * as claudeNativeRuntimeModule from './nativeRuntime.js';
 import type { ClaudeUsageObservation } from '../usage/types.js';
 import type { ClaudeProviderEvent } from './providerEvents.js';
+import { claudeHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -145,6 +147,83 @@ const context = {
 } as unknown as AgentRuntimeContext;
 
 describe('createClaudeNativeRuntime', () => {
+  it('publishes provider handoff through the AgentRuntime surface', () => {
+    const runtime = createClaudeAgentRuntime({} as never);
+
+    expect(runtime.surfaces?.handoff).toBe(claudeHandoffSurface);
+  });
+
+  it('declares a real pre-effect Agent tool interception boundary', () => {
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: async () => createNativeOperations('session-tool-lifecycle').runtime,
+    });
+
+    expect(runtime.toolExecution).toEqual({ capability: 'interceptable' });
+  });
+
+  it('opens create, resume, and fork through the public runtime API with no host-only opener', async () => {
+    const observedSessionInputs: Readonly<Record<string, unknown>>[] = [];
+    const observedExecutionInputs: Readonly<Record<string, unknown>>[] = [];
+    const openSession = vi.fn(async (input: Readonly<Record<string, unknown>>) => {
+      observedSessionInputs.push(input);
+      const request = input.request as AgentSessionOpenRequest;
+      return createNativeOperations(request.sessionId).runtime;
+    }) as unknown as ClaudeNativeSessionFactory;
+    const openExecutionSession = vi.fn(async (input: Readonly<Record<string, unknown>>) => {
+      observedExecutionInputs.push(input);
+      return createNativeOperations('execution-ordinary').runtime;
+    });
+    const runtime = createTestClaudeNativeRuntime({
+      openSession,
+      openExecutionSession: openExecutionSession as never,
+    });
+    const sessionContext = context as unknown as AgentSessionRuntimeContext;
+    const requests: readonly AgentSessionOpenRequest[] = [
+      { kind: 'create', sessionId: 'public-create', cwd: '/repo' },
+      {
+        kind: 'resume',
+        sessionId: 'public-resume',
+        providerSessionId: 'provider-resume',
+        cwd: '/repo',
+      },
+      {
+        kind: 'fork',
+        sessionId: 'public-fork',
+        cwd: '/repo',
+        source: {
+          sessionId: 'source-session',
+          providerSessionId: 'source-provider',
+          cwd: '/source',
+        },
+      },
+    ];
+    for (const request of requests) {
+      const session = await runtime.sessions.open(request, sessionContext);
+      await session.dispose();
+    }
+
+    const executionRun = await runtime.executionRuns?.open({
+      kind: 'create',
+      runId: 'ordinary-execution-run',
+      cwd: '/repo',
+      input: { text: 'ordinary execution' },
+    }, context);
+    await executionRun?.dispose();
+
+    expect(observedSessionInputs).toHaveLength(3);
+    expect(observedSessionInputs).not.toContainEqual(
+      expect.objectContaining({ workflowRunRecords: expect.anything() }),
+    );
+    expect(observedExecutionInputs).toHaveLength(1);
+    expect(observedExecutionInputs).not.toContainEqual(
+      expect.objectContaining({ workflowRunRecords: expect.anything() }),
+    );
+    expect(Reflect.get(
+      claudeNativeRuntimeModule,
+      'openClaudeAgentSessionWithWorkflowRunRecordPortForHost',
+    )).toBeUndefined();
+  });
+
   it('does not wait for initial qualified-purpose observations after caller cancellation', async () => {
     const controller = new AbortController();
     controller.abort(new Error('caller cancelled'));
@@ -617,8 +696,8 @@ describe('createClaudeNativeRuntime', () => {
     const sessionContext = {
       signal: new AbortController().signal,
       services: {
-        settings: { get: settingsGet },
-        storage: { session: { get: vi.fn(), set: vi.fn() } },
+        settings: { forScope: vi.fn(() => ({ get: settingsGet })) },
+        storage: { daemonSession: { get: vi.fn(), set: vi.fn() } },
         logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
         exec: {},
         connectedAccounts: {
@@ -642,7 +721,6 @@ describe('createClaudeNativeRuntime', () => {
           transcripts: { fileFollow: {} },
           accountUsage: {},
           auth: {},
-          systemRecords: {},
           workflowActivity: {},
         },
       },
@@ -675,9 +753,13 @@ describe('createClaudeNativeRuntime', () => {
       openUnifiedTerminalSession,
     });
     const settingsGet = vi.fn(async () => true);
+    const settingsForScope = vi.fn((scope: Readonly<{ kind: string }>) => {
+      if (scope.kind !== 'account') throw new Error(`unexpected settings scope: ${scope.kind}`);
+      return { get: settingsGet };
+    });
     const sessionContext = {
       services: {
-        settings: { get: settingsGet },
+        settings: { forScope: settingsForScope },
       },
       session: {
         services: {
@@ -697,9 +779,144 @@ describe('createClaudeNativeRuntime', () => {
     expect(sessionContext.session.services.features.isEnabled).toHaveBeenCalledWith(
       'agents.claude.unifiedTerminal',
     );
+    expect(settingsForScope).toHaveBeenCalledWith({ kind: 'account' });
     expect(settingsGet).toHaveBeenCalledWith('claudeUnifiedTerminalEnabled');
     expect(openUnifiedTerminalSession).toHaveBeenCalledTimes(1);
     expect(openAgentSdkSession).not.toHaveBeenCalled();
+    await session.dispose();
+  });
+
+  it.each(['create', 'resume'] as const)(
+    'resolves installed effort support once and fails closed for a native %s session',
+    async (kind) => {
+      const native = createNativeOperations(`session-effort-${kind}`);
+      const updateProviderConfiguration = vi.fn(async () => ({ status: 'applied' as const }));
+      const openAgentSdkSession = vi.fn<ClaudeNativeSessionFactory>(() => ({
+        ...native.runtime,
+        updateProviderConfiguration,
+      }));
+      const resolveSupportsEffort = vi.fn(async () => false);
+      const bindModels = vi.fn((source: {
+        read(): Readonly<{
+          models: readonly Readonly<{
+            modelOptions?: readonly Readonly<{ id: string }>[];
+            suppressedModelOptionIds?: readonly string[];
+          }>[];
+        }>;
+      }) => ({ dispose() {} }));
+      const sessionContext = {
+        services: {
+          settings: { forScope: vi.fn(() => ({ get: vi.fn(async () => false) })) },
+        },
+        session: {
+          services: {
+            features: { isEnabled: vi.fn(() => false) },
+            activeInput: { bind: () => ({ dispose() {} }) },
+            models: { bind: bindModels },
+          },
+        },
+      } as unknown as AgentSessionRuntimeContext;
+      const runtime = createTestClaudeNativeRuntime({
+        openSession: createClaudeNativeSessionOpener({
+          openAgentSdkSession,
+          openUnifiedTerminalSession: vi.fn(),
+        }),
+        resolveSupportsEffort,
+      });
+      const configuration = {
+        mode: { value: null, updatedAtMs: 1 },
+        model: { value: 'claude-opus-4-8', updatedAtMs: 1 },
+        permissionIntent: { value: 'default' as const, updatedAtMs: 1 },
+        options: { reasoning_effort: { value: 'xhigh', updatedAtMs: 1 } },
+      };
+      const request: AgentSessionOpenRequest = kind === 'resume'
+        ? {
+            kind,
+            sessionId: `session-effort-${kind}`,
+            providerSessionId: 'provider-session',
+            cwd: '/repo',
+            configuration,
+          }
+        : {
+            kind,
+            sessionId: `session-effort-${kind}`,
+            cwd: '/repo',
+            configuration,
+          };
+
+      const session = await runtime.sessions.open(request, sessionContext);
+
+      expect(resolveSupportsEffort).toHaveBeenCalledTimes(1);
+      expect(openAgentSdkSession).toHaveBeenCalledWith(expect.objectContaining({
+        supportsEffort: false,
+      }));
+      const modelSnapshot = bindModels.mock.calls[0]?.[0].read();
+      expect(modelSnapshot.models.every((model) => (
+        model.modelOptions?.every((option) => (
+          option.id !== 'reasoning_effort' && option.id !== 'ultracode'
+        )) ?? true
+      ))).toBe(true);
+      expect(modelSnapshot.models.every((model) => (
+        model.suppressedModelOptionIds?.includes('reasoning_effort') === true
+        && model.suppressedModelOptionIds.includes('ultracode')
+      ))).toBe(true);
+      native.publishEffectiveModel({ modelId: 'claude-runtime-observed' });
+      expect(
+        bindModels.mock.calls[0]?.[0].read().models.find(
+          (model) => (model as { id?: string }).id === 'claude-runtime-observed',
+        )?.suppressedModelOptionIds,
+      ).toEqual(['reasoning_effort', 'ultracode']);
+
+      await expect(session.updateConfiguration?.({
+        ...configuration,
+        options: { reasoning_effort: { value: 'low', updatedAtMs: 2 } },
+      })).resolves.toMatchObject({
+        status: 'unsupported',
+        diagnostic: { code: 'claude_effort_unsupported_by_installed_cli' },
+      });
+      expect(updateProviderConfiguration).not.toHaveBeenCalled();
+      await session.dispose();
+    },
+  );
+
+  it('keeps the runtime selected at session open when the account setting changes later', async () => {
+    const sdkOperations = createNativeOperations('session-pinned-sdk').runtime;
+    const unifiedOperations = createNativeOperations('session-pinned-unified').runtime;
+    const openAgentSdkSession = vi.fn<ClaudeNativeSessionFactory>(() => sdkOperations);
+    const openUnifiedTerminalSession = vi.fn<ClaudeNativeSessionFactory>(() => unifiedOperations);
+    let unifiedTerminalEnabled = false;
+    const settingsGet = vi.fn(async () => unifiedTerminalEnabled);
+    const sessionContext = {
+      services: { settings: { forScope: vi.fn(() => ({ get: settingsGet })) } },
+      session: {
+        services: {
+          features: { isEnabled: vi.fn(() => true) },
+          activeInput: { bind: () => ({ dispose() {} }) },
+        },
+      },
+    } as unknown as AgentSessionRuntimeContext;
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: createClaudeNativeSessionOpener({
+        openAgentSdkSession,
+        openUnifiedTerminalSession,
+      }),
+    });
+
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'session-pinned-sdk',
+      cwd: '/repo',
+    }, sessionContext);
+    unifiedTerminalEnabled = true;
+
+    await expect(session.send({
+      inputIds: ['input-after-setting-change'],
+      input: { text: 'continue in the active runtime' },
+      delivery: { kind: 'newTurn', turnId: 'turn-after-setting-change' },
+    })).resolves.toEqual({ status: 'admitted' });
+    expect(settingsGet).toHaveBeenCalledTimes(1);
+    expect(openAgentSdkSession).toHaveBeenCalledTimes(1);
+    expect(openUnifiedTerminalSession).not.toHaveBeenCalled();
     await session.dispose();
   });
 
@@ -721,7 +938,7 @@ describe('createClaudeNativeRuntime', () => {
       return setting;
     });
     const sessionContext = {
-      services: { settings: { get: settingsGet } },
+      services: { settings: { forScope: vi.fn(() => ({ get: settingsGet })) } },
       session: {
         services: {
           features: { isEnabled: vi.fn(() => featureEnabled) },
@@ -760,7 +977,7 @@ describe('createClaudeNativeRuntime', () => {
       throw new Error('terminal host unavailable');
     });
     const sessionContext = {
-      services: { settings: { get: vi.fn(async () => true) } },
+      services: { settings: { forScope: vi.fn(() => ({ get: vi.fn(async () => true) })) } },
       session: {
         services: {
           features: { isEnabled: vi.fn(() => true) },
@@ -880,6 +1097,29 @@ describe('createClaudeNativeRuntime', () => {
 
     await session.dispose();
     expect(disposeBinding).toHaveBeenCalledTimes(1);
+  });
+
+  it('delegates exact connected-service application settlement to the provider-owned surface cleanup', async () => {
+    const native = createNativeOperations('session-connected-service-settlement');
+    const releaseConnectedServiceUsageLimitDialog = vi.fn(async () => undefined);
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: () => ({
+        ...native.runtime,
+        releaseConnectedServiceUsageLimitDialog,
+      }),
+    });
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'session-connected-service-settlement',
+      cwd: '/repo',
+    });
+
+    await session.connectedServiceApplicationSettled?.({
+      serviceId: 'claude-subscription',
+      groupId: 'primary',
+    });
+
+    expect(releaseConnectedServiceUsageLimitDialog).toHaveBeenCalledOnce();
   });
 
   it('binds the native model source and publishes applied model configuration', async () => {
@@ -1603,9 +1843,71 @@ describe('createClaudeNativeRuntime', () => {
     });
   });
 
+  it('acknowledges bypass mode in the host-owned interactive terminal launch overlay', async () => {
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: ({ request }) => createNativeOperations(request.sessionId).runtime,
+    });
+
+    const plan = await Promise.resolve(runtime.surfaces?.terminal?.resolveLaunch({
+      sessionId: 'session-yolo',
+      cwd: '/repo',
+      metadata: {
+        claudeArgs: ['--permission-mode=bypassPermissions'],
+      },
+      modelSelection: null,
+    }));
+
+    expect(plan?.argv).toEqual([
+      '--settings',
+      JSON.stringify({ skipDangerousModePermissionPrompt: true }),
+      '--permission-mode',
+      'bypassPermissions',
+    ]);
+  });
+
+  it('does not promote raw Claude model arguments without exact active proof', async () => {
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: ({ request }) => createNativeOperations(request.sessionId).runtime,
+    });
+
+    await expect(Promise.resolve(runtime.surfaces?.terminal?.resolveLaunch({
+      sessionId: 'session-1',
+      cwd: '/repo',
+      metadata: {
+        claudeArgs: [
+          '--model',
+          'stale',
+          '--fallback-model',
+          'claude-haiku-4-5',
+          '--permission-mode=acceptEdits',
+          'prompt',
+        ],
+        model: 'also-stale',
+        modelSelectionIntentV1: {
+          v: 1,
+          updatedAt: 41,
+          selection: {
+            agentTargetKey: 'backend:claude',
+            providerConnectionId: 'pc_next',
+            modelId: 'proposed-provider-model',
+          },
+        },
+      },
+      modelSelection: null,
+    }))).resolves.toMatchObject({
+      argv: [
+        '--fallback-model',
+        'claude-haiku-4-5',
+        'prompt',
+        '--permission-mode',
+        'acceptEdits',
+      ],
+    });
+  });
+
   it('publishes input rejection when Claude proves spawn failed before prompt transport', async () => {
     const native = createNativeOperations('session-rejected');
-    const runtime = createClaudeNativeRuntime({
+    const runtime = createTestClaudeNativeRuntime({
       openSession: () => ({
         ...native.runtime,
         async sendProviderTurnPrompt() {
@@ -1831,6 +2133,95 @@ describe('createClaudeNativeRuntime', () => {
       kind: 'provider-session-id',
       providerSessionId: 'claude-provider-late',
     }));
+    // A publish that carried no log path must not invent one.
+    expect(events.find((event) => (
+      event.kind === 'provider-session-id' && event.providerSessionId === 'claude-provider-late'
+    ))).not.toHaveProperty('nativeSessionLogPath');
+  });
+
+  it('carries the Claude transcript path in the same host event as the id whose log it names', async () => {
+    const native = createNativeOperations('session-proven-provider-identity');
+    const runtime = createTestClaudeNativeRuntime({ openSession: () => native.runtime });
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'session-proven-provider-identity',
+      cwd: '/repo',
+    }, context);
+    const events: AgentSessionRuntimeEvent[] = [];
+    session.watch((event) => events.push(event));
+
+    native.publish({
+      kind: 'session-id-publish',
+      sessionId: 'session-proven-provider-identity',
+      emittedAtMs: 10,
+      publishedSessionId: 'claude-provider-proven',
+      source: 'claude-unified-session-start',
+      nativeSessionLogPath: '  /tmp/claude/claude-provider-proven.jsonl  ',
+    });
+
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'provider-session-id',
+      providerSessionId: 'claude-provider-proven',
+      nativeSessionLogPath: '/tmp/claude/claude-provider-proven.jsonl',
+    }));
+  });
+
+  it('treats a blank Claude transcript path as no log path rather than an empty one', async () => {
+    const native = createNativeOperations('session-blank-proof-identity');
+    const runtime = createTestClaudeNativeRuntime({ openSession: () => native.runtime });
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'session-blank-proof-identity',
+      cwd: '/repo',
+    }, context);
+    const events: AgentSessionRuntimeEvent[] = [];
+    session.watch((event) => events.push(event));
+
+    native.publish({
+      kind: 'session-id-publish',
+      sessionId: 'session-blank-proof-identity',
+      emittedAtMs: 10,
+      publishedSessionId: 'claude-provider-blank-proof',
+      source: 'claude-unified-session-start',
+      nativeSessionLogPath: '   ',
+    });
+
+    const projected = events.find((event) => (
+      event.kind === 'provider-session-id' && event.providerSessionId === 'claude-provider-blank-proof'
+    ));
+    expect(projected).toBeDefined();
+    expect(projected).not.toHaveProperty('nativeSessionLogPath');
+  });
+
+  it('drops a Claude session-id publish that carries no usable provider session id', async () => {
+    const native = createNativeOperations('session-empty-provider-identity');
+    const runtime = createTestClaudeNativeRuntime({ openSession: () => native.runtime });
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'session-empty-provider-identity',
+      cwd: '/repo',
+    }, context);
+    const events: AgentSessionRuntimeEvent[] = [];
+    session.watch((event) => events.push(event));
+    const identityPublishCount = () => events
+      .filter((event) => event.kind === 'provider-session-id').length;
+    const publishedBefore = identityPublishCount();
+
+    native.publish({
+      kind: 'session-id-publish',
+      sessionId: 'session-empty-provider-identity',
+      emittedAtMs: 10,
+      publishedSessionId: '',
+      source: 'claude-unified-session-start',
+      nativeSessionLogPath: '/tmp/claude/orphan-proof.jsonl',
+    });
+
+    // No id means no identity to publish: neither the empty id nor its orphan
+    // log path may reach the host.
+    expect(identityPublishCount()).toBe(publishedBefore);
+    expect(events.some((event) => (
+      event.kind === 'provider-session-id' && 'nativeSessionLogPath' in event
+    ))).toBe(false);
   });
 
   it('delivers declared follow-up input as the next Claude turn while preserving native custody', async () => {

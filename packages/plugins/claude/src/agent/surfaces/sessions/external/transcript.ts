@@ -1,24 +1,43 @@
 import { createHash } from 'node:crypto';
 import { open, stat } from 'node:fs/promises';
 
-import type {
-    ExternalSessionsSource,
-    ExternalSessionTranscriptRawMessageV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
 import {
     readJsonlFileBackwardPage,
     readJsonlFileForward,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
-import { classifyClaudeNativeTranscriptRow } from '../../../transcripts/nativeSemanticProjection.js';
-import { projectClaudeJsonlLineToDirectMessages } from '../../../transcripts/projection.js';
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
+import {
+    projectClaudeJsonlLineRecord,
+    projectClaudeJsonlLineToDirectMessages,
+} from '../../../transcripts/projection.js';
 
 import { readClaudeJsonlFileSize, resolveClaudeJsonlSessionFile } from './files.js';
+import type { ClaudeExternalSessionSource } from './source.js';
 
 type ClaudeBackwardCursorV1 = Readonly<{
     v: 1;
     kind: 'claudeBackward';
     fileRelPath: string;
     endOffsetBytes: number;
+}>;
+
+/**
+ * A backward cursor names a byte position inside ONE physical generation of the
+ * session file, so it carries the same physical-generation evidence the forward
+ * cursor already proved: the device/inode pair plus a content anchor over
+ * `[0, sourceAnchorOffsetBytes)` — every byte the cursor still promises to
+ * deliver. Without it a same-path replacement or in-place rewrite reads as
+ * ordinary continuation and splices rows from two generations into one
+ * transcript.
+ */
+type ClaudeBackwardCursorV2 = Readonly<{
+    v: 2;
+    kind: 'claudeBackward';
+    fileRelPath: string;
+    endOffsetBytes: number;
+    sourceAnchorOffsetBytes: number;
+    sourceAnchorSha256: string;
+    sourceDevice: string;
+    sourceInode: string;
 }>;
 
 type ClaudeForwardCursorV1 = Readonly<{
@@ -41,7 +60,7 @@ type ClaudeForwardCursorV2 = Readonly<{
 
 export type ClaudeTranscriptResultBudget = Readonly<{
     fits(page: Readonly<{
-        items: readonly ExternalSessionTranscriptRawMessageV1[];
+        items: readonly ReturnType<typeof projectClaudeJsonlLineToDirectMessages>[number][];
         nextCursor: string | null;
         tailCursor?: string | null;
         hasMore?: boolean;
@@ -53,12 +72,25 @@ export class ClaudeTranscriptResultBudgetTooSmallError extends Error {
     readonly name = 'ClaudeTranscriptResultBudgetTooSmallError';
 }
 
+/**
+ * A supplied cursor this leaf cannot decode is a caller error, not an absent
+ * cursor. Treating the two alike silently restarts an in-progress browse at the
+ * tail and re-delivers rows the caller already assembled.
+ */
+export class ClaudeTranscriptInvalidCursorError extends Error {
+    readonly name = 'ClaudeTranscriptInvalidCursorError';
+}
+
 function throwIfAborted(signal: AbortSignal | undefined): void {
     signal?.throwIfAborted();
 }
 
 function encodeCursor(
-    value: ClaudeBackwardCursorV1 | ClaudeForwardCursorV1 | ClaudeForwardCursorV2,
+    value:
+        | ClaudeBackwardCursorV1
+        | ClaudeBackwardCursorV2
+        | ClaudeForwardCursorV1
+        | ClaudeForwardCursorV2,
 ): string {
     return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
@@ -75,15 +107,43 @@ function asCursorRecord(raw: string | undefined): Record<string, unknown> | null
     }
 }
 
-function decodeBackwardCursor(raw: string | undefined): ClaudeBackwardCursorV1 | null {
+function decodeBackwardCursor(
+    raw: string | undefined,
+): ClaudeBackwardCursorV1 | ClaudeBackwardCursorV2 | null {
     const record = asCursorRecord(raw);
-    if (!record || record.v !== 1 || record.kind !== 'claudeBackward') return null;
+    if (!record || (record.v !== 1 && record.v !== 2) || record.kind !== 'claudeBackward') return null;
     const fileRelPath = typeof record.fileRelPath === 'string' ? record.fileRelPath : '';
     const endOffsetBytes = typeof record.endOffsetBytes === 'number' && Number.isFinite(record.endOffsetBytes)
         ? Math.trunc(record.endOffsetBytes)
         : Number.NaN;
-    return fileRelPath.trim() && endOffsetBytes >= 0
-        ? { v: 1, kind: 'claudeBackward', fileRelPath, endOffsetBytes }
+    if (!fileRelPath.trim() || !(endOffsetBytes >= 0)) return null;
+    if (record.v === 1) {
+        return { v: 1, kind: 'claudeBackward', fileRelPath, endOffsetBytes };
+    }
+    const sourceAnchorOffsetBytes =
+        typeof record.sourceAnchorOffsetBytes === 'number'
+        && Number.isFinite(record.sourceAnchorOffsetBytes)
+            ? Math.trunc(record.sourceAnchorOffsetBytes)
+            : Number.NaN;
+    const sourceAnchorSha256 =
+        typeof record.sourceAnchorSha256 === 'string' ? record.sourceAnchorSha256 : '';
+    const sourceDevice = typeof record.sourceDevice === 'string' ? record.sourceDevice : '';
+    const sourceInode = typeof record.sourceInode === 'string' ? record.sourceInode : '';
+    return sourceAnchorOffsetBytes >= 0
+        && sourceAnchorOffsetBytes <= endOffsetBytes
+        && /^[A-Za-z0-9_-]{43}$/.test(sourceAnchorSha256)
+        && /^\d+$/.test(sourceDevice)
+        && /^[1-9]\d*$/.test(sourceInode)
+        ? {
+            v: 2,
+            kind: 'claudeBackward',
+            fileRelPath,
+            endOffsetBytes,
+            sourceAnchorOffsetBytes,
+            sourceAnchorSha256,
+            sourceDevice,
+            sourceInode,
+        }
         : null;
 }
 
@@ -208,29 +268,87 @@ async function createForwardCursor(params: Readonly<{
     });
 }
 
+/**
+ * Mints a backward cursor bound to the physical generation the page was read
+ * from. `null` means the file could not yield consistent generation evidence,
+ * which the caller reports as a truncated page instead of a continuation the
+ * next read could not validate.
+ */
+async function createBackwardCursor(params: Readonly<{
+    filePath: string;
+    fileRelPath: string;
+    endOffsetBytes: number;
+    signal?: AbortSignal;
+}>): Promise<string | null> {
+    const evidence = await readSourceAnchorEvidence(
+        params.filePath,
+        params.endOffsetBytes,
+        params.signal,
+    );
+    if (!evidence) return null;
+    return encodeCursor({
+        v: 2,
+        kind: 'claudeBackward',
+        fileRelPath: params.fileRelPath,
+        endOffsetBytes: params.endOffsetBytes,
+        sourceAnchorOffsetBytes: params.endOffsetBytes,
+        ...evidence,
+    });
+}
+
+/**
+ * A byte-exact stand-in for the cursor `createBackwardCursor` would mint at the
+ * same offset, used only to size a candidate page against the result budget. The
+ * SHA-256 anchor is always 43 base64url characters and the device/inode pair
+ * belongs to the file rather than the offset, so probing with the real identity
+ * costs one stat instead of one full re-hash per candidate row.
+ */
+function encodeBackwardCursorEnvelopeProbe(params: Readonly<{
+    fileRelPath: string;
+    endOffsetBytes: number;
+    identity: Readonly<{ sourceDevice: string; sourceInode: string }>;
+}>): string {
+    return encodeCursor({
+        v: 2,
+        kind: 'claudeBackward',
+        fileRelPath: params.fileRelPath,
+        endOffsetBytes: params.endOffsetBytes,
+        sourceAnchorOffsetBytes: params.endOffsetBytes,
+        sourceAnchorSha256: 'A'.repeat(43),
+        sourceDevice: params.identity.sourceDevice,
+        sourceInode: params.identity.sourceInode,
+    });
+}
+
 function projectLines(params: Readonly<{
     lines: ReadonlyArray<Readonly<{ startOffsetBytes: number; value: unknown }>>;
     fileRelPath: string;
     maxItems: number;
-}>): ExternalSessionTranscriptRawMessageV1[] {
-    const items: ExternalSessionTranscriptRawMessageV1[] = [];
+}>): Readonly<{
+    items: ReturnType<typeof projectClaudeJsonlLineToDirectMessages>;
+    consumedUnsupportedRecord: boolean;
+}> {
+    const items: ReturnType<typeof projectClaudeJsonlLineToDirectMessages> = [];
+    let consumedUnsupportedRecord = false;
     for (const line of params.lines) {
         if (items.length >= params.maxItems) break;
-        const mapped = projectClaudeJsonlLineToDirectMessages({
+        const projected = projectClaudeJsonlLineRecord({
             fileRelPath: params.fileRelPath,
             lineStartOffsetBytes: line.startOffsetBytes,
             lineValue: line.value,
+            maxItems: params.maxItems - items.length,
         });
-        for (const item of mapped) {
+        if (projected.disposition === 'unsupported') consumedUnsupportedRecord = true;
+        for (const item of projected.items) {
             if (items.length >= params.maxItems) break;
             items.push(item);
         }
     }
-    return items;
+    return { items, consumedUnsupportedRecord };
 }
 
 export async function pageClaudeExternalSessionTranscript(params: Readonly<{
-    source: ExternalSessionsSource;
+    source: ClaudeExternalSessionSource;
     env: NodeJS.ProcessEnv;
     providerSessionId: string;
     direction: 'older' | 'newer';
@@ -240,17 +358,13 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
     signal?: AbortSignal;
     resultBudget?: ClaudeTranscriptResultBudget;
 }>): Promise<Readonly<{
-    items: ExternalSessionTranscriptRawMessageV1[];
+    items: ReturnType<typeof projectClaudeJsonlLineToDirectMessages>;
     nextCursor: string | null;
     tailCursor: string | null;
     hasMore: boolean;
     truncated?: boolean;
 }>> {
     throwIfAborted(params.signal);
-    if (params.direction !== 'older') {
-        return { items: [], nextCursor: null, tailCursor: null, hasMore: false };
-    }
-
     const resolved = await resolveClaudeJsonlSessionFile({
         source: params.source,
         env: params.env,
@@ -268,13 +382,104 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
         offsetBytes: fileSize,
         signal: params.signal,
     });
+    if (params.direction === 'newer') {
+        const initialCursor = params.cursor ?? await createForwardCursor({
+            filePath: resolved.filePath,
+            fileRelPath: resolved.fileRelPath,
+            offsetBytes: 0,
+            signal: params.signal,
+        });
+        if (!initialCursor || !tailCursor) {
+            return { items: [], nextCursor: null, tailCursor, hasMore: false };
+        }
+        const forward = await readAfterClaudeExternalSessionTranscript({
+            source: params.source,
+            env: params.env,
+            providerSessionId: params.providerSessionId,
+            cursor: initialCursor,
+            maxBytes: params.maxBytes,
+            maxItems: params.maxItems,
+            signal: params.signal,
+            ...(params.resultBudget
+                ? {
+                    resultBudget: {
+                        fits(candidate) {
+                            const decodedNext = candidate.nextCursor
+                                ? decodeForwardCursor(candidate.nextCursor)
+                                : null;
+                            const hasMore = decodedNext !== null
+                                && decodedNext.offsetBytes < fileSize;
+                            return params.resultBudget!.fits({
+                                items: candidate.items,
+                                nextCursor: hasMore ? candidate.nextCursor : null,
+                                tailCursor,
+                                hasMore,
+                                ...(candidate.truncated ? { truncated: true } : {}),
+                            });
+                        },
+                    },
+                }
+                : {}),
+        });
+        const decodedNext = forward.nextCursor
+            ? decodeForwardCursor(forward.nextCursor)
+            : null;
+        const hasMore = decodedNext !== null && decodedNext.offsetBytes < fileSize;
+        const truncated = forward.truncated
+            || (
+                forward.readAfterOutcome !== undefined
+                && forward.readAfterOutcome !== 'already_current'
+            );
+        return {
+            items: forward.items,
+            nextCursor: hasMore ? forward.nextCursor : null,
+            tailCursor,
+            hasMore,
+            ...(truncated ? { truncated: true } : {}),
+        };
+    }
     const decoded = decodeBackwardCursor(params.cursor);
+    // A caller that supplied a cursor asked to continue a specific browse. When
+    // this leaf cannot decode it, restarting at the tail would re-deliver rows
+    // the caller already holds and present them as a fresh newest page, so the
+    // undecodable cursor is refused instead of silently reinterpreted as absent.
+    if (decoded === null && typeof params.cursor === 'string' && params.cursor.trim().length > 0) {
+        throw new ClaudeTranscriptInvalidCursorError(
+            'Claude transcript backward cursor could not be decoded.',
+        );
+    }
     const cursorMismatch = Boolean(decoded && decoded.fileRelPath !== resolved.fileRelPath);
+    // A v2 cursor is bound to one physical generation of this file. Validating it
+    // before the next older page is read is what keeps rows from a replaced or
+    // rewritten file out of a transcript the caller is still assembling; a
+    // mismatch is a discontinuity, not a continuation, so it yields zero rows.
+    // A v1 cursor carries no such evidence — it can only have been minted by a
+    // predecessor writer, and rejecting it outright would restart an in-progress
+    // browse at the tail — so it keeps its established offset-only meaning.
+    if (decoded?.v === 2 && !cursorMismatch) {
+        const currentEvidence = await readSourceAnchorEvidence(
+            resolved.filePath,
+            decoded.sourceAnchorOffsetBytes,
+            params.signal,
+        );
+        if (
+            !currentEvidence
+            || currentEvidence.sourceAnchorSha256 !== decoded.sourceAnchorSha256
+            || currentEvidence.sourceDevice !== decoded.sourceDevice
+            || currentEvidence.sourceInode !== decoded.sourceInode
+        ) {
+            return { items: [], nextCursor: null, tailCursor, hasMore: false, truncated: true };
+        }
+    }
     const endOffsetBytes = cursorMismatch || !decoded
         ? fileSize
         : Math.min(fileSize, Math.max(0, decoded.endOffsetBytes));
     if (endOffsetBytes <= 0) {
         return { items: [], nextCursor: null, tailCursor, hasMore: false, ...(cursorMismatch ? { truncated: true } : {}) };
+    }
+    const sourceIdentity = await readSourceAnchorEvidence(resolved.filePath, 0, params.signal);
+    if (!sourceIdentity) {
+        return { items: [], nextCursor: null, tailCursor, hasMore: false, truncated: true };
     }
 
     const page = await readJsonlFileBackwardPage({
@@ -289,21 +494,27 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
     }
     const maxItems = Math.max(1, Math.trunc(params.maxItems));
     if (params.resultBudget) {
-        const items: ExternalSessionTranscriptRawMessageV1[] = [];
+        const items: ReturnType<typeof projectClaudeJsonlLineToDirectMessages> = [];
         let nextEndOffsetBytes = page.items.length === 0
             ? page.nextEndOffsetBytes
             : endOffsetBytes;
         let stoppedBeforeOlderLine = false;
+        // Only a row the page actually advances past can be lost. A row the
+        // budget refuses stays behind `nextCursor`, so it is a continuation
+        // rather than a discarded record.
+        let consumedUnsupportedRecord = false;
 
         for (let index = page.items.length - 1; index >= 0; index -= 1) {
             throwIfAborted(params.signal);
             const line = page.items[index];
             if (!line) continue;
-            const mapped = projectClaudeJsonlLineToDirectMessages({
+            const projected = projectClaudeJsonlLineRecord({
                 fileRelPath: resolved.fileRelPath,
                 lineStartOffsetBytes: line.startOffsetBytes,
                 lineValue: line.value,
+                maxItems: maxItems - items.length,
             });
+            const mapped = projected.items;
             if (items.length + mapped.length > maxItems) {
                 stoppedBeforeOlderLine = true;
                 break;
@@ -312,11 +523,10 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
             const proposedNextEndOffsetBytes = line.startOffsetBytes;
             const proposedHasMore = index > 0 || !page.reachedStart;
             const proposedNextCursor = proposedHasMore
-                ? encodeCursor({
-                    v: 1,
-                    kind: 'claudeBackward',
+                ? encodeBackwardCursorEnvelopeProbe({
                     fileRelPath: resolved.fileRelPath,
                     endOffsetBytes: proposedNextEndOffsetBytes,
+                    identity: sourceIdentity,
                 })
                 : null;
             const proposed = {
@@ -324,7 +534,11 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
                 nextCursor: proposedNextCursor,
                 tailCursor,
                 hasMore: proposedHasMore,
-                ...(cursorMismatch ? { truncated: true } : {}),
+                ...(cursorMismatch
+                    || consumedUnsupportedRecord
+                    || projected.disposition === 'unsupported'
+                    ? { truncated: true }
+                    : {}),
             };
             if (!params.resultBudget.fits(proposed)) {
                 if (items.length === 0) {
@@ -337,23 +551,29 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
             }
             items.splice(0, items.length, ...proposedItems);
             nextEndOffsetBytes = proposedNextEndOffsetBytes;
+            if (projected.disposition === 'unsupported') consumedUnsupportedRecord = true;
         }
 
         const hasMore = stoppedBeforeOlderLine || !page.reachedStart;
         const nextCursor = hasMore
-            ? encodeCursor({
-                v: 1,
-                kind: 'claudeBackward',
+            ? await createBackwardCursor({
+                filePath: resolved.filePath,
                 fileRelPath: resolved.fileRelPath,
                 endOffsetBytes: nextEndOffsetBytes,
+                signal: params.signal,
             })
             : null;
+        // A page whose continuation cannot be bound to this generation is
+        // reported as truncated rather than as a silent end of history.
+        if (hasMore && !nextCursor) {
+            return { items, nextCursor: null, tailCursor, hasMore: false, truncated: true };
+        }
         const result = {
             items,
             nextCursor,
             tailCursor,
             hasMore,
-            ...(cursorMismatch ? { truncated: true } : {}),
+            ...(cursorMismatch || consumedUnsupportedRecord ? { truncated: true } : {}),
         };
         if (!params.resultBudget.fits(result)) {
             throw new ClaudeTranscriptResultBudgetTooSmallError(
@@ -362,25 +582,34 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
         }
         return result;
     }
-    const items = projectLines({
+    const { items, consumedUnsupportedRecord } = projectLines({
         lines: page.items,
         fileRelPath: resolved.fileRelPath,
         maxItems,
     });
     const hasMore = !page.reachedStart;
     const nextCursor = hasMore
-        ? encodeCursor({
-            v: 1,
-            kind: 'claudeBackward',
+        ? await createBackwardCursor({
+            filePath: resolved.filePath,
             fileRelPath: resolved.fileRelPath,
             endOffsetBytes: page.nextEndOffsetBytes,
+            signal: params.signal,
         })
         : null;
-    return { items, nextCursor, tailCursor, hasMore, ...(cursorMismatch ? { truncated: true } : {}) };
+    if (hasMore && !nextCursor) {
+        return { items, nextCursor: null, tailCursor, hasMore: false, truncated: true };
+    }
+    return {
+        items,
+        nextCursor,
+        tailCursor,
+        hasMore,
+        ...(cursorMismatch || consumedUnsupportedRecord ? { truncated: true } : {}),
+    };
 }
 
 export async function readAfterClaudeExternalSessionTranscript(params: Readonly<{
-    source: ExternalSessionsSource;
+    source: ClaudeExternalSessionSource;
     env: NodeJS.ProcessEnv;
     providerSessionId: string;
     cursor: string;
@@ -389,7 +618,7 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
     signal?: AbortSignal;
     resultBudget?: ClaudeTranscriptResultBudget;
 }>): Promise<Readonly<{
-    items: ExternalSessionTranscriptRawMessageV1[];
+    items: ReturnType<typeof projectClaudeJsonlLineToDirectMessages>;
     nextCursor: string | null;
     truncated: boolean;
     readAfterOutcome?: 'already_current' | 'gap_or_cursor_expired' | 'source_replaced' | 'source_unavailable';
@@ -497,7 +726,7 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
 
     if (params.resultBudget) {
         const maxItems = Math.max(1, Math.trunc(params.maxItems));
-        const items: ExternalSessionTranscriptRawMessageV1[] = [];
+        const items: ReturnType<typeof projectClaudeJsonlLineToDirectMessages> = [];
         const knownNonTranscriptPositions: number[] = [];
         const unsupportedPositions: number[] = [];
         let nextOffsetBytes = read.items.length === 0
@@ -508,16 +737,17 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
             throwIfAborted(params.signal);
             const line = read.items[index];
             if (!line) continue;
-            const mapped = projectClaudeJsonlLineToDirectMessages({
+            const projected = projectClaudeJsonlLineRecord({
                 fileRelPath: resolved.fileRelPath,
                 lineStartOffsetBytes: line.startOffsetBytes,
                 lineValue: line.value,
+                maxItems: maxItems - items.length,
             });
-            if (mapped.length === 0) {
-                (classifyClaudeNativeTranscriptRow(line.value).knownNonTranscriptRecord
-                    ? knownNonTranscriptPositions
-                    : unsupportedPositions
-                ).push(line.startOffsetBytes);
+            const mapped = projected.items;
+            if (projected.disposition === 'known_non_transcript') {
+                knownNonTranscriptPositions.push(line.startOffsetBytes);
+            } else if (projected.disposition === 'unsupported') {
+                unsupportedPositions.push(line.startOffsetBytes);
             }
             if (items.length + mapped.length > maxItems) break;
             const proposedItems = [...items, ...mapped];
@@ -594,24 +824,24 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
         return result;
     }
 
-    const projectedItems: ExternalSessionTranscriptRawMessageV1[] = [];
+    const projectedItems: ReturnType<typeof projectClaudeJsonlLineToDirectMessages> = [];
     const knownNonTranscriptPositions: number[] = [];
     const unsupportedPositions: number[] = [];
     const maxItems = Math.max(1, Math.trunc(params.maxItems));
     for (const line of read.items) {
         if (projectedItems.length >= maxItems) break;
-        const mapped = projectClaudeJsonlLineToDirectMessages({
+        const projected = projectClaudeJsonlLineRecord({
             fileRelPath: resolved.fileRelPath,
             lineStartOffsetBytes: line.startOffsetBytes,
             lineValue: line.value,
+            maxItems: maxItems - projectedItems.length,
         });
-        if (mapped.length === 0) {
-            (classifyClaudeNativeTranscriptRow(line.value).knownNonTranscriptRecord
-                ? knownNonTranscriptPositions
-                : unsupportedPositions
-            ).push(line.startOffsetBytes);
+        if (projected.disposition === 'known_non_transcript') {
+            knownNonTranscriptPositions.push(line.startOffsetBytes);
+        } else if (projected.disposition === 'unsupported') {
+            unsupportedPositions.push(line.startOffsetBytes);
         }
-        for (const item of mapped) {
+        for (const item of projected.items) {
             if (projectedItems.length >= maxItems) break;
             projectedItems.push(item);
         }

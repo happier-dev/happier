@@ -196,6 +196,46 @@ function mapTypedToolResult(
   };
 }
 
+const ANTIGRAVITY_USER_RECORD_TYPES = ['user_input', 'user', 'user_message'] as const;
+const ANTIGRAVITY_ASSISTANT_RECORD_TYPES = [
+  'planner_response',
+  'assistant',
+  'assistant_message',
+  'conversation_history',
+] as const;
+const ANTIGRAVITY_TYPED_TOOL_RECORD_TYPES = [
+  'run_command',
+  'code_action',
+  'list_directory',
+  'view_file',
+  'file_action',
+] as const;
+const ANTIGRAVITY_TOOL_RESULT_RECORD_TYPES = ['tool_result', 'command_result', 'action_result'] as const;
+const ANTIGRAVITY_SYSTEM_RECORD_TYPES = ['system_message', 'system'] as const;
+
+const ANTIGRAVITY_KNOWN_RECORD_TYPES: ReadonlySet<string> = new Set<string>([
+  ...ANTIGRAVITY_USER_RECORD_TYPES,
+  ...ANTIGRAVITY_ASSISTANT_RECORD_TYPES,
+  ...ANTIGRAVITY_TYPED_TOOL_RECORD_TYPES,
+  ...ANTIGRAVITY_TOOL_RESULT_RECORD_TYPES,
+  ...ANTIGRAVITY_SYSTEM_RECORD_TYPES,
+  'checkpoint',
+  'error',
+]);
+
+/**
+ * Whether this mapper recognizes the record's own declared kind.
+ *
+ * A recognized record that projects to no transcript item (a checkpoint, an
+ * empty system message) is a deliberate omission. An UNRECOGNIZED nonempty
+ * record is Antigravity history this build cannot read, which readers must be
+ * able to tell apart from an omission before they finalize a transcript.
+ */
+export function isKnownAntigravityTranscriptRecord(record: JsonRecord): boolean {
+  const type = (readString(record.type) ?? readString(record.eventType))?.toLowerCase();
+  return Boolean(type) && ANTIGRAVITY_KNOWN_RECORD_TYPES.has(type!);
+}
+
 function mapAntigravityTranscriptRecordToStepsWithContext(
   record: JsonRecord,
   context?: TranscriptMappingContext,
@@ -203,22 +243,22 @@ function mapAntigravityTranscriptRecordToStepsWithContext(
   const type = (readString(record.type) ?? readString(record.eventType))?.toLowerCase();
   const id = readStepIdentity(record, context);
   if (!type) return [];
-  if (['user_input', 'user', 'user_message'].includes(type)) {
+  if ((ANTIGRAVITY_USER_RECORD_TYPES as readonly string[]).includes(type)) {
     const text = readText(record);
     const requested = text ? readAntigravityUserRequestBody(text).trim() : '';
     return requested ? [{ ...(id ? { id } : {}), kind: 'user_message', text: requested }] : [];
   }
-  if (['planner_response', 'assistant', 'assistant_message', 'conversation_history'].includes(type)) {
+  if ((ANTIGRAVITY_ASSISTANT_RECORD_TYPES as readonly string[]).includes(type)) {
     const text = readText(record);
     return [
       ...(text ? [{ ...(id ? { id } : {}), kind: 'assistant_message' as const, text }] : []),
       ...mapPlannerToolCalls(record, context),
     ];
   }
-  if (['run_command', 'code_action', 'list_directory', 'view_file', 'file_action'].includes(type)) {
+  if ((ANTIGRAVITY_TYPED_TOOL_RECORD_TYPES as readonly string[]).includes(type)) {
     return [mapTypedToolResult(record, context)];
   }
-  if (['tool_result', 'command_result', 'action_result'].includes(type)) {
+  if ((ANTIGRAVITY_TOOL_RESULT_RECORD_TYPES as readonly string[]).includes(type)) {
     return [mapTypedToolResult(record, context)];
   }
   if (type === 'checkpoint') {
@@ -228,7 +268,7 @@ function mapAntigravityTranscriptRecordToStepsWithContext(
       ...(readString(record.checkpointId) ? { checkpointId: readString(record.checkpointId) ?? undefined } : {}),
     }];
   }
-  if (['system_message', 'system'].includes(type)) {
+  if ((ANTIGRAVITY_SYSTEM_RECORD_TYPES as readonly string[]).includes(type)) {
     const text = readText(record);
     return text ? [{ ...(id ? { id } : {}), kind: 'system_message', text }] : [];
   }
@@ -291,6 +331,11 @@ export type AntigravityExternalTranscriptItemGroup = Readonly<{
   startOffsetBytes: number;
   endOffsetBytes: number;
   items: readonly AgentExternalSessionTranscriptItem[];
+  /**
+   * The record's own kind is not one this build reads. Distinct from an empty
+   * `items` list, which a recognized record may legitimately produce.
+   */
+  unsupported: boolean;
 }>;
 
 function readCreatedAtMs(record: JsonRecord): number {
@@ -420,6 +465,8 @@ export function projectAntigravityTranscriptRecordGroupsWithCorrelation(params: 
     return {
       startOffsetBytes: entry.startOffsetBytes,
       endOffsetBytes: entry.endOffsetBytes,
+      unsupported: Object.keys(entry.record).length > 0
+        && !isKnownAntigravityTranscriptRecord(entry.record),
       items: steps.flatMap((step, index) => {
         const item = projectStep({
           step,

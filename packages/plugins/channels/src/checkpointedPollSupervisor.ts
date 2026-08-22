@@ -7,6 +7,7 @@ import {
   CHANNEL_STATE_INDEX_ID,
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
+import { MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE } from './requiredAccountStorage.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
 import {
   runConversationCheckpointedPollForInvocation,
@@ -105,7 +106,7 @@ async function readCurrentConnectionIds(context: BackgroundServiceContext): Prom
       index: CHANNEL_STATE_INDEX_ID.byKind,
       prefix: [CHANNEL_STATE_RECORD_KIND.connection],
       order: 'asc',
-      limit: Math.min(MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT - result.length, 200),
+      limit: Math.min(MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT - result.length, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE),
       ...(cursor === undefined ? {} : { cursor }),
     }, { signal: context.signal });
     for (const row of page.rows) {

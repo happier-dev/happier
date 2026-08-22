@@ -61,7 +61,7 @@ describe('Google voice plugin manifest', () => {
   });
 
   it('activates the public registration from the package root', () => {
-    expect(PLUGIN_MANIFEST.entrypoints).toEqual({ daemon: './dist/index.js' });
+    expect(PLUGIN_MANIFEST.entrypoints).toEqual({ daemon: './.happier-plugin/daemon.js' });
     expect(PLUGIN_MANIFEST.hostAccess).toEqual({ required: [], optional: [] });
   });
 

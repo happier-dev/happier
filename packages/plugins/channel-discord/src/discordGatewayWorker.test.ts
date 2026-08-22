@@ -1396,4 +1396,69 @@ describe('Discord Gateway worker', () => {
     await expect(invalidWorker.result).resolves.toEqual({ kind: 'historyGap', reason: 'providerHistoryUnavailable' });
     expect(invalidOpenWebSocket).toHaveBeenCalledTimes(1);
   });
+
+  it('backs off inside the reconnect bounds the Gateway session emitted and restarts the ramp after a healthy session', async () => {
+    // Discord re-identifies an Invalid Session inside a 1-5s window while a
+    // generic reconnect ramps to 30s, so the worker must use the bounds the
+    // session emitted for the disconnect it is reacting to. A session that
+    // reached READY/RESUMED is healthy: the next disconnect must not inherit
+    // the ramp that preceded it.
+    const sleeps: number[] = [];
+    const clock = {
+      now: () => 0,
+      setTimeout: (callback: () => void, delayMs: number) => globalThis.setTimeout(callback, delayMs),
+      clearTimeout: (handle: unknown) => globalThis.clearTimeout(handle as ReturnType<typeof globalThis.setTimeout>),
+      sleep: async (delayMs: number) => { sleeps.push(delayMs); },
+    };
+    const hello = { op: 10, d: { heartbeat_interval: 60_000 } };
+    const resumableInvalidSession = { op: 9, d: true };
+    const sockets = [
+      socketUntilClosed([
+        hello,
+        {
+          op: 0,
+          s: 1,
+          t: 'READY',
+          d: { session_id: 'session-backoff', resume_gateway_url: 'wss://gateway.discord.gg/' },
+        },
+        resumableInvalidSession,
+      ]),
+      socketUntilClosed([hello, resumableInvalidSession]),
+      socketUntilClosed([hello, resumableInvalidSession]),
+      socketUntilClosed([hello, resumableInvalidSession]),
+      socketUntilClosed([hello, { op: 0, s: 5, t: 'RESUMED', d: {} }, resumableInvalidSession]),
+      socketWithFrames([], 4_004),
+    ];
+    const openWebSocket = vi.fn(async () => {
+      const socket = sockets.shift();
+      if (!socket) throw new Error('The worker opened more Gateway sockets than this scenario supplies.');
+      return socket;
+    });
+    const worker = startDiscordGatewayWorker({
+      connection: {
+        connectionId: 'connection-reconnect-bounds',
+        authorityEpoch: 8,
+        applicationId: 'application-1',
+        botUserId: 'bot-1',
+        token: 'bot-token',
+        runtime: { requiresFullSharedMessageContent: false },
+        applicationMessageContentIntentPermission: { kind: 'disabled', source: 'flags' },
+      },
+      api: {
+        getGatewayBot: vi.fn(async () => gatewayBot()),
+        getChannel: vi.fn(),
+        getGuildMember: vi.fn(async () => null),
+      },
+      webSockets: { openWebSocket },
+      admitObservation: vi.fn(),
+      signal: new AbortController().signal,
+      clock,
+    });
+
+    await expect(worker.result).resolves.toEqual({ kind: 'terminal', reason: 'authenticationFailed' });
+    // Cycles 1-4 ramp inside the Invalid Session ceiling (the generic ceiling
+    // would have produced 8_000 on the fourth); the RESUMED session restarts
+    // the ramp (the unreset ramp would have produced 16_000).
+    expect(sleeps).toEqual([1_000, 2_000, 4_000, 5_000, 1_000]);
+  });
 });

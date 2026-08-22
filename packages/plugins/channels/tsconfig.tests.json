@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    // The build-configuration assertions import the package's authored
+    // `.mjs` build config, so the test program checks JavaScript too.
+    "allowJs": true,
+    // The test tree deliberately imports sibling workspace sources
+    // (`@happier-dev/plugin-ui` test support, first-party channel providers),
+    // so the source `rootDir` of `src` cannot contain the whole program.
+    "rootDir": "../../.."
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["node_modules", "dist"]
+}

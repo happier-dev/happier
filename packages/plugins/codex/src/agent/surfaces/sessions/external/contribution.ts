@@ -10,6 +10,8 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
+  canonicalizeCodexHomePath,
+  homeEntries,
   resolveConfiguredCodexHomePath,
 } from '../../../rollout/discovery/homeEntries.js';
 import { normalizeCodexBackendMode } from '../../../../protocol/runtimeDescriptorV1.js';
@@ -86,7 +88,8 @@ function validateSource(params: Readonly<{
   const codexSource = projectAgentExternalSessionSourceToCodex(params.source);
   if (!codexSource) return failed('source_invalid', 'provider/source mismatch');
   const canonicalRequestedHomePath = typeof codexSource.homePath === 'string'
-    ? codexSource.homePath.trim() || null
+    && codexSource.homePath.trim().length > 0
+    ? canonicalizeCodexHomePath(codexSource.homePath, params.env) || null
     : null;
   const validation = validateCodexExternalSessionsSourcePolicy({
     source: codexSource,
@@ -101,9 +104,40 @@ function validateSource(params: Readonly<{
   });
 }
 
-function transcriptMediaReadRootsFor(source: CodexExternalSessionSource): readonly string[] {
-  const homePath = typeof source.homePath === 'string' ? source.homePath.trim() : '';
-  return homePath ? [homePath] : [];
+/**
+ * The media read roots a source grants are the homes this Agent actually
+ * resolves for it, never the value the request carried. `homeEntries` is that
+ * single owner: it builds a connected-service home from the host-owned home
+ * namespace under the active server root and verifies any requested path
+ * against it, so the directories the host is asked to read media from are
+ * exactly the directories this Agent reads rollouts from. Taking the root from
+ * the request instead would let a caller name a directory neither that
+ * namespace nor the machine environment ever contained.
+ */
+async function transcriptMediaReadRootsFor(params: Readonly<{
+  source: CodexExternalSessionSource;
+  activeServerDir: string;
+  env: NodeJS.ProcessEnv;
+  invocation: AgentExternalSessionsInvocation;
+}>): Promise<AgentExternalSessionsResult<readonly string[]>> {
+  try {
+    const entries = await homeEntries({
+      source: params.source,
+      activeServerDir: params.activeServerDir,
+      env: params.env,
+      signal: params.invocation.signal,
+      deadlineAtMs: params.invocation.deadlineAtMs,
+    });
+    return ok(entries.map((entry) => entry.codexHome));
+  } catch (error) {
+    const stopped = invocationFailure(params.invocation);
+    if (stopped) return stopped;
+    return failed(
+      'agent_unavailable',
+      error instanceof Error ? error.message : 'Codex external-session home resolution failed.',
+      true,
+    );
+  }
 }
 
 function serializedByteLength(value: unknown): number {
@@ -114,6 +148,12 @@ function fitsResult(result: AgentExternalSessionsResult<unknown>, maxSerializedB
   return serializedByteLength(result) <= maxSerializedBytes;
 }
 
+/**
+ * Output overflow is not a malformed inbound request: the caller's byte bound is
+ * well formed and only this Agent's own result overran it. It is reported as a
+ * NONRETRYABLE `agent_error`, the same classification the host's
+ * bounded-invocation owner applies when a leaf overruns the identical budget.
+ */
 function bounded<T>(
   value: T,
   maxSerializedBytes: number,
@@ -122,7 +162,7 @@ function bounded<T>(
   const result = ok(value);
   return fitsResult(result, maxSerializedBytes)
     ? result
-    : failed('invalid_request', message);
+    : failed('agent_error', message, false);
 }
 
 function mapTranscriptPage(
@@ -195,7 +235,7 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
     || inferCodexExternalSessionsActiveServerDir(source)
     || '';
 
-  const resolveIdentity = (
+  const resolveIdentity = async (
     request: Readonly<{
       source: AgentExternalSessionSource;
       remoteSessionId: string;
@@ -228,10 +268,17 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
     const identityBackendMode = typeof identity.externalSessionMetadata?.codexBackendMode === 'string'
       ? identity.externalSessionMetadata.codexBackendMode
       : null;
+    const mediaReadRoots = await transcriptMediaReadRootsFor({
+      source: identity.source,
+      activeServerDir: activeServerDirFor(source),
+      env,
+      invocation: request,
+    });
+    if (!mediaReadRoots.ok) return mediaReadRoots;
     return bounded({
       source,
       remoteSessionId: identity.remoteSessionId,
-      transcriptMediaReadRoots: transcriptMediaReadRootsFor(identity.source),
+      transcriptMediaReadRoots: mediaReadRoots.value,
       linkData: buildIdentityLinkData({
         source,
         runtimeDescriptor: identity.runtimeDescriptor,
@@ -241,15 +288,23 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
   };
 
   return Object.freeze({
-    resolveSource(request) {
+    async resolveSource(request) {
       const stopped = invocationFailure(request);
       if (stopped) return stopped;
-      const validation = validateSource({ source: request.source, env: readEnv() });
+      const env = readEnv();
+      const validation = validateSource({ source: request.source, env });
       if (!validation.ok) return validation;
+      const mediaReadRoots = await transcriptMediaReadRootsFor({
+        source: validation.value.codexSource,
+        activeServerDir: activeServerDirFor(validation.value.publicSource),
+        env,
+        invocation: request,
+      });
+      if (!mediaReadRoots.ok) return mediaReadRoots;
       return bounded(
         {
           source: validation.value.publicSource,
-          transcriptMediaReadRoots: transcriptMediaReadRootsFor(validation.value.codexSource),
+          transcriptMediaReadRoots: mediaReadRoots.value,
         },
         request.maxSerializedBytes,
         'Codex source result cannot fit the result byte bound.',
@@ -335,7 +390,7 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
         const mapped = mapTranscriptPage(page);
         return fitsResult(mapped, request.maxSerializedBytes)
           ? mapped
-          : failed('invalid_request', 'Codex transcript page cannot fit the result byte bound.');
+          : failed('agent_error', 'Codex transcript page cannot fit the result byte bound.', false);
       } catch (error) {
         const after = invocationFailure(request);
         if (after) return after;
@@ -376,7 +431,7 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
         const mapped = mapReadAfterPage(page);
         return fitsResult(mapped, request.maxSerializedBytes)
           ? mapped
-          : failed('invalid_request', 'Codex transcript page cannot fit the result byte bound.');
+          : failed('agent_error', 'Codex transcript page cannot fit the result byte bound.', false);
       } catch (error) {
         const after = invocationFailure(request);
         if (after) return after;

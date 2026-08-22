@@ -15,10 +15,45 @@ import {
   activate as activateGithub,
   PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST,
 } from '@happier-dev/plugins-scm-github';
+import type { PluginServices } from '@happier-dev/plugin-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
 import { CHANNELS_PROVIDER_POINT_REF, PLUGIN_MANIFEST } from './manifest.js';
+
+/**
+ * These compositions cross only the credential-materialization and HTTP
+ * request boundaries. Every other member of the real service is present but
+ * refuses, so a composition that starts reaching a new boundary fails here
+ * instead of calling through an absent method.
+ */
+type ConnectedAccountsService = PluginServices['connectedAccounts'];
+type HttpService = PluginServices['http'];
+
+function unusedBoundary(member: string): never {
+  throw new Error(`The first-party provider composition does not use ${member}.`);
+}
+
+function connectedAccountsStub(
+  materialize: ConnectedAccountsService['materialize'],
+): ConnectedAccountsService {
+  return {
+    materialize,
+    getBinding: () => unusedBoundary('connectedAccounts.getBinding'),
+    requestSelection: () => unusedBoundary('connectedAccounts.requestSelection'),
+    listAccounts: () => unusedBoundary('connectedAccounts.listAccounts'),
+    materializeListedAccount: () => unusedBoundary('connectedAccounts.materializeListedAccount'),
+    watch: () => unusedBoundary('connectedAccounts.watch'),
+  };
+}
+
+function httpStub(request: HttpService['request']): HttpService {
+  return {
+    request,
+    openWebSocket: () => unusedBoundary('http.openWebSocket'),
+  };
+}
+
 
 /**
  * Converts the public testkit's structural fixture snapshot into the exact
@@ -66,14 +101,11 @@ describe('Channels first-party provider composition', () => {
       service: { pluginId: 'happier.channel.telegram', localId: 'telegram-bot' },
       accountId: 'telegram-account',
     } as const;
-    const telegramAccounts = {
-      materialize: vi.fn(async () => ({
+    const telegramAccounts = connectedAccountsStub(vi.fn(async () => ({
         kind: 'environment' as const,
         env: { TELEGRAM_BOT_TOKEN: '123:bot-token' },
-      })),
-    };
-    const telegramHttp = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => jsonResponse(
+      })));
+    const telegramHttp = httpStub(vi.fn(async (request: Readonly<{ url: string }>) => jsonResponse(
         request.url.endsWith('/getWebhookInfo')
           ? { ok: true, result: { url: '', pending_update_count: 0 } }
           : {
@@ -87,8 +119,7 @@ describe('Channels first-party provider composition', () => {
               },
             },
         request.url,
-      )),
-    };
+      )));
     const telegram = await createPluginTestkit({
       manifest: TELEGRAM_PLUGIN_MANIFEST,
       module: { activate: activateTelegram },
@@ -130,14 +161,11 @@ describe('Channels first-party provider composition', () => {
       service: { pluginId: 'happier.channel.discord', localId: 'discord-bot' },
       accountId: 'discord-account',
     } as const;
-    const discordAccounts = {
-      materialize: vi.fn(async () => ({
+    const discordAccounts = connectedAccountsStub(vi.fn(async () => ({
         kind: 'environment' as const,
         env: { DISCORD_BOT_TOKEN: 'discord-token' },
-      })),
-    };
-    const discordHttp = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => {
+      })));
+    const discordHttp = httpStub(vi.fn(async (request: Readonly<{ url: string }>) => {
         if (request.url.endsWith('/oauth2/applications/@me')) {
           return jsonResponse({ id: 'application-1', name: 'Happier Discord' }, request.url);
         }
@@ -156,8 +184,7 @@ describe('Channels first-party provider composition', () => {
           }, request.url);
         }
         throw new Error(`Unexpected Discord request: ${request.url}`);
-      }),
-    };
+      }));
     assertConversationProviderContributionV1(DISCORD_PLUGIN_MANIFEST);
     const discord = await createPluginTestkit({
       manifest: DISCORD_PLUGIN_MANIFEST,
@@ -200,14 +227,11 @@ describe('Channels first-party provider composition', () => {
       service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
       accountId: 'github-account',
     } as const;
-    const githubAccounts = {
-      materialize: vi.fn(async () => ({
+    const githubAccounts = connectedAccountsStub(vi.fn(async () => ({
         kind: 'httpHeaders' as const,
         headers: { Authorization: 'Bearer github-token' },
-      })),
-    };
-    const githubHttp = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => {
+      })));
+    const githubHttp = httpStub(vi.fn(async (request: Readonly<{ url: string }>) => {
         if (request.url === 'https://api.github.com/repos/acme/widgets') {
           return jsonResponse({
             id: 77,
@@ -220,8 +244,7 @@ describe('Channels first-party provider composition', () => {
           return jsonResponse({ id: 99, login: 'happier-bot' }, request.url);
         }
         throw new Error(`Unexpected GitHub request: ${request.url}`);
-      }),
-    };
+      }));
     assertConversationProviderContributionV1(GITHUB_PLUGIN_MANIFEST);
     const github = await createPluginTestkit({
       manifest: GITHUB_PLUGIN_MANIFEST,

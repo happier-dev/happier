@@ -4,6 +4,7 @@ import {
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
 
+import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
 import { sameTriageEntryRefV1, type TriageSurfaceSelectionV1 } from '../state/surface.js';
 
 /**
@@ -51,10 +52,8 @@ export function buildTriageDetailSurfaceInputV1(
   }
 
   const instanceRef = input.instance.instance;
-  const selectedSource = input.selection.entryRef.source;
   const instanceAgrees = instanceRef.sourceInstanceId === input.selection.sourceInstanceId
-    && instanceRef.source.pluginId === selectedSource.pluginId
-    && instanceRef.source.localId === selectedSource.localId;
+    && sameTriageSourceIdentity(instanceRef.source, input.selection.entryRef.source);
   if (!instanceAgrees) return REFUSED_INSTANCE_MISMATCH;
 
   try {

@@ -11,6 +11,10 @@
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import {
+  materializeTriageSourceAuthorizationV1,
+  type TriageSourceAuthorizationFailureReasonV1,
+} from '@happier-dev/triage-sources/runtime';
 
 import {
   SENTRY_CONNECTED_ACCOUNT_PURPOSE,
@@ -55,24 +59,50 @@ function failed(failure: SentryFailureV1): SentryApiOutcomeV1 {
   return Object.freeze({ kind: 'failed' as const, failure });
 }
 
-function readAuthorizationHeader(headers: Readonly<Record<string, string>>): string | null {
-  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === 'authorization');
-  const value = entry?.[1]?.trim();
-  return value === undefined || value === '' ? null : value;
-}
-
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError');
 }
+
+/**
+ * The exact-account materialization rule is the shared source contract and lives in
+ * `@happier-dev/triage-protocol/v1`; Sentry's published failure vocabulary is not, so
+ * the four neutral refusal reasons are mapped here and nowhere else.
+ *
+ * A host refusal is a **credential** problem the user can fix, so it is
+ * `authentication` — never `transient`. Reporting it as a transport failure would
+ * route it into the aggregate's provider-pacing backoff, which deliberately exempts
+ * `authentication` so that reconnecting and pressing Refresh works immediately
+ * (`refresh/refreshEligibility.ts`).
+ */
+const AUTHORIZATION_FAILURES: Readonly<
+  Record<TriageSourceAuthorizationFailureReasonV1, SentryFailureV1>
+> = Object.freeze({
+  cancelled: {
+    class: 'transient' as const,
+    code: SENTRY_FAILURE_CODES.cancelled,
+  },
+  materializationFailed: {
+    class: 'authentication' as const,
+    code: SENTRY_FAILURE_CODES.accountMaterializationFailed,
+  },
+  unsupportedMaterialization: {
+    class: 'unsupportedContract' as const,
+    code: SENTRY_FAILURE_CODES.unsupportedMaterialization,
+  },
+  authorizationHeaderMissing: {
+    class: 'authentication' as const,
+    code: SENTRY_FAILURE_CODES.authorizationHeaderUnavailable,
+  },
+});
 
 export async function createSentryApiClient(
   context: PluginInvocationContext,
   input: SentryApiClientInputV1,
 ): Promise<SentryApiClientV1> {
   const { origin } = input.deployment;
-  let authorization: string | null | undefined;
+  let authorization: string | SentryFailureV1 | undefined;
 
-  async function resolveAuthorization(): Promise<string | null> {
+  async function resolveAuthorization(): Promise<string | SentryFailureV1> {
     if (authorization !== undefined) return authorization;
     // `CONTRACT.md` §3.1: every Sentry request is bound to one exact account
     // that this invocation already observed in the bounded metadata listing, so
@@ -80,17 +110,18 @@ export async function createSentryApiClient(
     // materializer. The host reauthorizes the purpose and revalidates the
     // origin against that account around the materialization; this source can
     // neither select nor fall through to a different authorized account.
-    const materialized = await context.services.connectedAccounts.materializeListedAccount(
-      {
-        purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE,
-        account: input.account,
-        materialization: { kind: 'httpHeaders', origin, headerNames: ['authorization'] },
-      },
-      { signal: context.signal },
-    );
-    authorization = materialized.kind === 'httpHeaders'
-      ? readAuthorizationHeader(materialized.headers)
-      : null;
+    //
+    // The rule itself is the shared source contract, so it is consumed rather
+    // than re-spelled: a private copy is what let a host refusal escape as an
+    // untyped rejection and be classified as an upstream outage.
+    const outcome = await materializeTriageSourceAuthorizationV1({
+      connectedAccounts: context.services.connectedAccounts,
+      purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE,
+      account: input.account,
+      origin,
+      signal: context.signal,
+    });
+    authorization = outcome.ok ? outcome.authorization : AUTHORIZATION_FAILURES[outcome.reason];
     return authorization;
   }
 
@@ -121,15 +152,11 @@ export async function createSentryApiClient(
         return failed(classifySentryFailure({ kind: 'cancelled', operation: request.operation }));
       }
 
+      const bearer = await resolveAuthorization();
+      if (typeof bearer !== 'string') return failed(bearer);
+
       let response: Awaited<ReturnType<typeof context.services.http.request>>;
       try {
-        const bearer = await resolveAuthorization();
-        if (bearer === null) {
-          return failed(Object.freeze({
-            class: 'authentication' as const,
-            code: SENTRY_FAILURE_CODES.tokenInvalid,
-          }));
-        }
         response = await context.services.http.request({
           url: request.url,
           method: 'GET',

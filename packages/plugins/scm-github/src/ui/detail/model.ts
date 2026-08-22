@@ -22,57 +22,22 @@
  * reintroduce those differences as branches.
  */
 
+import { projectTriageDetailFieldsV1 } from '@happier-dev/triage-protocol/v1';
 import type {
+  TriageDetailFieldV1,
   TriageDetailSurfaceInputV1,
   TriageLinkedSessionProjectionV1,
-  TriageRowFactImportanceV1,
-  TriageRowFactNumberFormatV1,
-  TriageRowFactStatusToneV1,
-  TriageRowFactTimestampFormatV1,
-  TriageRowFactV1,
 } from '@happier-dev/triage-protocol/v1';
 
-/** One GitHub-native fact row the source renders from the applied observation. */
-export type GithubDetailFieldV1 =
-  | Readonly<{
-    kind: 'text';
-    id: string;
-    label: string;
-    importance: TriageRowFactImportanceV1;
-    value: string;
-  }>
-  | Readonly<{
-    kind: 'timestamp';
-    id: string;
-    label: string;
-    importance: TriageRowFactImportanceV1;
-    atMs: number;
-    format: TriageRowFactTimestampFormatV1;
-  }>
-  | Readonly<{
-    kind: 'number';
-    id: string;
-    label: string;
-    importance: TriageRowFactImportanceV1;
-    value: number;
-    format: TriageRowFactNumberFormatV1;
-    approximate: boolean;
-  }>
-  | Readonly<{
-    kind: 'status';
-    id: string;
-    label: string;
-    importance: TriageRowFactImportanceV1;
-    value: string;
-    tone: TriageRowFactStatusToneV1;
-  }>
-  /** A fact the list deliberately defers and this build has not resolved yet. */
-  | Readonly<{
-    kind: 'pending';
-    id: string;
-    label: string;
-    importance: TriageRowFactImportanceV1;
-  }>;
+/**
+ * One provider-native detail row.
+ *
+ * Projecting a row fact into a renderable field is the same rule for every Triage
+ * source — it is a function of the contract's own closed fact vocabulary — so it is
+ * consumed from `@happier-dev/triage-protocol` rather than re-spelled here. What
+ * stays with this source is its own fact-id label vocabulary below.
+ */
+export type GithubDetailFieldV1 = TriageDetailFieldV1;
 
 export type GithubDetailBodyV1 = Readonly<{
   /**
@@ -89,6 +54,7 @@ export type GithubDetailBodyV1 = Readonly<{
   linkedSessions: readonly TriageLinkedSessionProjectionV1[];
 }>;
 
+
 /** The GitHub fact vocabulary `triage/mapping/facts.ts` emits. */
 const FIELD_LABELS: Readonly<Record<string, string | undefined>> = Object.freeze({
   'github/number': 'Number',
@@ -103,50 +69,6 @@ const FIELD_LABELS: Readonly<Record<string, string | undefined>> = Object.freeze
   'github/additions-deletions': 'Changes',
 });
 
-function toDetailField(fact: TriageRowFactV1): GithubDetailFieldV1 | null {
-  const label = FIELD_LABELS[fact.id] ?? fact.label ?? fact.id;
-  const importance = fact.importance;
-  switch (fact.value.kind) {
-    case 'text':
-    case 'actor':
-      return { kind: 'text', id: fact.id, label, importance, value: fact.value.value };
-    case 'timestamp':
-      return {
-        kind: 'timestamp',
-        id: fact.id,
-        label,
-        importance,
-        atMs: fact.value.atMs,
-        format: fact.value.format,
-      };
-    case 'number':
-      return {
-        kind: 'number',
-        id: fact.id,
-        label,
-        importance,
-        value: fact.value.value,
-        format: fact.value.format,
-        approximate: fact.value.approximate === true,
-      };
-    case 'status':
-      return {
-        kind: 'status',
-        id: fact.id,
-        label,
-        importance,
-        value: fact.value.value,
-        tone: fact.value.tone,
-      };
-    case 'detailOnly':
-      return { kind: 'pending', id: fact.id, label, importance };
-    default:
-      // A value arm this build does not know is presentation-only: the row is skipped and
-      // the entry kept.
-      return null;
-  }
-}
-
 /**
  * Projects one mounted GitHub detail input into the source-owned body model.
  *
@@ -160,9 +82,7 @@ export function projectGithubDetailBody(
   const { snapshot, entryRef } = input.observation;
   return {
     kindId: entryRef.kindId,
-    fields: snapshot.facts
-      .map(toDetailField)
-      .filter((field): field is GithubDetailFieldV1 => field !== null),
+    fields: projectTriageDetailFieldsV1(snapshot.facts, FIELD_LABELS),
     linkedSessions: input.linkedSessions,
   };
 }

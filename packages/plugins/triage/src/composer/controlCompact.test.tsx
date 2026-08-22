@@ -80,6 +80,7 @@ async function mountControl(options: Readonly<{
     attachments?: readonly unknown[];
     launchInput?: unknown;
     unavailable?: boolean;
+    translations?: Readonly<Record<string, string>>;
 }> = {}): Promise<PluginUiTestkit> {
     const launchInput = options.launchInput ?? {
         v: 1,
@@ -101,7 +102,9 @@ async function mountControl(options: Readonly<{
                 generation: 'control-mount',
             },
             surface: renderEntriesControlCompactSurface,
-            surfaceContext: createSurfaceContextFixture(),
+            surfaceContext: createSurfaceContextFixture(
+                options.translations === undefined ? {} : { translations: options.translations },
+            ),
             adapter: createPluginUiRnwSemanticSurfaceAdapter(),
             launchInput: launchInput as never,
             handlers: {
@@ -156,6 +159,22 @@ describe('the Triage entries compact control', () => {
         // which is what the host state claims, and not one label winning.
         await expect(control.getByText('2 PRs & Issues')).resolves.toEqual({ content: '2 PRs & Issues' });
         await expect(control.queryByText('First')).resolves.toBeUndefined();
+    });
+
+    it('says the many-count in the reader own language', async () => {
+        const control = await mountControl({
+            attachments: [
+                attachmentView({ instanceId: 'a1', label: 'First', entryId: '42' }),
+                attachmentView({ instanceId: 'a2', label: 'Second', entryId: '43' }),
+            ],
+            // A host catalog entry, not this plugin's shipped copy: the case
+            // proves the label is RESOLVED rather than assembled in English, and
+            // pinning the shipped sentence would prove neither.
+            translations: { 'plugins.triage.composer.entriesCount': 'fixture:{count} entrees' },
+        });
+
+        await expect(control.getByText('fixture:2 entrees')).resolves
+            .toEqual({ content: 'fixture:2 entrees' });
     });
 
     it('counts only its own contribution inside a shared snapshot', async () => {

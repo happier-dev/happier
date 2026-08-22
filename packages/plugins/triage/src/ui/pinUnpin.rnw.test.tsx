@@ -186,6 +186,7 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
             surfaceContext: createSurfaceContextFixture(),
             adapter: createPluginUiRnwSemanticSurfaceAdapter(),
             handlers: {
+                publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
             },
         });
@@ -222,7 +223,13 @@ describe('the mounted Pin/Unpin affordance', () => {
         // the Open lane has nothing left and its header is gone with it — a
         // pinned entry that also appeared under Open would read as two pins for
         // one thing, and would collide on the List's own row key.
-        await expect(shell.queryByText('Open')).resolves.toBeUndefined();
+        //
+        // The query is the section header's own role rather than a sweep for
+        // the word: the filter rail's State facet offers an **Open** option
+        // (`core/SURFACE.md` §6), so a text sweep now proves nothing about
+        // sections at all.
+        await expect(shell.queryByRole('group', { name: 'Open' })).resolves.toBeUndefined();
+        await expect(shell.getByRole('group', { name: 'Pinned' })).resolves.toBeDefined();
         // A materialized pinned row offers its one Pin/Unpin operation through
         // the shared secondary-action owner, not a nested per-row control.
         expect(await shell.getAllByRole('button', {
@@ -296,5 +303,40 @@ describe('the mounted Pin/Unpin affordance', () => {
         await expect(shell.getByText('Replace the duplicated normalizer'))
             .resolves.toEqual({ content: 'Replace the duplicated normalizer' });
         await expect(shell.getByText('Up to date')).resolves.toEqual({ content: 'Up to date' });
+    });
+
+    it('says pins are unavailable when the WRITE is refused, not just the read', async () => {
+        // The read path was already covered; the write path was not, and it is the
+        // branch that now carries traffic: `setPinned` stopped reporting every
+        // Collections failure as `conflict`, so a store that is unreachable at
+        // press time reaches the unavailable branch instead of telling the reader
+        // to retry a write retrying cannot fix.
+        const harness = createHarness();
+        // An UNWALKED pin, because that is the row that carries the inline Unpin
+        // (a walked row hosts its control in the detail panel instead).
+        await seedPin(harness, entryRef('404'), {
+            title: 'A change this device has not read',
+            scopeLabel: 'example/other',
+        });
+        const shell = await mountShell(harness);
+
+        // The initial read SUCCEEDED — that is what makes this the write path.
+        await expect(shell.queryByText('Pins are unavailable')).resolves.toBeUndefined();
+
+        harness.state.marksUnreachable = true;
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', {
+                name: 'Unpin A change this device has not read',
+            }));
+        });
+
+        await expect(shell.getByText('Pins are unavailable'))
+            .resolves.toEqual({ content: 'Pins are unavailable' });
+        // HONEST LIMIT OF THIS ASSERTION: it proves the write rejection REACHES the
+        // unavailable branch, which was previously untested. It does NOT prove the
+        // reason is translated — this branch used to render a raw English constant
+        // whose text is identical to the English catalogue entry, so the assertion
+        // passes either way. This harness exposes no locale knob; proving the
+        // catalogue lookup would need one. Do not read this test as i18n coverage.
     });
 });

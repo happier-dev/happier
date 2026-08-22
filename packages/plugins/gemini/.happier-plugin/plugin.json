@@ -188,6 +188,66 @@
           "messages": {
             "agentInput.connectedServiceLabel.gemini": "Google Gemini"
           }
+        },
+        {
+          "locale": "ru",
+          "messages": {
+            "agentInput.connectedServiceLabel.gemini": "Google Gemini"
+          }
+        },
+        {
+          "locale": "pl",
+          "messages": {
+            "agentInput.connectedServiceLabel.gemini": "Google Gemini"
+          }
+        },
+        {
+          "locale": "es",
+          "messages": {
+            "agentInput.connectedServiceLabel.gemini": "Google Gemini"
+          }
+        },
+        {
+          "locale": "fr",
+          "messages": {
+            "agentInput.connectedServiceLabel.gemini": "Google Gemini"
+          }
+        },
+        {
+          "locale": "it",
+          "messages": {
+            "agentInput.connectedServiceLabel.gemini": "Google Gemini"
+          }
+        },
+        {
+          "locale": "pt",
+          "messages": {
+            "agentInput.connectedServiceLabel.gemini": "Google Gemini"
+          }
+        },
+        {
+          "locale": "ca",
+          "messages": {
+            "agentInput.connectedServiceLabel.gemini": "Google Gemini"
+          }
+        },
+        {
+          "locale": "zh-Hans",
+          "messages": {
+            "agentInput.connectedServiceLabel.gemini": "Google Gemini"
+          }
+        },
+        {
+          "locale": "zh-Hant",
+          "messages": {
+            "agentInput.connectedServiceLabel.gemini": "Google Gemini"
+          }
+        },
+        {
+          "locale": "ja",
+          "messages": {
+            "agentInput.connectedServiceLabel.gemini": "Google Gemini"
+          }
         }
       ],
       "views": []
@@ -201,7 +261,7 @@
     "happier": "^0.0.0"
   },
   "entrypoints": {
-    "daemon": "./dist/index.js"
+    "daemon": "./.happier-plugin/daemon.js"
   },
   "hostAccess": {
     "optional": [],

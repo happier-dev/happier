@@ -3,12 +3,18 @@ import type { SessionId } from '@happier-dev/plugin-sdk/sessions';
 import type { TriageEntryLocatorV1, TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
-import { fromCorpusStoredRow, toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
+import { putCorpusRowOnce } from '../corpus/collections/putRowOnce.js';
+import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
 import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
 import { deriveSessionLinkEntryTag, deriveSessionLinkTag } from '../corpus/identity/tags.js';
 
 /**
- * The one canonical `session-links` writer.
+ * The one writer that creates a `session-links` row.
+ *
+ * The only other writer of this collection is `reconcileMergedSuccessor.ts`,
+ * and it never creates a relationship: it moves a row this module committed onto
+ * an authoritative successor, or collapses it into one. So a link still comes
+ * into existence in exactly one place.
  *
  * The link is the sole authority for "this entry is being worked on in that
  * Session". It is Account Collection data, so it survives client and daemon
@@ -127,29 +133,13 @@ async function writeEntrySessionLink(
         identityEntryRef: entryRef,
         displayPathAtLink: entrySessionLinkDisplayPath(input.display),
     };
-    const value = toCorpusStoredValue(row);
-
-    const first = await collections.sessionLinks.batch(
-        [{ kind: 'put', value, expectedRevision: 'absent' }],
-        options,
-    );
-    if (first.status === 'updated') return { status: 'linked', linkTag };
-
-    const conflict = first.conflicts[0];
-    // A tombstoned link carries no competing live content, so the same intent
-    // may be written once against that exact revision. An `absent` put alone
-    // would lose the row forever.
-    if (conflict?.deleted === true && conflict.revision !== null) {
-        const second = await collections.sessionLinks.batch(
-            [{ kind: 'put', value, expectedRevision: conflict.revision }],
-            options,
-        );
-        if (second.status === 'updated') return { status: 'linked', linkTag };
-    }
-
+    const written = await putCorpusRowOnce<CorpusSessionLinkRowV1>({
+        collection: collections.sessionLinks,
+        rowId: linkTag,
+        row,
+        ...(input.signal ? { signal: input.signal } : {}),
+    });
     // Another writer won the same row. The relationship it committed is the one
     // this call wanted, so a live row is success rather than a forced overwrite.
-    return await readLiveLink(collections, linkTag, options)
-        ? { status: 'linked', linkTag }
-        : { status: 'failed' };
+    return written.status === 'conflict' ? { status: 'failed' } : { status: 'linked', linkTag };
 }

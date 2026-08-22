@@ -1,16 +1,23 @@
-import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 
+import { AGENT_DEFINITION } from './agent/definition.js';
+import { createCodeRabbitExecutionRunFactory } from './agent/reviews/nativeRun.js';
 import { createCodeRabbitReviewExecutionProfile } from './agent/reviews/profile.js';
 import { CODERABBIT_SYSTEM_TOOL_ID } from './agent/reviews/systemTool.js';
 
-export const PLUGIN_MANIFEST = {
-  schemaVersion: 2,
+const createCodeRabbitRuntime: AgentRuntimeFactory = () => Object.freeze({
+  executionRuns: createCodeRabbitExecutionRunFactory(),
+});
+
+export const CODERABBIT_PLUGIN = definePlugin({
   id: 'happier.review.coderabbit',
   version: '0.0.0',
   displayName: 'CodeRabbit review engine',
   description: 'Runs CodeRabbit as a review-only execution engine.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
       id: 'coderabbit-workspace',
@@ -36,50 +43,63 @@ export const PLUGIN_MANIFEST = {
     }],
     optional: [],
   },
-  contributes: {
-    agents: [{
-      id: 'coderabbit',
-      title: 'CodeRabbit',
-      runtime: { kind: 'custom' },
-      cli: {
-        executable: {
-          binaryName: 'coderabbit',
-          knownUserBinDirSuffixes: null,
-          sourcePreference: 'system-first',
-        },
-        install: {
-          managed: null,
-          manual: { kind: 'command' },
-          guideUrl: null,
-          docsUrl: null,
-        },
-        auth: {
-          support: 'status_only',
-          probe: {
-            parser: 'unknown',
-            backgroundChecks: 'safe',
-            statusArgs: null,
-            envVars: ['CODERABBIT_API_KEY'],
+  agents: {
+    coderabbit: {
+      declaration: {
+        title: 'CodeRabbit',
+        runtime: { kind: 'custom' },
+        cli: {
+          executable: {
+            binaryName: 'coderabbit',
+            knownUserBinDirSuffixes: null,
+            sourcePreference: 'system-first',
           },
-          loginLaunches: [],
+          install: {
+            managed: null,
+            manual: { kind: 'command' },
+            guideUrl: null,
+            docsUrl: null,
+          },
+          auth: {
+            support: 'status_only',
+            probe: {
+              parser: 'unknown',
+              backgroundChecks: 'safe',
+              statusArgs: null,
+              envVars: ['CODERABBIT_API_KEY'],
+            },
+            loginLaunches: [],
+          },
         },
+        primary: 'executionRuns',
+        capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, { executionRuns: { open: ['create'], checkpoint: false, stop: true } }),
       },
-      primary: 'executionRuns',
-      capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } },
-    }],
-    executionRunProfiles: [createCodeRabbitReviewExecutionProfile()],
-    resources: [{
-      id: 'review-prompt-resource',
+      factory: createCodeRabbitRuntime,
+    },
+  },
+  executionRunProfiles: {
+    review: createCodeRabbitReviewExecutionProfile(),
+  },
+  resources: {
+    'review-prompt-resource': {
       kind: 'prompt',
       path: './resources/review-prompt.md',
       contentType: 'text/markdown',
-    }],
-    promptAssets: [{
-      id: 'review-prompt',
+    },
+  },
+  promptAssets: {
+    'review-prompt': {
       kind: 'systemPrompt',
       resource: 'review-prompt-resource',
       target: { kind: 'agent', agent: 'coderabbit' },
-    }],
-    systemTools: [{ id: CODERABBIT_SYSTEM_TOOL_ID, title: 'CodeRabbit CLI', executableNames: ['coderabbit'] }],
+    },
   },
-} satisfies PluginManifest;
+  systemTools: {
+    [CODERABBIT_SYSTEM_TOOL_ID]: {
+      title: 'CodeRabbit CLI',
+      executableNames: ['coderabbit'],
+    },
+  },
+});
+
+export const PLUGIN_MANIFEST = CODERABBIT_PLUGIN.manifest;

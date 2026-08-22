@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { VoiceTranscriptCanonicalEventV1Schema } from '@happier-dev/plugin-sdk/voice/client';
+
 import { createElevenLabsEventMapper } from './eventMapper.js';
 
 describe('createElevenLabsEventMapper', () => {
@@ -45,6 +47,39 @@ describe('createElevenLabsEventMapper', () => {
       role: 'assistant',
       text: 'corrected answer',
     }));
+  });
+
+  it('refuses a provider identity too long to become a canonical transcript identity', () => {
+    const mapper = createElevenLabsEventMapper();
+    mapper.beginConversation();
+
+    // The canonical transcript id ceiling is 256 characters and the leaf composes
+    // `elevenlabs:message:<providerEventId>:<revision>` from it. An identity that cannot produce a
+    // canonical event is not usable transcript identity, so the message is dropped rather than
+    // published unvalidated.
+    expect(mapper.map({
+      event_id: 'e'.repeat(300),
+      role: 'user',
+      source: 'user',
+      message: 'hello',
+    })).toBeNull();
+
+    const longest = mapper.map({
+      event_id: 'e'.repeat(200),
+      role: 'user',
+      source: 'user',
+      message: 'hello',
+    });
+    expect(longest).not.toBeNull();
+    expect(VoiceTranscriptCanonicalEventV1Schema.safeParse(longest).success).toBe(true);
+  });
+
+  it('refuses a message claiming an item the other speaker already owns', () => {
+    const mapper = createElevenLabsEventMapper();
+    mapper.beginConversation();
+
+    expect(mapper.map({ event_id: 4, role: 'user', source: 'user', message: 'mine' })?.role).toBe('user');
+    expect(mapper.map({ event_id: 4, role: 'agent', source: 'ai', message: 'not mine' })).toBeNull();
   });
 
   it('starts a fresh epoch for a replacement conversation', () => {

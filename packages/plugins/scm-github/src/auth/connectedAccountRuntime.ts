@@ -4,6 +4,7 @@ import type {
   ConnectedAccountManualCompletion as PluginConnectedAccountManualCompletion,
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
 import { GITHUB_API_VERSION } from '../observations/githubProviderContracts.js';
 
@@ -19,16 +20,8 @@ function diagnostic(code: string, message: string) {
   return { code, severity: 'error' as const, message };
 }
 
-function readHeader(
-  headers: Readonly<Record<string, string>>,
-  name: string,
-): string | null {
-  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase());
-  return entry?.[1] ?? null;
-}
-
 function parseScopes(headers: Readonly<Record<string, string>>): readonly string[] {
-  const value = readHeader(headers, 'x-oauth-scopes');
+  const value = readTriageResponseHeaderV1(headers, 'x-oauth-scopes');
   if (!value) return [];
   return [...new Set(value.split(',').map((scope) => scope.trim()).filter(Boolean))];
 }

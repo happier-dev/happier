@@ -126,7 +126,7 @@ async function forkCodexAppServerLatest(
       error,
       redactedValues: [providerSessionIdRaw],
     });
-    return null;
+    throw error;
   }
 
   const providerSessionId = typeof forked?.providerSessionId === 'string' ? forked.providerSessionId.trim() : '';

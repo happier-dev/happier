@@ -3,7 +3,7 @@ import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
   AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { activate } from './activate.js';
+import { activate } from './manifest.js';
 import { createGrokAgentRuntime } from './agent/runtime/factory.js';
 
 describe('Grok native activation', () => {
@@ -55,6 +55,8 @@ describe('Grok native activation', () => {
         notifications: expect.objectContaining({
           'x.ai/session/prompt_complete': expect.any(Function),
           '_x.ai/session/prompt_complete': expect.any(Function),
+          'x.ai/session/update': expect.any(Function),
+          '_x.ai/session/update': expect.any(Function),
         }),
       }),
     }));

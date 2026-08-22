@@ -1,4 +1,4 @@
-import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
 const DEFAULT_MIN_PUBLISH_INTERVAL_MS = 1000;
 

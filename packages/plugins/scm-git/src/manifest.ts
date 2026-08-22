@@ -1,6 +1,7 @@
-import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { ScmBackendContribution } from '@happier-dev/plugin-sdk/scm/backend';
 
+import { createGitScmBackendRuntimeRegistration } from './backend.js';
 import { GIT_INSTALLABLE_DEP_ID, GIT_INSTALLABLE_DESCRIPTOR } from './installables/gitInstallable.js';
 
 export const GIT_SCM_BACKEND_CONTRIBUTION = Object.freeze({
@@ -11,14 +12,15 @@ export const GIT_SCM_BACKEND_CONTRIBUTION = Object.freeze({
   capabilities: ['detect', 'clone', 'fetch', 'status', 'diff', 'commit', 'push', 'pullRequest'],
 } satisfies ScmBackendContribution);
 
-export const PLUGIN_MANIFEST = {
-  schemaVersion: 2,
+const gitScmBackendRegistration = createGitScmBackendRuntimeRegistration();
+
+export const GIT_PLUGIN = definePlugin({
   id: 'happier.scm.backend.git',
   version: '0.0.0',
   displayName: 'Git SCM backend',
   description: 'First-party local Git SCM backend.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
       id: 'git-process',
@@ -28,8 +30,18 @@ export const PLUGIN_MANIFEST = {
     }],
     optional: [],
   },
-  contributes: {
-    managedDependencies: [GIT_INSTALLABLE_DESCRIPTOR],
-    scmBackends: [GIT_SCM_BACKEND_CONTRIBUTION],
+  managedDependencies: {
+    [GIT_INSTALLABLE_DEP_ID]: GIT_INSTALLABLE_DESCRIPTOR,
   },
-} satisfies PluginManifest;
+  scmBackends: {
+    git: {
+      declaration: GIT_SCM_BACKEND_CONTRIBUTION,
+      runtime: {
+        runtime: gitScmBackendRegistration.runtime,
+        handlers: gitScmBackendRegistration.handlers,
+      },
+    },
+  },
+});
+
+export const PLUGIN_MANIFEST = GIT_PLUGIN.manifest;

@@ -12,6 +12,7 @@ import {
   CHANNEL_STATE_INDEX_ID,
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
+import { MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE } from './requiredAccountStorage.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
 import {
   acceptConversationPermissionWaitOutwardDelivery,
@@ -29,6 +30,7 @@ import { finalizeConversationConnectionDeletesForInvocation } from './management
 import {
   createConversationSessionProjectionCollectionStore,
   projectConversationSessionTranscriptPage,
+  type ConversationSessionProjectionResult,
 } from './sessionProjection.js';
 
 const RECONCILIATION_INTERVAL_MS = 1_000;
@@ -157,6 +159,28 @@ function logOutwardDeliverySupervisorWorkFailure(
   });
 }
 
+/**
+ * A history gap is a typed result, not a thrown error: projection returns it
+ * and leaves the frontier unchanged, so the next wake repeats the same rejected
+ * or unusable cursor forever. Discarding that value hid a permanently stuck
+ * binding behind a healthy-looking cycle. The reason is a closed literal, so
+ * this carries no session, endpoint, or transcript content.
+ */
+function logConversationSessionProjectionHistoryGap(
+  context: BackgroundServiceContext,
+  input: Readonly<{
+    bindingId: string;
+    reason: Extract<ConversationSessionProjectionResult, Readonly<{ kind: 'historyGap' }>>['reason'];
+  }>,
+): void {
+  if (context.signal.aborted) return;
+  context.services.logger.warn('[Channels] Session projection cannot advance its transcript frontier', {
+    boundary: 'transcript-projection',
+    bindingId: input.bindingId,
+    reason: input.reason,
+  });
+}
+
 function isProjectionConnectionCurrent(value: JsonValue, connectionId: string): boolean {
   if (!isJsonRecord(value)
     || value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.connection
@@ -208,7 +232,7 @@ async function readCurrentBindingIds(context: BackgroundServiceContext): Promise
       index: CHANNEL_STATE_INDEX_ID.byKind,
       prefix: [CHANNEL_STATE_RECORD_KIND.binding],
       order: 'asc',
-      limit: Math.min(MAX_CONVERSATION_BINDINGS_PER_ACCOUNT - bindingIds.length, 200),
+      limit: Math.min(MAX_CONVERSATION_BINDINGS_PER_ACCOUNT - bindingIds.length, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE),
       ...(cursor === undefined ? {} : { cursor }),
     }, { signal: context.signal });
     for (const row of page.rows) {
@@ -502,7 +526,7 @@ export async function runConversationOutwardDeliveryCycle(
   for (const bindingId of bindingIds) {
     if (context.signal.aborted) break;
     try {
-      await projectConversationSessionTranscriptPage({
+      const projected = await projectConversationSessionTranscriptPage({
         actions: context.services.actions,
         store: projectionStore,
         bindingId,
@@ -520,6 +544,9 @@ export async function runConversationOutwardDeliveryCycle(
           signal: context.signal,
         }),
       });
+      if (projected.kind === 'historyGap') {
+        logConversationSessionProjectionHistoryGap(context, { bindingId, reason: projected.reason });
+      }
     } catch {
       // Projection never receives a local replacement owner; its unchanged
       // frontier causes the canonical page to be re-read on the next wake.

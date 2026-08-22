@@ -50,6 +50,10 @@ describe('createCodexAgentRuntime', () => {
       usageLimitRecovery: { execute: expect.any(Function) },
       continuation: { verify: expect.any(Function) },
     });
+    expect(runtime.surfaces?.handoff).toEqual({
+      exportBundle: expect.any(Function),
+      importBundle: expect.any(Function),
+    });
   });
 
   it('routes ACP sessions through the native composer and exposes the data-only terminal plan', async () => {
@@ -88,7 +92,7 @@ describe('createCodexAgentRuntime', () => {
       sessionId: 'terminal-1',
       cwd: '/repo',
       metadata: {
-        providerSessionId: 'provider-1',
+        resumeId: 'provider-1',
         permissionMode: 'read-only',
         codexArgs: ['--search'],
       },

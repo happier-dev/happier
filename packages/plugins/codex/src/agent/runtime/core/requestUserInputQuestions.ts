@@ -45,16 +45,19 @@ function readQuestionOptions(question: RecordLike): ReadonlyArray<RecordLike> {
     .filter((option): option is RecordLike => Boolean(option));
 }
 
-function readApprovalLabels(questions: unknown): string[] {
-  if (!Array.isArray(questions)) return [];
-  return questions
-    .map((question) => asRecord(question))
-    .filter((question): question is RecordLike => Boolean(question))
-    .flatMap((question) => readQuestionOptions(question))
-    .map((option) => normalizeString(option.label))
-    .filter((label) => label.length > 0);
-}
+const CODEX_APPROVAL_QUESTION_ID_PREFIX = 'mcp_tool_call_approval_';
+const POSITIVE_CHOICE_LABEL = /\bapprove\b|\ballow\b|\baccept\b/i;
+const NEGATIVE_CHOICE_LABEL = /\bdeny\b|\breject\b|\bdecline\b/i;
+const CANCELLATION_CHOICE_LABEL = /\bcancel\b|\babort\b|\bstop\b/i;
+const SESSION_SCOPED_CHOICE_LABEL = /\bsession\b|\balways\b/i;
 
+/**
+ * Detection and selection share one rule for "which question carries the
+ * permission decision". Approval wording is never pooled across questions: a
+ * genuine multi-question form whose separate questions happen to use approving
+ * and denying words stays a form, and is asked, instead of being answered as a
+ * permission decision the user never made.
+ */
 export function looksLikeCodexApprovalRequestUserInput(params: Readonly<{
   toolName: string;
   questions: unknown;
@@ -63,16 +66,103 @@ export function looksLikeCodexApprovalRequestUserInput(params: Readonly<{
   if (normalizedToolName.includes('request_user_input') || normalizedToolName.includes('askuserquestion')) {
     return false;
   }
+  return hasCodexApprovalQuestionId(params.questions)
+    || findApprovalQuestion(params.questions) !== null;
+}
 
-  if (!Array.isArray(params.questions) || params.questions.length === 0) return false;
-  if (params.questions.some((question) => normalizeString(asRecord(question)?.id).startsWith('mcp_tool_call_approval_'))) {
-    return true;
-  }
+function hasCodexApprovalQuestionId(questions: unknown): boolean {
+  return Array.isArray(questions)
+    && questions.some((question) => (
+      normalizeString(asRecord(question)?.id).startsWith(CODEX_APPROVAL_QUESTION_ID_PREFIX)
+    ));
+}
 
-  const labels = readApprovalLabels(params.questions);
-  const hasApproval = labels.some((label) => /\bapprove\b|\ballow\b|\baccept\b/i.test(label));
-  const hasDeny = labels.some((label) => /\bdeny\b|\breject\b|\bdecline\b/i.test(label));
-  return hasApproval && hasDeny;
+/** The permission outcome a Codex approval question has to carry. */
+export type CodexApprovalOutcome =
+  | 'approve_once'
+  | 'approve_for_session'
+  | 'deny'
+  | 'cancel';
+
+export type CodexApprovalChoice = Readonly<{
+  questionId: string;
+  label: string;
+}>;
+
+type ApprovalQuestionCandidate = Readonly<{
+  id: string;
+  labels: readonly string[];
+}>;
+
+function readApprovalQuestionCandidate(question: RecordLike): ApprovalQuestionCandidate | null {
+  const id = normalizeString(question.id);
+  if (!id) return null;
+  const labels = readQuestionOptions(question)
+    .map((option) => normalizeString(option.label))
+    .filter((label) => label.length > 0);
+  return labels.length > 0 ? { id, labels } : null;
+}
+
+/**
+ * Locates the one question whose options can carry a permission decision.
+ * Codex stamps that question with the `mcp_tool_call_approval_` id; otherwise
+ * only a question offering both an explicit positive and an explicit negative
+ * option is answerable. Options are never pooled across questions, so one
+ * question's choice can never become another question's answer.
+ */
+function findApprovalQuestion(questions: unknown): ApprovalQuestionCandidate | null {
+  if (!Array.isArray(questions)) return null;
+  const candidates = questions
+    .map((question) => asRecord(question))
+    .filter((question): question is RecordLike => Boolean(question))
+    .map((question) => readApprovalQuestionCandidate(question))
+    .filter((candidate): candidate is ApprovalQuestionCandidate => Boolean(candidate));
+  return candidates.find((candidate) => candidate.id.startsWith(CODEX_APPROVAL_QUESTION_ID_PREFIX))
+    ?? candidates.find((candidate) => (
+      candidate.labels.some((label) => POSITIVE_CHOICE_LABEL.test(label))
+      && candidate.labels.some((label) => NEGATIVE_CHOICE_LABEL.test(label))
+    ))
+    ?? null;
+}
+
+/**
+ * Canonical semantic mapping from a settled permission outcome to the exact
+ * Codex approval option that expresses it. Approval requires an explicit
+ * positive option; every decline, cancellation, timeout and unavailability
+ * requires an explicit negative option. When the question offers no option
+ * that can truthfully carry the outcome the approval is left unanswered
+ * rather than answered with a choice the user did not make.
+ */
+export function resolveCodexApprovalQuestionChoice(params: Readonly<{
+  questions: unknown;
+  outcome: CodexApprovalOutcome;
+}>): CodexApprovalChoice | null {
+  const question = findApprovalQuestion(params.questions);
+  if (!question) return null;
+  const pick = (predicate: (label: string) => boolean): string | null =>
+    question.labels.find((label) => predicate(label)) ?? null;
+  const positive = (label: string): boolean => POSITIVE_CHOICE_LABEL.test(label);
+  const negative = (label: string): boolean => NEGATIVE_CHOICE_LABEL.test(label);
+  const cancellation = (label: string): boolean => CANCELLATION_CHOICE_LABEL.test(label);
+  const sessionScoped = (label: string): boolean => SESSION_SCOPED_CHOICE_LABEL.test(label);
+  const label = ((): string | null => {
+    switch (params.outcome) {
+      case 'approve_for_session':
+        // A narrower once-scoped grant is a safe downgrade when the question
+        // offers no session-scoped option.
+        return pick((entry) => positive(entry) && sessionScoped(entry))
+          ?? pick((entry) => positive(entry) && !sessionScoped(entry));
+      case 'approve_once':
+        // Never widen a once-scoped grant while a once-scoped option exists.
+        return pick((entry) => positive(entry) && !sessionScoped(entry))
+          ?? pick(positive);
+      case 'deny':
+        return pick(negative) ?? pick(cancellation);
+      case 'cancel':
+        return pick(cancellation) ?? pick(negative);
+    }
+  })();
+  return label ? { questionId: question.id, label } : null;
 }
 
 function normalizeAskUserQuestionEntry(question: unknown): AskUserQuestionEntry | null {

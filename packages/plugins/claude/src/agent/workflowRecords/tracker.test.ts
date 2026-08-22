@@ -350,6 +350,80 @@ describe('createClaudeWorkflowActivityTracker', () => {
     expect(snapshot?.phases[0]?.agentIds).toEqual(['workflow-agent:1']);
   });
 
+  it('files one row per agent when the live stream and the sidecar journal name it differently', () => {
+    // The live `task_progress` stream keys an agent by POSITION (`workflow-agent:<n>`) while the
+    // sidecar journal keys the same agent by its concrete hex id. Both feed this one tracker, so
+    // left alone every agent of every journal-backed run was filed twice — one row `running`
+    // forever beside the row that actually finished.
+    //
+    // The row identity that already exists wins and the other name joins it as `vendorRef`: dev's
+    // agent id is what `buildAgentActivityEntryId` publishes and what the client merges on, so
+    // renaming a row that is already on screen would remount it and split its handle.
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(workflowToolUseWithScript({
+      id: 'toolu_wf',
+      script: `
+export const meta = { name: 'audit', phases: [{ title: 'Investigate' }] }
+phase('Investigate')
+await parallel([agent('Read the docs', { label: 'docs', phase: 'Investigate' })])
+`,
+    }), { updatedAt: 1000 });
+    tracker.observe(taskProgress({
+      toolUseId: 'toolu_wf',
+      workflowProgress: [
+        { type: 'workflow_phase', index: 1, title: 'Investigate' },
+        { type: 'workflow_agent', index: 1, label: 'docs', agentId: 'ada15d97cdea9c7fd', phaseIndex: 1, state: 'running' },
+      ],
+    }), { updatedAt: 2000 });
+    tracker.observe(workflowJournal({
+      workflowToolUseId: 'toolu_wf',
+      type: 'started',
+      key: 'v2:first',
+      agentId: 'ada15d97cdea9c7fd',
+    }), { updatedAt: 2100 });
+
+    const snapshot = tracker.getRunSnapshot('toolu_wf');
+    expect(snapshot?.agents).toHaveLength(1);
+    expect(snapshot?.agents[0]).toMatchObject({
+      id: 'workflow-agent:1',
+      vendorRef: 'ada15d97cdea9c7fd',
+    });
+    expect(snapshot?.phases.find((p) => p.title === 'Investigate')?.agentIds).toEqual(['workflow-agent:1']);
+  });
+
+  it('folds a positional row into the concrete row the journal filed first', () => {
+    // Arrival order is not guaranteed. When the journal named the agent first, ITS id is the row
+    // identity and the later positional fact joins it — still one row, still no rename.
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(workflowToolUseWithScript({
+      id: 'toolu_wf',
+      script: `
+export const meta = { name: 'audit', phases: [{ title: 'Investigate' }] }
+phase('Investigate')
+await parallel([agent('Read the docs', { label: 'docs', phase: 'Investigate' })])
+`,
+    }), { updatedAt: 1000 });
+    tracker.observe(workflowJournal({
+      workflowToolUseId: 'toolu_wf',
+      type: 'started',
+      key: 'v2:first',
+      agentId: 'ada15d97cdea9c7fd',
+    }), { updatedAt: 2000 });
+    tracker.observe(taskProgress({
+      toolUseId: 'toolu_wf',
+      workflowProgress: [
+        { type: 'workflow_agent', index: 1, label: 'docs', agentId: 'ada15d97cdea9c7fd', state: 'done' },
+      ],
+    }), { updatedAt: 2100 });
+
+    const snapshot = tracker.getRunSnapshot('toolu_wf');
+    expect(snapshot?.agents).toHaveLength(1);
+    expect(snapshot?.agents[0]).toMatchObject({
+      id: 'ada15d97cdea9c7fd',
+      status: 'complete',
+    });
+  });
+
   it('does not reopen terminal agents from stale progress for the same attempt', () => {
     const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
     tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'ship-feature' }), { updatedAt: 1000 });
@@ -753,5 +827,67 @@ await parallel([
       completedAgents: 0,
     }, { updatedAt: 5000 }).changedRunIds).toEqual([]);
     expect(tracker.getRunSnapshot('toolu_live')).toMatchObject({ status: 'active' });
+  });
+
+  it('resolves the agents of a run it reconciles as interrupted', () => {
+    // Crash recovery was run-scoped while the surface is agent-scoped: the run went `stopped` and
+    // every agent inside it stayed `active` forever, so the roster kept spinning on work whose
+    // process is gone.
+    // Replay, not live: the transcript the dead process left behind rebuilds the run and its agents
+    // in this process, which never saw any of it happen.
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(workflowToolUse({ id: 'toolu_wf', name: 'ship-feature' }), { updatedAt: 1000, live: false });
+    tracker.observe(taskProgress({
+      toolUseId: 'toolu_wf',
+      workflowProgress: [
+        { type: 'workflow_agent', index: 1, label: 'researcher', state: 'running' },
+        { type: 'workflow_agent', index: 2, label: 'reviewer', state: 'done' },
+      ],
+    }), { updatedAt: 2000, live: false });
+
+    tracker.reconcileInterruptedRunFromHeadline({
+      runId: 'toolu_wf',
+      title: 'ship-feature',
+      totalAgents: 2,
+      completedAgents: 1,
+    }, { updatedAt: 5000 });
+
+    const snapshot = tracker.getRunSnapshot('toolu_wf');
+    expect(snapshot).toMatchObject({ status: 'stopped', statusReason: 'interrupted' });
+    expect(snapshot?.agents.map((a) => a.status)).toEqual(['cancelled', 'complete']);
+  });
+
+  it('rebuilds the agents a dead process published but this one never observed', () => {
+    // The workflow headline carries agent COUNTS only, so a run rebuilt from it alone could name no
+    // agent at all — the roster showed a stopped run with nothing in it. The agent-activity headline
+    // does carry identities, and carrying them back is what lets an orphaned agent be REPLACED with
+    // a truthful ending instead of vanishing from the session's history.
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+
+    tracker.reconcileInterruptedRunFromHeadline({
+      runId: 'wf_stale',
+      title: 'Big workflow',
+      workflowToolUseId: 'toolu_stale',
+      totalAgents: 2,
+      completedAgents: 0,
+      orphanAgents: [
+        { agentId: 'workflow-agent:1', title: 'researcher', updatedAt: 4_000, startedAt: 3_000 },
+        { agentId: 'workflow-agent:2', title: 'reviewer', updatedAt: 4_100 },
+      ],
+    }, { updatedAt: 5000 });
+
+    const snapshot = tracker.getRunSnapshot('wf_stale');
+    expect(snapshot).toMatchObject({ status: 'stopped', statusReason: 'interrupted' });
+    expect(snapshot?.agents).toHaveLength(2);
+    expect(snapshot?.agents[0]).toMatchObject({
+      id: 'workflow-agent:1',
+      title: 'researcher',
+      status: 'cancelled',
+      startedAt: 3_000,
+    });
+    // The agent's own last evidence, not the moment recovery ran: stamping the sweep clock here
+    // would inflate every rebuilt row's elapsed time by however long the session was down.
+    expect(snapshot?.agents[0]?.updatedAt).toBe(4_000);
+    expect(snapshot?.agents[1]).toMatchObject({ id: 'workflow-agent:2', status: 'cancelled' });
   });
 });

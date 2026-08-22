@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
   PluginInvocationContext,
   TargetedContributionPointRef,
@@ -219,7 +220,8 @@ class MemoryCollection {
       const matches = typeof rowId === 'string'
         && (expectedRevision === 'absent'
           ? current === undefined
-          : current?.revision === expectedRevision
+          : current !== undefined
+            && current.revision === expectedRevision
             && (operation.kind === 'put' || current.deleted !== true));
       if (!matches) {
         return {
@@ -660,7 +662,7 @@ function backgroundContext(input: Readonly<{
   collection?: (definition: Readonly<{ id: string }>) => MemoryCollection | undefined;
   targetedContributions?: TargetedContributionsService;
 }>): BackgroundServiceContext {
-  const collections = new Map([
+  const collections = new Map<string, MemoryCollection>([
     [CHANNEL_STATE_COLLECTION.id, input.state],
     [CHANNEL_DELIVERIES_COLLECTION.id, input.deliveries],
   ]);
@@ -1769,6 +1771,66 @@ describe('Channels outward-delivery supervisor', () => {
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
   });
 
+  it('surfaces a rejected transcript cursor instead of retrying it invisibly forever', async () => {
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await seedProjectionState(state);
+    const logger = { warn: vi.fn() };
+    const execute = vi.fn(async (action: string) => {
+      if (action !== 'session.transcript.get') throw new Error(`Unexpected Action ${action}`);
+      throw new PluginError({
+        code: 'invalid_cursor',
+        message: 'secret transcript cursor detail',
+      });
+    });
+    const context = backgroundContext({
+      state,
+      deliveries,
+      execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(),
+      logger,
+    });
+
+    await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
+
+    // A typed history gap never throws, so the cycle looks healthy: this is the
+    // only signal that the binding can no longer advance.
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[Channels] Session projection cannot advance its transcript frontier',
+      { boundary: 'transcript-projection', bindingId: 'binding-1', reason: 'cursorRejected' },
+    );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('secret');
+  });
+
+  it('stays quiet while the transcript frontier advances normally', async () => {
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await seedProjectionState(state);
+    const logger = { warn: vi.fn() };
+    const execute = vi.fn(async (action: string) => {
+      if (action !== 'session.transcript.get') throw new Error(`Unexpected Action ${action}`);
+      return {
+        ok: true,
+        projection: 'externalShareableV1',
+        sessionId: 'session-1',
+        scannedThroughSeq: 0,
+        hasMore: false,
+        items: [],
+      };
+    });
+    const context = backgroundContext({
+      state,
+      deliveries,
+      execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(),
+      logger,
+    });
+
+    await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
+
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
   it('C3 RED logs a production delete-finalization failure without retaining error text', async () => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
@@ -1786,7 +1848,7 @@ describe('Channels outward-delivery supervisor', () => {
       };
     });
     const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn();
-    const collections = new Map([
+    const collections = new Map<string, MemoryCollection>([
       [CHANNEL_STATE_COLLECTION.id, state],
       [CHANNEL_DELIVERIES_COLLECTION.id, deliveries],
     ]);
@@ -2392,7 +2454,7 @@ describe('Channels outward-delivery supervisor', () => {
       ));
       if (rejectNextFrontierAdvance && advancesFrontier) {
         rejectNextFrontierAdvance = false;
-        return { status: 'conflict' as const, results: [] };
+        return { status: 'conflict' as const, conflicts: [] };
       }
       return await originalBatch(operations);
     };

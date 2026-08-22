@@ -14,6 +14,7 @@ import {
 } from './collections.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import { BINDINGS_RESOURCE_RUNTIME } from './bindingsResource.js';
+import { declaredResourceMaxBytes, resourceText } from './testkit/resourceContract.js';
 
 class MemoryAccountCollection {
   readonly rows = new Map<string, Readonly<{
@@ -155,7 +156,7 @@ describe('Channels bindings Resource', () => {
 
     const serialized = await BINDINGS_RESOURCE_RUNTIME.read(resourceReadOptions(accountStorageFor(state)));
 
-    expect(JSON.parse(serialized)).toEqual({
+    expect(JSON.parse(resourceText(serialized))).toEqual({
       bindings: [
         {
           bindingId: 'binding-automation',
@@ -248,12 +249,8 @@ describe('Channels bindings Resource', () => {
     }
 
     const serialized = await BINDINGS_RESOURCE_RUNTIME.read(resourceReadOptions(accountStorageFor(state)));
-    const declaredResource = PLUGIN_MANIFEST.contributes.resources.find(
-      (resource) => resource.id === 'bindings-v1',
-    );
-    if (declaredResource === undefined) throw new Error('Expected the bindings-v1 Resource declaration.');
 
-    const projection = JSON.parse(serialized) as Readonly<{ bindings: readonly Readonly<{
+    const projection = JSON.parse(resourceText(serialized)) as Readonly<{ bindings: readonly Readonly<{
       endpoint: Readonly<{ label?: string }>;
       target: Readonly<{ summary: string }>;
     }>[] }>;
@@ -262,7 +259,8 @@ describe('Channels bindings Resource', () => {
       Array.from(binding.endpoint.label ?? '').length <= 28
       && Array.from(binding.target.summary).length <= 28
     ))).toBe(true);
-    expect(new TextEncoder().encode(serialized).byteLength).toBeLessThanOrEqual(declaredResource.maxBytes);
+    expect(new TextEncoder().encode(resourceText(serialized)).byteLength)
+      .toBeLessThanOrEqual(declaredResourceMaxBytes('bindings-v1'));
   });
 
   it('invalidates the current snapshot on a binding-row change and disposes its one Collection watch', () => {

@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type {
+    OauthCredentialRecord,
+    TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
     computeClaudeCodeCredentialFingerprint,
@@ -47,7 +50,7 @@ export function resolveClaudeCodeNativeAuthProvenancePath(claudeConfigDir: strin
 }
 
 export function buildClaudeCodeNativeAuthProvenance(params: Readonly<{
-    record: ConnectedServiceCredentialRecordV1;
+    record: OauthCredentialRecord | TokenCredentialRecord;
     payload: ClaudeCodeNativeCredentialPayload;
     groupId?: string;
     generation?: number;

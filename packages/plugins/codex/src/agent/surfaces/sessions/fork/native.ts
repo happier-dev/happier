@@ -1,4 +1,5 @@
 import { readThreadId } from '../../../runtime/appServer/wire/fields.js';
+import { isCodexAppServerApplicationRejectionForMethod } from '../../../runtime/appServer/compatibility.js';
 
 export const CODEX_APP_SERVER_NATIVE_FORK_METHODS = ['thread/fork', 'conversation/fork'] as const;
 
@@ -11,6 +12,7 @@ export type CodexAppServerNativeForkClient = Readonly<{
       threadId: string;
       persistExtendedHistory: true;
     }>,
+    options?: Readonly<{ timeoutMs?: number | null }>,
   ): Promise<unknown>;
 }>;
 
@@ -25,15 +27,56 @@ export type CodexAppServerNativeForkResult = Readonly<{
   providerSessionId: string;
 }>;
 
-export async function forkCodexNativeAppServerConversation(params: Readonly<{
+export type CodexAppServerNativeForkOutcome =
+  | Readonly<{ kind: 'succeeded'; result: CodexAppServerNativeForkResult }>
+  | Readonly<{ kind: 'unsupported' }>
+  | Readonly<{ kind: 'failed_before_dispatch'; cause: unknown }>
+  | Readonly<{ kind: 'indeterminate_after_dispatch'; cause: unknown }>;
+
+type CodexAppServerNativeForkFailureOutcome = Extract<
+  CodexAppServerNativeForkOutcome,
+  { kind: 'failed_before_dispatch' | 'indeterminate_after_dispatch' }
+>;
+
+export class CodexAppServerNativeForkFailure extends Error {
+  readonly outcome: CodexAppServerNativeForkFailureOutcome['kind'];
+
+  constructor(outcome: CodexAppServerNativeForkFailureOutcome) {
+    super(
+      outcome.kind === 'failed_before_dispatch'
+        ? 'Codex native fork failed before dispatch.'
+        : 'Codex native fork outcome is unknown. Check the existing child session before retrying.',
+      { cause: outcome.cause },
+    );
+    this.name = 'CodexAppServerNativeForkFailure';
+    this.outcome = outcome.kind;
+  }
+}
+
+const NATIVE_FORK_REQUEST_OPTIONS = Object.freeze({ timeoutMs: null });
+
+function isDefinitiveNativeForkMethodUnsupported(
+  error: unknown,
+  method: CodexAppServerNativeForkMethod,
+): boolean {
+  return isCodexAppServerApplicationRejectionForMethod(error, method)
+    && (error as Readonly<{ code?: unknown }>).code === -32601;
+}
+
+async function attemptCodexNativeAppServerConversationFork(params: Readonly<{
   client: CodexAppServerNativeForkClient;
   parentCodexSessionId: string;
   onEvent?: (event: CodexAppServerNativeForkEvent) => void;
-}>): Promise<CodexAppServerNativeForkResult | null> {
+}>): Promise<CodexAppServerNativeForkOutcome> {
   const parentCodexSessionId = typeof params.parentCodexSessionId === 'string'
     ? params.parentCodexSessionId.trim()
     : '';
-  if (!parentCodexSessionId) return null;
+  if (!parentCodexSessionId) {
+    return {
+      kind: 'failed_before_dispatch',
+      cause: new Error('Codex native fork requires a parent thread id.'),
+    };
+  }
 
   for (const method of CODEX_APP_SERVER_NATIVE_FORK_METHODS) {
     params.onEvent?.({ type: 'methodAttempt', method });
@@ -42,20 +85,40 @@ export async function forkCodexNativeAppServerConversation(params: Readonly<{
       response = await params.client.request(method, {
         threadId: parentCodexSessionId,
         persistExtendedHistory: true,
-      });
+      }, NATIVE_FORK_REQUEST_OPTIONS);
     } catch (error) {
+      if (isDefinitiveNativeForkMethodUnsupported(error, method)) {
+        params.onEvent?.({ type: 'methodFailed', method, error });
+        continue;
+      }
       params.onEvent?.({ type: 'methodFailed', method, error });
-      continue;
+      return { kind: 'indeterminate_after_dispatch', cause: error };
     }
 
     const providerSessionId = readThreadId(response);
     if (providerSessionId) {
+      const result = { providerSessionId };
       params.onEvent?.({ type: 'methodSucceeded', method, providerSessionId });
-      return { providerSessionId };
+      return { kind: 'succeeded', result };
     }
     params.onEvent?.({ type: 'methodReturnedNoThreadId', method, response });
+    return {
+      kind: 'indeterminate_after_dispatch',
+      cause: new Error(`Codex native fork '${method}' returned no child thread id.`),
+    };
   }
 
   params.onEvent?.({ type: 'methodsExhausted' });
-  return null;
+  return { kind: 'unsupported' };
+}
+
+export async function forkCodexNativeAppServerConversation(params: Readonly<{
+  client: CodexAppServerNativeForkClient;
+  parentCodexSessionId: string;
+  onEvent?: (event: CodexAppServerNativeForkEvent) => void;
+}>): Promise<CodexAppServerNativeForkResult | null> {
+  const outcome = await attemptCodexNativeAppServerConversationFork(params);
+  if (outcome.kind === 'succeeded') return outcome.result;
+  if (outcome.kind === 'unsupported') return null;
+  throw new CodexAppServerNativeForkFailure(outcome);
 }

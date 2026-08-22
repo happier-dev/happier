@@ -18,22 +18,12 @@
 
 import type { GitlabResponseHeaders } from './gitlabHeaders.js';
 
-/**
- * GitLab documents its request quota as a per-minute window and, for a differently
- * configured period, approximates it to "the nearest 60-minute period". A reset
- * further out than that is not a rate-limit window, so it is clamped rather than
- * allowed to park the source indefinitely.
- */
-export const GITLAB_MAX_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
-
 export type GitlabRetryEvidenceSource = 'retry-after' | 'ratelimit-reset' | 'ratelimit-reset-time';
 
 export type GitlabRetryEvidence = Readonly<{
-  /** Absolute epoch milliseconds. */
+  /** Absolute epoch milliseconds, exactly as GitLab stated it. */
   retryNotBeforeMs: number;
   source: GitlabRetryEvidenceSource;
-  /** True when GitLab's value exceeded the documented maximum window and was clamped. */
-  clamped: boolean;
 }>;
 
 function readDeltaSeconds(raw: string | null): number | null {
@@ -58,18 +48,17 @@ function readHttpDateMs(raw: string | null): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function clamp(nowMs: number, deadlineMs: number): { deadlineMs: number; clamped: boolean } {
-  const ceiling = nowMs + GITLAB_MAX_RATE_LIMIT_WINDOW_MS;
-  return deadlineMs > ceiling
-    ? { deadlineMs: ceiling, clamped: true }
-    : { deadlineMs, clamped: false };
-}
-
 /**
  * Converts GitLab's own retry evidence into an absolute deadline using the injected
  * clock. Returns `null` when GitLab supplied none — an application-level limit can
  * answer `429` without quota headers, and inventing a schedule there would turn one
  * user-driven read into a scheduler.
+ *
+ * The value is GitLab's, unbounded: how long the aggregate is willing to wait on a
+ * provider statement is one pacing decision owned by the single consumer that
+ * honours it (`plugins/triage` `refresh/refreshEligibility.ts`). A private ceiling
+ * here would be a fifth owner of that policy and would hide a skewed header from
+ * the one place that can bound it for every source.
  */
 export function readGitlabRetryEvidence(
   headers: GitlabResponseHeaders,
@@ -78,24 +67,20 @@ export function readGitlabRetryEvidence(
   // `Retry-After` is the response's own instruction and wins when present.
   const retryAfterSeconds = readDeltaSeconds(headers.get('retry-after'));
   if (retryAfterSeconds !== null) {
-    const { deadlineMs, clamped } = clamp(nowMs, nowMs + retryAfterSeconds * 1000);
-    return { retryNotBeforeMs: deadlineMs, source: 'retry-after', clamped };
+    return { retryNotBeforeMs: nowMs + retryAfterSeconds * 1000, source: 'retry-after' };
   }
 
   const resetSeconds = readEpochSeconds(headers.get('ratelimit-reset'));
   if (resetSeconds !== null) {
     const absoluteMs = resetSeconds * 1000;
-    if (absoluteMs > nowMs) {
-      const { deadlineMs, clamped } = clamp(nowMs, absoluteMs);
-      return { retryNotBeforeMs: deadlineMs, source: 'ratelimit-reset', clamped };
-    }
-    return null;
+    return absoluteMs > nowMs
+      ? { retryNotBeforeMs: absoluteMs, source: 'ratelimit-reset' }
+      : null;
   }
 
   const resetTimeMs = readHttpDateMs(headers.get('ratelimit-resettime'));
   if (resetTimeMs !== null && resetTimeMs > nowMs) {
-    const { deadlineMs, clamped } = clamp(nowMs, resetTimeMs);
-    return { retryNotBeforeMs: deadlineMs, source: 'ratelimit-reset-time', clamped };
+    return { retryNotBeforeMs: resetTimeMs, source: 'ratelimit-reset-time' };
   }
 
   return null;

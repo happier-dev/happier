@@ -442,18 +442,18 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
         });
         return serializedByteLength(withoutTitles) <= request.maxSerializedBytes
           ? withoutTitles
-          : failed('invalid_request', 'Oh My Pi candidate result byte budget cannot fit the page envelope.');
+          : failed('agent_error', 'Oh My Pi candidate result byte budget cannot fit the page envelope.', false);
       } catch (error) {
         const after = invocationFailure(request);
         if (after) return after;
         if (error instanceof OhMyPiCandidateSourceChangedError) {
           return failed('source_invalid', error.message, true);
         }
-        if (
-          error instanceof OhMyPiCandidateInvalidCursorError
-          || error instanceof OhMyPiCandidateResultBudgetTooSmallError
-        ) {
+        if (error instanceof OhMyPiCandidateInvalidCursorError) {
           return failed('invalid_request', error.message);
+        }
+        if (error instanceof OhMyPiCandidateResultBudgetTooSmallError) {
+          return failed('agent_error', error.message, false);
         }
         return failed(
           'agent_unavailable',
@@ -549,7 +549,7 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
         const mapped = mapTranscriptPage(page);
         return serializedByteLength(mapped) <= request.maxSerializedBytes
           ? mapped
-          : failed('invalid_request', 'Oh My Pi transcript result byte budget cannot fit the page envelope.');
+          : failed('agent_error', 'Oh My Pi transcript result byte budget cannot fit the page envelope.', false);
       } catch (error) {
         const after = invocationFailure(request);
         if (after) return after;
@@ -581,7 +581,7 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
         const mapped = mapReadAfterPage(page, request.cursor);
         return serializedByteLength(mapped) <= request.maxSerializedBytes
           ? mapped
-          : failed('invalid_request', 'Oh My Pi transcript result byte budget cannot fit the page envelope.');
+          : failed('agent_error', 'Oh My Pi transcript result byte budget cannot fit the page envelope.', false);
       } catch (error) {
         const after = invocationFailure(request);
         if (after) return after;

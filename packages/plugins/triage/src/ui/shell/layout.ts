@@ -1,5 +1,3 @@
-import type { TriageRowGeometryV1, TriageScaledTypeMetricsV1 } from '../list/geometry.js';
-
 /**
  * Measured split/stacked composition for the PRs & Issues shell.
  *
@@ -44,14 +42,34 @@ const TRIAGE_DETAIL_BODY_MEASURE_CHARACTERS_V1 = 45;
  */
 const AVERAGE_CHARACTER_ADVANCE_PER_FONT_SIZE = 0.5;
 
+/**
+ * One already-scaled text role metric projected from the host theme.
+ *
+ * The canonical text-scale owner is `@happier-dev/plugin-ui`'s `Text`
+ * presentation (`scaleTextStyleMetrics`), which the surface applies to the
+ * host-projected `SurfaceContext.theme.typography` before measuring here.
+ * Rescaling locally would put a second text-scale decision in the product.
+ */
+export type TriageScaledLineMetricsV1 = Readonly<{
+  fontSize: number;
+  lineHeight: number;
+}>;
+
+/** The four text roles the pane minima below are measured from. */
+export type TriageScaledTypeMetricsV1 = Readonly<{
+  title: TriageScaledLineMetricsV1;
+  body: TriageScaledLineMetricsV1;
+  caption: TriageScaledLineMetricsV1;
+  label: TriageScaledLineMetricsV1;
+}>;
+
 export type TriageLayoutV1 =
   | Readonly<{
       mode: 'split';
-      rowGeometry: TriageRowGeometryV1;
       /** The resolved ratio AFTER both pane minima have clamped the preference. */
       listRatio: number;
     }>
-  | Readonly<{ mode: 'stacked'; rowGeometry: TriageRowGeometryV1 }>;
+  | Readonly<{ mode: 'stacked' }>;
 
 type TriagePaneSpacingV1 = Readonly<{ xsmall: number; small: number; medium: number }>;
 
@@ -62,7 +80,6 @@ export type TriagePaneMeasureInputV1 = Readonly<{
 
 export type TriageLayoutInputV1 = TriagePaneMeasureInputV1 & Readonly<{
   availableWidth: number;
-  rowGeometry: TriageRowGeometryV1;
 }>;
 
 /**
@@ -96,7 +113,7 @@ export function resolveTriageLayoutV1(input: TriageLayoutInputV1): TriageLayoutV
   const detailMinimum = resolveTriageDetailPaneMinimumWidthV1(input);
 
   if (input.availableWidth < listMinimum + detailMinimum) {
-    return Object.freeze({ mode: 'stacked', rowGeometry: input.rowGeometry });
+    return Object.freeze({ mode: 'stacked' });
   }
 
   // Both minima clamp the one static preference. The measured width already
@@ -106,7 +123,7 @@ export function resolveTriageLayoutV1(input: TriageLayoutInputV1): TriageLayoutV
     1 - detailMinimum / input.availableWidth,
   );
 
-  return Object.freeze({ mode: 'split', rowGeometry: input.rowGeometry, listRatio });
+  return Object.freeze({ mode: 'split', listRatio });
 }
 
 function measure(fontSize: number, characters: number): number {

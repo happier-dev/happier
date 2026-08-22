@@ -14,11 +14,27 @@ import { claudeExternalSessionObservationContribution } from './agent/surfaces/s
 import { claudeExternalSessionTakeoverContribution } from './agent/surfaces/sessions/external/takeover.js';
 
 describe('activate', () => {
+    it('reexports the activation compiled by its canonical public plugin definition', async () => {
+        expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
+            'agents',
+            'connectedAccountDescriptors',
+            'hooks',
+            'mcp',
+            'providers',
+            'settings',
+            'systemTools',
+            'ui',
+        ]);
+        expect(await import('./manifest.js')).toEqual(expect.objectContaining({
+            CLAUDE_PLUGIN: expect.objectContaining({ manifest: PLUGIN_MANIFEST, activate }),
+        }));
+    });
+
     afterEach(() => {
         vi.unstubAllEnvs();
     });
 
-    it('registers the Claude config MCP discovery provider through the plugin API', async () => {
+    it('registers the Claude config MCP discovery source through the plugin API', async () => {
         const root = await mkdtemp(join(tmpdir(), 'claude-plugin-mcp-'));
         const configRoot = join(root, '.claude');
         await mkdir(configRoot, { recursive: true });
@@ -29,6 +45,9 @@ describe('activate', () => {
                     review: {
                         command: 'review-mcp',
                         args: ['--stdio'],
+                    },
+                    docs: {
+                        url: 'https://mcp.example.test/docs',
                     },
                 },
             }),
@@ -42,12 +61,51 @@ describe('activate', () => {
 
         expect(agent).toEqual(expect.objectContaining({
             factory: expect.any(Function),
-            providerBinding: CLAUDE_PROVIDER_BINDING_ADAPTER_V1,
-            externalSessions: claudeExternalSessionsContribution,
-            externalSessionTakeover: claudeExternalSessionTakeoverContribution,
-            externalSessionObservation: claudeExternalSessionObservationContribution,
-            externalSessionHooks: claudeExternalSessionHooksContribution,
+            providerBinding: {
+                v: 1,
+                adapterVersion: CLAUDE_PROVIDER_BINDING_ADAPTER_V1.adapterVersion,
+                prepare: expect.any(Function),
+                materialize: expect.any(Function),
+            },
+            externalSessions: {
+                resolveSource: expect.any(Function),
+                listCandidates: expect.any(Function),
+                resolveLinkIdentity: expect.any(Function),
+                resolveLinkedIdentity: expect.any(Function),
+                pageTranscript: expect.any(Function),
+                readAfterTranscript: expect.any(Function),
+            },
+            externalSessionTakeover: { resolveLaunch: expect.any(Function) },
+            externalSessionObservation: {
+                describeResource: expect.any(Function),
+                observeResource: expect.any(Function),
+                reconcileResource: expect.any(Function),
+            },
+            externalSessionHooks: {
+                installationVariants: claudeExternalSessionHooksContribution.installationVariants,
+                resolveInstallation: expect.any(Function),
+                mapHookEvent: expect.any(Function),
+            },
         }));
+        expect(agent?.providerBinding).not.toBe(CLAUDE_PROVIDER_BINDING_ADAPTER_V1);
+        expect(agent?.externalSessions).not.toBe(claudeExternalSessionsContribution);
+        expect(agent?.externalSessionTakeover).not.toBe(
+            claudeExternalSessionTakeoverContribution,
+        );
+        expect(agent?.externalSessionObservation).not.toBe(
+            claudeExternalSessionObservationContribution,
+        );
+        expect(agent?.externalSessionHooks).not.toBe(
+            claudeExternalSessionHooksContribution,
+        );
+        const prepareInput = {
+            v: 1 as const,
+            agentTargetKey: 'backend:claude:built_in',
+            connectionId: 'pc_claude_activation_test',
+        };
+        expect(agent?.providerBinding?.prepare(prepareInput)).toEqual(
+            CLAUDE_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput),
+        );
         expect(Object.keys(
             agent?.externalSessions ?? {},
         ).sort()).toEqual([
@@ -73,27 +131,21 @@ describe('activate', () => {
             'resolveInstallation',
         ]);
         expect(activation.registrations()).toEqual(expect.arrayContaining([
-            { family: 'mcp.discoveryProviders', localId: 'config' },
+            { family: 'mcp.discoverySources', localId: 'config' },
             { family: 'hooks', localId: 'resolve-prerequisites' },
             { family: 'hooks', localId: 'augment-spawn-env' },
         ]));
 
-        const discovery = activation.registration('mcp.discoveryProviders', 'config');
+        const discovery = activation.registration('mcp.discoverySources', 'config');
         if (!discovery) throw new Error('Missing Claude MCP discovery registration');
         await expect(Reflect.apply(discovery, undefined, [{}])).resolves.toEqual({
             items: [],
-            servers: [
+            endpoints: [
                 expect.objectContaining({
-                    id: 'claude.config.review',
-                    name: 'review',
-                    transport: {
-                        kind: 'stdio',
-                        launch: {
-                            kind: 'binary',
-                            executablePath: 'review-mcp',
-                            args: ['--stdio'],
-                        },
-                    },
+                    id: 'claude.config.docs',
+                    name: 'docs',
+                    kind: 'http',
+                    url: 'https://mcp.example.test/docs',
                 }),
             ],
             warnings: [],
@@ -112,12 +164,12 @@ describe('activate', () => {
 
         const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
 
-        const discovery = activation.registration('mcp.discoveryProviders', 'config');
+        const discovery = activation.registration('mcp.discoverySources', 'config');
         if (!discovery) throw new Error('Missing Claude MCP discovery registration');
 
         await expect(Reflect.apply(discovery, undefined, [{}])).resolves.toEqual({
             items: [],
-            servers: [],
+            endpoints: [],
             warnings: [{
                 provider: 'claude',
                 code: 'parse_failed',

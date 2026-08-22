@@ -47,6 +47,7 @@ function pairingBinding(id: string): ConversationPairingBinding {
     senderFeedback: 'off',
     authorityEpoch: 1,
     enabled: false,
+    deletionState: 'none',
     createdAt: 1_000,
     updatedAt: 1_000,
   };
@@ -308,6 +309,39 @@ describe('Channels pre-binding pairing', () => {
     expect(attempt('person-2', '/pair 00000001')).toMatchObject({ kind: 'matched' });
   });
 
+  it('charges one redelivered occurrence to the requester budget exactly once', () => {
+    const now = { value: 1_000 };
+    const manager = createManager(now);
+    manager.createChallenge({
+      connectionId: 'connection-1',
+      expectedConnectionRevision: 1,
+      materialization,
+      destinationLabel: 'Telegram bot',
+      target: sessionTarget,
+    });
+    const typo = {
+      censusId: 'census-redelivered-1',
+      connectionId: 'connection-1',
+      materialization,
+      endpoint: directEndpoint,
+      actor: { principalId: 'person-1', kind: 'human' as const, isIntegrationSelf: false },
+      contentProvenance: 'original' as const,
+      command: classifyConversationCommand('/pair 00000002'),
+    };
+
+    const first = manager.preparePreBindingMessage(typo);
+    expect(first).toEqual({ kind: 'silent', ownerReason: 'tokenMismatch', attemptsRemaining: 4 });
+    for (let redelivery = 0; redelivery < 8; redelivery += 1) {
+      expect(manager.preparePreBindingMessage(typo)).toEqual(first);
+    }
+
+    expect(manager.preparePreBindingMessage({ ...typo, censusId: 'census-redelivered-2' })).toEqual({
+      kind: 'silent',
+      ownerReason: 'tokenMismatch',
+      attemptsRemaining: 3,
+    });
+  });
+
   it('scopes a requester failure budget to its authenticated connection', () => {
     const now = { value: 1_000 };
     const manager = createManager(now);
@@ -352,7 +386,7 @@ describe('Channels pre-binding pairing', () => {
     });
 
     for (const rejected of [
-      { endpoint: { ...directEndpoint, audience: 'shared' as const }, actor: { principalId: 'person-1', kind: 'human' as const, isIntegrationSelf: false }, contentProvenance: 'original' as const },
+      { endpoint: { ...directEndpoint, kind: 'shared' as const, audience: 'shared' as const }, actor: { principalId: 'person-1', kind: 'human' as const, isIntegrationSelf: false }, contentProvenance: 'original' as const },
       { endpoint: directEndpoint, actor: { principalId: 'bot-1', kind: 'bot' as const, isIntegrationSelf: false }, contentProvenance: 'original' as const },
       { endpoint: directEndpoint, actor: { principalId: 'person-1', kind: 'human' as const, isIntegrationSelf: false }, contentProvenance: 'forwarded' as const },
       { endpoint: directEndpoint, actor: { principalId: 'self', kind: 'integration' as const, isIntegrationSelf: true }, contentProvenance: 'original' as const },
@@ -373,6 +407,45 @@ describe('Channels pre-binding pairing', () => {
       contentProvenance: 'original',
       command: classifyConversationCommand('/pair 00000001'),
     })).toMatchObject({ kind: 'matched' });
+  });
+
+  it('refuses a valid token redeemed from any materialization the challenge did not name', () => {
+    const now = { value: 1_000 };
+    const manager = createManager(now);
+    const challenge = manager.createChallenge({
+      connectionId: 'connection-1',
+      expectedConnectionRevision: 1,
+      materialization,
+      destinationLabel: 'Telegram bot',
+      target: sessionTarget,
+    });
+    // Each field is varied independently below, so the parameter is the
+    // structural ref rather than the exact literal fixture.
+    const redeem = (
+      from: Readonly<{ machineId: string; materializationId: string; pluginId: string }>,
+    ) => completePreBindingMessage(manager, {
+      connectionId: 'connection-1',
+      materialization: from,
+      endpoint: directEndpoint,
+      actor: { principalId: 'person-1', kind: 'human' as const, isIntegrationSelf: false },
+      contentProvenance: 'original' as const,
+      command: classifyConversationCommand(`/pair ${challenge.manualToken}`),
+    });
+
+    // Each field of the ref is load-bearing on its own.
+    for (const wrong of [
+      { ...materialization, materializationId: 'materialization-2' },
+      { ...materialization, machineId: 'machine-2' },
+      { ...materialization, pluginId: 'channel.discord' },
+    ]) {
+      expect(redeem(wrong)).toMatchObject({ kind: 'silent', ownerReason: 'tokenMismatch' });
+    }
+    expect(manager.readChallenge({
+      generationId: challenge.generationId,
+      challengeId: challenge.challengeId,
+    })).toMatchObject({ kind: 'active' });
+
+    expect(redeem(materialization)).toMatchObject({ kind: 'matched' });
   });
 
   it('types expiry and restart for the authenticated owner while external callers stay non-oracular', () => {

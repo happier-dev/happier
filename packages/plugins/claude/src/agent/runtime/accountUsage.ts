@@ -1,13 +1,17 @@
-import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/plugin-sdk/experimental/cloud/usage';
-import { buildProviderAccountUsageOpaqueLocalCredentialRef } from '@happier-dev/plugin-sdk/experimental/cloud/usage';
-import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
+import type {
+  AgentAccountUsageSnapshot,
+  AgentAccountUsageSourceContextInput,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { ClaudeRuntimeLogger } from './dependencies.js';
 
+import { resolveClaudeConfigDirOverride } from '../environment.js';
 import {
   mapClaudeRateLimitEventToUsageDetails,
   mapClaudeRuntimeRateLimitsToUsageObservation,
 } from '../auth/services/runtime/usage.js';
 import { resolveClaudeUsageSubjectRef } from '../auth/services/usage/identity.js';
+import { readClaudeNativeAccountIdentityFromConfigDir } from '../auth/services/native/accountIdentity.js';
 import {
   mapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshot,
   mapClaudeUsageLimitDetailsToProviderAccountUsageSnapshot,
@@ -27,7 +31,6 @@ type ClaudeProviderAccountUsageSourceContext = Readonly<{
   profileId: string;
   bindingKind: 'profile' | 'group_member';
   groupId?: string;
-  groupGeneration?: number;
 }> | null;
 
 export type ClaudeRuntimeAccountUsageService = Readonly<{
@@ -37,10 +40,10 @@ export type ClaudeRuntimeAccountUsageService = Readonly<{
   }>, options?: Readonly<{ signal?: AbortSignal }>): Promise<ClaudeProviderAccountUsageSourceContext>;
   recordSnapshot?(input: Readonly<{
     sessionId?: string | null;
-    snapshot: ProviderAccountUsageSnapshotV1;
-    source?: Exclude<ClaudeProviderAccountUsageSourceContext, null> | null;
+    snapshot: AgentAccountUsageSnapshot;
+    source?: AgentAccountUsageSourceContextInput | null;
   }>, options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<
-    | { status: 'recorded'; recordId?: string; persisted?: boolean }
+    | { status: 'recorded' }
     | { status: 'unavailable' | 'rejected'; reason?: string }
   >>;
 }>;
@@ -63,7 +66,7 @@ function readString(value: unknown): string | null {
 }
 
 function readClaudeConfigDir(env: Readonly<Record<string, string>> | null | undefined): string | null {
-  return readString(env?.CLAUDE_CONFIG_DIR) ?? readString(env?.[HAPPIER_CLAUDE_CONFIG_DIR_ENV]);
+  return env ? resolveClaudeConfigDirOverride(env) : null;
 }
 
 function hasEnvCredential(env: Readonly<Record<string, string>> | null | undefined): boolean {
@@ -80,25 +83,18 @@ function buildRuntimeIdentity(params: Readonly<{
 }>): Readonly<{
   kind: 'nativeCli' | 'envCredential';
   sessionId: string;
-  localCredentialRef?: string;
 }> {
   const claudeConfigDir = readClaudeConfigDir(params.launchEnv);
   if (claudeConfigDir) {
     return {
       kind: 'nativeCli',
       sessionId: params.sessionId,
-      localCredentialRef: buildProviderAccountUsageOpaqueLocalCredentialRef({
-        providerId: 'claude',
-        kind: 'nativeCli',
-        value: claudeConfigDir,
-      }),
     };
   }
   if (hasEnvCredential(params.launchEnv)) {
     return {
       kind: 'envCredential',
       sessionId: params.sessionId,
-      localCredentialRef: 'claude-runtime-env',
     };
   }
   return {
@@ -137,13 +133,27 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
     sessionId: params.sessionId,
     launchEnv: params.launchEnv,
   });
+  const claudeConfigDir = readClaudeConfigDir(params.launchEnv);
+  const liveAccountIdentity = claudeConfigDir
+    ? await readClaudeNativeAccountIdentityFromConfigDir(claudeConfigDir)
+    : null;
+  const serializedConnectedServiceSelection = params.launchEnv?.[
+    HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV
+  ];
+  const sourceAddress = {
+    serviceId: 'claude-subscription',
+    ...(serializedConnectedServiceSelection
+      ? {
+          env: {
+            [HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV]: serializedConnectedServiceSelection,
+          },
+        }
+      : {}),
+  } as const satisfies AgentAccountUsageSourceContextInput;
   let sourceContext: ClaudeProviderAccountUsageSourceContext = null;
   if (typeof service.resolveSourceContext === 'function') {
     try {
-      sourceContext = await service.resolveSourceContext({
-        serviceId: 'claude-subscription',
-        ...(params.launchEnv ? { env: params.launchEnv } : {}),
-      });
+      sourceContext = await service.resolveSourceContext(sourceAddress);
     } catch (error) {
       params.ctx.logger.debug('Claude runtime provider-account usage source context resolution failed (ignored)', {
         errorName: error instanceof Error ? error.name : typeof error,
@@ -152,6 +162,7 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
     }
   }
   const subject = resolveClaudeUsageSubjectRef({
+    oauthAccountUuid: liveAccountIdentity?.providerAccountId ?? null,
     provisionalDiscriminator: buildProvisionalDiscriminator({
       identity,
       sessionId: params.sessionId,
@@ -167,6 +178,7 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
       observation,
       observedAtMs,
       fetchedAtMs: observedAtMs,
+      accountLabel: liveAccountIdentity?.accountLabel ?? null,
     })
     : (() => {
       const details = mapClaudeRateLimitEventToUsageDetails(params.evidence);
@@ -176,6 +188,7 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
         details,
         observedAtMs,
         fetchedAtMs: observedAtMs,
+        accountLabel: liveAccountIdentity?.accountLabel ?? null,
       });
     })();
 
@@ -185,7 +198,9 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
     const result = await service.recordSnapshot({
       sessionId: params.sessionId,
       snapshot,
-      ...(sourceContext ? { source: sourceContext } : {}),
+      ...(sourceContext
+        ? { source: sourceAddress }
+        : {}),
     });
     if (result.status !== 'recorded') {
       params.ctx.logger.debug('Claude runtime provider-account usage snapshot was not recorded', {

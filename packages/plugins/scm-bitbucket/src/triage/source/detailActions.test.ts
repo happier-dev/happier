@@ -36,7 +36,7 @@ function configuredInstance(): TriageConfiguredSourceInstanceV1 {
   return {
     v: 1,
     instance: {
-      source: { pluginId: 'happier.scm.forge.bitbucket', localId: 'bitbucket-cloud' },
+      source: { pluginId: 'happier.scm.forge.bitbucket', localId: 'bitbucket-forge' },
       sourceInstanceId: '2f1c9c4e-8c1f-4a53-9c2a-4c9a7b1d3e05',
     },
     binding: {

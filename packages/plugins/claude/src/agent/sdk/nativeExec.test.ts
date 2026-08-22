@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
-  PluginExecService,
-} from '@happier-dev/plugin-sdk/runtime';
+  ExecService,
+} from '@happier-dev/plugin-sdk/exec';
 
 import { createClaudeNativeSdkQueryContext } from './nativeExec.js';
 
@@ -21,7 +21,7 @@ describe('createClaudeNativeSdkQueryContext', () => {
         executablePath: '/tmp/fake-claude.js',
       };
     });
-    const spawn = vi.fn(async (protocolSpec: Parameters<PluginExecService['clients']['spawn']>[0]) => {
+    const spawn = vi.fn(async (protocolSpec: Parameters<ExecService['clients']['spawn']>[0]) => {
       expect(callOrder).toEqual(['resolve']);
       expect(protocolSpec.launch.executable).toBe(resolvedExecutable);
       callOrder.push('spawn');
@@ -31,7 +31,7 @@ describe('createClaudeNativeSdkQueryContext', () => {
     const exec = {
       systemTools: { resolve: resolveSystemTool },
       clients: { spawn },
-    } as unknown as PluginExecService;
+    } as unknown as ExecService;
     const context = createClaudeNativeSdkQueryContext(exec);
 
     await expect(context.spawnClient({
@@ -85,7 +85,7 @@ describe('createClaudeNativeSdkQueryContext', () => {
         }),
       },
       clients: { spawn },
-    } as unknown as PluginExecService;
+    } as unknown as ExecService;
 
     await expect(createClaudeNativeSdkQueryContext(exec).spawnClient({
       launch: {
@@ -108,7 +108,7 @@ describe('createClaudeNativeSdkQueryContext', () => {
     controller.abort(cancellation);
     const spawn = vi.fn();
     const resolveSystemTool = vi.fn(async (
-      request: Parameters<PluginExecService['systemTools']['resolve']>[0],
+      request: Parameters<ExecService['systemTools']['resolve']>[0],
     ) => {
       request.signal?.throwIfAborted();
       throw new Error('expected the aborted signal to stop resolution');
@@ -116,7 +116,7 @@ describe('createClaudeNativeSdkQueryContext', () => {
     const exec = {
       systemTools: { resolve: resolveSystemTool },
       clients: { spawn },
-    } as unknown as PluginExecService;
+    } as unknown as ExecService;
 
     await expect(createClaudeNativeSdkQueryContext(exec).spawnClient({
       launch: {
@@ -153,7 +153,6 @@ describe('createClaudeNativeSdkQueryContext', () => {
         subscribe: vi.fn(() => ({ dispose() {} })),
       },
       process: {
-        pid: 123,
         write: vi.fn(async () => undefined),
         dispose: vi.fn(async () => undefined),
       },
@@ -170,7 +169,7 @@ describe('createClaudeNativeSdkQueryContext', () => {
       clients: {
         spawn: vi.fn(async () => handle),
       },
-    } as unknown as PluginExecService;
+    } as unknown as ExecService;
     const context = createClaudeNativeSdkQueryContext(exec);
     const clientHandle = await context.spawnClient({
       launch: {
@@ -183,6 +182,23 @@ describe('createClaudeNativeSdkQueryContext', () => {
       },
       protocol: { kind: 'json-stream' },
     });
+
+    expect(clientHandle.process).not.toHaveProperty('pid');
+    expect(clientHandle.process).toEqual(expect.objectContaining({
+      exit: expect.any(Promise),
+      writeStdin: expect.any(Function),
+      kill: expect.any(Function),
+      dispose: expect.any(Function),
+    }));
+
+    const invalidRecordOutcome = await clientHandle.client.writeRecord(undefined);
+    expect(invalidRecordOutcome).toEqual({
+      kind: 'rejected_before_write',
+      error: expect.any(Error),
+    });
+    if (invalidRecordOutcome.kind !== 'written') {
+      expect(invalidRecordOutcome.error.name).toBe('Error');
+    }
 
     await expect(clientHandle.client.writeRecord({ type: 'user' })).resolves.toEqual({
       kind: 'rejected_before_write',

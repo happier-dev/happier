@@ -12,6 +12,7 @@ export const { manifest, activate } = definePlugin({
   actions: {
     'save-note': {
       title: 'Save note',
+      execution: { target: 'daemon' },
       description: 'Stores a note in plugin-local storage and returns it.',
       scopes: ['global'],
       surfaces: ['agent', 'cli', 'mcp'],

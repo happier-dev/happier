@@ -10,10 +10,10 @@ import {
   lstat,
 } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
-import { sleep } from '@happier-dev/plugin-sdk/experimental/timeout';
+import { sleep } from '@happier-dev/plugin-sdk/async';
+
+import { resolveClaudeConfigDir } from '../../../../environment.js';
 
 /**
  * Settings isolation guard for `/model` and `/effort` controls.
@@ -32,10 +32,6 @@ const DEFAULT_LOCK_STALE_MS = 60_000;
 const LOCK_DIR_NAME = '.happier-tui-control.lock';
 const JOURNAL_FILE_NAME = 'settings-journal.json';
 
-function readNonEmpty(value: string | undefined): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
 /**
  * Resolve the Claude config root the SPAWNED process actually uses. Mirrors the auth
  * materialization idiom (`CLAUDE_CONFIG_DIR` explicit override wins, then the Happier-managed
@@ -43,12 +39,7 @@ function readNonEmpty(value: string | undefined): string | null {
  * so Windows launch envs resolve first-class.
  */
 export function resolveClaudeConfigRootFromEnv(env: Readonly<Record<string, string | undefined>>): string {
-  const explicit = readNonEmpty(env.CLAUDE_CONFIG_DIR);
-  if (explicit) return explicit;
-  const managed = readNonEmpty(env[HAPPIER_CLAUDE_CONFIG_DIR_ENV]);
-  if (managed) return managed;
-  const home = readNonEmpty(env.HOME) ?? readNonEmpty(env.USERPROFILE) ?? homedir();
-  return join(home, '.claude');
+  return resolveClaudeConfigDir(env);
 }
 
 export type SettingsGuardSnapshotFile = Readonly<{

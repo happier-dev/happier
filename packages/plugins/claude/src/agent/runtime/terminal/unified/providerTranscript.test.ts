@@ -1,7 +1,7 @@
 import type {
   AgentTranscriptFileFollowHandle as TranscriptFileFollowHandleV1,
   AgentTranscriptFileFollowInput as TranscriptFileFollowInputV1,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ClaudeUnifiedProviderTranscriptBindResult } from './providerTranscript.js';
@@ -624,6 +624,50 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
       },
     })));
     expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).not.toHaveBeenCalled();
+  });
+
+  it('keeps historical compact boundaries lifecycle-inert during resume catch-up while publishing the next live boundary', async () => {
+    const historicalCompactBoundary = {
+      type: 'system',
+      subtype: 'compact_boundary',
+      uuid: 'historical-compact-boundary',
+      session_id: 'claude-session-1',
+      compactMetadata: { trigger: 'auto' },
+    };
+    const { createClaudeUnifiedProviderTranscriptPublisher } = await loadSubject();
+    const ctx = createContext({
+      replayLinesOnFollow: [jsonLine(historicalCompactBoundary)],
+    });
+    const publisher = createClaudeUnifiedProviderTranscriptPublisher({ ctx });
+    publishers.push(publisher);
+
+    await expect(publisher.bindFromSessionHook('claude-session-1', {
+      hook_event_name: 'SessionStart',
+      source: 'resume',
+      session_id: 'claude-session-1',
+      transcript_path: '/tmp/claude-session-1.jsonl',
+    })).resolves.toEqual({
+      status: 'bound',
+      binding: {
+        providerSessionId: 'claude-session-1',
+        transcriptPath: '/tmp/claude-session-1.jsonl',
+      },
+    });
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).not.toHaveBeenCalled();
+
+    const liveCompactBoundary = {
+      type: 'system',
+      subtype: 'compact_boundary',
+      uuid: 'live-compact-boundary',
+      session_id: 'claude-session-1',
+      compactMetadata: { trigger: 'auto' },
+    };
+    await ctx.fileFollows[0]?.emit(jsonLine(liveCompactBoundary));
+
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'compact_boundary',
+      turnId: 'live-compact-boundary',
+    }));
   });
 
   it('does not publish Claude synthetic no-response assistant closures as completion evidence', async () => {

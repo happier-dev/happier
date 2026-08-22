@@ -545,4 +545,200 @@ describe('Codex app-server canonical interaction bridge', () => {
     await expect(pendingApproval).resolves.toEqual({ decision: 'accept' });
     expect(requestApproval).toHaveBeenCalledTimes(1);
   });
+
+  it('never serializes a declined approval as the only positive option', async () => {
+    const fixture = createFixture();
+    const requestApproval = vi.fn(async () => approvalResult('declined'));
+    registerCodexAppServerInteractionHandlers({
+      client: fixture.client,
+      ui: createUi({ requestApproval }),
+      getThreadId: () => 'thread-1',
+    });
+
+    await expect(fixture.invoke('item/tool/requestUserInput', {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'approval-only-positive',
+      autoResolutionMs: null,
+      questions: [{
+        id: 'mcp_tool_call_approval_1',
+        header: 'Approval',
+        question: 'Allow this MCP tool call?',
+        isOther: false,
+        isSecret: false,
+        options: [{ label: 'Approve Once', description: 'Run once' }],
+      }],
+    })).resolves.toEqual({ answers: {} });
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps every non-approval settlement to an explicit negative option', async () => {
+    const fixture = createFixture();
+    const requestApproval = vi.fn()
+      .mockResolvedValueOnce(approvalResult('declined'))
+      .mockResolvedValueOnce(approvalResult('userCancelled'))
+      .mockResolvedValueOnce(approvalResult('unavailable'));
+    registerCodexAppServerInteractionHandlers({
+      client: fixture.client,
+      ui: createUi({ requestApproval }),
+      getThreadId: () => 'thread-1',
+    });
+    const request = (itemId: string) => fixture.invoke('item/tool/requestUserInput', {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId,
+      autoResolutionMs: null,
+      questions: [{
+        id: 'mcp_tool_call_approval_1',
+        header: 'Approval',
+        question: 'Allow this MCP tool call?',
+        isOther: false,
+        isSecret: false,
+        options: [
+          { label: 'Approve Once', description: 'Run once' },
+          { label: 'Approve this Session', description: 'Run for the session' },
+          { label: 'Deny', description: 'Do not run' },
+          { label: 'Cancel', description: 'Cancel this tool call' },
+        ],
+      }],
+    });
+
+    await expect(request('declined-1')).resolves.toEqual({
+      answers: { mcp_tool_call_approval_1: { answers: ['Deny'] } },
+    });
+    await expect(request('cancelled-1')).resolves.toEqual({
+      answers: { mcp_tool_call_approval_1: { answers: ['Cancel'] } },
+    });
+    await expect(request('unavailable-1')).resolves.toEqual({
+      answers: { mcp_tool_call_approval_1: { answers: ['Deny'] } },
+    });
+  });
+
+  it('answers the exact approval question and never cross-associates a sibling option', async () => {
+    const fixture = createFixture();
+    const requestApproval = vi.fn(async () => approvalResult('approved', 'once'));
+    registerCodexAppServerInteractionHandlers({
+      client: fixture.client,
+      ui: createUi({ requestApproval }),
+      getThreadId: () => 'thread-1',
+    });
+
+    await expect(fixture.invoke('item/tool/requestUserInput', {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'approval-with-sibling',
+      autoResolutionMs: null,
+      questions: [
+        {
+          id: 'note',
+          header: 'Note',
+          question: 'Any release note?',
+          isOther: false,
+          isSecret: false,
+          options: [{ label: 'Approve the design doc', description: 'Unrelated wording' }],
+        },
+        {
+          id: 'mcp_tool_call_approval_1',
+          header: 'Approval',
+          question: 'Allow this MCP tool call?',
+          isOther: false,
+          isSecret: false,
+          options: [
+            { label: 'Approve Once', description: 'Run once' },
+            { label: 'Deny', description: 'Do not run' },
+          ],
+        },
+      ],
+    })).resolves.toEqual({
+      answers: { mcp_tool_call_approval_1: { answers: ['Approve Once'] } },
+    });
+  });
+
+  it('keeps a once-scoped approval from escalating to a session-scoped option', async () => {
+    const fixture = createFixture();
+    const requestApproval = vi.fn(async () => approvalResult('approved', 'once'));
+    registerCodexAppServerInteractionHandlers({
+      client: fixture.client,
+      ui: createUi({ requestApproval }),
+      getThreadId: () => 'thread-1',
+    });
+
+    await expect(fixture.invoke('item/tool/requestUserInput', {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'approval-scope',
+      autoResolutionMs: null,
+      questions: [{
+        id: 'mcp_tool_call_approval_1',
+        header: 'Approval',
+        question: 'Allow this MCP tool call?',
+        isOther: false,
+        isSecret: false,
+        options: [
+          { label: 'Approve this Session', description: 'Run for the session' },
+          { label: 'Approve Once', description: 'Run once' },
+          { label: 'Deny', description: 'Do not run' },
+        ],
+      }],
+    })).resolves.toEqual({
+      answers: { mcp_tool_call_approval_1: { answers: ['Approve Once'] } },
+    });
+  });
+
+  it('asks a genuine multi-question form instead of treating cross-question wording as one approval', async () => {
+    const fixture = createFixture();
+    const requestApproval = vi.fn(async () => approvalResult('approved', 'once'));
+    const askQuestions = vi.fn(async () => ({
+      requestId: 'questions-1',
+      kind: 'questions' as const,
+      status: 'answered' as const,
+      answers: {
+        'review-note': {
+          kind: 'singleChoice' as const,
+          answer: { kind: 'choice' as const, choiceId: 'Approve the design doc' },
+        },
+        'rollout-note': {
+          kind: 'singleChoice' as const,
+          answer: { kind: 'choice' as const, choiceId: 'Deny the rollout request' },
+        },
+      },
+    }));
+    registerCodexAppServerInteractionHandlers({
+      client: fixture.client,
+      ui: createUi({ requestApproval, askQuestions }),
+      getThreadId: () => 'thread-1',
+    });
+
+    await expect(fixture.invoke('item/tool/requestUserInput', {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'multi-question-form',
+      autoResolutionMs: null,
+      questions: [
+        {
+          id: 'review-note',
+          header: 'Review',
+          question: 'Which review note applies?',
+          isOther: false,
+          isSecret: false,
+          options: [{ label: 'Approve the design doc', description: 'Unrelated wording' }],
+        },
+        {
+          id: 'rollout-note',
+          header: 'Rollout',
+          question: 'Which rollout note applies?',
+          isOther: false,
+          isSecret: false,
+          options: [{ label: 'Deny the rollout request', description: 'Unrelated wording' }],
+        },
+      ],
+    })).resolves.toEqual({
+      answers: {
+        'review-note': { answers: ['Approve the design doc'] },
+        'rollout-note': { answers: ['Deny the rollout request'] },
+      },
+    });
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(askQuestions).toHaveBeenCalledTimes(1);
+  });
 });

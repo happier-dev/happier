@@ -1,3 +1,5 @@
+import type { SessionPermissionDecisionResult as SessionPermissionDecisionResultV1 } from '@happier-dev/plugin-sdk/sessions';
+
 import type { PermissionResult } from '../sdk/types.js';
 import {
     isAskUserQuestionToolName,
@@ -16,13 +18,7 @@ export type ClaudePermissionEngine = Readonly<{
     ): Promise<PermissionResult>;
 }>;
 
-export type ClaudePermissionDecision = Readonly<{
-    decision: string;
-    rationale?: string;
-    updatedInput?: unknown;
-    answers?: unknown;
-    updatedPermissions?: readonly Readonly<Record<string, unknown>>[];
-}>;
+export type ClaudePermissionDecision = SessionPermissionDecisionResultV1;
 
 export type ClaudePermissionContext = Readonly<{
     sessions: Readonly<{

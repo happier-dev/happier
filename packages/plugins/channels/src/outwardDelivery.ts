@@ -55,6 +55,7 @@ import {
   isConversationDeliveryAutomaticTerminal,
   isConversationDeliveryRetentionEligible,
   resolveConversationDeliveryCustody,
+  retryConversationDeliveryAfterArchiveRecovery,
   settleConversationDeliveryForBindingDeletion,
   settleConversationDeliveryForConnectionDeletion,
   settleConversationDeliveryAttempt,
@@ -71,6 +72,7 @@ import {
 } from './privateRowIdentity.js';
 import { readCurrentProviderContributionForPersistedSelection } from './providerContributions.js';
 import type { PersistedConversationProviderContributionSelection } from './collections.js';
+import { MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE } from './requiredAccountStorage.js';
 import type {
   ConversationSessionProjectionBinding,
   ConversationSessionProjectionSource,
@@ -364,7 +366,6 @@ type ChannelDeliveriesCollection = Pick<
   'delete' | 'get' | 'put' | 'query'
 >;
 
-const MAX_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE = 200;
 // Mirrors the strict transcript-activity Resource contract without importing
 // the Protocol implementation into this first-party plugin leaf.
 const MAX_CHANNELS_TRANSCRIPT_ACTIVITIES_PER_SNAPSHOT = 16;
@@ -377,7 +378,7 @@ const MAX_CHANNELS_TRANSCRIPT_ACTIVITIES_PER_SNAPSHOT = 16;
 export type ConversationOutwardDeliveryResolutionRow = Readonly<{
   custodyId: string;
   revision: number;
-  state: 'partial' | 'outcomeUnknown';
+  state: 'partial' | 'outcomeUnknown' | 'archiveRecoverable';
 }>;
 
 export type ConversationOutwardDeliveryResolutionPage = Readonly<{
@@ -409,8 +410,18 @@ function isDeliveryResolutionCustodyId(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/u.test(value);
 }
 
-function isDeliveryResolution(value: unknown): value is 'accepted' | 'discarded' {
-  return value === 'accepted' || value === 'discarded';
+/**
+ * The present-user decisions the custody owner supports. `retryAfterUnarchive`
+ * is the owner-led recovery arm for an authoritative archived-endpoint refusal:
+ * the provider proved no effect, so the exact obligation may be reopened.
+ */
+export type ConversationDeliveryResolutionDecision =
+  | 'accepted'
+  | 'discarded'
+  | 'retryAfterUnarchive';
+
+function isDeliveryResolution(value: unknown): value is ConversationDeliveryResolutionDecision {
+  return value === 'accepted' || value === 'discarded' || value === 'retryAfterUnarchive';
 }
 
 function isPluginCollectionConflict(error: unknown): boolean {
@@ -475,6 +486,12 @@ export type ConversationOutwardDeliveryConnectionAttention = Readonly<{
   notDelivered: boolean;
   partial: boolean;
   outcomeUnknown: boolean;
+  /**
+   * At least one retained delivery carries the provider's authoritative
+   * archived-endpoint evidence with the owner-led recovery arm, so the present
+   * user can unarchive the destination and retry the exact obligation.
+   */
+  archiveRecovery: boolean;
 }>;
 
 export type ConversationOutwardDeliveryConnectionAttentionReaderInput = Readonly<{
@@ -488,7 +505,6 @@ export type ConversationOutwardDeliveryConnectionAttentionReadResult =
     kind: 'ready';
     attentionByConnection: ReadonlyMap<string, ConversationOutwardDeliveryConnectionAttention>;
   }>
-  | Readonly<{ kind: 'invalid'; reason: 'invalidRow' }>
   | Readonly<{ kind: 'unavailable'; reason: 'cancelled' | 'storageUnavailable' }>;
 
 /**
@@ -606,7 +622,13 @@ async function deriveConversationOutwardDeliveryContentFingerprint(input: Readon
   }
 }
 
-function sameConversationOutwardDeliveryObligationMetadata(
+/**
+ * What a custody row permanently answers for: the connection, binding, semantic
+ * source, delivery key, endpoint, reply context, and caller-chosen presentation
+ * policies. Route authority is deliberately excluded — it is a mutable
+ * currentness fence, not identity.
+ */
+function sameConversationOutwardDeliveryObligationIdentity(
   left: ConversationStoredOutwardDeliveryObligation,
   right: ConversationOutwardDeliveryObligation,
 ): boolean {
@@ -616,17 +638,27 @@ function sameConversationOutwardDeliveryObligationMetadata(
     && left.mentionPolicy === right.mentionPolicy
     && left.linkPreviewPolicy === right.linkPreviewPolicy
     && pluginJsonValuesEqual(left.source, right.source)
-    && pluginJsonValuesEqual(left.routeAuthority, right.routeAuthority)
     && pluginJsonValuesEqual(left.endpoint, right.endpoint)
     && pluginJsonValuesEqual(left.replyContext ?? null, right.replyContext ?? null);
 }
 
 async function matchesConversationOutwardDeliveryObligation(input: Readonly<{
   stored: ConversationStoredOutwardDeliveryObligation;
+  storedCustody: ConversationDeliveryCustody;
   incoming: ConversationOutwardDeliveryObligation;
   routingIdentityKey: string;
 }>): Promise<boolean> {
-  if (!sameConversationOutwardDeliveryObligationMetadata(input.stored, input.incoming)) return false;
+  if (!sameConversationOutwardDeliveryObligationIdentity(input.stored, input.incoming)) return false;
+  // Route authority fences a live attempt: a non-terminal row must still hold
+  // the exact connection/binding authority its attempt was admitted under. A
+  // terminal row has no attempt left to fence, so an ordinary binding edit
+  // landing between provider success and frontier advancement must not turn an
+  // already-delivered item into a permanent custody conflict that blocks the
+  // whole projection until retention removes the row.
+  if (
+    !isConversationDeliveryAutomaticTerminal(input.storedCustody)
+    && !pluginJsonValuesEqual(input.stored.routeAuthority, input.incoming.routeAuthority)
+  ) return false;
   if (hasRetainedConversationOutwardDeliveryContent(input.stored)) {
     return input.stored.content === input.incoming.content;
   }
@@ -875,7 +907,7 @@ export async function readConversationOutwardDeliveryResolutionPage(input: Reado
       'Delivery resolution page requires a canonical connection identity.',
     );
   }
-  const limit = Math.min(input.limit ?? MAX_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE, MAX_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE);
+  const limit = Math.min(input.limit ?? MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE);
   if (!Number.isSafeInteger(limit) || limit < 1) {
     throw resolutionError(
       'channels_delivery_resolution_page_input_invalid',
@@ -928,11 +960,16 @@ export async function readConversationOutwardDeliveryResolutionPage(input: Reado
         'Delivery resolution details did not match the current Account connection.',
       );
     }
-    if (record.custody.state !== 'partial' && record.custody.state !== 'outcomeUnknown') continue;
+    const state = record.custody.state === 'partial' || record.custody.state === 'outcomeUnknown'
+      ? record.custody.state
+      : isConversationDeliveryArchiveRecoverable(record.custody)
+        ? 'archiveRecoverable' as const
+        : undefined;
+    if (state === undefined) continue;
     rows.push({
       custodyId: record.custodyId,
       revision: record.revision,
-      state: record.custody.state,
+      state,
     });
   }
   return {
@@ -952,7 +989,7 @@ export async function resolveConversationOutwardDeliveryCustodyInAccountCollecti
   deliveriesCollection: Pick<ChannelDeliveriesCollection, 'get' | 'put'>;
   custodyId: string;
   expectedRevision: number;
-  resolution: 'accepted' | 'discarded';
+  resolution: ConversationDeliveryResolutionDecision;
   signal?: AbortSignal;
   assertCurrent?: () => void;
   now?: () => number;
@@ -960,7 +997,7 @@ export async function resolveConversationOutwardDeliveryCustodyInAccountCollecti
   kind: 'resolved';
   custodyId: string;
   revision: number;
-  resolution: 'accepted' | 'discarded';
+  resolution: ConversationDeliveryResolutionDecision;
 }>> {
   if (!isDeliveryResolutionCustodyId(input.custodyId)
     || !Number.isSafeInteger(input.expectedRevision)
@@ -1024,14 +1061,16 @@ export async function resolveConversationOutwardDeliveryCustodyInAccountCollecti
       'Delivery resolution target is not canonical outward custody.',
     );
   }
-  const transition = resolveConversationDeliveryCustody({
-    custody: record.custody,
-    resolution: input.resolution,
-  });
-  if (transition.kind !== 'resolved') {
+  const transition = input.resolution === 'retryAfterUnarchive'
+    ? retryConversationDeliveryAfterArchiveRecovery({ custody: record.custody })
+    : resolveConversationDeliveryCustody({
+      custody: record.custody,
+      resolution: input.resolution,
+    });
+  if (transition.kind !== 'resolved' && transition.kind !== 'retryReady') {
     throw resolutionError(
       'channels_delivery_resolve_not_resolvable',
-      'Delivery resolution requires a partial or unknown custody state.',
+      'Delivery resolution requires a partial, unknown, or archive-recoverable custody state.',
     );
   }
 
@@ -1202,6 +1241,7 @@ export function createConversationOutwardDeliveryCollectionStore(
       if (existing.kind === 'found') {
         return await matchesConversationOutwardDeliveryObligation({
           stored: existing.record.obligation,
+          storedCustody: existing.record.custody,
           incoming: obligation,
           routingIdentityKey: connectionFacts.routingIdentityKey,
         })
@@ -1244,6 +1284,7 @@ export function createConversationOutwardDeliveryCollectionStore(
         }
         return await matchesConversationOutwardDeliveryObligation({
           stored: rejoined.record.obligation,
+          storedCustody: rejoined.record.custody,
           incoming: obligation,
           routingIdentityKey: connectionFacts.routingIdentityKey,
         })
@@ -1511,7 +1552,7 @@ async function settleConversationOutwardDeliveriesForDeletion(input: Readonly<{
         index: collections.CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention,
         prefix,
         order: 'asc',
-        limit: 200,
+        limit: MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
         ...(cursor === undefined ? {} : { cursor }),
       }, { signal: input.signal });
     } catch {
@@ -1542,7 +1583,7 @@ async function settleConversationOutwardDeliveriesForDeletion(input: Readonly<{
         index: collections.CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention,
         prefix,
         order: 'asc',
-        limit: 200,
+        limit: MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
         ...(cursor === undefined ? {} : { cursor }),
       }, { signal: input.signal });
     } catch {
@@ -1653,6 +1694,7 @@ export async function readConversationOutwardDeliveryConnectionAttention(
     notDelivered: false,
     partial: false,
     outcomeUnknown: false,
+    archiveRecovery: false,
   };
   const connectionIds = [...new Set(input.connectionIds)];
   const attentionByConnection = new Map<string, ConversationOutwardDeliveryConnectionAttention>(
@@ -1669,7 +1711,7 @@ export async function readConversationOutwardDeliveryConnectionAttention(
           index: collections.CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention,
           prefix: [connectionId],
           order: 'asc',
-          limit: 200,
+          limit: MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
           ...(cursor === undefined ? {} : { cursor }),
         }, { signal: input.signal });
       } catch {
@@ -1684,16 +1726,23 @@ export async function readConversationOutwardDeliveryConnectionAttention(
           collections,
           row: row as unknown as StoredCollectionRow,
         });
-        if (record === null || record.obligation.connectionId !== connectionId) {
-          return { kind: 'invalid', reason: 'invalidRow' };
-        }
         const current = attentionByConnection.get(connectionId) ?? emptyAttention;
-        const custodyAttention = deriveConversationDeliveryAttention(record.custody);
+        // One unreadable custody row is exactly one delivery whose outcome
+        // this reader cannot establish. It degrades to the existing
+        // `outcomeUnknown` attention marker for its own connection, matching
+        // the supervisor scan that skips the same row, rather than discarding
+        // every other connection's readable delivery health.
+        const unreadable = record === null || record.obligation.connectionId !== connectionId;
+        const custodyAttention = unreadable
+          ? { retryDue: false, notDelivered: false, partial: false, outcomeUnknown: true }
+          : deriveConversationDeliveryAttention(record.custody);
         attentionByConnection.set(connectionId, {
           retryDue: current.retryDue || custodyAttention.retryDue,
           notDelivered: current.notDelivered || custodyAttention.notDelivered,
           partial: current.partial || custodyAttention.partial,
           outcomeUnknown: current.outcomeUnknown || custodyAttention.outcomeUnknown,
+          archiveRecovery: current.archiveRecovery
+            || (!unreadable && isConversationDeliveryArchiveRecoverable(record.custody)),
         });
       }
       cursor = page.nextCursor;
@@ -1703,10 +1752,41 @@ export async function readConversationOutwardDeliveryConnectionAttention(
   return { kind: 'ready', attentionByConnection };
 }
 
+/**
+ * The single reader-side test for the one recovery arm the custody owner will
+ * actually reset. Every surface that offers the retry, and the retry itself,
+ * agree through `retryConversationDeliveryAfterArchiveRecovery`.
+ */
+function isConversationDeliveryArchiveRecoverable(custody: ConversationDeliveryCustody): boolean {
+  return retryConversationDeliveryAfterArchiveRecovery({ custody }).kind === 'retryReady';
+}
+
 function deriveConversationOutwardDeliveryTranscriptActivityId(custodyId: string): string | null {
   const bytes = decodeBase64Url(custodyId);
   if (bytes === null) return null;
   return `delivery-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/**
+ * A custody row that this reader cannot parse, or whose obligation does not
+ * match the index prefix it was returned under, is still one real retained
+ * delivery. It is disclosed as its own unreadable activity so a single corrupt
+ * row cannot erase every readable delivery in the same snapshot.
+ */
+function projectUnreadableConversationOutwardDeliveryTranscriptActivity(
+  rowId: string,
+): ConversationOutwardDeliveryTranscriptActivity | null {
+  const localActivityId = deriveConversationOutwardDeliveryTranscriptActivityId(rowId);
+  if (localActivityId === null) return null;
+  return Object.freeze({
+    localActivityId,
+    title: 'External delivery',
+    checklist: [] as const,
+    actions: [] as const,
+    phase: 'failed' as const,
+    status: 'Delivery details could not be read',
+    dismissible: true,
+  });
 }
 
 function projectConversationOutwardDeliveryTranscriptActivity(
@@ -1746,7 +1826,9 @@ function projectConversationOutwardDeliveryTranscriptActivity(
       return Object.freeze({
         ...base,
         phase: 'failed' as const,
-        status: 'Delivery was not sent',
+        status: isConversationDeliveryArchiveRecoverable(record.custody)
+          ? 'Delivery was not sent: the destination is archived'
+          : 'Delivery was not sent',
         dismissible: true,
       });
     case 'partial':
@@ -1816,7 +1898,7 @@ export async function readConversationOutwardDeliveryTranscriptActivities(
           index: collections.CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention,
           prefix: [target.connectionId, target.bindingId],
           order: 'asc',
-          limit: MAX_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
+          limit: MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
           ...(cursor === undefined ? {} : { cursor }),
         }, { signal: input.signal });
       } catch {
@@ -1826,16 +1908,16 @@ export async function readConversationOutwardDeliveryTranscriptActivities(
         };
       }
       for (const row of page.rows) {
+        const storedRow = row as unknown as StoredCollectionRow;
         const record = readConversationOutwardDeliveryRecord({
           collections,
-          row: row as unknown as StoredCollectionRow,
+          row: storedRow,
         });
-        if (record === null
+        const activity = record === null
           || record.obligation.connectionId !== target.connectionId
-          || record.obligation.bindingId !== target.bindingId) {
-          return { kind: 'invalid', reason: 'invalidRow' };
-        }
-        const activity = projectConversationOutwardDeliveryTranscriptActivity(record);
+          || record.obligation.bindingId !== target.bindingId
+          ? projectUnreadableConversationOutwardDeliveryTranscriptActivity(storedRow.rowId)
+          : projectConversationOutwardDeliveryTranscriptActivity(record);
         if (activity === null) continue;
         if (activityIds.has(activity.localActivityId)) {
           return { kind: 'invalid', reason: 'invalidRow' };

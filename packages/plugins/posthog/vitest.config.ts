@@ -13,11 +13,15 @@ const repoRoot = resolve(packageRoot, '../../..');
 
 /**
  * The PostHog source binds to current workspace source of the SDK, the shared Triage
- * protocol, the canonical Protocol package and the Plugin UI package rather than to a
- * previously built copy of any of them. A stale nested copy of Protocol is what makes a
+ * source adapter, the shared Triage protocol, the canonical Protocol package and the
+ * Plugin UI package rather than to a previously built copy of any of them. A stale nested copy of Protocol is what makes a
  * manifest that parses in production fail here for reasons the source never caused.
  */
 const workspacePackages: readonly WorkspacePackageSpec[] = [
+    {
+        packageName: '@happier-dev/triage-sources',
+        packageSourceRoot: resolve(repoRoot, 'packages/triage-sources/src'),
+    },
     {
         packageName: '@happier-dev/plugin-sdk',
         packageSourceRoot: resolve(repoRoot, 'packages/plugin-sdk/src'),

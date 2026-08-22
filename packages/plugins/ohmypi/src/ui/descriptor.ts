@@ -35,9 +35,7 @@ export const OH_MY_PI_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: 'ohMyPi' },
   },
   behavior: {
-    mcpServers: { supportsDetectedConfigScan: true },
     externalSessions: {
-      supportsBackgroundFollow: false,
       browse: {
         order: 25,
         sourceOptions: [

@@ -1,4 +1,4 @@
-import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export type ClaudeRuntimeActivityProjection = Readonly<
   | { state: 'active'; activeCount: number }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/agents';
+import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/protocol/agents/claude';
 
 import {
   createEventsFixture,
@@ -211,7 +211,7 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
         answers: Readonly<Record<string, string>>;
       }>>(options?.signal);
     });
-    const port = createFakeControlPort({ captures: [RESUME_CHOICE_DIALOG, IDLE_COMPOSER] });
+    const port = createFakeControlPort({ captures: [IDLE_COMPOSER] });
     const handler = createClaudeUnifiedResumeChoiceStartupHandler({
       ctx: createContext(requestDecision),
       sessionId: 'session-1',
@@ -225,6 +225,34 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
     expect(handler.hasPendingUserAction()).toBe(true);
     expect(await handler.handle(parseClaudeScreenState(IDLE_COMPOSER))).toBe('unhandled');
     expect(signal?.aborted).toBe(true);
+  });
+
+  it('keeps a pending ask request when a transient no-dialog observation recaptures the same chooser', async () => {
+    let signal: AbortSignal | null = null;
+    const requestDecision = vi.fn((_request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
+      signal = options?.signal ?? null;
+      return pendingDecisionUntilAbort<Readonly<{
+        decision: 'approved';
+        answers: Readonly<Record<string, string>>;
+      }>>(options?.signal);
+    });
+    const port = createFakeControlPort({ captures: [RESUME_CHOICE_DIALOG] });
+    const handler = createClaudeUnifiedResumeChoiceStartupHandler({
+      ctx: createContext(requestDecision),
+      sessionId: 'session-1',
+      policy: 'ask_every_time',
+      port,
+      settleMs: 0,
+      wait: async () => undefined,
+    });
+
+    expect(await handler.handle(parseClaudeScreenState(RESUME_CHOICE_DIALOG))).toBe('waiting_for_user');
+    expect(handler.hasPendingUserAction()).toBe(true);
+    expect(await handler.handle(parseClaudeScreenState(IDLE_COMPOSER))).toBe('waiting_for_user');
+    expect(signal?.aborted).toBe(false);
+    expect(handler.hasPendingUserAction()).toBe(true);
+
+    await handler.dispose();
   });
 
   it('aborts and does not republish an ask request after dispose', async () => {
@@ -257,6 +285,50 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
     const requestDecision = vi.fn(async () => ({
       decision: 'approved' as const,
       answers: { [CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION]: 'Resume from summary' },
+    }));
+    const port = createFakeControlPort({ captures: [RESUME_CHOICE_DIALOG, IDLE_COMPOSER] });
+    const handler = createClaudeUnifiedResumeChoiceStartupHandler({
+      ctx: createContext(requestDecision),
+      sessionId: 'session-1',
+      policy: 'ask_every_time',
+      port,
+      settleMs: 0,
+      wait: async () => undefined,
+    });
+
+    expect(await handler.handle(parseClaudeScreenState(RESUME_CHOICE_DIALOG))).toBe('waiting_for_user');
+    await vi.waitFor(() => {
+      expect(port.sentLiteral).toEqual(['1']);
+    });
+    expect(port.sentKeys).toEqual([]);
+  });
+
+  it('sends the remembered summary answer through the same registered terminal option', async () => {
+    const requestDecision = vi.fn(async () => ({
+      decision: 'approved' as const,
+      answers: { [CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION]: 'always_resume_from_summary' },
+    }));
+    const port = createFakeControlPort({ captures: [RESUME_CHOICE_DIALOG, IDLE_COMPOSER] });
+    const handler = createClaudeUnifiedResumeChoiceStartupHandler({
+      ctx: createContext(requestDecision),
+      sessionId: 'session-1',
+      policy: 'ask_every_time',
+      port,
+      settleMs: 0,
+      wait: async () => undefined,
+    });
+
+    expect(await handler.handle(parseClaudeScreenState(RESUME_CHOICE_DIALOG))).toBe('waiting_for_user');
+    await vi.waitFor(() => {
+      expect(port.sentLiteral).toEqual(['1']);
+    });
+    expect(port.sentKeys).toEqual([]);
+  });
+
+  it('sends the user-selected answer returned by the current structured-answer shape', async () => {
+    const requestDecision = vi.fn(async () => ({
+      decision: 'approved' as const,
+      answers: { [CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION]: ['resume_from_summary'] },
     }));
     const port = createFakeControlPort({ captures: [RESUME_CHOICE_DIALOG, IDLE_COMPOSER] });
     const handler = createClaudeUnifiedResumeChoiceStartupHandler({

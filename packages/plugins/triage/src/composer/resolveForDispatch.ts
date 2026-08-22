@@ -11,7 +11,11 @@ import {
     type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import type { TriageAdmittedSourceV1 } from '../actions/listEntries.js';
+import {
+    indexTriageAdmittedSourcesV1,
+    type TriageAdmittedSourceV1,
+} from '../actions/listEntries.js';
+import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
 import type { CorpusCollectionHandleV1 } from '../corpus/collections/handles.js';
 import {
     CORPUS_SOURCE_INSTANCES_INDEX_ID,
@@ -19,7 +23,9 @@ import {
 } from '../corpus/collections/ids.js';
 import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
+import { qualifyEntryLocalRef } from '../corpus/fold/qualify.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
+import { reconcileMergedSuccessor } from '../sessions/reconcileMergedSuccessor.js';
 import { parseTriageComposerEntryAttachmentValue } from './attachmentValue.js';
 
 /**
@@ -34,10 +40,19 @@ import { parseTriageComposerEntryAttachmentValue } from './attachmentValue.js';
  * hours ago.
  *
  * It resolves; it does not repair. There is no retry loop, no successor
- * following, no account substitution, no durable write, no Session link and no
- * queue. A blocked attachment is reported as blocked and the canonical host
- * owns the all-or-none dispatch refusal, because a partially resolved selection
- * is a prompt that quietly omits something the user attached.
+ * following, no account substitution, no new Session link and no queue. A
+ * blocked attachment is reported as blocked and the canonical host owns the
+ * all-or-none dispatch refusal, because a partially resolved selection is a
+ * prompt that quietly omits something the user attached.
+ *
+ * One thing it does own, because it is the only place a `merged(successor)`
+ * observation is produced: the single durable continuity effect that answer has
+ * (`core/CORPUS.md` §3.3). The dispatch outcome is unaffected — a successor is
+ * still a different entry and is still blocked — but the user's existing
+ * Session links must not be stranded on a predecessor nobody will open again,
+ * so the link owner retargets them inside the observation that produced the
+ * evidence. It never touches a pin: `corpus/marks/setPinned.ts` is the single
+ * `user-marks` writer.
  */
 
 /**
@@ -73,6 +88,11 @@ export type TriageAdmittedGetExecutorV1 = (
 export type TriageEntryDispatchDepsV1 = Readonly<{
     /** The `source-instances` Collection. This resolver never writes it. */
     sourceInstances: Pick<CorpusCollectionHandleV1, 'query'>;
+    /**
+     * The `session-links` Collection, passed straight to the link owner. This
+     * resolver never reads or writes it itself, and creates no link.
+     */
+    sessionLinks: CorpusCollectionsV1['sessionLinks'];
     /** The current admitted view of this target's own sources point. */
     readAdmittedSources: (options?: PluginCancellationOptions) => Promise<readonly TriageAdmittedSourceV1[]>;
     executeGet: TriageAdmittedGetExecutorV1;
@@ -175,19 +195,6 @@ async function readActiveConfiguredInstances(
     return configured;
 }
 
-function indexAdmittedSources(
-    admitted: readonly TriageAdmittedSourceV1[],
-): ReadonlyMap<string, TriageAdmittedSourceV1> {
-    const byQualifiedId = new Map<string, TriageAdmittedSourceV1>();
-    for (const contribution of admitted) {
-        byQualifiedId.set(renderSourceQualifiedId({
-            pluginId: contribution.contributor.pluginId,
-            localId: contribution.contributor.contributionId,
-        }), contribution);
-    }
-    return byQualifiedId;
-}
-
 function sameLocalRef(
     left: Readonly<{ kindId: string; collisionScope: string; entryId: string }>,
     right: Readonly<{ kindId: string; collisionScope: string; entryId: string }>,
@@ -206,7 +213,7 @@ export async function resolveTriageEntryForDispatch(
         readActiveConfiguredInstances(deps),
         deps.readAdmittedSources(options),
     ]);
-    const admittedByQualifiedId = indexAdmittedSources(admitted);
+    const admittedByQualifiedId = indexTriageAdmittedSourcesV1(admitted);
 
     const attachments: TriageEntryDispatchOutcomeV1[] = [];
     for (const attachment of request.attachments) {
@@ -214,6 +221,7 @@ export async function resolveTriageEntryForDispatch(
             configured,
             admittedByQualifiedId,
             executeGet: deps.executeGet,
+            sessionLinks: deps.sessionLinks,
             options,
         }));
     }
@@ -226,6 +234,7 @@ async function resolveOne(
         configured: ReadonlyMap<string, TriageConfiguredSourceInstanceV1>;
         admittedByQualifiedId: ReadonlyMap<string, TriageAdmittedSourceV1>;
         executeGet: TriageAdmittedGetExecutorV1;
+        sessionLinks: CorpusCollectionsV1['sessionLinks'];
         options: PluginCancellationOptions | undefined;
     }>,
 ): Promise<TriageEntryDispatchOutcomeV1> {
@@ -293,11 +302,30 @@ async function resolveOne(
             };
         case 'absent':
             return blocked(attachment.instanceId, 'notFound', false, 'It no longer exists in its source.');
-        case 'merged':
+        case 'merged': {
+            // The one durable effect of this answer, run before it is reported
+            // so the evidence and its consequence stay in one invocation.
+            const successor = qualifyEntryLocalRef({
+                source: entryRef.source,
+                declaredKindIds: contribution.descriptor?.kinds.map((kind) => kind.id) ?? [],
+                localRef: observation.successor,
+            });
+            // A successor the invoked descriptor does not declare is not a
+            // successor this aggregate can address, and a merge nobody can
+            // qualify moves nothing. The dispatch answer is the same either way.
+            if (successor.status === 'qualified') {
+                await reconcileMergedSuccessor({
+                    collections: { sessionLinks: context.sessionLinks },
+                    entryRef,
+                    successorEntryRef: successor.entryRef,
+                    ...(context.options?.signal ? { signal: context.options.signal } : {}),
+                });
+            }
             // The successor is a different entry. Resolving it would send the
             // model something the user never attached; the user removes and
             // reattaches deliberately.
             return blocked(attachment.instanceId, 'notFound', false, 'It was merged into another entry.');
+        }
         case 'unresolved':
             return blocked(
                 attachment.instanceId,

@@ -26,14 +26,21 @@ describe('Claude terminal argv leaf', () => {
         expect(partitionClaudeTerminalUserArgs([
             '--model=raw-opus',
             '--mcp-config',
-            '{"mcpServers":{}}',
+            '/tmp/claude-mcp.json',
             '--permission-mode=acceptEdits',
             'prompt text',
         ])).toEqual({
-            flagArgs: ['--mcp-config', '{"mcpServers":{}}'],
+            flagArgs: ['--mcp-config', '/tmp/claude-mcp.json'],
             positionalArgs: ['prompt text'],
             trailingPermissionFlagArgs: ['--permission-mode', 'acceptEdits'],
         });
+    });
+
+    it.each([
+        ['--mcp-config', '{"mcpServers":{"fixture":{"env":{"TOKEN":"synthetic-terminal-marker"}}}}'],
+        ['--mcp-config={"mcpServers":{"fixture":{"env":{"TOKEN":"synthetic-terminal-marker"}}}}'],
+    ])('rejects inline MCP JSON before direct terminal spawn', (...args) => {
+        expect(() => partitionClaudeTerminalUserArgs(args)).toThrow(/MCP config file path/u);
     });
 
     it('keeps the last explicit permission override as the trailing permission flag', () => {
@@ -43,6 +50,31 @@ describe('Claude terminal argv leaf', () => {
             '--dangerously-skip-permissions',
         ])).toEqual({
             flagArgs: [],
+            positionalArgs: [],
+            trailingPermissionFlagArgs: ['--permission-mode', 'bypassPermissions'],
+        });
+    });
+
+    it('does not let bare --resume consume a following permission flag', () => {
+        expect(partitionClaudeTerminalUserArgs([
+            '--resume',
+            '--permission-mode',
+            'bypassPermissions',
+        ])).toEqual({
+            flagArgs: ['--resume'],
+            positionalArgs: [],
+            trailingPermissionFlagArgs: ['--permission-mode', 'bypassPermissions'],
+        });
+    });
+
+    it('keeps the optional value of the short -r resume flag attached', () => {
+        expect(partitionClaudeTerminalUserArgs([
+            '-r',
+            'session-id',
+            '--permission-mode',
+            'bypassPermissions',
+        ])).toEqual({
+            flagArgs: ['-r', 'session-id'],
             positionalArgs: [],
             trailingPermissionFlagArgs: ['--permission-mode', 'bypassPermissions'],
         });

@@ -156,6 +156,8 @@ export type AzureDevOpsFailureClass =
   | 'server'
   | 'transport'
   | 'cancelled'
+  /** The owner's own deadline elapsed before the provider answered or failed. */
+  | 'timedOut'
   | 'unexpectedRedirect'
   | 'malformedResponse';
 

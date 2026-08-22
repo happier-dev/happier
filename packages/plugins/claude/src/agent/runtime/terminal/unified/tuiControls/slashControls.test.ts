@@ -45,6 +45,21 @@ const GENERATING = ['● working', '✶ Forging… (10s · esc to interrupt)'].j
 const EFFORT_CONFIRMATION = ['Set reasoning effort to high', '╭─────╮', '│ >   │', '╰─────╯'].join('\n');
 
 describe('applyModelControl', () => {
+  it.each(['sonnet\nrun arbitrary prompt', 'sonnet\u0000extra'])(
+    'rejects control characters before typing a model command',
+    async (model) => {
+      const port = createFakeControlPort({ captures: [IDLE] });
+      const { guard } = await makeGuard();
+
+      await expect(applyModelControl(contextFor(port, guard), model)).resolves.toEqual({
+        kind: 'failed',
+        reason: 'invalid_control_value',
+      });
+      expect(port.sentLiteral).toHaveLength(0);
+      expect(port.sentKeys).toHaveLength(0);
+    },
+  );
+
   it('types /model and submits only from an idle safe window, verifying via confirmation text (B1, B9)', async () => {
     const port = createFakeControlPort({ captures: [IDLE, IDLE, MODEL_CONFIRMATION] });
     const { guard } = await makeGuard();
@@ -441,6 +456,18 @@ describe('effort change confirmation dialog (incident cmq8y3nlx, L6)', () => {
 });
 
 describe('applyEffortControl', () => {
+  it('rejects control characters before typing an effort command', async () => {
+    const port = createFakeControlPort({ captures: [IDLE] });
+    const { guard } = await makeGuard();
+
+    await expect(applyEffortControl(contextFor(port, guard), 'high\nrun arbitrary prompt')).resolves.toEqual({
+      kind: 'failed',
+      reason: 'invalid_control_value',
+    });
+    expect(port.sentLiteral).toHaveLength(0);
+    expect(port.sentKeys).toHaveLength(0);
+  });
+
   it('types /effort and verifies via confirmation text (B2, B10)', async () => {
     const port = createFakeControlPort({ captures: [IDLE, IDLE, EFFORT_CONFIRMATION] });
     const { guard } = await makeGuard();

@@ -14,12 +14,32 @@ describe('forkCodexNativeAppServerConversation', () => {
     expect(request).toHaveBeenCalledWith('thread/fork', {
       threadId: 'parent-thread',
       persistExtendedHistory: true,
-    });
+    }, { timeoutMs: null });
   });
 
-  it('falls back to conversation/fork when thread/fork fails', async () => {
+  it('reports a missing parent thread as a failure before any fork dispatch', async () => {
+    const request = vi.fn();
+
+    await expect(forkCodexNativeAppServerConversation({
+      client: { request },
+      parentCodexSessionId: '  ',
+    })).rejects.toMatchObject({
+      name: 'CodexAppServerNativeForkFailure',
+      outcome: 'failed_before_dispatch',
+    });
+
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('falls back to conversation/fork only when thread/fork is definitively unsupported', async () => {
     const request = vi.fn(async (method: string) => {
-      if (method === 'thread/fork') throw new Error('unsupported');
+      if (method === 'thread/fork') {
+        throw Object.assign(new Error('Method not found'), {
+          name: 'JsonRpcApplicationError',
+          code: -32601,
+          method,
+        });
+      }
       return { thread_id: 'forked-thread' };
     });
 
@@ -31,31 +51,64 @@ describe('forkCodexNativeAppServerConversation', () => {
     expect(request).toHaveBeenNthCalledWith(1, 'thread/fork', {
       threadId: 'parent-thread',
       persistExtendedHistory: true,
-    });
+    }, { timeoutMs: null });
     expect(request).toHaveBeenNthCalledWith(2, 'conversation/fork', {
       threadId: 'parent-thread',
       persistExtendedHistory: true,
-    });
+    }, { timeoutMs: null });
   });
 
-  it('returns null when neither native fork method yields a thread id', async () => {
-    const events: string[] = [];
+  it('treats a malformed successful response as an indeterminate outcome without aliasing', async () => {
     const request = vi.fn(async () => ({ ok: true }));
 
     await expect(forkCodexNativeAppServerConversation({
       client: { request },
       parentCodexSessionId: 'parent-thread',
-      onEvent: (event) => {
-        events.push(event.type);
-      },
-    })).resolves.toBeNull();
+    })).rejects.toMatchObject({
+      name: 'CodexAppServerNativeForkFailure',
+      outcome: 'indeterminate_after_dispatch',
+    });
 
-    expect(events).toEqual([
-      'methodAttempt',
-      'methodReturnedNoThreadId',
-      'methodAttempt',
-      'methodReturnedNoThreadId',
-      'methodsExhausted',
-    ]);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith('thread/fork', {
+      threadId: 'parent-thread',
+      persistExtendedHistory: true,
+    }, { timeoutMs: null });
+  });
+
+  it('treats a transport failure as indeterminate instead of replaying through the alias', async () => {
+    const request = vi.fn(async () => {
+      throw new Error('transport interrupted after dispatch');
+    });
+
+    await expect(forkCodexNativeAppServerConversation({
+      client: { request },
+      parentCodexSessionId: 'parent-thread',
+    })).rejects.toMatchObject({
+      name: 'CodexAppServerNativeForkFailure',
+      outcome: 'indeterminate_after_dispatch',
+    });
+
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not alias a method-not-found error correlated to another request', async () => {
+    const request = vi.fn(async () => {
+      throw Object.assign(new Error('Method not found'), {
+        name: 'JsonRpcApplicationError',
+        code: -32601,
+        method: 'conversation/fork',
+      });
+    });
+
+    await expect(forkCodexNativeAppServerConversation({
+      client: { request },
+      parentCodexSessionId: 'parent-thread',
+    })).rejects.toMatchObject({
+      name: 'CodexAppServerNativeForkFailure',
+      outcome: 'indeterminate_after_dispatch',
+    });
+
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });

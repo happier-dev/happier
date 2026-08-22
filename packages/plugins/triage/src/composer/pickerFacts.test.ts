@@ -6,6 +6,7 @@ import {
     testkitSnapshot,
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
+import { projectTriageEntrySearchText } from '../projection/entrySearch.js';
 import type { TriageListRowV1, TriageListWindowV1 } from '../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1 } from '../projection/listWindowStore.js';
 import { projectTriagePickerCorpusFacts } from './pickerFacts.js';
@@ -17,6 +18,16 @@ const ASSEMBLED_AT_MS = 1_760_000_000_000;
 function row(): TriageListRowV1 {
     return {
         entryRef: { source: SOURCE, kindId: 'pull-request', collisionScope: 'origin', entryId: '42' },
+        content: {
+            sourceInstanceId: INSTANCE,
+            observedAtMs: 1_000,
+            outcome: {
+                kind: 'present',
+                locator: testkitLocator(),
+                snapshot: testkitSnapshot({ title: 'Fix the parser', scopeLabel: 'forge/repo' }),
+                viewer: testkitViewer(),
+            },
+        },
         lane: CORPUS_LANE.open,
         sortAtMs: 1_000,
         presence: { kind: 'present', observedAtMs: 1_000 },
@@ -85,6 +96,9 @@ describe('projectTriagePickerCorpusFacts', () => {
             entryRef: row().entryRef,
             title: 'Fix the parser',
             scopeLabel: 'forge/repo',
+            // Projected by the one search owner rather than folded again here, so
+            // the picker answers a query exactly as the list does.
+            search: projectTriageEntrySearchText(row().observations),
             instance: { kind: 'selected', sourceInstanceId: INSTANCE, reason: 'onlyPresent' },
         }]);
     });
@@ -118,5 +132,18 @@ describe('projectTriagePickerCorpusFacts', () => {
             displayName: 'forge/repo',
             failure: { class: 'transient', code: 'provider-busy' },
         }]);
+    });
+
+    it('carries the store\'s pacing refusal instead of leaving the picker to guess', () => {
+        const blocked = projectTriagePickerCorpusFacts({
+            snapshot: snapshot({
+                window: window(),
+                refreshBlocked: { reason: 'failureBackoff', nextEligibleAtMs: 9_000 },
+            }),
+            nowMs: 1,
+        });
+
+        expect(blocked.refreshBlocked).toEqual({ reason: 'failureBackoff', nextEligibleAtMs: 9_000 });
+        expect(projectTriagePickerCorpusFacts({ snapshot: snapshot(), nowMs: 1 }).refreshBlocked).toBeNull();
     });
 });

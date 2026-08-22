@@ -1,4 +1,5 @@
 import type {
+  JsonValue,
   PluginInvocationContext,
   PluginServices,
   TargetedContributionPointRef,
@@ -20,7 +21,8 @@ import {
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 
-type StateValue = Readonly<Record<string, unknown>> & Readonly<{ id: string }>;
+type StateValue = Readonly<Record<string, unknown>>
+  & Readonly<{ id: string; payload: Readonly<Record<string, unknown>> }>;
 type StateRow = Readonly<{ rowId: string; revision: number; value: StateValue }>;
 type StateMutation =
   | Readonly<{ kind: 'assert'; rowId: string; expectedRevision: number }>
@@ -158,6 +160,37 @@ function completePreBindingMessage(
     : prepared;
 }
 
+/**
+ * The one mounted invocation context these pairing-management cases execute
+ * against. Building it here keeps every case on the complete
+ * `PluginInvocationContext` the host actually supplies, rather than a
+ * per-case partial literal no compiler ever checked.
+ */
+function pairingManagementContext(input: Readonly<{
+  collection: ReturnType<typeof createCollection>;
+  actions?: Readonly<Record<string, unknown>>;
+  targetedContributions?: TargetedContributionsService;
+}>): PluginInvocationContext {
+  return {
+    plugin: { id: 'happier.channels', version: '0.0.0' },
+    contribution: {
+      id: 'pairing-management',
+      qualifiedId: 'happier.channels/actions/pairing-management',
+    },
+    surface: 'plugin',
+    signal: new AbortController().signal,
+    // This fixture crosses only the Account-storage, Action-execution, and
+    // targeted-contribution host boundaries.
+    services: {
+      actions: input.actions ?? {},
+      storage: { account: { collection: () => input.collection } },
+      ...(input.targetedContributions === undefined
+        ? {}
+        : { targetedContributions: input.targetedContributions }),
+    } as unknown as PluginServices,
+  };
+}
+
 function createCollection(initial: readonly StateRow[]) {
   const rows = new Map(initial.map((row) => [row.rowId, row]));
   const batches: StateMutation[][] = [];
@@ -260,13 +293,10 @@ describe('Channels pairing management writer', () => {
     if (typeof createHandlers !== 'function') return;
 
     const collection = createCollection([connectionRow()]);
-    const context = {
-      signal: new AbortController().signal,
-      services: {
-        actions: { execute: vi.fn(async () => ({ kind: 'verified' as const, templateVersion: 3 })) },
-        storage: { account: { collection: () => collection } },
-      },
-    };
+    const context = pairingManagementContext({
+      collection,
+      actions: { execute: vi.fn(async () => ({ kind: 'verified' as const, templateVersion: 3 })) },
+    });
     const manager = createConversationPairingManager({
       generationId: 'generation-1',
       now: () => 1_000,
@@ -300,13 +330,7 @@ describe('Channels pairing management writer', () => {
 
     const collection = createCollection([connectionRow()]);
     const execute = vi.fn(async () => ({ kind: 'verified' as const, templateVersion: 3 }));
-    const context = {
-      signal: new AbortController().signal,
-      services: {
-        actions: { execute },
-        storage: { account: { collection: () => collection } },
-      },
-    };
+    const context = pairingManagementContext({ collection, actions: { execute } });
     const manager = createConversationPairingManager({
       generationId: 'generation-1',
       now: () => 1_000,
@@ -354,6 +378,7 @@ describe('Channels pairing management writer', () => {
       {
         automationId: 'automation-1',
         expectedTemplateVersion: 3,
+        // Early pairing feedback runs before the proposal mints a binding id.
         resultDelivery: 'finalResult',
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -402,10 +427,7 @@ describe('Channels pairing management writer', () => {
         },
       },
     }]);
-    const context = {
-      signal: new AbortController().signal,
-      services: { storage: { account: { collection: () => collection } } },
-    } as unknown as PluginInvocationContext;
+    const context = pairingManagementContext({ collection });
     collection.loseNextUpdatedBatchResponse();
 
     await expect(retry({
@@ -452,10 +474,7 @@ describe('Channels pairing management writer', () => {
         },
       },
     }]);
-    const context = {
-      signal: new AbortController().signal,
-      services: { storage: { account: { collection: () => collection } } },
-    } as unknown as PluginInvocationContext;
+    const context = pairingManagementContext({ collection });
 
     await expect(retry({
       connectionId: 'connection-1',
@@ -487,13 +506,7 @@ describe('Channels pairing management writer', () => {
       hasMore: false,
       items: [],
     }));
-    const context = {
-      signal: new AbortController().signal,
-      services: {
-        actions: { execute },
-        storage: { account: { collection: () => collection } },
-      },
-    };
+    const context = pairingManagementContext({ collection, actions: { execute } });
     const manager = createConversationPairingManager({
       generationId: 'generation-1',
       now: () => 1_000,
@@ -506,6 +519,7 @@ describe('Channels pairing management writer', () => {
       expectedConnectionRevision: 4,
       target: newSessionPrincipalOutsidePairingAllowlistTarget,
     }, context);
+    if (challenge.kind !== 'created') throw new Error('Expected a created pairing challenge.');
     const proposal = completePreBindingMessage(manager, {
       connectionId: 'connection-1',
       materialization,
@@ -548,13 +562,7 @@ describe('Channels pairing management writer', () => {
       hasMore: false,
       items: [],
     }));
-    const context = {
-      signal: new AbortController().signal,
-      services: {
-        actions: { execute },
-        storage: { account: { collection: () => collection } },
-      },
-    };
+    const context = pairingManagementContext({ collection, actions: { execute } });
     const manager = createConversationPairingManager({
       generationId: 'generation-1',
       now: () => 1_000,
@@ -567,6 +575,7 @@ describe('Channels pairing management writer', () => {
       expectedConnectionRevision: 4,
       target: approvalEnabledTarget,
     }, context);
+    if (challenge.kind !== 'created') throw new Error('Expected a created pairing challenge.');
     const proposal = completePreBindingMessage(manager, {
       connectionId: 'connection-1',
       materialization,
@@ -601,26 +610,19 @@ describe('Channels pairing management writer', () => {
 
     const connection = checkpointedPullConnectionRow();
     const collection = createCollection([connection]);
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
+      _operation: unknown,
+      _input: JsonValue,
+      _executionOptions: Readonly<{ signal: AbortSignal }>,
+    ) => ({
       result: { kind: 'checkpointOnly', checkpointAfterBatch: { offset: '43' } },
       executionOrigin: { serverIdentityId: 'server-1', materializationRef: materialization },
     }));
-    // This fixture crosses only the Account-storage and provider-poll host boundaries.
-    const services = {
+    const context = pairingManagementContext({
+      collection,
       actions: { execute: vi.fn(), executeAdmittedTargetedOperationWithExecutionOrigin },
-      storage: { account: { collection: () => collection } },
       targetedContributions: targetedCheckpointedPollContribution(),
-    } as unknown as PluginServices;
-    const context: PluginInvocationContext = {
-      plugin: { id: 'happier.channels', version: '0.0.0' },
-      contribution: {
-        id: 'pairing-management',
-        qualifiedId: 'happier.channels/actions/pairing-management',
-      },
-      surface: 'plugin',
-      signal: new AbortController().signal,
-      services,
-    };
+    });
     const manager = createConversationPairingManager({
       generationId: 'generation-1',
       now: () => 1_000,
@@ -679,13 +681,7 @@ describe('Channels pairing management writer', () => {
       hasMore: false,
       items: [],
     }));
-    const context = {
-      signal: new AbortController().signal,
-      services: {
-        actions: { execute },
-        storage: { account: { collection: () => collection } },
-      },
-    };
+    const context = pairingManagementContext({ collection, actions: { execute } });
     const manager = createConversationPairingManager({
       generationId: 'generation-1',
       now: () => 1_000,
@@ -698,6 +694,7 @@ describe('Channels pairing management writer', () => {
       expectedConnectionRevision: 4,
       target,
     }, context);
+    if (challenge.kind !== 'created') throw new Error('Expected a created pairing challenge.');
     const proposal = completePreBindingMessage(manager, {
       connectionId: 'connection-1',
       materialization,
@@ -773,13 +770,7 @@ describe('Channels pairing management writer', () => {
     const execute = vi.fn()
       .mockResolvedValueOnce({ kind: 'verified', templateVersion: 3 })
       .mockResolvedValueOnce({ kind: 'notVerified', reason: 'templateVersionMismatch' });
-    const context = {
-      signal: new AbortController().signal,
-      services: {
-        actions: { execute },
-        storage: { account: { collection: () => collection } },
-      },
-    };
+    const context = pairingManagementContext({ collection, actions: { execute } });
     const manager = createConversationPairingManager({
       generationId: 'generation-1',
       now: () => 1_000,
@@ -814,13 +805,20 @@ describe('Channels pairing management writer', () => {
     expect(execute).toHaveBeenNthCalledWith(
       1,
       'automation.conversation.target.verify',
-      { automationId: 'automation-1', expectedTemplateVersion: 3 },
+      {
+        automationId: 'automation-1',
+        expectedTemplateVersion: 3,
+        // Early pairing feedback runs before the proposal mints a binding id.
+      },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(execute).toHaveBeenNthCalledWith(
       2,
       'automation.conversation.target.verify',
-      { automationId: 'automation-1', expectedTemplateVersion: 3 },
+      {
+        automationId: 'automation-1',
+        expectedTemplateVersion: 3,
+      },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(collection.batches).toHaveLength(0);
@@ -837,13 +835,7 @@ describe('Channels pairing management writer', () => {
       .mockResolvedValueOnce({ kind: 'verified', templateVersion: 3 })
       .mockResolvedValueOnce({ kind: 'verified', templateVersion: 3 })
       .mockResolvedValueOnce({ kind: 'notVerified', reason: 'templateVersionMismatch' });
-    const context = {
-      signal: new AbortController().signal,
-      services: {
-        actions: { execute },
-        storage: { account: { collection: () => collection } },
-      },
-    };
+    const context = pairingManagementContext({ collection, actions: { execute } });
     const manager = createConversationPairingManager({
       generationId: 'generation-1',
       now: () => 1_000,

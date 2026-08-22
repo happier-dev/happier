@@ -1,13 +1,3 @@
-import type { PluginApi } from '@happier-dev/plugin-sdk';
-import type {
-  AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
+import { DEEPSEC_PLUGIN } from './manifest.js';
 
-import { createDeepSecExecutionRunFactory } from './agent/reviews/execution.js';
-
-const createDeepSecRuntime: AgentRuntimeFactory = () => Object.freeze({
-  executionRuns: createDeepSecExecutionRunFactory(),
-});
-
-export function activate(api: PluginApi): void {
-  api.agents.register('deepsec', createDeepSecRuntime);
-}
+export const activate = DEEPSEC_PLUGIN.activate;

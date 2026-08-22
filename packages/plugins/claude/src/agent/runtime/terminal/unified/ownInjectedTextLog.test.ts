@@ -16,7 +16,7 @@ describe('createClaudeUnifiedOwnInjectedTextLog', () => {
     expect(log.matches(null)).toBe(false);
   });
 
-  it('matches a recent long prefix residue from a truncated own injection but not stale or short prefixes', () => {
+  it('matches a long visible window while the own injection remains recorded but rejects short windows', () => {
     let nowMs = 10_000;
     const log = createClaudeUnifiedOwnInjectedTextLog(undefined, {
       nowMs: () => nowMs,
@@ -26,10 +26,11 @@ describe('createClaudeUnifiedOwnInjectedTextLog', () => {
     log.record(longPrompt);
 
     expect(log.matches(longPrompt.slice(0, 280))).toBe(true);
-    expect(log.matches(longPrompt.slice(0, 80))).toBe(false);
+    expect(log.matches(longPrompt.slice(-280))).toBe(true);
+    expect(log.matches(longPrompt.slice(-80))).toBe(false);
 
     nowMs += 5_001;
-    expect(log.matches(longPrompt.slice(0, 280))).toBe(false);
+    expect(log.matches(longPrompt.slice(-280))).toBe(true);
   });
 
   it('matches a short prefix only after a risky terminal write marked it as possible own residue', () => {

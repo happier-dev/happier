@@ -1,9 +1,9 @@
-import type {
-  PluginConnectedAccountAuthenticationContext,
-  PluginConnectedAccountCredentialReader,
-  PluginConnectedAccountHealthResult,
-  PluginConnectedAccountRuntime,
-} from '@happier-dev/plugin-sdk/runtime';
+import {
+  CLAUDE_SUBSCRIPTION_OAUTH_PROFILE,
+  type ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
+  type ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
+  type ConnectedAccountRuntime as PluginConnectedAccountRuntime,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import {
   CLAUDE_DEFAULT_SUBSCRIPTION_USAGE_URL,
   parseClaudeSubscriptionUsageMeters,
@@ -13,16 +13,7 @@ import {
   CLAUDE_CODE_SETUP_TOKEN_SCOPES,
 } from '../agent/auth/services/native/scopes.js';
 
-export const CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID =
-  '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
-export const CLAUDE_SUBSCRIPTION_OAUTH_AUTHORIZATION_URL =
-  'https://platform.claude.com/oauth/authorize';
-export const CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL =
-  'https://platform.claude.com/v1/oauth/token';
-export const CLAUDE_SUBSCRIPTION_OAUTH_CALLBACK_URL =
-  'https://platform.claude.com/oauth/code/callback';
 const CLAUDE_CREDENTIAL_FILE_ID = '.credentials.json';
-const CLAUDE_SCOPES = CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES;
 const SETUP_TOKEN_KEY = 'setupToken';
 const ACCESS_TOKEN_KEY = 'accessToken';
 const REFRESH_TOKEN_KEY = 'refreshToken';
@@ -41,6 +32,8 @@ type ClaudeTokens = Readonly<{
   scopes: readonly string[];
 }>;
 type CredentialStore = PluginConnectedAccountAuthenticationContext['attemptCredentials'];
+type ConnectedAccountCredentialReader =
+  Parameters<PluginConnectedAccountRuntime['status']>[0]['credentials'];
 
 function diagnostic(code: string, message: string) {
   return { code, severity: 'error' as const, message };
@@ -82,7 +75,7 @@ function readExpiresAtMs(value: unknown, now: number): number | null {
 }
 
 async function readCredential(
-  credentials: PluginConnectedAccountCredentialReader,
+  credentials: ConnectedAccountCredentialReader,
   key: string,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<string> {
@@ -152,10 +145,10 @@ async function exchangeTokens(
   | Readonly<{ status: 'rejected' | 'outcomeUnknown'; diagnostic: ReturnType<typeof diagnostic> }>
 > {
   const signal = options?.signal ?? context.signal;
-  let response: Awaited<ReturnType<typeof context.services.fetch.request>>;
+  let response: Awaited<ReturnType<typeof context.services.http.request>>;
   try {
-    response = await context.services.fetch.request({
-      url: CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL,
+    response = await context.services.http.request({
+      url: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.tokenUrl,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: new TextEncoder().encode(JSON.stringify(params.body)),
@@ -219,7 +212,7 @@ async function exchangeTokens(
 }
 
 async function readScopes(
-  credentials: PluginConnectedAccountCredentialReader,
+  credentials: ConnectedAccountCredentialReader,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<readonly string[]> {
   const raw = await readCredential(credentials, SCOPES_KEY, options);
@@ -237,7 +230,7 @@ function modeId(context: Parameters<PluginConnectedAccountRuntime['status']>[0])
 
 async function readHealth(
   authenticationModeId: string,
-  credentials: PluginConnectedAccountCredentialReader,
+  credentials: ConnectedAccountCredentialReader,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<PluginConnectedAccountHealthResult> {
   if (authenticationModeId === 'setup-token') {
@@ -323,9 +316,9 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
         async begin(input) {
           const query = new URLSearchParams({
             response_type: 'code',
-            client_id: CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID,
+            client_id: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.clientId,
             redirect_uri: input.callbackUrl,
-            scope: CLAUDE_SCOPES.join(' '),
+            scope: CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES.join(' '),
             code_challenge: input.pkce.challenge,
             code_challenge_method: input.pkce.method,
             state: input.state,
@@ -334,7 +327,7 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
           return {
             status: 'awaitingOAuthRedirect',
             authorizationUrl:
-              `${CLAUDE_SUBSCRIPTION_OAUTH_AUTHORIZATION_URL}?${query.toString()}`,
+              `${CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.authorizeUrl}?${query.toString()}`,
           };
         },
         async complete(input, context, options) {
@@ -343,7 +336,7 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
               grant_type: 'authorization_code',
               code: input.code,
               redirect_uri: input.callbackUrl,
-              client_id: CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID,
+              client_id: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.clientId,
               code_verifier: input.pkceVerifier,
               state: input.state,
             },
@@ -375,7 +368,7 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
       body: {
         grant_type: 'refresh_token',
         refresh_token: refreshToken,
-        client_id: CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID,
+        client_id: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.clientId,
       },
       fallbackRefreshToken: refreshToken,
       fallbackProviderAccountId: await readCredential(
@@ -425,7 +418,7 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
     if (!accessToken) {
       throw new Error('Claude OAuth credentials are unavailable');
     }
-    const response = await context.services.fetch.request({
+    const response = await context.services.http.request({
       url: CLAUDE_DEFAULT_SUBSCRIPTION_USAGE_URL,
       method: 'GET',
       headers: {

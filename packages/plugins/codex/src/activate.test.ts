@@ -13,6 +13,23 @@ import { codexExternalSessionsContribution } from './index.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('activate', () => {
+  it('reexports the activation compiled by its canonical public plugin definition', async () => {
+    expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
+      'agents',
+      'connectedAccountDescriptors',
+      'hooks',
+      'managedDependencies',
+      'mcp',
+      'settings',
+      'systemTools',
+      'ui',
+      'voiceProviders',
+    ]);
+    expect(await import('./manifest.js')).toEqual(expect.objectContaining({
+      CODEX_PLUGIN: expect.objectContaining({ manifest: PLUGIN_MANIFEST, activate }),
+    }));
+  });
+
   const previousCodexHome = process.env.CODEX_HOME;
 
   afterEach(() => {

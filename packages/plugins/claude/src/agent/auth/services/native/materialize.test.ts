@@ -2,8 +2,8 @@ import { lstat, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { PluginExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/runtime';
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE } from './scopes.js';
@@ -35,7 +35,7 @@ function createProcessResult(params: Readonly<{
     };
 }
 
-function createExecFixture(params: Readonly<{ exitCode?: number | null; stderr?: string }> = {}): PluginExecService {
+function createExecFixture(params: Readonly<{ exitCode?: number | null; stderr?: string }> = {}): ExecService {
     return {
         systemTools: {
             resolve: vi.fn(async () => ({
@@ -44,10 +44,10 @@ function createExecFixture(params: Readonly<{ exitCode?: number | null; stderr?:
             })),
         },
         run: vi.fn(async () => createProcessResult(params)),
-    } as unknown as PluginExecService;
+    } as unknown as ExecService;
 }
 
-function createKeychainSweepExecFixture(params: Readonly<{ dumpStdout: string }>): PluginExecService {
+function createKeychainSweepExecFixture(params: Readonly<{ dumpStdout: string }>): ExecService {
     return {
         systemTools: {
             resolve: vi.fn(async () => ({
@@ -61,7 +61,7 @@ function createKeychainSweepExecFixture(params: Readonly<{ dumpStdout: string }>
             }
             return createProcessResult();
         }),
-    } as unknown as PluginExecService;
+    } as unknown as ExecService;
 }
 
 describe('materializeClaudeCodeNativeAuth', () => {

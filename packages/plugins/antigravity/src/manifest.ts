@@ -1,18 +1,35 @@
-import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 
+import { antigravityExternalSessionObservationContribution } from './agent/cliPrint/observation.js';
+import { AGENT_DEFINITION } from './agent/definition.js';
+import { ANTIGRAVITY_BACKEND_ID } from './agent/install/cliRuntime.js';
+import { resolveAntigravityDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
+import {
+  antigravityExternalSessionsContribution,
+  createAntigravityAgentRuntime,
+} from './agent/runtime/factory.js';
 import { ANTIGRAVITY_CLI_SYSTEM_TOOL_ID } from './agent/systemTool.js';
 import { ANTIGRAVITY_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import {
   ANTIGRAVITY_LOCALHARNESS_INSTALLABLE_KEY,
 } from './agent/localharness/installable.js';
 
-export const PLUGIN_MANIFEST = {
-  schemaVersion: 2,
+const resolveAntigravityDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
+  resolveAntigravityDaemonSpawnPrerequisites(event, context);
+
+const {
+  id: ANTIGRAVITY_AGENT_SETTINGS_CONTRIBUTION_ID,
+  ...ANTIGRAVITY_AGENT_SETTINGS_DECLARATION
+} = ANTIGRAVITY_AGENT_SETTINGS_CONTRIBUTION;
+
+export const ANTIGRAVITY_PLUGIN = definePlugin({
   id: 'happier.agent.antigravity',
   version: '0.0.0',
   displayName: 'Antigravity',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
       id: 'antigravity-external-session-transcripts',
@@ -35,88 +52,99 @@ export const PLUGIN_MANIFEST = {
     }],
     optional: [],
   },
-  contributes: {
-    agents: [{
-      id: 'antigravity',
-      title: 'Antigravity',
-      runtime: { kind: 'custom' },
-      cli: {
-        displayName: 'Antigravity CLI',
-        executable: {
-          binaryName: 'agy',
-          knownUserBinDirSuffixes: null,
-          sourcePreference: 'system-first',
-        },
-        install: {
-          managed: null,
-          manual: {
-            kind: 'vendor_recipe',
-            recipes: {
-              darwin: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://antigravity.google/cli/install.sh | bash'] }],
-              linux: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://antigravity.google/cli/install.sh | bash'] }],
-              win32: [{
-                cmd: 'powershell',
-                args: [
-                  '-NoProfile',
-                  '-ExecutionPolicy',
-                  'Bypass',
-                  '-Command',
-                  'irm https://antigravity.google/cli/install.ps1 | iex',
-                ],
-              }],
-            },
+  agents: {
+    [ANTIGRAVITY_BACKEND_ID]: {
+      declaration: {
+        title: 'Antigravity',
+        runtime: { kind: 'custom' },
+        cli: {
+          displayName: 'Antigravity CLI',
+          executable: {
+            binaryName: 'agy',
+            knownUserBinDirSuffixes: null,
+            sourcePreference: 'system-first',
           },
-          guideUrl: 'https://antigravity.google/docs/cli-install',
-          docsUrl: 'https://antigravity.google/docs/cli-install',
-        },
-        auth: {
-          support: 'login_terminal',
-          machineLoginKey: 'antigravity-cli',
-          probe: { parser: 'none', backgroundChecks: 'manual_only', statusArgs: null },
-          loginLaunches: [{ kind: 'primary', args: [] }],
-        },
-      },
-      primary: 'sessions',
-      connectedAccounts: [{
-        purpose: 'model_upstream',
-        service: {
-          pluginId: 'happier.agent.gemini',
-          localId: 'gemini-account',
-        },
-        required: false,
-        materializationKinds: ['environment'],
-      }],
-      capabilities: {
-        surfaces: ['terminal', 'externalSessions'],
-        sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true },
-        executionRuns: { open: ['create'], checkpoint: false, stop: true },
-      },
-      surfaces: {
-        externalSession: {
-          externalLinkedTakeover: { writerSafety: 'unsupported' },
-          sources: [{
-            sourceKind: 'antigravityCliPrint',
-            schema: {
-              fields: [
-                { kind: 'literal', name: 'kind', value: 'antigravityCliPrint' },
-                { kind: 'string', name: 'brainDir', min: 1, max: 10_000, nullish: true },
-                { kind: 'string', name: 'conversationId', min: 1, max: 2_000, nullish: true },
-                { kind: 'string', name: 'sourceRevision', min: 1, max: 10_000, nullish: true },
-              ],
+          install: {
+            managed: null,
+            manual: {
+              kind: 'vendor_recipe',
+              recipes: {
+                darwin: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://antigravity.google/cli/install.sh | bash'] }],
+                linux: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://antigravity.google/cli/install.sh | bash'] }],
+                win32: [{
+                  cmd: 'powershell',
+                  args: [
+                    '-NoProfile',
+                    '-ExecutionPolicy',
+                    'Bypass',
+                    '-Command',
+                    'irm https://antigravity.google/cli/install.ps1 | iex',
+                  ],
+                }],
+              },
             },
-            key: {
-              segments: [
-                { kind: 'literal', value: 'antigravityCliPrint' },
-                { kind: 'field', field: 'brainDir' },
-              ],
-            },
-            instances: [{ kind: 'default', constants: {} }],
-          }],
+            guideUrl: 'https://antigravity.google/docs/cli-install',
+            docsUrl: 'https://antigravity.google/docs/cli-install',
+          },
+          auth: {
+            support: 'login_terminal',
+            machineLoginKey: 'antigravity-cli',
+            probe: { parser: 'none', backgroundChecks: 'manual_only', statusArgs: null },
+            loginLaunches: [{ kind: 'primary', args: [] }],
+          },
+        },
+        primary: 'sessions',
+        connectedAccounts: [{
+          purpose: 'model_upstream',
+          service: {
+            pluginId: 'happier.agent.gemini',
+            localId: 'gemini-account',
+          },
+          required: false,
+          materializationKinds: ['environment'],
+        }],
+        capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
+          surfaces: ['externalSessions'],
+          sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true },
+          executionRuns: { open: ['create'], checkpoint: false, stop: true },
+        }),
+        surfaces: {
+          externalSession: {
+            externalLinkedTakeover: { writerSafety: 'unsupported' },
+            sources: [{
+              sourceKind: 'antigravityCliPrint',
+              schema: {
+                fields: [
+                  { kind: 'literal', name: 'kind', value: 'antigravityCliPrint' },
+                  { kind: 'string', name: 'brainDir', min: 1, max: 10_000, nullish: true },
+                  { kind: 'string', name: 'conversationId', min: 1, max: 2_000, nullish: true },
+                  { kind: 'string', name: 'sourceRevision', min: 1, max: 10_000, nullish: true },
+                ],
+              },
+              key: {
+                segments: [
+                  { kind: 'literal', value: 'antigravityCliPrint' },
+                  { kind: 'field', field: 'brainDir' },
+                ],
+              },
+              instances: [{ kind: 'default', constants: {} }],
+            }],
+          },
         },
       },
-    }],
-    managedDependencies: [{
-      id: 'localharness',
+      factory: createAntigravityAgentRuntime,
+      sessionRunnerFactory: {
+        module: './agent/runtime/factory',
+        export: 'createAntigravityAgentRuntime',
+        runtimeApiVersion: 1,
+        externalSessionsExport: 'antigravityExternalSessionsContribution',
+      },
+      externalSessions: antigravityExternalSessionsContribution,
+      externalSessionObservation: antigravityExternalSessionObservationContribution,
+    },
+  },
+  managedDependencies: {
+    localharness: {
       title: 'Antigravity localharness',
       description: 'Google Antigravity structured local runtime.',
       sources: [{
@@ -139,21 +167,30 @@ export const PLUGIN_MANIFEST = {
       }],
       platforms: ['macos', 'linux', 'windows'],
       executable: 'localharness',
-    }],
-    systemTools: [{
-      id: ANTIGRAVITY_CLI_SYSTEM_TOOL_ID,
+    },
+  },
+  systemTools: {
+    [ANTIGRAVITY_CLI_SYSTEM_TOOL_ID]: {
       title: 'Antigravity CLI',
       executableNames: ['agy'],
-    }],
-    hooks: [{
-      id: 'resolve-prerequisites',
-      on: 'agent.resolvePrerequisites',
-      hookApiVersion: 1,
-      category: 'decision',
-      scope: 'agent',
-      filters: { agentId: 'antigravity' },
-      executionKind: 'decide',
-    }],
-    settings: [ANTIGRAVITY_AGENT_SETTINGS_CONTRIBUTION],
+    },
   },
-} satisfies PluginManifest;
+  hooks: {
+    'resolve-prerequisites': {
+      declaration: {
+        on: 'agent.resolvePrerequisites',
+        hookApiVersion: 1,
+        category: 'decision',
+        scope: 'agent',
+        filters: { agentId: 'antigravity' },
+        executionKind: 'decide',
+      },
+      handler: resolveAntigravityDaemonSpawnPrerequisitesHook,
+    },
+  },
+  settings: {
+    [ANTIGRAVITY_AGENT_SETTINGS_CONTRIBUTION_ID]: ANTIGRAVITY_AGENT_SETTINGS_DECLARATION,
+  },
+});
+
+export const PLUGIN_MANIFEST = ANTIGRAVITY_PLUGIN.manifest;

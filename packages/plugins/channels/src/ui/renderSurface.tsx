@@ -47,6 +47,7 @@ import {
 } from '@happier-dev/plugin-ui/data';
 import {
   CONVERSATION_MANAGEMENT_ACTION_IDS_V1,
+  CONVERSATION_CONNECTION_SELECTABLE_TRANSPORTS_V1,
   CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1,
   CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_ID_V1,
   CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_VERSION_V1,
@@ -58,6 +59,7 @@ import {
   ConversationBindingResolveResultV1Schema,
   ConversationBindingUpdateInputV1Schema,
   ConversationConnectionCreateResultV1Schema,
+  isConversationConnectionSelectableTransportV1,
   ConversationConnectionPrepareResultV1Schema,
   ConversationProviderSetupRemediationResultV1Schema,
   ConversationConnectionTransferInputV1Schema,
@@ -69,11 +71,13 @@ import {
   ConversationPairingFinalizeInputV1Schema,
   ConversationPairingFinalizeResultV1Schema,
   ConversationPairingResourceV1Schema,
+  conversationBindingPolicyForOmittedFieldsV1,
   MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
   MAX_CONVERSATION_INBOUND_DEBOUNCE_MS,
   MAX_CONVERSATION_OBSERVATION_AGE_MS,
   MIN_CONVERSATION_OBSERVATION_AGE_MS,
   type ConversationBindingV1,
+  type ConversationConnectionCreateInputV1,
   type ConversationPairingResourceV1,
 } from '@happier-dev/channels-protocol/v1';
 
@@ -83,11 +87,14 @@ import {
 } from '../collections.js';
 import {
   readConversationBindingManagementRows,
+  readConversationBindingPolicyFromAccountCollection,
   readConversationConnectionManagementRows,
   readConversationIngressAttentionPage,
   setConversationBindingEnabledInAccountCollection,
+  updateConversationBindingPolicyInAccountCollection,
   updateConversationConnectionInAccountCollection,
   type ConversationBindingEnablementResult,
+  type ConversationBindingPolicyReadResult,
   type ConversationConnectionLifecycleMutationResult,
   type ConversationIngressAttentionRow,
 } from '../accountLocalBindingPolicy.js';
@@ -98,6 +105,8 @@ import {
 import {
   readConversationOutwardDeliveryConnectionAttention,
   readConversationOutwardDeliveryResolutionPage,
+  resolveConversationOutwardDeliveryCustodyInAccountCollection,
+  type ConversationDeliveryResolutionDecision,
   type ConversationOutwardDeliveryResolutionRow,
 } from '../outwardDelivery.js';
 
@@ -137,6 +146,7 @@ type ConnectionOutwardDeliveryAttention = Readonly<{
   notDelivered: boolean;
   partial: boolean;
   outcomeUnknown: boolean;
+  archiveRecovery: boolean;
 }>;
 
 type ChannelsConnection = Readonly<{
@@ -230,7 +240,7 @@ type SelectedProviderSetupRemediationActionInput = Readonly<{
   operation: ProviderSetupRemediationOperation;
   result: SubmittedProviderSetupRemediationSelection;
 }>;
-type ConnectionCreateTransport = 'checkpointedPull' | 'socket';
+type ConnectionCreateTransport = ConversationConnectionCreateInputV1['selectedTransport'];
 type PreparedConnectionSetup = Readonly<{
   operationKey: string;
   providerSelection: SubmittedProviderSetupSelection['selection'];
@@ -350,6 +360,21 @@ type BindingEnablementOperation = Readonly<{
   execute(input: BindingEnablementInput): Promise<PluginActionExecution>;
   reset(): void;
 }>;
+type BindingPolicyInput = Readonly<{
+  bindingId: string;
+  expectedRevision: number;
+  allowBotSenders: boolean;
+  inputMode: BindingInputMode;
+  inboundDebounceMs: number;
+  linkPreviewPolicy: 'suppress' | 'providerDefault';
+  senderFeedback: 'off' | 'eligibleRefusals';
+  enabled: boolean;
+}>;
+type BindingPolicyOperation = Readonly<{
+  execution: PluginActionExecution;
+  execute(input: BindingPolicyInput): Promise<PluginActionExecution>;
+  reset(): void;
+}>;
 type BindingEnablementFailure = Readonly<{
   bindingId: string;
   code: string;
@@ -373,6 +398,16 @@ type ConnectionPolicyInput = Readonly<{
 type ConnectionPolicyOperation = Readonly<{
   execution: PluginActionExecution;
   execute(input: ConnectionPolicyInput): Promise<PluginActionExecution>;
+  reset(): void;
+}>;
+type DeliveryResolveInput = Readonly<{
+  custodyId: string;
+  expectedRevision: number;
+  resolution: ConversationDeliveryResolutionDecision;
+}>;
+type DeliveryResolveOperation = Readonly<{
+  execution: PluginActionExecution;
+  execute(input: DeliveryResolveInput): Promise<PluginActionExecution>;
   reset(): void;
 }>;
 type AccountLocalBindingReadState = Readonly<{
@@ -457,10 +492,6 @@ function isConnectionTransport(value: unknown): value is ConnectionTransport {
   return value === 'checkpointedPull' || value === 'socket' || value === 'durablePush';
 }
 
-function isConnectionCreateTransport(value: unknown): value is ConnectionCreateTransport {
-  return value === 'checkpointedPull' || value === 'socket';
-}
-
 function isConnectionDeletionState(value: unknown): value is ConnectionDeletionState {
   return value === 'none' || value === 'pendingStopReconciliation' || value === 'finalizingDelete';
 }
@@ -518,6 +549,9 @@ function parseOutwardDeliveryAttention(value: unknown): ConnectionOutwardDeliver
     notDelivered: value.notDelivered,
     partial: value.partial,
     outcomeUnknown: value.outcomeUnknown,
+    // Tolerated as absent: a Resource produced before archive recovery was
+    // surfaced simply offers no recoverable delivery.
+    archiveRecovery: value.archiveRecovery === true,
   };
 }
 
@@ -1157,52 +1191,104 @@ function directBindingWriteFailure(error: unknown): PluginActionExecution {
   };
 }
 
+type AccountLocalMutationOperation<TInput> = Readonly<{
+  execution: PluginActionExecution;
+  execute(write: TInput): Promise<PluginActionExecution>;
+  reset(): void;
+}>;
+
 /**
- * This is the offline counterpart of the canonical Action lifecycle, not a
- * second binding writer: it invokes the same transition/parser/CAS owner and
- * deliberately waits for the direct Account reread before the list changes.
+ * The one direct-Data mutation lifecycle in this surface. It is the offline
+ * counterpart of the canonical Action lifecycle, not a second Channel writer:
+ * every caller supplies a shared transition/parser/CAS owner as `commit`, and
+ * the list deliberately waits for the direct Account reread before it changes.
  */
-function useAccountLocalBindingEnablement(input: Readonly<{
-  collection: ChannelStateCollection;
-  signal: AbortSignal;
-  onCommitted: () => void;
-}>): BindingEnablementOperation {
+function useAccountLocalMutation<TInput, TResult extends Readonly<{ kind: string }>>(
+  input: Readonly<{
+    signal: AbortSignal;
+    onCommitted: () => void;
+    commit: (write: TInput, signal: AbortSignal) => Promise<TResult>;
+    describeFailure: (error: unknown) => PluginActionExecution;
+  }>,
+): AccountLocalMutationOperation<TInput> {
   const [execution, setExecution] = React.useState<PluginActionExecution>({ status: 'idle' });
   const pendingRef = React.useRef(false);
   const mountedRef = React.useRef(true);
 
-  React.useEffect(() => () => {
-    mountedRef.current = false;
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
-  const execute = React.useCallback(async (
-    write: BindingEnablementInput,
-  ): Promise<PluginActionExecution> => {
+  const execute = React.useCallback(async (write: TInput): Promise<PluginActionExecution> => {
     if (pendingRef.current) return { status: 'pending' };
     pendingRef.current = true;
     setExecution({ status: 'pending' });
     let settled: PluginActionExecution;
     try {
-      const result: ConversationBindingEnablementResult = await setConversationBindingEnabledInAccountCollection({
-        collection: input.collection,
-        ...write,
-        signal: input.signal,
-      });
+      const result = await input.commit(write, input.signal);
       settled = { status: 'success', result };
-      if (result.kind === 'updated' && !input.signal.aborted) input.onCommitted();
+      if (result.kind !== 'unchanged' && !input.signal.aborted) input.onCommitted();
     } catch (error) {
-      settled = directBindingWriteFailure(error);
+      settled = input.describeFailure(error);
     }
     pendingRef.current = false;
     if (mountedRef.current && !input.signal.aborted) setExecution(settled);
     return settled;
-  }, [input.collection, input.onCommitted, input.signal]);
+  }, [input.commit, input.describeFailure, input.onCommitted, input.signal]);
 
   const reset = React.useCallback(() => {
     if (!pendingRef.current) setExecution({ status: 'idle' });
   }, []);
 
   return React.useMemo(() => ({ execution, execute, reset }), [execute, execution, reset]);
+}
+
+function useAccountLocalBindingEnablement(input: Readonly<{
+  collection: ChannelStateCollection;
+  signal: AbortSignal;
+  onCommitted: () => void;
+}>): BindingEnablementOperation {
+  const { collection } = input;
+  const commit = React.useCallback(async (
+    write: BindingEnablementInput,
+    signal: AbortSignal,
+  ): Promise<ConversationBindingEnablementResult> => (
+    await setConversationBindingEnabledInAccountCollection({ collection, ...write, signal })
+  ), [collection]);
+  return useAccountLocalMutation({
+    signal: input.signal,
+    onCommitted: input.onCommitted,
+    commit,
+    describeFailure: directBindingWriteFailure,
+  });
+}
+
+/**
+ * The Account-decidable binding-policy counterpart of the online update Action.
+ * It deliberately carries no endpoint, principal, or target field: those need
+ * current provider or Automation authority and stay unavailable offline.
+ */
+function useAccountLocalBindingPolicy(input: Readonly<{
+  collection: ChannelStateCollection;
+  signal: AbortSignal;
+  onCommitted: () => void;
+}>): BindingPolicyOperation {
+  const { collection } = input;
+  const commit = React.useCallback(async (
+    write: BindingPolicyInput,
+    signal: AbortSignal,
+  ): Promise<ConversationBindingEnablementResult> => (
+    await updateConversationBindingPolicyInAccountCollection({ collection, ...write, signal })
+  ), [collection]);
+  return useAccountLocalMutation({
+    signal: input.signal,
+    onCommitted: input.onCommitted,
+    commit,
+    describeFailure: directBindingWriteFailure,
+  });
 }
 
 function directConnectionWriteFailure(error: unknown): PluginActionExecution {
@@ -1238,42 +1324,75 @@ function useAccountLocalConnectionPolicy(input: Readonly<{
   signal: AbortSignal;
   onCommitted: () => void;
 }>): ConnectionPolicyOperation {
-  const [execution, setExecution] = React.useState<PluginActionExecution>({ status: 'idle' });
-  const pendingRef = React.useRef(false);
-  const mountedRef = React.useRef(true);
-
-  React.useEffect(() => () => {
-    mountedRef.current = false;
-  }, []);
-
-  const execute = React.useCallback(async (
+  const { collection } = input;
+  const commit = React.useCallback(async (
     write: ConnectionPolicyInput,
-  ): Promise<PluginActionExecution> => {
-    if (pendingRef.current) return { status: 'pending' };
-    pendingRef.current = true;
-    setExecution({ status: 'pending' });
-    let settled: PluginActionExecution;
-    try {
-      const result: ConversationConnectionLifecycleMutationResult = await updateConversationConnectionInAccountCollection({
-        collection: input.collection,
-        ...write,
-        signal: input.signal,
-      });
-      settled = { status: 'success', result };
-      if (result.kind === 'updated' && !input.signal.aborted) input.onCommitted();
-    } catch (error) {
-      settled = directConnectionWriteFailure(error);
-    }
-    pendingRef.current = false;
-    if (mountedRef.current && !input.signal.aborted) setExecution(settled);
-    return settled;
-  }, [input.collection, input.onCommitted, input.signal]);
+    signal: AbortSignal,
+  ): Promise<ConversationConnectionLifecycleMutationResult> => (
+    await updateConversationConnectionInAccountCollection({ collection, ...write, signal })
+  ), [collection]);
+  return useAccountLocalMutation({
+    signal: input.signal,
+    onCommitted: input.onCommitted,
+    commit,
+    describeFailure: directConnectionWriteFailure,
+  });
+}
 
-  const reset = React.useCallback(() => {
-    if (!pendingRef.current) setExecution({ status: 'idle' });
-  }, []);
+function directDeliveryResolveFailure(error: unknown): PluginActionExecution {
+  const candidate = error !== null && typeof error === 'object'
+    ? error as Readonly<{ code?: unknown; retryable?: unknown }>
+    : undefined;
+  const code = typeof candidate?.code === 'string'
+    ? candidate.code
+    : 'plugin_collection_mutation_failed';
+  if (code === 'timeout'
+    || code === 'aborted'
+    || code === 'plugin_collection_cancelled') {
+    return {
+      status: 'outcomeUnknown',
+      code,
+      message: 'The delivery decision may have reached the Account.',
+    };
+  }
+  return {
+    status: 'error',
+    code,
+    message: 'The delivery decision did not complete.',
+    retryable: candidate?.retryable === true,
+  };
+}
 
-  return React.useMemo(() => ({ execution, execute, reset }), [execute, execution, reset]);
+/**
+ * The direct-Data counterpart of the delivery-resolution Action. Resolution is
+ * explicitly provider-independent - the mounted Action itself performs no
+ * provider call - so a cold offline Account can settle its own never-expiring
+ * ambiguity through the same custody CAS owner.
+ */
+function useAccountLocalDeliveryResolution(input: Readonly<{
+  stateCollection: ChannelStateCollection;
+  deliveriesCollection: ChannelDeliveriesCollection;
+  signal: AbortSignal;
+  onCommitted: () => void;
+}>): DeliveryResolveOperation {
+  const { deliveriesCollection, stateCollection } = input;
+  const commit = React.useCallback(async (
+    write: DeliveryResolveInput,
+    signal: AbortSignal,
+  ) => (
+    await resolveConversationOutwardDeliveryCustodyInAccountCollection({
+      stateCollection,
+      deliveriesCollection,
+      ...write,
+      signal,
+    })
+  ), [deliveriesCollection, stateCollection]);
+  return useAccountLocalMutation({
+    signal: input.signal,
+    onCommitted: input.onCommitted,
+    commit,
+    describeFailure: directDeliveryResolveFailure,
+  });
 }
 
 function transportLabel(transport: ConnectionTransport, t: Translate): string {
@@ -2006,6 +2125,61 @@ function BindingEnablementFailureNotice(props: Readonly<{
   );
 }
 
+type DestructiveConfirmation = Readonly<{
+  open: boolean;
+  openerFocusTarget: PluginUiFocusTarget;
+  confirmationFocusTarget: PluginUiFocusTarget;
+  /** Open the confirmation and move logical focus into it. */
+  request: () => void;
+  /** User-driven cancel or confirm: close it and return focus to its opener. */
+  dismiss: () => void;
+  /** State-driven close, such as the confirmed subject changing underneath. */
+  close: () => void;
+}>;
+
+/**
+ * The one destructive-confirmation focus contract in this surface: opening a
+ * confirmation transfers logical focus into it, and cancelling or confirming
+ * returns focus to the control that opened it. A confirmation closed because
+ * its subject changed underneath is not a user dismissal and does not move
+ * focus.
+ */
+function useDestructiveConfirmation(): DestructiveConfirmation {
+  const openerFocusTarget = usePluginUiFocusTarget();
+  const confirmationFocusTarget = usePluginUiFocusTarget();
+  const [open, setOpen] = React.useState(false);
+  const restoreOpenerFocusRef = React.useRef(false);
+
+  React.useEffect(() => {
+    if (open) {
+      confirmationFocusTarget.focus();
+      return;
+    }
+    if (!restoreOpenerFocusRef.current) return;
+    restoreOpenerFocusRef.current = false;
+    openerFocusTarget.focus();
+  }, [confirmationFocusTarget, open, openerFocusTarget]);
+
+  const request = React.useCallback(() => { setOpen(true); }, []);
+  const dismiss = React.useCallback(() => {
+    restoreOpenerFocusRef.current = true;
+    setOpen(false);
+  }, []);
+  const close = React.useCallback(() => {
+    restoreOpenerFocusRef.current = false;
+    setOpen(false);
+  }, []);
+
+  return React.useMemo(() => ({
+    open,
+    openerFocusTarget,
+    confirmationFocusTarget,
+    request,
+    dismiss,
+    close,
+  }), [close, confirmationFocusTarget, dismiss, open, openerFocusTarget, request]);
+}
+
 function BindingRow(props: Readonly<{
   presentation: BindingPresentation;
   execution: PluginActionExecution;
@@ -2027,7 +2201,7 @@ function BindingRow(props: Readonly<{
   const providerDisplayName = usePluginBrandDisplayName(providerPluginId)
     ?? props.t('plugins.channels.surface.providerFallback', 'Integration provider');
   const editFocusTarget = usePluginUiFocusTarget();
-  const [deleteConfirmationOpen, setDeleteConfirmationOpen] = React.useState(false);
+  const deleteConfirmation = useDestructiveConfirmation();
   const enablementFailure = props.enablementFailure?.bindingId === binding.bindingId
     ? props.enablementFailure
     : undefined;
@@ -2036,11 +2210,12 @@ function BindingRow(props: Readonly<{
   const deleteOutcomeUnknown = deleteExecution?.status === 'outcomeUnknown';
   const enablementBusy = props.execution.status === 'pending' && props.activeBindingId === binding.bindingId;
   const deleteBusy = deleteExecution?.status === 'pending' && props.activeDeletedBindingId === binding.bindingId;
+  const { close: closeDeleteConfirmation } = deleteConfirmation;
   React.useEffect(() => {
-    setDeleteConfirmationOpen(false);
-  }, [binding.bindingId, binding.deletionState, binding.revision]);
+    closeDeleteConfirmation();
+  }, [binding.bindingId, binding.deletionState, binding.revision, closeDeleteConfirmation]);
 
-  const mutationLocked = deleteConfirmationOpen
+  const mutationLocked = deleteConfirmation.open
     || props.execution.status === 'pending'
     || enablementOutcomeUnknown
     || deleteExecution?.status === 'pending'
@@ -2106,7 +2281,7 @@ function BindingRow(props: Readonly<{
             disabled={enablementUnavailable}
           />
          {props.onDelete === undefined ? null : (
-            deleteConfirmationOpen ? (
+            deleteConfirmation.open ? (
               <Stack gap="small" testID={`channels-binding-delete-confirmation-${binding.bindingId}`}>
                 <Banner
                   tone="danger"
@@ -2123,8 +2298,9 @@ function BindingRow(props: Readonly<{
                   testID={`channels-binding-delete-confirm-${binding.bindingId}`}
                   title={props.t('plugins.channels.surface.bindingDeleteConfirm', 'Confirm deletion')}
                   disabled={deleteBusy || deleteOutcomeUnknown}
+                  focusTarget={deleteConfirmation.confirmationFocusTarget}
                   onPress={() => {
-                    setDeleteConfirmationOpen(false);
+                    deleteConfirmation.dismiss();
                     void props.onDelete?.(binding);
                   }}
                 />
@@ -2132,7 +2308,7 @@ function BindingRow(props: Readonly<{
                   title={props.t('plugins.channels.surface.cancel', 'Cancel')}
                   variant="plain"
                   disabled={deleteBusy || deleteOutcomeUnknown}
-                  onPress={() => setDeleteConfirmationOpen(false)}
+                  onPress={deleteConfirmation.dismiss}
                 />
               </Stack>
             ) : (
@@ -2143,7 +2319,8 @@ function BindingRow(props: Readonly<{
                   : props.t('plugins.channels.surface.bindingDelete', 'Delete binding')}
                 busy={deleteBusy}
                 disabled={deleteUnavailable}
-                onPress={() => setDeleteConfirmationOpen(true)}
+                focusTarget={deleteConfirmation.openerFocusTarget}
+                onPress={deleteConfirmation.request}
               />
             )
          )}
@@ -2370,13 +2547,8 @@ function bindingEditorTargetFromBinding(binding: ConversationBindingV1): Binding
   };
 }
 
-function bindingEditorDraftFromDetail(
-  detail: ReturnType<typeof ConversationBindingReadResultV1Schema.parse>,
-): BindingEditorDraft {
-  if (detail.kind !== 'ready') {
-    throw new Error('Binding editor draft requires an exact ready binding detail.');
-  }
-  const { binding } = detail;
+/** The one draft projection of an exact retained binding, online or offline. */
+function bindingEditorDraftFromBinding(binding: ConversationBindingV1): BindingEditorDraft {
   return {
     target: bindingEditorTargetFromBinding(binding),
     targetChanged: false,
@@ -2389,6 +2561,15 @@ function bindingEditorDraftFromDetail(
     senderFeedback: binding.senderFeedback,
     enabled: binding.enabled,
   };
+}
+
+function bindingEditorDraftFromDetail(
+  detail: ReturnType<typeof ConversationBindingReadResultV1Schema.parse>,
+): BindingEditorDraft {
+  if (detail.kind !== 'ready') {
+    throw new Error('Binding editor draft requires an exact ready binding detail.');
+  }
+  return bindingEditorDraftFromBinding(detail.binding);
 }
 
 function bindingEditorTargetLabel(target: BindingEditorTarget, t: Translate): string {
@@ -3124,9 +3305,12 @@ function BindingCreateJourney(props: Readonly<{
   const currentConnection = availableConnections.find((connection) => connection.connectionId === connectionId);
   const providerDisplayName = usePluginBrandDisplayName(currentConnection?.providerPluginId)
     ?? props.t('plugins.channels.surface.providerFallback', 'Integration provider');
-  const defaultInputMode: BindingInputMode = endpointSelection?.selected.audience === 'direct'
-    ? 'allAllowedMessages'
-    : 'directMentionsOnly';
+  // The surface previews the binding the create writer will persist, so the
+  // omitted-field policy comes from that one contract owner rather than a
+  // second copy of the same rule.
+  const defaultInputMode: BindingInputMode = conversationBindingPolicyForOmittedFieldsV1(
+    endpointSelection?.selected.audience ?? 'shared',
+  ).inputMode;
   const inputMode = inputModeOverride ?? defaultInputMode;
   const selectedPrincipalSummary = principalSelection === undefined
     ? props.t('plugins.channels.surface.bindingCreatePrincipalFallback', 'Person')
@@ -4181,6 +4365,103 @@ function BindingCreateJourney(props: Readonly<{
  * exact private row only after its owner selects Edit, then keeps the draft
  * inside the mounted editor until it is cancelled or confirmed.
  */
+/**
+ * The binding-policy facts that are decided entirely from the retained binding
+ * row: no provider resolution, target verification, or transport call. This is
+ * exactly the set the Account-local transition and CAS owner accepts, so the
+ * daemon-backed editor and the cold-offline editor present one control set.
+ */
+type BindingPolicyFields = Readonly<{
+  allowBotSenders: boolean;
+  inputMode: BindingInputMode;
+  inboundDebounceMs: string;
+  linkPreviewPolicy: 'suppress' | 'providerDefault';
+  senderFeedback: 'off' | 'eligibleRefusals';
+  enabled: boolean;
+}>;
+
+function BindingPolicyControls(props: Readonly<{
+  fields: BindingPolicyFields;
+  disabled: boolean;
+  botSendersLocked: boolean;
+  debounceValid: boolean;
+  onChange: (update: (current: BindingPolicyFields) => BindingPolicyFields) => void;
+  t: Translate;
+}>): React.ReactElement {
+  const { fields, onChange } = props;
+  return (
+    <>
+      <Form.Toggle
+        label={props.t('plugins.channels.surface.bindingEditEnabled', 'Enable this binding')}
+        value={fields.enabled}
+        disabled={props.disabled}
+        onChange={(enabled) => onChange((current) => ({ ...current, enabled }))}
+      />
+      <Form.Toggle
+        label={props.t('plugins.channels.surface.bindingCreateAllowBots', 'Allow bot senders')}
+        value={fields.allowBotSenders}
+        disabled={props.disabled || props.botSendersLocked}
+        onChange={(allowBotSenders) => onChange((current) => ({ ...current, allowBotSenders }))}
+      />
+      <Form.Select
+        label={props.t('plugins.channels.surface.bindingCreateInputMode', 'Incoming messages')}
+        options={[
+          { value: 'directMentionsOnly', label: props.t('plugins.channels.surface.bindingCreateInputDirect', 'Direct mentions only') },
+          { value: 'addressedMessages', label: props.t('plugins.channels.surface.bindingCreateInputAddressed', 'Addressed messages') },
+          { value: 'allAllowedMessages', label: props.t('plugins.channels.surface.bindingCreateInputAll', 'All allowed messages') },
+        ]}
+        value={fields.inputMode}
+        disabled={props.disabled}
+        onChange={(inputMode) => {
+          if (!isBindingInputMode(inputMode)) return;
+          onChange((current) => ({ ...current, inputMode }));
+        }}
+      />
+      <Form.TextField
+        label={props.t('plugins.channels.surface.bindingEditDebounce', 'Inbound debounce (ms)')}
+        value={fields.inboundDebounceMs}
+        disabled={props.disabled}
+        onChange={(inboundDebounceMs) => onChange((current) => ({ ...current, inboundDebounceMs }))}
+      />
+      {props.debounceValid ? null : (
+        <Text
+          tone="danger"
+          value={props.t(
+            'plugins.channels.surface.bindingEditDebounceInvalid',
+            `Enter a whole number from 0 to ${MAX_CONVERSATION_INBOUND_DEBOUNCE_MS}.`,
+          )}
+        />
+      )}
+      <Form.Select
+        label={props.t('plugins.channels.surface.bindingCreateLinkPreview', 'Link previews')}
+        options={[
+          { value: 'suppress', label: props.t('plugins.channels.surface.bindingCreateLinkPreviewSuppress', 'Suppress previews') },
+          { value: 'providerDefault', label: props.t('plugins.channels.surface.bindingCreateLinkPreviewProviderDefault', 'Provider default') },
+        ]}
+        value={fields.linkPreviewPolicy}
+        disabled={props.disabled}
+        onChange={(linkPreviewPolicy) => {
+          if (linkPreviewPolicy !== 'suppress' && linkPreviewPolicy !== 'providerDefault') return;
+          onChange((current) => ({ ...current, linkPreviewPolicy }));
+        }}
+      />
+      <Form.Select
+        label={props.t('plugins.channels.surface.bindingCreateSenderFeedback', 'Sender feedback')}
+        options={[
+          { value: 'off', label: props.t('plugins.channels.surface.bindingCreateSenderFeedbackOff', 'Off') },
+          { value: 'eligibleRefusals', label: props.t('plugins.channels.surface.bindingCreateSenderFeedbackRefusals', 'Eligible refusals') },
+        ]}
+        value={fields.senderFeedback}
+        disabled={props.disabled}
+        onChange={(senderFeedback) => {
+          if (senderFeedback !== 'off' && senderFeedback !== 'eligibleRefusals') return;
+          onChange((current) => ({ ...current, senderFeedback }));
+        }}
+      />
+    </>
+  );
+}
+
 function BindingEditJourney(props: Readonly<{
   bindingId: string;
   presentation?: BindingPresentation;
@@ -4914,72 +5195,15 @@ function BindingEditJourney(props: Readonly<{
               void loadSessions();
             }}
           />
-          <Form.Toggle
-            label={props.t('plugins.channels.surface.bindingEditEnabled', 'Enable this binding')}
-            value={draft.enabled}
+          <BindingPolicyControls
+            fields={draft}
             disabled={actionLocked || finalizingDelete}
-            onChange={(enabled) => setDraft((current) => current === undefined ? current : { ...current, enabled })}
-          />
-          <Form.Toggle
-            label={props.t('plugins.channels.surface.bindingCreateAllowBots', 'Allow bot senders')}
-            value={draft.allowBotSenders}
-            disabled={actionLocked || finalizingDelete || selectedAudienceIncludesBot}
-            onChange={(allowBotSenders) => setDraft((current) => current === undefined ? current : { ...current, allowBotSenders })}
-          />
-          <Form.Select
-            label={props.t('plugins.channels.surface.bindingCreateInputMode', 'Incoming messages')}
-            options={[
-              { value: 'directMentionsOnly', label: props.t('plugins.channels.surface.bindingCreateInputDirect', 'Direct mentions only') },
-              { value: 'addressedMessages', label: props.t('plugins.channels.surface.bindingCreateInputAddressed', 'Addressed messages') },
-              { value: 'allAllowedMessages', label: props.t('plugins.channels.surface.bindingCreateInputAll', 'All allowed messages') },
-            ]}
-            value={draft.inputMode}
-            disabled={actionLocked || finalizingDelete}
-            onChange={(inputMode) => {
-              if (!isBindingInputMode(inputMode)) return;
-              setDraft((current) => current === undefined ? current : { ...current, inputMode });
-            }}
-          />
-          <Form.TextField
-            label={props.t('plugins.channels.surface.bindingEditDebounce', 'Inbound debounce (ms)')}
-            value={draft.inboundDebounceMs}
-            disabled={actionLocked || finalizingDelete}
-            onChange={(inboundDebounceMs) => setDraft((current) => current === undefined ? current : { ...current, inboundDebounceMs })}
-          />
-          {debounceMs === undefined ? (
-            <Text
-              tone="danger"
-              value={props.t(
-                'plugins.channels.surface.bindingEditDebounceInvalid',
-                `Enter a whole number from 0 to ${MAX_CONVERSATION_INBOUND_DEBOUNCE_MS}.`,
-              )}
-            />
-          ) : null}
-          <Form.Select
-            label={props.t('plugins.channels.surface.bindingCreateLinkPreview', 'Link previews')}
-            options={[
-              { value: 'suppress', label: props.t('plugins.channels.surface.bindingCreateLinkPreviewSuppress', 'Suppress previews') },
-              { value: 'providerDefault', label: props.t('plugins.channels.surface.bindingCreateLinkPreviewProviderDefault', 'Provider default') },
-            ]}
-            value={draft.linkPreviewPolicy}
-            disabled={actionLocked || finalizingDelete}
-            onChange={(linkPreviewPolicy) => {
-              if (linkPreviewPolicy !== 'suppress' && linkPreviewPolicy !== 'providerDefault') return;
-              setDraft((current) => current === undefined ? current : { ...current, linkPreviewPolicy });
-            }}
-          />
-          <Form.Select
-            label={props.t('plugins.channels.surface.bindingCreateSenderFeedback', 'Sender feedback')}
-            options={[
-              { value: 'off', label: props.t('plugins.channels.surface.bindingCreateSenderFeedbackOff', 'Off') },
-              { value: 'eligibleRefusals', label: props.t('plugins.channels.surface.bindingCreateSenderFeedbackRefusals', 'Eligible refusals') },
-            ]}
-            value={draft.senderFeedback}
-            disabled={actionLocked || finalizingDelete}
-            onChange={(senderFeedback) => {
-              if (senderFeedback !== 'off' && senderFeedback !== 'eligibleRefusals') return;
-              setDraft((current) => current === undefined ? current : { ...current, senderFeedback });
-            }}
+            botSendersLocked={selectedAudienceIncludesBot}
+            debounceValid={debounceMs !== undefined}
+            onChange={(update) => setDraft((current) => (
+              current === undefined ? current : { ...current, ...update(current) }
+            ))}
+            t={props.t}
           />
           {draft.target.kind === 'session' ? (
             <Stack gap="small">
@@ -5731,6 +5955,309 @@ function OnlineBindingsContent({
   );
 }
 
+type AccountLocalBindingEditorFeedback =
+  | 'readUnavailable'
+  | 'notFound'
+  | 'saveUnavailable'
+  | 'updated';
+
+/**
+ * The cold-offline binding editor. It offers exactly the binding policy the
+ * shared transition and CAS owner decides from the retained Account row, and
+ * deliberately offers no endpoint or principal re-resolution, target change,
+ * transport effect, custody resolution, or delete: each of those needs current
+ * provider or Automation authority that an unreachable machine cannot supply.
+ */
+function AccountLocalBindingPolicyEditor(props: Readonly<{
+  collection: ChannelStateCollection;
+  bindingId: string;
+  presentation?: BindingPresentation;
+  signal: AbortSignal;
+  onCommitted: () => void;
+  onRefresh: () => void;
+  onClose: (restoreOriginFocus: boolean) => void;
+  t: Translate;
+}>): React.ReactElement {
+  const operation = useAccountLocalBindingPolicy({
+    collection: props.collection,
+    signal: props.signal,
+    onCommitted: props.onCommitted,
+  });
+  const stageFocusTarget = usePluginUiFocusTarget();
+  const feedbackFocusTarget = usePluginUiFocusTarget();
+  const [detail, setDetail] = React.useState<Readonly<{
+    revision: number;
+    binding: ConversationBindingV1;
+  }> | undefined>();
+  const [draft, setDraft] = React.useState<BindingEditorDraft | undefined>();
+  const [detailPending, setDetailPending] = React.useState(true);
+  const [feedback, setFeedback] = React.useState<AccountLocalBindingEditorFeedback | undefined>();
+  const mountedRef = React.useRef(true);
+  const initialReadStartedRef = React.useRef(false);
+
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const readDetail = React.useCallback(async (input: Readonly<{
+    preserveDraft: boolean;
+  }>): Promise<'ready' | 'notFound' | 'unavailable' | 'retired'> => {
+    if (props.signal.aborted) return 'retired';
+    setDetailPending(true);
+    let result: ConversationBindingPolicyReadResult;
+    try {
+      result = await readConversationBindingPolicyFromAccountCollection({
+        collection: props.collection,
+        bindingId: props.bindingId,
+        signal: props.signal,
+      });
+    } catch {
+      if (!mountedRef.current || props.signal.aborted) return 'retired';
+      setDetailPending(false);
+      setFeedback('readUnavailable');
+      return 'unavailable';
+    }
+    if (!mountedRef.current || props.signal.aborted) return 'retired';
+    setDetailPending(false);
+    if (result.kind === 'notFound') {
+      setDetail(undefined);
+      setFeedback('notFound');
+      return 'notFound';
+    }
+    setDetail({ revision: result.revision, binding: result.binding });
+    setDraft((current) => (input.preserveDraft && current !== undefined
+      ? current
+      : bindingEditorDraftFromBinding(result.binding)));
+    setFeedback(undefined);
+    return 'ready';
+  }, [props.bindingId, props.collection, props.signal]);
+
+  React.useEffect(() => {
+    if (initialReadStartedRef.current) return;
+    initialReadStartedRef.current = true;
+    void readDetail({ preserveDraft: false });
+  }, [readDetail]);
+
+  React.useEffect(() => {
+    if (detail === undefined) return;
+    stageFocusTarget.focus();
+  }, [detail, stageFocusTarget]);
+
+  const outcomeUnknown = operation.execution.status === 'outcomeUnknown';
+  const saving = operation.execution.status === 'pending';
+  const debounceMs = draft === undefined ? undefined : bindingEditorDebounceMs(draft.inboundDebounceMs);
+  const finalizingDelete = detail !== undefined && detail.binding.deletionState !== 'none';
+  const summaryChanged = detail !== undefined
+    && props.presentation !== undefined
+    && props.presentation.binding.revision !== detail.revision;
+  const actionLocked = detailPending || saving || outcomeUnknown;
+  const saveLocked = actionLocked
+    || detail === undefined
+    || draft === undefined
+    || debounceMs === undefined
+    || finalizingDelete
+    || summaryChanged;
+
+  // Reload is the exit from an ambiguous outcome, so it must stay available
+  // while that state is latched; only an in-flight read or write blocks it.
+  const reloadLocked = detailPending || saving;
+  const reload = React.useCallback(() => {
+    if (reloadLocked) return;
+    props.onRefresh();
+    void readDetail({ preserveDraft: true }).then(() => {
+      if (!mountedRef.current) return;
+      operation.reset();
+    });
+  }, [operation, props.onRefresh, readDetail, reloadLocked]);
+
+  const submit = React.useCallback(async () => {
+    if (saveLocked || detail === undefined || draft === undefined || debounceMs === undefined) return;
+    const settled = await operation.execute({
+      bindingId: props.bindingId,
+      expectedRevision: detail.revision,
+      allowBotSenders: draft.allowBotSenders,
+      inputMode: draft.inputMode,
+      inboundDebounceMs: debounceMs,
+      linkPreviewPolicy: draft.linkPreviewPolicy,
+      senderFeedback: draft.senderFeedback,
+      enabled: draft.enabled,
+    });
+    if (!mountedRef.current) return;
+    if (settled.status === 'success') {
+      props.onRefresh();
+      // The saved confirmation is reported from the authoritative reread, so it
+      // never claims a change the Account has not returned.
+      if (await readDetail({ preserveDraft: false }) === 'ready' && mountedRef.current) {
+        setFeedback('updated');
+      }
+      return;
+    }
+    if (settled.status === 'error') setFeedback('saveUnavailable');
+  }, [debounceMs, detail, draft, operation, props.bindingId, props.onRefresh, readDetail, saveLocked]);
+
+  const feedbackContent = (() => {
+    if (outcomeUnknown) {
+      return (
+        <Banner
+          testID="channels-account-local-binding-outcome-unknown"
+          tone="warning"
+          title={props.t('plugins.channels.surface.bindingEditUnknownTitle', 'Could not confirm the binding update')}
+          description={props.t(
+            'plugins.channels.surface.bindingSaveUnknownDescription',
+            'The change may already be saved. Refresh binding details before changing it again.',
+          )}
+          action={<Action.Refresh title={props.t('plugins.channels.surface.reload', 'Reload')} onRefresh={reload} />}
+        />
+      );
+    }
+    if (feedback === undefined) return null;
+    if (feedback === 'updated') {
+      return (
+        <Status
+          testID="channels-account-local-binding-updated"
+          tone="success"
+          label={props.t('plugins.channels.surface.bindingUpdated', 'Binding updated')}
+          focusTarget={feedbackFocusTarget}
+        />
+      );
+    }
+    const copy: Readonly<Record<Exclude<AccountLocalBindingEditorFeedback, 'updated'>, readonly [string, string]>> = {
+      readUnavailable: [
+        props.t('plugins.channels.surface.bindingEditReadUnavailableTitle', 'Binding detail is unavailable'),
+        props.t('plugins.channels.surface.bindingEditReadUnavailableDescription', 'Reload to read the current private binding policy before editing it.'),
+      ],
+      notFound: [
+        props.t('plugins.channels.surface.bindingEditNotFoundTitle', 'This binding no longer exists'),
+        props.t('plugins.channels.surface.bindingEditNotFoundDescription', 'Reload the bindings list before deciding what to do next.'),
+      ],
+      saveUnavailable: [
+        props.t('plugins.channels.surface.bindingEditUnavailableTitle', 'Could not save the binding'),
+        props.t('plugins.channels.surface.bindingEditUnavailableDescription', 'Your draft is still here. Reload current details before trying again.'),
+      ],
+    };
+    const [title, description] = copy[feedback];
+    return (
+      <Status
+        testID="channels-account-local-binding-feedback"
+        tone="warning"
+        label={`${title}. ${description}`}
+        focusTarget={feedbackFocusTarget}
+      />
+    );
+  })();
+
+  if (detail === undefined || draft === undefined) {
+    return (
+      <Stack testID="channels-account-local-binding-editor" gap="medium">
+        <Heading level={2} value={props.t('plugins.channels.surface.bindingEdit', 'Edit binding')} focusTarget={stageFocusTarget} />
+        {detailPending ? (
+          <LoadingState
+            title={props.t('plugins.channels.surface.bindingEditLoadingTitle', 'Loading binding detail')}
+            description={props.t('plugins.channels.surface.bindingEditLoadingDescription', 'Reading the exact current binding policy.')}
+          />
+        ) : feedbackContent}
+        <Stack gap="small">
+          <Button
+            title={props.t('plugins.channels.surface.reload', 'Reload')}
+            variant="secondary"
+            disabled={reloadLocked}
+            onPress={reload}
+          />
+          <Button
+            title={props.t('plugins.channels.surface.cancel', 'Cancel')}
+            variant="plain"
+            disabled={saving}
+            onPress={() => props.onClose(true)}
+          />
+        </Stack>
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack testID="channels-account-local-binding-editor" gap="medium">
+      <Heading level={2} value={props.t('plugins.channels.surface.bindingEdit', 'Edit binding')} focusTarget={stageFocusTarget} />
+      {finalizingDelete ? (
+        <Banner
+          tone="warning"
+          title={props.t('plugins.channels.surface.deleteFinalizing', 'Deletion cleanup in progress')}
+          description={props.t(
+            'plugins.channels.surface.bindingEditFinalizingDescription',
+            'This retained binding is read-only while deletion cleanup completes.',
+          )}
+        />
+      ) : null}
+      {summaryChanged ? (
+        <Banner
+          tone="warning"
+          title={props.t('plugins.channels.surface.bindingEditSummaryChangedTitle', 'This binding changed while you were editing')}
+          description={props.t(
+            'plugins.channels.surface.bindingEditSummaryChangedDescription',
+            'Your draft is retained, but saving is locked until you reload the current binding summary and exact detail.',
+          )}
+          action={<Action.Refresh title={props.t('plugins.channels.surface.reload', 'Reload')} onRefresh={reload} />}
+        />
+      ) : null}
+      <Banner
+        testID="channels-account-local-binding-provider-actions-unavailable"
+        tone="info"
+        title={props.t(
+          'plugins.channels.surface.providerActionsUnavailableTitle',
+          'Provider actions need your selected machine',
+        )}
+        description={props.t(
+          'plugins.channels.surface.providerActionsUnavailableDescription',
+          'This Account policy can be saved now. Provider recovery and delivery resolution remain unavailable until the selected machine can run the provider.',
+        )}
+      />
+      <Metadata
+        title={props.t('plugins.channels.surface.bindingEditCurrentAudience', 'Current conversation and senders')}
+        entries={[
+          {
+            label: props.t('plugins.channels.surface.bindingCreateConversation', 'Conversation'),
+            value: draft.endpointLabel,
+          },
+          {
+            label: props.t('plugins.channels.surface.bindingCreateAllowedSender', 'Allowed senders'),
+            value: draft.allowedPrincipalIds.join(', '),
+          },
+          {
+            label: props.t('plugins.channels.surface.bindingCreateTarget', 'Target'),
+            value: bindingEditorTargetLabel(draft.target, props.t),
+          },
+        ]}
+      />
+      <BindingPolicyControls
+        fields={draft}
+        disabled={actionLocked || finalizingDelete}
+        botSendersLocked={false}
+        debounceValid={debounceMs !== undefined}
+        onChange={(update) => setDraft((current) => (
+          current === undefined ? current : { ...current, ...update(current) }
+        ))}
+        t={props.t}
+      />
+      <Button
+        testID="channels-account-local-binding-save"
+        title={props.t('plugins.channels.surface.bindingEditSave', 'Save binding')}
+        busy={saving}
+        disabled={saveLocked}
+        onPress={() => { void submit(); }}
+      />
+      <Button
+        title={props.t('plugins.channels.surface.cancel', 'Cancel')}
+        variant="plain"
+        disabled={saving}
+        onPress={() => props.onClose(true)}
+      />
+      {feedbackContent}
+    </Stack>
+  );
+}
+
 /**
  * Cold offline policy mode deliberately has no Resource or Action fallback.
  * It consumes only the mounted Account Data client and the shared Channels
@@ -5763,6 +6290,11 @@ function AccountLocalBindingsSurface(props: Readonly<{
   });
   const [expandedConnectionId, setExpandedConnectionId] = React.useState<string | undefined>();
   const [savedPendingMachineReconciliation, setSavedPendingMachineReconciliation] = React.useState(false);
+  const [editingBinding, setEditingBinding] = React.useState<Readonly<{
+    bindingId: string;
+    originFocusTarget: PluginUiFocusTarget;
+  }> | undefined>();
+  const restoreEditFocusRef = React.useRef<PluginUiFocusTarget | undefined>(undefined);
   const onCommitted = React.useCallback(() => {
     setSavedPendingMachineReconciliation(true);
   }, []);
@@ -5771,6 +6303,20 @@ function AccountLocalBindingsSurface(props: Readonly<{
     signal: props.signal,
     onCommitted,
   });
+  const openEditor = React.useCallback((binding: ChannelsBinding, originFocusTarget: PluginUiFocusTarget) => {
+    if (binding.deletionState !== 'none') return;
+    setEditingBinding({ bindingId: binding.bindingId, originFocusTarget });
+  }, []);
+  const closeEditor = React.useCallback((restoreOriginFocus: boolean) => {
+    if (restoreOriginFocus) restoreEditFocusRef.current = editingBinding?.originFocusTarget;
+    setEditingBinding(undefined);
+  }, [editingBinding]);
+  React.useEffect(() => {
+    if (editingBinding !== undefined || restoreEditFocusRef.current === undefined) return;
+    const target = restoreEditFocusRef.current;
+    restoreEditFocusRef.current = undefined;
+    target.focus();
+  }, [editingBinding]);
   const refreshConnectionPolicy = React.useCallback(() => {
     refreshConnections();
     refresh();
@@ -5783,6 +6329,11 @@ function AccountLocalBindingsSurface(props: Readonly<{
     () => buildBindingPresentations(bindings ?? [], sortedConnections, t),
     [bindings, sortedConnections, t],
   );
+  const editingPresentation = editingBinding === undefined
+    ? undefined
+    : presentations.find((presentation) => (
+      presentation.binding.bindingId === editingBinding.bindingId
+    ));
 
   if (bindings === undefined) {
     return (
@@ -5835,6 +6386,19 @@ function AccountLocalBindingsSurface(props: Readonly<{
       onRefresh={refresh}
       operation={operation}
       savedPendingMachineReconciliation={savedPendingMachineReconciliation}
+      onEdit={openEditor}
+      bindingEditContent={editingBinding === undefined ? undefined : (
+        <AccountLocalBindingPolicyEditor
+          collection={collection}
+          bindingId={editingBinding.bindingId}
+          presentation={editingPresentation}
+          signal={props.signal}
+          onCommitted={onCommitted}
+          onRefresh={refresh}
+          onClose={closeEditor}
+          t={t}
+        />
+      )}
       connectionsContent={(
         <>
           <IngressAttentionControls
@@ -5849,7 +6413,7 @@ function AccountLocalBindingsSurface(props: Readonly<{
               : 'ready'}
             signal={props.signal}
             resource={connectionResource}
-            accountLocalPolicy={{ collection, onCommitted }}
+            accountLocalPolicy={{ collection, deliveriesCollection, onCommitted }}
             expandedConnectionId={expandedConnectionId}
             onExpand={(connectionId) => {
               setExpandedConnectionId((current) => current === connectionId ? undefined : connectionId);
@@ -5952,6 +6516,7 @@ function ConnectionRow(props: Readonly<{
   resource: ResourcePresentation;
   targetPluginId?: string;
   policyOperation?: ConnectionPolicyOperation;
+  resolveOperation?: DeliveryResolveOperation;
   providerDependentOperationsAvailable?: boolean;
   onLifecycleSettled?: (connectionId: string) => void;
   onExpand: () => void;
@@ -6116,16 +6681,24 @@ function ConnectionRow(props: Readonly<{
               t={props.t}
             />
           ) : null}
-          {providerDependentOperationsAvailable && (props.connection.attention.outwardDelivery.partial
-            || props.connection.attention.outwardDelivery.outcomeUnknown ? (
+          {/*
+            Delivery resolution is deliberately outside the provider-dependent
+            gate: the resolution owner performs no provider call, so a cold
+            offline Account must still be able to clear ambiguity that would
+            otherwise never expire.
+          */}
+          {props.connection.attention.outwardDelivery.partial
+            || props.connection.attention.outwardDelivery.outcomeUnknown
+            || props.connection.attention.outwardDelivery.archiveRecovery ? (
               <ConnectionDeliveryResolutionControls
                 key={props.connection.connectionId}
                 connection={props.connection}
                 signal={props.signal}
+                resolveOperation={props.resolveOperation}
                 onRefresh={requestRefresh}
                 t={props.t}
               />
-            ) : null)}
+            ) : null}
         </List.Item>
       ) : null}
     </>
@@ -6140,6 +6713,7 @@ function ConnectionRow(props: Readonly<{
  */
 function AccountLocalConnectionRow(props: Readonly<{
   collection: ChannelStateCollection;
+  deliveriesCollection: ChannelDeliveriesCollection;
   connection: ChannelsConnection;
   expanded: boolean;
   signal: AbortSignal;
@@ -6154,6 +6728,12 @@ function AccountLocalConnectionRow(props: Readonly<{
     signal: props.signal,
     onCommitted: props.onCommitted,
   });
+  const resolveOperation = useAccountLocalDeliveryResolution({
+    stateCollection: props.collection,
+    deliveriesCollection: props.deliveriesCollection,
+    signal: props.signal,
+    onCommitted: props.onCommitted,
+  });
   return (
     <ConnectionRow
       connection={props.connection}
@@ -6161,6 +6741,7 @@ function AccountLocalConnectionRow(props: Readonly<{
       signal={props.signal}
       resource={props.resource}
       policyOperation={policyOperation}
+      resolveOperation={resolveOperation}
       providerDependentOperationsAvailable={false}
       onExpand={props.onExpand}
       onRefresh={props.onRefresh}
@@ -6419,10 +7000,7 @@ function ConnectionHistoryGapBaselineControls(props: Readonly<{
   const baselineAction = useExecutePluginAction(
     CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamBaselineAccept,
   );
-  const openerFocusTarget = usePluginUiFocusTarget();
-  const confirmationFocusTarget = usePluginUiFocusTarget();
-  const [confirmationOpen, setConfirmationOpen] = React.useState(false);
-  const restoreOpenerFocusRef = React.useRef(false);
+  const confirmation = useDestructiveConfirmation();
   const historyGap = props.connection.attention.historyGap;
   const outcomeUnknown = baselineAction.execution.status === 'outcomeUnknown';
   const resourceCurrent = props.resource.pending === 'idle'
@@ -6435,9 +7013,11 @@ function ConnectionHistoryGapBaselineControls(props: Readonly<{
     onReconciled: baselineAction.reset,
   });
 
+  const { close: closeStaleConfirmation } = confirmation;
   React.useEffect(() => {
-    setConfirmationOpen(false);
+    closeStaleConfirmation();
   }, [
+    closeStaleConfirmation,
     props.connection.authorityEpoch,
     props.connection.connectionId,
     props.connection.revision,
@@ -6445,20 +7025,7 @@ function ConnectionHistoryGapBaselineControls(props: Readonly<{
     historyGap?.reportedAt,
   ]);
 
-  React.useEffect(() => {
-    if (confirmationOpen) {
-      confirmationFocusTarget.focus();
-      return;
-    }
-    if (!restoreOpenerFocusRef.current) return;
-    restoreOpenerFocusRef.current = false;
-    openerFocusTarget.focus();
-  }, [confirmationFocusTarget, confirmationOpen, openerFocusTarget]);
-
-  const closeConfirmation = React.useCallback(() => {
-    restoreOpenerFocusRef.current = true;
-    setConfirmationOpen(false);
-  }, []);
+  const closeConfirmation = confirmation.dismiss;
   const acceptBaseline = React.useCallback(async () => {
     if (historyGap === null
       || !resourceCurrent
@@ -6485,7 +7052,7 @@ function ConnectionHistoryGapBaselineControls(props: Readonly<{
   if (historyGap === null) return null;
 
   const busy = baselineAction.execution.status === 'pending';
-  const unavailable = !resourceCurrent || busy || outcomeUnknown || confirmationOpen;
+  const unavailable = !resourceCurrent || busy || outcomeUnknown || confirmation.open;
   return (
     <Stack testID="channels-history-gap-baseline-controls" gap="small">
       <Button
@@ -6499,10 +7066,10 @@ function ConnectionHistoryGapBaselineControls(props: Readonly<{
         )}
         busy={busy}
         disabled={unavailable}
-        focusTarget={openerFocusTarget}
-        onPress={() => setConfirmationOpen(true)}
+        focusTarget={confirmation.openerFocusTarget}
+        onPress={confirmation.request}
       />
-      {confirmationOpen ? (
+      {confirmation.open ? (
         <Stack testID="channels-history-gap-baseline-confirmation" gap="small">
           <Banner
             tone="danger"
@@ -6522,7 +7089,7 @@ function ConnectionHistoryGapBaselineControls(props: Readonly<{
               'Confirm new history baseline',
             )}
             disabled={busy || outcomeUnknown || !resourceCurrent}
-            focusTarget={confirmationFocusTarget}
+            focusTarget={confirmation.confirmationFocusTarget}
             onPress={() => { void acceptBaseline(); }}
           />
           <Button
@@ -6603,7 +7170,7 @@ function ConnectionLifecycleControls(props: Readonly<{
     && (!props.connection.attention.oldTransportStopUnconfirmed
       || props.connection.attention.acceptedPossibleLoss);
   const activeAction = mayAbandon ? abandonAction : deleteAction;
-  const [confirmationOpen, setConfirmationOpen] = React.useState(false);
+  const confirmation = useDestructiveConfirmation();
   const outcomeUnknown = activeAction.execution.status === 'outcomeUnknown';
   const requestRefresh = useExplicitFreshRereadAfterUnknownOutcome({
     outcomeUnknown,
@@ -6612,9 +7179,11 @@ function ConnectionLifecycleControls(props: Readonly<{
     onReconciled: activeAction.reset,
   });
 
+  const { close: closeStaleConfirmation } = confirmation;
   React.useEffect(() => {
-    setConfirmationOpen(false);
+    closeStaleConfirmation();
   }, [
+    closeStaleConfirmation,
     mayAbandon,
     mayDelete,
     props.connection.authorityEpoch,
@@ -6640,10 +7209,11 @@ function ConnectionLifecycleControls(props: Readonly<{
     }
   }, [activeAction, mayAbandon, mayDelete, props.connection, props.onRefresh, props.onSettled]);
 
+  const { dismiss: dismissConfirmation } = confirmation;
   const confirm = React.useCallback(async () => {
-    setConfirmationOpen(false);
+    dismissConfirmation();
     await execute();
-  }, [execute]);
+  }, [dismissConfirmation, execute]);
 
   if (!mayAbandon && !mayDelete) return null;
 
@@ -6674,10 +7244,11 @@ function ConnectionLifecycleControls(props: Readonly<{
           : title}
         accessibilityLabel={title}
         busy={busy}
-        disabled={busy || outcomeUnknown || confirmationOpen}
-        onPress={() => setConfirmationOpen(true)}
+        disabled={busy || outcomeUnknown || confirmation.open}
+        focusTarget={confirmation.openerFocusTarget}
+        onPress={confirmation.request}
       />
-      {confirmationOpen ? (
+      {confirmation.open ? (
         <Stack testID="channels-connection-lifecycle-confirmation" gap="small">
           <Banner
             tone="danger"
@@ -6695,13 +7266,14 @@ function ConnectionLifecycleControls(props: Readonly<{
               )
               : props.t('plugins.channels.surface.connectionDeleteConfirm', 'Confirm deletion')}
             disabled={busy || outcomeUnknown}
+            focusTarget={confirmation.confirmationFocusTarget}
             onPress={() => { void confirm(); }}
           />
           <Button
             title={props.t('plugins.channels.surface.cancel', 'Cancel')}
             variant="plain"
             disabled={busy || outcomeUnknown}
-            onPress={() => setConfirmationOpen(false)}
+            onPress={confirmation.dismiss}
           />
         </Stack>
       ) : null}
@@ -6797,7 +7369,7 @@ function ConnectionTransferControls(props: Readonly<{
   const [selectionPending, setSelectionPending] = React.useState(false);
   const [selectedOperationKey, setSelectedOperationKey] = React.useState<string | undefined>();
   const [selectedTransport, setSelectedTransport] = React.useState<ConnectionCreateTransport>(
-    isConnectionCreateTransport(props.connection.selectedTransport)
+    isConversationConnectionSelectableTransportV1(props.connection.selectedTransport)
       ? props.connection.selectedTransport
       : 'checkpointedPull',
   );
@@ -6823,7 +7395,7 @@ function ConnectionTransferControls(props: Readonly<{
     || selectionPending
     || transferAction.execution.status === 'pending'
     || transferOutcomeUnknown;
-  const defaultTransport = isConnectionCreateTransport(props.connection.selectedTransport)
+  const defaultTransport = isConversationConnectionSelectableTransportV1(props.connection.selectedTransport)
     ? props.connection.selectedTransport
     : 'checkpointedPull';
 
@@ -7083,20 +7655,14 @@ function ConnectionTransferControls(props: Readonly<{
               <Form.Select
                 testID="channels-connection-transfer-transport"
                 label={props.t('plugins.channels.surface.transport', 'Transport')}
-                options={[
-                  {
-                    value: 'checkpointedPull',
-                    label: transportLabel('checkpointedPull', props.t),
-                  },
-                  {
-                    value: 'socket',
-                    label: transportLabel('socket', props.t),
-                  },
-                ]}
+                options={CONVERSATION_CONNECTION_SELECTABLE_TRANSPORTS_V1.map((transport) => ({
+                  value: transport,
+                  label: transportLabel(transport, props.t),
+                }))}
                 value={selectedTransport}
                 disabled={actionUnavailable}
                 onChange={(next) => {
-                  if (isConnectionCreateTransport(next)) setSelectedTransport(next);
+                  if (isConversationConnectionSelectableTransportV1(next)) setSelectedTransport(next);
                 }}
               />
               <Button
@@ -7536,6 +8102,7 @@ function IngressAttentionControls(props: Readonly<{
 function ConnectionDeliveryResolutionControls(props: Readonly<{
   connection: ChannelsConnection;
   signal: AbortSignal;
+  resolveOperation?: DeliveryResolveOperation;
   onRefresh: () => void;
   t: Translate;
 }>): React.ReactElement | null {
@@ -7549,20 +8116,22 @@ function ConnectionDeliveryResolutionControls(props: Readonly<{
     connectionId: props.connection.connectionId,
     signal: props.signal,
   });
-  const action = useExecutePluginAction(
+  const resolveAction = useExecutePluginAction(
     CONVERSATION_MANAGEMENT_ACTION_IDS_V1.deliveryResolve,
   );
+  const action = props.resolveOperation ?? resolveAction;
   const [activeCustodyId, setActiveCustodyId] = React.useState<string | undefined>();
   const [outcomeUnknownRereadPending, setOutcomeUnknownRereadPending] = React.useState(false);
   const sawOutcomeUnknownReread = React.useRef(false);
   const hasAmbiguousDelivery = props.connection.attention.outwardDelivery.partial
-    || props.connection.attention.outwardDelivery.outcomeUnknown;
+    || props.connection.attention.outwardDelivery.outcomeUnknown
+    || props.connection.attention.outwardDelivery.archiveRecovery;
   const actionOutcomeUnknown = action.execution.status === 'outcomeUnknown';
   const actionUnavailable = action.execution.status === 'pending' || actionOutcomeUnknown;
 
   const resolve = React.useCallback(async (
     row: ConversationOutwardDeliveryResolutionRow,
-    resolution: 'accepted' | 'discarded',
+    resolution: ConversationDeliveryResolutionDecision,
   ) => {
     if (actionUnavailable) return;
     setActiveCustodyId(row.custodyId);
@@ -7673,6 +8242,39 @@ function ConnectionDeliveryResolutionControls(props: Readonly<{
 
       {rows.map((row) => {
         const busy = action.execution.status === 'pending' && activeCustodyId === row.custodyId;
+        // An archive-recoverable delivery is not ambiguous: the provider proved
+        // it had no effect and reported that the owner may unarchive and retry.
+        // It therefore offers the recovery decision instead of the two terminal
+        // settlements, which exist only for a possible external effect.
+        if (row.state === 'archiveRecoverable') {
+          return (
+            <Stack
+              key={row.custodyId}
+              testID={`channels-delivery-resolution-${row.custodyId}`}
+              gap="small"
+            >
+              <Status
+                tone="warning"
+                label={props.t(
+                  'plugins.channels.surface.deliveryResolutionArchived',
+                  'Not sent: the destination is archived',
+                )}
+              />
+              <Button
+                testID={`channels-delivery-resolution-retry-${row.custodyId}`}
+                title={busy
+                  ? props.t('plugins.channels.surface.deliveryResolutionRetrying', 'Retrying…')
+                  : props.t(
+                    'plugins.channels.surface.deliveryResolutionRetryAfterUnarchive',
+                    'Unarchived it — send again',
+                  )}
+                busy={busy}
+                disabled={actionUnavailable}
+                onPress={() => resolve(row, 'retryAfterUnarchive')}
+              />
+            </Stack>
+          );
+        }
         const label = row.state === 'partial'
           ? props.t('plugins.channels.surface.deliveryResolutionPartial', 'Partly sent')
           : props.t('plugins.channels.surface.deliveryResolutionOutcomeUnknown', 'Outcome unknown');
@@ -7998,10 +8600,7 @@ function ProviderSetupPicker(props: Readonly<{
         setRemediationSetupOperation(operation);
         setFeedback('requiresRemediation');
       } else {
-        const supportedTransports = prepared.data.supportedTransports.filter(isConnectionCreateTransport);
-        const selectedTransport = isConnectionCreateTransport(prepared.data.recommendedTransport)
-          ? prepared.data.recommendedTransport
-          : supportedTransports[0];
+        const { supportedTransports, recommendedTransport: selectedTransport } = prepared.data;
         setRemediationSetupOperation(undefined);
         if (selectedTransport === undefined) {
           setFeedback('creationUnavailable');
@@ -8197,12 +8796,9 @@ function ProviderSetupPicker(props: Readonly<{
 
   const selectTransport = React.useCallback((next: string) => {
     setPreparedConnection((current) => {
-      if (current === undefined
-        || !isConnectionCreateTransport(next)
-        || !current.supportedTransports.includes(next)) {
-        return current;
-      }
-      return { ...current, selectedTransport: next };
+      if (current === undefined) return current;
+      const selectedTransport = current.supportedTransports.find((transport) => transport === next);
+      return selectedTransport === undefined ? current : { ...current, selectedTransport };
     });
   }, []);
 
@@ -8547,6 +9143,7 @@ function ConnectionsContent(props: Readonly<{
   resource: ResourcePresentation;
   accountLocalPolicy?: Readonly<{
     collection: ChannelStateCollection;
+    deliveriesCollection: ChannelDeliveriesCollection;
     onCommitted: () => void;
   }>;
   expandedConnectionId: string | undefined;
@@ -8668,6 +9265,7 @@ function ConnectionsContent(props: Readonly<{
               <AccountLocalConnectionRow
                 key={connection.connectionId}
                 collection={props.accountLocalPolicy.collection}
+                deliveriesCollection={props.accountLocalPolicy.deliveriesCollection}
                 connection={connection}
                 expanded={connection.connectionId === props.expandedConnectionId}
                 signal={props.signal}

@@ -172,7 +172,7 @@
     "happier": "^0.0.0"
   },
   "entrypoints": {
-    "daemon": "./dist/index.js"
+    "daemon": "./.happier-plugin/daemon.js"
   },
   "hostAccess": {
     "optional": [],

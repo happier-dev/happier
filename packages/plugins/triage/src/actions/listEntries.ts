@@ -61,6 +61,30 @@ export type TriageAdmittedSourceV1 =
  * The host-owned execution of one admitted operation handle. Only the original
  * host-created handle carries authority, so it is passed through untouched.
  */
+/**
+ * The admitted view, keyed the one way this plugin addresses a source.
+ *
+ * Three readers ask the same question — the aggregate list binds each configured
+ * connection to its contribution, the Composer resolves an attached entry
+ * through its own source's `get`, and the detail read names that source in the
+ * source's own words — and each spelled the join itself. One of them indexing
+ * on `contributor.pluginId` alone would mount one source's contribution under
+ * another's contribution id, so the key is the same qualified id the configured
+ * row is stored under and there is one owner of it.
+ */
+export function indexTriageAdmittedSourcesV1(
+    admitted: readonly TriageAdmittedSourceV1[],
+): ReadonlyMap<string, TriageAdmittedSourceV1> {
+    const byQualifiedId = new Map<string, TriageAdmittedSourceV1>();
+    for (const contribution of admitted) {
+        byQualifiedId.set(renderSourceQualifiedId({
+            pluginId: contribution.contributor.pluginId,
+            localId: contribution.contributor.contributionId,
+        }), contribution);
+    }
+    return byQualifiedId;
+}
+
 export type TriageAdmittedOperationExecutorV1 = (
     operation: AdmittedTargetedOperationExecutionHandle<TriageScanInputV1, TriageScanResultV1, 'scan'>,
     input: TriageScanInputV1,
@@ -138,13 +162,7 @@ export async function listTriageEntries(
         deps.readAdmittedSources(options),
     ]);
 
-    const admittedByQualifiedId = new Map<string, TriageAdmittedSourceV1>();
-    for (const contribution of admitted) {
-        admittedByQualifiedId.set(renderSourceQualifiedId({
-            pluginId: contribution.contributor.pluginId,
-            localId: contribution.contributor.contributionId,
-        }), contribution);
-    }
+    const admittedByQualifiedId = indexTriageAdmittedSourcesV1(admitted);
 
     const configuredSources: TriageListEntriesResultV1['configuredSources'][number][] = [];
     /** Every instance this request set out to cover, invocable or not. */

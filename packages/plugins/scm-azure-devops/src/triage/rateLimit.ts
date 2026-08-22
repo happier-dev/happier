@@ -1,12 +1,6 @@
-import type { AzureDevOpsRateLimitEvidence } from './types.js';
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
-/**
- * The furthest future a provider-supplied reset is allowed to push a retry fact. Azure can
- * return a reset far ahead; carrying it verbatim would let one throttled response silence a
- * source for hours. This is a source-owned positive bound — the shared contract declares no
- * value for it.
- */
-export const MAX_AZURE_RETRY_HORIZON_MS = 60 * 60 * 1000;
+import type { AzureDevOpsRateLimitEvidence } from './types.js';
 
 /**
  * Read Azure DevOps' own rate-limit evidence, case-insensitively, exactly as returned.
@@ -17,18 +11,18 @@ export const MAX_AZURE_RETRY_HORIZON_MS = 60 * 60 * 1000;
 export function readAzureDevOpsRateLimitEvidence(
   headers: Readonly<Record<string, string>>,
 ): AzureDevOpsRateLimitEvidence {
-  const retryAfter = readHeader(headers, 'retry-after');
+  const retryAfter = readTriageResponseHeaderV1(headers, 'retry-after');
   const retryAfterSeconds = readNonNegativeNumber(retryAfter);
   return {
     retryAfterSeconds,
     // RFC 9110 also permits an HTTP-date; Azure documents delta-seconds but the date form
     // is honored rather than discarded.
     retryAfterAtEpochMs: retryAfterSeconds === null ? readHttpDate(retryAfter) : null,
-    resetEpochSeconds: readNonNegativeNumber(readHeader(headers, 'x-ratelimit-reset')),
-    remaining: readNonNegativeNumber(readHeader(headers, 'x-ratelimit-remaining')),
-    limit: readNonNegativeNumber(readHeader(headers, 'x-ratelimit-limit')),
-    delaySeconds: readNonNegativeNumber(readHeader(headers, 'x-ratelimit-delay')),
-    resource: readHeader(headers, 'x-ratelimit-resource'),
+    resetEpochSeconds: readNonNegativeNumber(readTriageResponseHeaderV1(headers, 'x-ratelimit-reset')),
+    remaining: readNonNegativeNumber(readTriageResponseHeaderV1(headers, 'x-ratelimit-remaining')),
+    limit: readNonNegativeNumber(readTriageResponseHeaderV1(headers, 'x-ratelimit-limit')),
+    delaySeconds: readNonNegativeNumber(readTriageResponseHeaderV1(headers, 'x-ratelimit-delay')),
+    resource: readTriageResponseHeaderV1(headers, 'x-ratelimit-resource'),
   };
 }
 
@@ -38,6 +32,12 @@ export function readAzureDevOpsRateLimitEvidence(
  * Explicit `Retry-After` wins; otherwise a valid **future** `X-RateLimit-Reset` is used. With
  * neither, the result is `null` — Azure publishes no documented minimum, so inventing one
  * would be a guessed schedule rather than provider evidence.
+ *
+ * The instant is Azure's own and is not bounded here. Azure can return a reset far ahead, but
+ * how long we are willing to wait on a provider statement is one pacing policy owned by the
+ * single consumer that honours it (`plugins/triage` `refresh/refreshEligibility.ts`); a
+ * source-owned ceiling here would be one of five owners of the same rule and would hide a
+ * skewed reset from the one place that can bound it for every source.
  */
 export function resolveAzureDevOpsRetryNotBeforeMs(
   evidence: AzureDevOpsRateLimitEvidence,
@@ -46,32 +46,17 @@ export function resolveAzureDevOpsRetryNotBeforeMs(
   if (!Number.isFinite(nowMs)) return null;
 
   if (evidence.retryAfterSeconds !== null) {
-    return clampRetryNotBefore(nowMs + evidence.retryAfterSeconds * 1000, nowMs);
+    // Azure documents delta-seconds as an integer but the header is provider text: a
+    // fractional value still has to leave here as the whole epoch millisecond the
+    // contract declares (`TriageSourceFailureV1.retryNotBeforeMs` is an integer).
+    return Math.round(nowMs + evidence.retryAfterSeconds * 1000);
   }
   if (evidence.retryAfterAtEpochMs !== null && evidence.retryAfterAtEpochMs > nowMs) {
-    return clampRetryNotBefore(evidence.retryAfterAtEpochMs, nowMs);
+    return Math.round(evidence.retryAfterAtEpochMs);
   }
   if (evidence.resetEpochSeconds !== null) {
     const resetMs = evidence.resetEpochSeconds * 1000;
-    if (resetMs > nowMs) return clampRetryNotBefore(resetMs, nowMs);
-  }
-  return null;
-}
-
-function clampRetryNotBefore(candidateMs: number, nowMs: number): number {
-  const bounded = Math.min(candidateMs, nowMs + MAX_AZURE_RETRY_HORIZON_MS);
-  return Math.max(Math.round(bounded), nowMs);
-}
-
-export function readHeader(
-  headers: Readonly<Record<string, string>>,
-  name: string,
-): string | null {
-  const wanted = name.toLowerCase();
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() !== wanted) continue;
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
+    if (resetMs > nowMs) return Math.round(resetMs);
   }
   return null;
 }

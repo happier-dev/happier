@@ -27,8 +27,9 @@ import {
   type ConversationProviderSetupRemediationResultV1,
   type ConversationResolvedEndpointV1,
 } from '@happier-dev/channels-protocol/v1';
-import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { PluginEventAutomationSetupResultV1 } from '@happier-dev/plugin-sdk/events';
 
 import {
   createTelegramBotApi,
@@ -40,7 +41,13 @@ import {
   type TelegramGetUpdatesResult,
   type TelegramIncomingMessage,
   type TelegramUpdate,
+  TELEGRAM_MAX_MESSAGE_CODE_POINTS,
 } from './telegramBotApi.js';
+import {
+  admitTelegramAutomationOccurrences,
+  buildTelegramChatEventSourceSetupResult,
+  throwTelegramAutomationSetupInvalid,
+} from './automationEvents.js';
 import {
   TELEGRAM_BOT_CONNECTED_ACCOUNT_ID,
   TELEGRAM_BOT_CREDENTIAL_PURPOSE,
@@ -151,7 +158,7 @@ function throwIfAborted(signal: AbortSignal): void {
 }
 
 function materializationFailure(error: unknown): ConversationProviderFailureV1 {
-  if (error instanceof PluginError) {
+  if (isPluginError(error)) {
     // The exact-account host uses this refusal when the invocation generation
     // is no longer current. It cannot become an independent delivery retry.
     if (error.code === 'plugin_final_generation_retired') throw error;
@@ -498,7 +505,7 @@ export async function setupTelegramChannels(
     recommendedTransport: 'checkpointedPull',
     overlapSafety: 'providerExclusive',
     replayContinuity: 'checkpointed',
-    outboundTextLimit: { maximum: 4_096, unit: 'unicodeCodePoints' },
+    outboundTextLimit: { maximum: TELEGRAM_MAX_MESSAGE_CODE_POINTS, unit: 'unicodeCodePoints' },
     pairingDeepLinkTemplate: `https://t.me/${identity.username}?start={{token}}`,
   });
 }
@@ -573,6 +580,49 @@ export async function resolveTelegramEndpoint(input: unknown, context: PluginInv
   });
 }
 
+/**
+ * Resolves the chosen Telegram chat into the immutable Automation Event source
+ * facts. It is invoked from the Automation composer, never from the Channels
+ * ingress, and performs no observation of its own.
+ */
+export async function setupTelegramChatEventSource(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<PluginEventAutomationSetupResultV1> {
+  if (!isRecord(input) || !isNonEmptyString(input.chatId) || !isRecord(input.credentialRef)) {
+    throwTelegramAutomationSetupInvalid();
+  }
+  const credentialRef = input.credentialRef as unknown as ConnectedAccountRef;
+  const api = await createExactTelegramBotApi(context, credentialRef);
+  if ('kind' in api) {
+    throw new PluginError({
+      code: 'telegram_automation_source_unavailable',
+      message: 'The selected Telegram bot is unavailable.',
+    });
+  }
+  const identity = await api.getMe({ signal: context.signal });
+  throwIfAborted(context.signal);
+  if ('kind' in identity) {
+    throw new PluginError({
+      code: 'telegram_automation_source_unavailable',
+      message: 'The selected Telegram bot is unavailable.',
+    });
+  }
+  const chat = await api.getChat({ chatId: input.chatId }, { signal: context.signal });
+  throwIfAborted(context.signal);
+  if ('kind' in chat) {
+    throw new PluginError({
+      code: 'telegram_automation_chat_not_found',
+      message: 'The selected Telegram chat could not be resolved for this bot.',
+    });
+  }
+  return buildTelegramChatEventSourceSetupResult({
+    botId: identity.id,
+    chatId: chat.id,
+    label: chat.label,
+  });
+}
+
 export async function pollTelegramObservations(input: unknown, context: PluginInvocationContext): Promise<ConversationPollResultV1> {
   assertChannelsCoreCaller(context);
   const request = ConversationPollInputV1Schema.parse(input);
@@ -597,22 +647,43 @@ export async function pollTelegramObservations(input: unknown, context: PluginIn
   }, { signal: context.signal });
   throwIfAborted(context.signal);
   if (poll.kind !== 'updates') return readFailure(poll);
+  // Automation Event occurrences are admitted from this same single-consumer
+  // cycle. Telegram's `offset` confirms and discards earlier updates for every
+  // reader of the bot, so a separate observer would silently steal Channel
+  // messages. Admission is idempotent by occurrence id, so running it before
+  // the Channel observations is safe under replay.
+  const automation = checkpoint === null
+    ? { stopBeforeUpdateId: null, admittedCount: 0 }
+    : await admitTelegramAutomationOccurrences({
+      context,
+      identity: ready.identity,
+      updates: poll.updates,
+      observationReceivedAt: Date.now(),
+    });
+  throwIfAborted(context.signal);
+  // The shared checkpoint must not advance past an occurrence that was not
+  // admitted checkpoint-safely, so the batch stops there and is retried.
+  const stopIndex = automation.stopBeforeUpdateId === null
+    ? -1
+    : poll.updates.findIndex((update) => update.updateId === automation.stopBeforeUpdateId);
+  const consumedUpdates = stopIndex < 0 ? poll.updates : poll.updates.slice(0, stopIndex);
   // An underfull page proves Telegram had no further update at this point. A
   // full page proves only forward progress, so it must retain the prior proof
-  // until a later underfull page catches up.
-  const caughtUpAtMs = checkpoint === null || poll.updates.length < request.limit
+  // until a later underfull page catches up. A withheld tail is never caught up.
+  const caughtUpAtMs = checkpoint === null
+    || (stopIndex < 0 && poll.updates.length < request.limit)
     ? Date.now()
     : checkpoint.caughtUpAtMs;
   const observations: ConversationNormalizedIngressV1[] = [];
   if (checkpoint !== null) {
-    for (const update of poll.updates) {
+    for (const update of consumedUpdates) {
       const observation = normalizedIngressFromUpdate(update, ready.identity);
       if (observation !== null) observations.push(observation);
     }
   }
   const checkpointAfterBatch = {
     v: 1,
-    offset: poll.checkpointAfter,
+    offset: stopIndex < 0 ? poll.checkpointAfter : automation.stopBeforeUpdateId!,
     caughtUpAtMs,
   };
   if (observations.length === 0) {

@@ -1,20 +1,30 @@
 import {
     deriveExternalSessionActivity,
-    type ExternalSessionCandidateV1,
-    type ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import {
     decodeIndexCursor,
     encodeIndexCursor,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import {
+    ClaudeCandidateSourceChangedError,
     findClaudeJsonlSessionsById,
     pageClaudeJsonlSessionFiles,
     type ClaudeJsonlSessionScanPosition,
     type DiscoveredClaudeJsonlSession,
 } from './files.js';
 import { readClaudeJsonlSessionTitle } from './metadata.js';
+import type { ClaudeExternalSessionSource } from './source.js';
+
+export type ClaudeExternalSessionCandidate = Readonly<{
+    remoteSessionId: string;
+    title?: string;
+    updatedAtMs: number;
+    createdAtMs?: number;
+    activity?: ReturnType<typeof deriveExternalSessionActivity>;
+    archived?: boolean;
+    details: Readonly<{ projectId: string }>;
+}>;
 
 type ClaudeCandidateCursorV2 = Readonly<{
     v: 2;
@@ -46,7 +56,7 @@ export type ClaudeCandidatePreparation = Readonly<{
 
 export type ClaudeCandidateResultBudget = Readonly<{
     fits(
-        candidates: readonly ExternalSessionCandidateV1[],
+        candidates: readonly ClaudeExternalSessionCandidate[],
         nextCursor: string | null,
         searchIncomplete: boolean | undefined,
         preparation: ClaudeCandidatePreparation | undefined,
@@ -57,9 +67,7 @@ export class ClaudeCandidateResultBudgetTooSmallError extends Error {
     readonly name = 'ClaudeCandidateResultBudgetTooSmallError';
 }
 
-export class ClaudeCandidateSourceChangedError extends Error {
-    readonly name = 'ClaudeCandidateSourceChangedError';
-}
+export { ClaudeCandidateSourceChangedError } from './files.js';
 
 export class ClaudeCandidateInvalidCursorError extends Error {
     readonly name = 'ClaudeCandidateInvalidCursorError';
@@ -210,7 +218,7 @@ async function buildCandidate(params: Readonly<{
     env: NodeJS.ProcessEnv;
     includeTitle: boolean;
     signal?: AbortSignal;
-}>): Promise<ExternalSessionCandidateV1> {
+}>): Promise<ClaudeExternalSessionCandidate> {
     throwIfAborted(params.signal);
     const title = params.includeTitle
         ? await readClaudeJsonlSessionTitle(params.session.filePath).catch(() => null)
@@ -232,7 +240,7 @@ async function buildCandidate(params: Readonly<{
 function buildMetadataCandidate(params: Readonly<{
     session: DiscoveredClaudeJsonlSession;
     env: NodeJS.ProcessEnv;
-}>): ExternalSessionCandidateV1 {
+}>): ClaudeExternalSessionCandidate {
     return {
         remoteSessionId: params.session.remoteSessionId,
         updatedAtMs: params.session.updatedAtMs,
@@ -245,7 +253,7 @@ function buildMetadataCandidate(params: Readonly<{
 }
 
 export async function listClaudeExternalSessionCandidates(params: Readonly<{
-    source: ExternalSessionsSource;
+    source: ClaudeExternalSessionSource;
     env: NodeJS.ProcessEnv;
     cursor?: string;
     limit: number;
@@ -254,7 +262,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
     signal?: AbortSignal;
     resultBudget?: ClaudeCandidateResultBudget;
 }>): Promise<Readonly<{
-    candidates: ExternalSessionCandidateV1[];
+    candidates: ClaudeExternalSessionCandidate[];
     nextCursor: string | null;
     searchIncomplete?: boolean;
     preparation?: ClaudeCandidatePreparation;
@@ -300,7 +308,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
                 );
             }
             const pageSessions = exactFilenameMatches.slice(offset, offset + limit);
-            const page: ExternalSessionCandidateV1[] = [];
+            const page: ClaudeExternalSessionCandidate[] = [];
             for (let index = 0; index < pageSessions.length; index += 1) {
                 const session = pageSessions[index];
                 if (!session) continue;
@@ -395,9 +403,10 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
     const searchIncomplete = searchTerm
         ? (params.searchMode === 'fast' || traversed.hasMore ? true : undefined)
         : undefined;
-    const page: ExternalSessionCandidateV1[] = [];
+    const page: ClaudeExternalSessionCandidate[] = [];
     let previousTraversalKey = afterTraversalKey;
     let previousScanPosition = scanPosition;
+    let previousSourceGeneration = traversed.sourceGeneration;
 
     for (let traversalIndex = 0; traversalIndex < traversed.entries.length; traversalIndex += 1) {
         const session = traversed.entries[traversalIndex];
@@ -405,7 +414,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
         throwIfAborted(params.signal);
         const cursorBefore = previousScanPosition
             ? encodeCandidateScanCursor({
-                sourceGeneration: traversed.sourceGeneration,
+                sourceGeneration: previousSourceGeneration,
                 scanPosition: previousScanPosition,
                 scanned: scannedBefore + traversalIndex,
             })
@@ -414,7 +423,8 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
                 : undefined;
         previousTraversalKey = session.traversalKey;
         previousScanPosition = session.scanPosition;
-        let candidate: ExternalSessionCandidateV1;
+        previousSourceGeneration = session.sourceGeneration;
+        let candidate: ClaudeExternalSessionCandidate;
         if (!searchTerm) {
             candidate = buildMetadataCandidate({ session, env: params.env });
         } else if (params.searchMode === 'fast') {
@@ -439,7 +449,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
 
         const cursorAfter = traversalIndex < traversed.entries.length - 1 || traversed.hasMore
             ? encodeCandidateScanCursor({
-                sourceGeneration: traversed.sourceGeneration,
+                sourceGeneration: session.sourceGeneration,
                 scanPosition: session.scanPosition,
                 scanned: scannedBefore + traversalIndex + 1,
             })
@@ -488,10 +498,10 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
         }
     }
 
-    const nextCursor = traversed.hasMore && traversed.nextScanPosition
+    const nextCursor = traversed.hasMore && traversed.nextScanPoint
         ? encodeCandidateScanCursor({
-            sourceGeneration: traversed.sourceGeneration,
-            scanPosition: traversed.nextScanPosition,
+            sourceGeneration: traversed.nextScanPoint.sourceGeneration,
+            scanPosition: traversed.nextScanPoint.scanPosition,
             scanned,
         })
         : null;

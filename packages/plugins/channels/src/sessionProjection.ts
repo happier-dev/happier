@@ -2,7 +2,7 @@ import type {
   ActionsService,
   PluginActionResultById,
 } from '@happier-dev/plugin-sdk/actions';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountCollectionForDefinition } from '@happier-dev/plugin-sdk/collections';
 
@@ -127,7 +127,7 @@ export type ConversationSessionProjectionNoHistoryBaseline =
   | Readonly<{ kind: 'unavailable'; reason: 'cancelled' | 'transcriptUnavailable' }>;
 
 function isTranscriptCursorRejected(error: unknown): boolean {
-  return error instanceof PluginError && error.code === 'invalid_cursor';
+  return isPluginError(error) && error.code === 'invalid_cursor';
 }
 
 function isJsonRecord(value: JsonValue): value is JsonRecord {
@@ -164,7 +164,7 @@ export function createConversationSessionProjectionFrontierRow(input: Readonly<{
   revision: number;
   now: number;
   createdAt?: number;
-}>): JsonRecord {
+}>): JsonRecord & Readonly<{ id: string }> {
   const rowId = createConversationSessionProjectionFrontierRowId(input.bindingId);
   return {
     [CHANNEL_STATE_FIELD.id]: rowId,

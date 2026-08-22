@@ -45,7 +45,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
 
     expect(mod.PLUGIN_MANIFEST).toMatchObject({
       id: 'happier.scm.forge.bitbucket',
-      entrypoints: { daemon: './dist/index.js' },
+      entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: { required: expect.arrayContaining([
         expect.objectContaining({ id: 'bitbucket-api', capability: 'network', scope: { targets: expect.arrayContaining([
           { kind: 'fixedOrigin', origin: 'https://api.bitbucket.org' },
@@ -100,9 +100,10 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
     // Ingested the way the host does it: from the serialized manifest bytes the build emits to
     // `.happier-plugin/plugin.json`, not from the branded in-memory object.
     expect(ingestPluginManifestV2(JSON.parse(JSON.stringify(mod.PLUGIN_MANIFEST)))).toMatchObject({ ok: true });
-    // The projected manifest declares every contribution family, so "no hooks" is an empty
-    // declaration rather than an absent key.
-    expect(mod.PLUGIN_MANIFEST.contributes.hooks).toEqual([]);
+    // This direct cold manifest retains author-declared shape. Canonical host
+    // ingestion later normalizes an undeclared hooks family to an empty array.
+    expect(mod.PLUGIN_MANIFEST.contributes).not.toHaveProperty('hooks');
+    expect(mod.PLUGIN_MANIFEST.contributes.hooks).toBeUndefined();
   });
 
   it('rejects dangling and wrong-family SCM/account origin references', async () => {

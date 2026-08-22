@@ -1,9 +1,16 @@
-import { defineProtocolLiteral, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
+import {
+    ProtocolComposerRefV1Schema,
+    defineProtocolLiteral,
+    defineProtocolObject,
+} from '@happier-dev/plugin-sdk/protocol';
+import type { ProtocolComposerRefV1 } from '@happier-dev/plugin-sdk/protocol';
 import {
     TriageEntryRefV1Schema,
     TriageSourceInstanceRefV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import type { TriageEntryRefV1, TriageSourceInstanceRefV1 } from '@happier-dev/triage-protocol/v1';
+
+import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
 
 /**
  * The strict private launch input of the Triage app page
@@ -20,17 +27,29 @@ import type { TriageEntryRefV1, TriageSourceInstanceRefV1 } from '@happier-dev/t
  * failure mode that would let a Triage-local mirror of a platform type slip in
  * unnoticed.
  *
- * ## The one deliberately absent field
+ * ## The Composer-origin address
  *
- * `core/COMPOSER.md` §2.1 specifies an optional `originComposer: ComposerRefV1`
- * for a Composer-origin launch. It is NOT declared here, and its presence is a
- * refusal, because the public `ComposerRefV1Schema` is a `PluginUiSchema` and
- * not a validator-neutral `ProtocolComposableSchema`: it cannot be embedded in
- * a `defineProtocolObject` at all. The canonical producer is tracked as
- * `COMPOSER-COMPOSABLE-REF` at the Composer/Main SDK owner. Declaring a
- * Triage-local mirror or an adoption wrapper is explicitly forbidden, so the
- * dependent slice — the Tier-B reference path that would consume the origin —
- * stays blocked while everything else here ships.
+ * `core/COMPOSER.md` §2.1 and PEP `03d1` §17.8 give a Composer-origin launch
+ * exactly one extra field, `originComposer`, and place it HERE — inside this
+ * closed private launch input — rather than on the source detail surface
+ * envelope. That envelope is `additive-open/drop`, which is right for a
+ * forward-compatible presentation payload and wrong for an address: a
+ * destination that resolves the value with an exact `get(originComposer)` would
+ * be handed a silently emptied launch instead of a refusal. Closed fails loudly,
+ * which is what an address needs.
+ *
+ * The declared value is the canonical composable projection
+ * `ProtocolComposerRefV1Schema` from `@happier-dev/plugin-sdk/protocol` — the
+ * one host parser, not a copy (`/ui`'s `ComposerRefV1Schema` is the same
+ * canonical value published declaration-only for reading Host API payloads, and
+ * stays uncomposable by design). A Triage-local mirror or adoption wrapper
+ * remains forbidden.
+ *
+ * It is an address and nothing more: not attestation, not mutation authority,
+ * not route state, and not a persisted origin. Contributor admission, scope
+ * availability, and snapshot revision stay with the canonical Composer owner,
+ * which is why a supplied `originComposer` still cannot excuse a mismatched
+ * entry/connection pair below.
  */
 
 export type TriageEntryDetailLaunchInputV1 = Readonly<{
@@ -38,6 +57,7 @@ export type TriageEntryDetailLaunchInputV1 = Readonly<{
     kind: 'entryDetail';
     entryRef: TriageEntryRefV1;
     sourceInstance: TriageSourceInstanceRefV1;
+    originComposer?: ProtocolComposerRefV1;
 }>;
 
 /**
@@ -50,6 +70,7 @@ export const TriageEntryDetailLaunchInputV1Schema = defineProtocolObject({
     kind: defineProtocolLiteral('entryDetail'),
     entryRef: TriageEntryRefV1Schema,
     sourceInstance: TriageSourceInstanceRefV1Schema,
+    originComposer: ProtocolComposerRefV1Schema.optional(),
 }, { policy: 'closed' });
 
 export type TriageEntryDetailLaunchInputParseResultV1 =
@@ -67,13 +88,25 @@ export type TriageEntryDetailLaunchInputParseResultV1 =
 export function buildTriageEntryDetailLaunchInput(input: Readonly<{
     entryRef: TriageEntryRefV1;
     sourceInstance: TriageSourceInstanceRefV1;
+    /** Present only when a mounted Composer opened this detail. */
+    originComposer?: ProtocolComposerRefV1;
 }>): TriageEntryDetailLaunchInputV1 {
-    return {
-        v: 1,
-        kind: 'entryDetail',
-        entryRef: input.entryRef,
-        sourceInstance: input.sourceInstance,
-    };
+    // An app-origin launch omits the key rather than carrying `undefined`: the
+    // absent address and the unresolvable one are different facts downstream.
+    return input.originComposer === undefined
+        ? {
+            v: 1,
+            kind: 'entryDetail',
+            entryRef: input.entryRef,
+            sourceInstance: input.sourceInstance,
+        }
+        : {
+            v: 1,
+            kind: 'entryDetail',
+            entryRef: input.entryRef,
+            sourceInstance: input.sourceInstance,
+            originComposer: input.originComposer,
+        };
 }
 
 export function parseTriageEntryDetailLaunchInput(
@@ -86,11 +119,8 @@ export function parseTriageEntryDetailLaunchInput(
     const { entryRef, sourceInstance } = candidate;
     // A connection to another source could never have observed this entry, so
     // the pair is a refusal rather than a substitution — the same rule the
-    // attachment value enforces, for the same reason.
-    if (
-        sourceInstance.source.pluginId !== entryRef.source.pluginId
-        || sourceInstance.source.localId !== entryRef.source.localId
-    ) {
+    // attachment value enforces, through the same predicate.
+    if (!sameTriageSourceIdentity(sourceInstance.source, entryRef.source)) {
         return { status: 'invalid', reason: 'sourceMismatch' };
     }
     return { status: 'valid', input: candidate };

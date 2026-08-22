@@ -51,7 +51,6 @@ function createControlledTransport() {
     const handle: ClaudeSdkExecClientHandle = {
         client,
         process: {
-            pid: 123,
             exit,
             async writeStdin() {},
             kill() {},

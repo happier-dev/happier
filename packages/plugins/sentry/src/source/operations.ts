@@ -12,7 +12,11 @@
  */
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import type {
+  ConnectedAccountMetadataList,
+  ConnectedAccountRef,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 import {
   MAX_TRIAGE_INSTANCE_DRAFTS_V1,
   TriageGetInputV1Schema,
@@ -329,10 +333,21 @@ export async function listSentryInstances(
   TriageListInstancesInputV1Schema.parse(input);
   const nowMs = Date.now();
 
-  const listed = await context.services.connectedAccounts.listAccounts({
+  // A purpose with no selected account has an empty authorized set: the host
+  // declines to list it, and calling that a Sentry failure would accuse a
+  // deployment this source never contacted while hiding the one thing the reader
+  // can act on. The shared owner is what decides that, so every source answers a
+  // first run the same way; every other refusal keeps propagating exactly as before.
+  const outcome = await readTriageSourceAccountListingV1({
+    connectedAccounts: context.services.connectedAccounts,
     purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE,
     limit: MAX_TRIAGE_INSTANCE_DRAFTS_V1,
-  }, { signal: context.signal });
+    signal: context.signal,
+  });
+  if (outcome.kind === 'failed') throw outcome.error;
+  const listed: ConnectedAccountMetadataList = outcome.kind === 'unbound'
+    ? { status: 'complete', accounts: [] }
+    : outcome.listing;
 
   const candidates: TriageSourceInstanceDraftV1[] = [];
   const failures: SentryInstanceFailureV1[] = [];

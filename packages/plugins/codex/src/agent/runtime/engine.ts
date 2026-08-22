@@ -21,6 +21,7 @@ import { buildCodexTerminalArgs } from './terminal/invocation.js';
 import { resolveCodexTerminalPermissionPolicy } from './terminal/permissionPolicy.js';
 import { openCodexNativeAppServerSession } from './appServer/native.js';
 import { createCodexNativeSessionControls } from './controls.js';
+import { codexHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
 
 export {
   codexExternalSessionsContribution,
@@ -361,7 +362,8 @@ function createCodexNativeTerminalSurface(): AgentTerminalSurface {
   return {
     resolveLaunch(request) {
       const terminal = readRecord(request.metadata.terminalRuntime);
-      const permissionMode = readString(request.metadata.permissionMode) ?? 'default';
+      const permissionMode = readString(request.metadata.permissionMode)
+        ?? 'default';
       const resumeId = readString(request.metadata.codexSessionId)
         ?? readString(request.metadata.providerSessionId)
         ?? readString(request.metadata.resumeId);
@@ -391,6 +393,7 @@ export const createCodexAgentRuntime: AgentRuntimeFactory = () => {
     executionRuns: { open: openCodexExecutionRun },
     surfaces: {
       terminal: createCodexNativeTerminalSurface(),
+      handoff: codexHandoffSurface,
     },
   } satisfies AgentRuntime;
 };

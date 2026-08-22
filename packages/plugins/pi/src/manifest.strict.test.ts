@@ -11,7 +11,7 @@ describe('Pi strict plugin manifest', () => {
       expect.objectContaining({ id: 'pi', runtime: { kind: 'custom' }, primary: 'sessions' }),
     ]);
     expect(PLUGIN_MANIFEST).toMatchObject({
-      entrypoints: { daemon: './dist/index.js' },
+      entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: {
         required: expect.arrayContaining([
           expect.objectContaining({ id: 'pi-process', capability: 'process' }),

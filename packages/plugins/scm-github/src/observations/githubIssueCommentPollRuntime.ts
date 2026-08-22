@@ -5,6 +5,8 @@ import {
   type ConversationObservationV1,
   type ConversationPollResultV1,
 } from '@happier-dev/channels-protocol/v1';
+import { parseForgeLinkHeader } from '@happier-dev/triage-sources/runtime';
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
   classifyGithubIssueCommentPage,
@@ -108,22 +110,16 @@ function decodeJson(response: GithubApiResponseV1): unknown {
   }
 }
 
-function findHeader(headers: Readonly<Record<string, string>>, name: string): string | null {
-  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name);
-  return entry?.[1] ?? null;
-}
-
+/**
+ * The RFC 8288 grammar is a provider-published standard rather than a GitHub rule, so
+ * it is parsed by the shared forge owner. What the relation MEANS, and whether its URL
+ * may be followed, stays with this source's continuation validation below.
+ */
 function parseGithubPaginationLink(
   headers: Readonly<Record<string, string>>,
   relation: 'next' | 'last',
 ): string | null {
-  const link = findHeader(headers, 'link');
-  if (!link) return null;
-  for (const part of link.split(',')) {
-    const match = /^\s*<([^>]+)>\s*;\s*rel="([^"]+)"\s*$/u.exec(part);
-    if (match?.[2].split(/\s+/u).includes(relation)) return match[1]!;
-  }
-  return null;
+  return parseForgeLinkHeader(readTriageResponseHeaderV1(headers, 'link'))[relation] ?? null;
 }
 
 function parseNextLink(headers: Readonly<Record<string, string>>): string | null {
@@ -422,7 +418,7 @@ function sortComments(
 }
 
 function pollIntervalHint(headers: Readonly<Record<string, string>>): number | null {
-  const raw = findHeader(headers, 'x-poll-interval');
+  const raw = readTriageResponseHeaderV1(headers, 'x-poll-interval');
   if (!raw || !/^\d+$/u.test(raw.trim())) return null;
   const seconds = Number(raw.trim());
   if (!Number.isSafeInteger(seconds) || seconds < 0) return null;
@@ -493,7 +489,7 @@ async function readIssueCommentPages(input: Readonly<{
     if (!Array.isArray(parsed)) throw new RangeError('GitHub issue-comment API response must be an array');
     comments.push(...parsed.map((entry) => parseIssueComment(entry, input.repository)));
     if (first) {
-      etag = findHeader(response.headers, 'etag');
+      etag = readTriageResponseHeaderV1(response.headers, 'etag');
       const last = parseLastLink(response.headers);
       lastPageUrl = last === null
         ? null

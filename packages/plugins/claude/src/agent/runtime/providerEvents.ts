@@ -78,6 +78,17 @@ export const ClaudeProviderEventSchema = z.discriminatedUnion('kind', [
     kind: z.literal('session-id-publish'),
     publishedSessionId: z.string().trim().min(1),
     source: z.string().trim().min(1),
+    /**
+     * Where Claude materialized this resume id's transcript. The path rides
+     * this event so it is published in the SAME generation as the id whose
+     * conversation it names; published separately it could be matched to a
+     * different id and would point a reader at the wrong log.
+     *
+     * The value is a MACHINE-LOCAL path, and it is a POINTER rather than a
+     * resume gate (`AM-24`): the host offers it to a successor Agent on the same
+     * machine and never writes it to a server record.
+     */
+    nativeSessionLogPath: z.string().trim().min(1).max(4_096).optional(),
   }),
   ProviderEventBaseSchema.extend({
     kind: z.literal('session-ended'),

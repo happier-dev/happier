@@ -25,7 +25,7 @@
   },
   "files": [
     "dist",
-    ".happier-plugin/plugin.json",
+    ".happier-plugin",
     "package.json"
   ],
   "scripts": {
@@ -37,7 +37,6 @@
     "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0"
   },
   "devDependencies": {

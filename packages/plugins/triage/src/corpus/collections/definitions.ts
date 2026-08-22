@@ -1,4 +1,3 @@
-import type { PluginAccountCollectionMigrationRuntimeProjection } from '@happier-dev/plugin-sdk';
 import { defineAccountCollection } from '@happier-dev/plugin-sdk/collections';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
@@ -246,29 +245,17 @@ export const CORPUS_USER_MARKS_COLLECTION = defineAccountCollection({
     migrations: [],
 });
 
-/** Every declared Account Collection, in one place, for manifest composition. */
+/**
+ * Every declared Account Collection, in one place, for the checks that reason
+ * about the set rather than about one Collection.
+ *
+ * The manifest does not compose this array: `definePlugin` names each
+ * definition under its own local id and projects both the static declaration
+ * and the executable migration half from it, so there is one owner for the two
+ * halves instead of a hand-maintained map beside these definitions.
+ */
 export const CORPUS_ACCOUNT_COLLECTIONS = [
     CORPUS_SOURCE_INSTANCES_COLLECTION,
     CORPUS_SESSION_LINKS_COLLECTION,
     CORPUS_USER_MARKS_COLLECTION,
 ] as const;
-
-/**
- * Executable half of `contributes.accountCollections`.
- *
- * The host rejects an author module whose projection does not name every
- * declared Collection, and whose per-Collection `migrate` callbacks are not the
- * ordered adjacent readable-schema-version edges the manifest declares. All
- * three Collections are at schema version 1 with no earlier readable version,
- * so all three carry zero edges today; deriving the projection from the same
- * declarations the manifest composes means a future schema-version bump adds
- * the callback beside its static identity instead of leaving the two halves to
- * drift.
- */
-export const CORPUS_ACCOUNT_COLLECTION_MIGRATIONS:
-PluginAccountCollectionMigrationRuntimeProjection = Object.freeze(Object.fromEntries(
-    CORPUS_ACCOUNT_COLLECTIONS.map((collection) => [
-        collection.id,
-        Object.freeze([...collection.migrations ?? []]),
-    ]),
-));

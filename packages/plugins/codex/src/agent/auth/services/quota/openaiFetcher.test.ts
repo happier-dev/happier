@@ -27,13 +27,24 @@ function systemJsonResponse(value: unknown, init?: ResponseInit): Response {
 }
 
 describe('createOpenAiCodexQuotaFetcher', () => {
-  it('uses the published numeric-epoch threshold for a numeric quota reset', () => {
-    expect(parseOpenAiCodexConnectedAccountQuotaLimits({
-      rate_limit: { primary_window: { reset_at: 1_000_000_000_000 } },
-    })).toEqual([
-      { id: 'session', resetsAtMs: 1_000_000_000_000 },
-      { id: 'weekly' },
-    ]);
+  it('normalizes numeric quota resets through the shared epoch boundary', () => {
+    const cases = [
+      [1_700_000_000, 1_700_000_000_000],
+      [1_700_000_000_000, 1_700_000_000_000],
+      [1_000_000_000_000, 1_000_000_000_000],
+      ['1700000000', 1_700_000_000_000],
+      ['1700000000000', 1_700_000_000_000],
+      ['1000000000000', 1_000_000_000_000],
+    ] as const;
+
+    for (const [resetAt, expected] of cases) {
+      expect(parseOpenAiCodexConnectedAccountQuotaLimits({
+        rate_limit: { primary_window: { reset_at: resetAt } },
+      })).toEqual([
+        { id: 'session', resetsAtMs: expected },
+        { id: 'weekly' },
+      ]);
+    }
   });
 
   it('returns a provider-neutral public usage observation from the private quota fetcher', async () => {

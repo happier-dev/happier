@@ -1,4 +1,7 @@
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type {
+    OauthCredentialRecord,
+    TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { findMissingClaudeCodeCredentialScopes } from './scopes.js';
 
@@ -20,7 +23,7 @@ function isNonBlank(value: string | null | undefined): boolean {
 }
 
 export function classifyClaudeCodeCredentialHealth(
-    record: ConnectedServiceCredentialRecordV1,
+    record: OauthCredentialRecord | TokenCredentialRecord,
 ): ClaudeCodeCredentialHealth {
     if (record.serviceId !== 'claude-subscription') {
         return { status: 'unsupported_service', missingScopes: [] };

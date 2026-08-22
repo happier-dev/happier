@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
+
+import { resolveClaudeConfigDir } from '../../environment.js';
+import { readClaudeNativeAccountIdentity } from './native/accountIdentity.js';
 
 type ClaudeCliAuthStatus =
     | Readonly<{
@@ -60,30 +61,11 @@ function readEnvString(
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function resolveClaudeConfigDir(env: Readonly<Record<string, string | undefined>>): string {
-    return readEnvString(env, HAPPIER_CLAUDE_CONFIG_DIR_ENV)
-        ?? readEnvString(env, 'CLAUDE_CONFIG_DIR')
-        ?? join(homedir(), '.claude');
-}
-
-function readClaudeOauthAccountLabel(record: Record<string, unknown> | null | undefined): string | null {
-    const oauthAccount = readObjectField(record, 'oauthAccount');
-    return oauthAccount
-        ? readStringField(oauthAccount, 'emailAddress')
-            ?? readStringField(oauthAccount, 'email')
-            ?? readStringField(oauthAccount, 'displayName')
-            ?? readStringField(oauthAccount, 'name')
-        : null;
-}
-
 function readClaudeAccountLabel(configDir: string, fallbackRecord: Record<string, unknown>): string | undefined {
     const rootConfig = readJsonFileSafe(join(configDir, '.claude.json'));
-    const rootRecord = rootConfig && typeof rootConfig === 'object' && !Array.isArray(rootConfig)
-        ? rootConfig as Record<string, unknown>
-        : null;
     const accountLabel =
-        readClaudeOauthAccountLabel(rootRecord)
-        ?? readClaudeOauthAccountLabel(fallbackRecord)
+        readClaudeNativeAccountIdentity(rootConfig)?.accountLabel
+        ?? readClaudeNativeAccountIdentity(fallbackRecord)?.accountLabel
         ?? readStringField(fallbackRecord, 'email')
         ?? readStringField(fallbackRecord, 'accountEmail')
         ?? readStringField(fallbackRecord, 'userEmail');

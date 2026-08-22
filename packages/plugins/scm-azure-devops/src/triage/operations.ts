@@ -1,4 +1,5 @@
 import type {
+  ConnectedAccountBindingSummary,
   ConnectedAccountListRequest,
   ConnectedAccountListedAccount,
   ConnectedAccountListedMaterializationRequest,
@@ -18,6 +19,8 @@ import {
   type TriageSourceScanEvidenceV1,
   type TriageSourceScanObservationV1,
 } from '@happier-dev/triage-protocol/v1';
+
+import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 
 import { materializeAzureDevOpsListedAuthorization } from './auth.js';
 import { createAzureDevOpsApiClient } from './client.js';
@@ -73,6 +76,10 @@ export type AzureTriageAccountService = Readonly<{
     request: ConnectedAccountListRequest,
     options?: Readonly<{ signal?: AbortSignal }>,
   ): Promise<ConnectedAccountMetadataList>;
+  getBinding(
+    purpose: string,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<ConnectedAccountBindingSummary | null>;
   materializeListedAccount(
     request: ConnectedAccountListedMaterializationRequest,
     options?: Readonly<{ signal?: AbortSignal }>,
@@ -106,16 +113,15 @@ export type AzureTriageReadServices = Readonly<{
  * silently missing row.
  */
 export async function runAzureTriageListInstances(input: Readonly<{
-  connectedAccounts: Pick<AzureTriageAccountService, 'listAccounts'>;
+  connectedAccounts: Pick<AzureTriageAccountService, 'listAccounts' | 'getBinding'>;
   signal: AbortSignal;
 }>): Promise<TriageListInstancesResultV1> {
-  let listing: ConnectedAccountMetadataList;
-  try {
-    listing = await input.connectedAccounts.listAccounts(
-      { purpose: AZURE_DEVOPS_TRIAGE_PURPOSE },
-      { signal: input.signal },
-    );
-  } catch {
+  const outcome = await readTriageSourceAccountListingV1({
+    connectedAccounts: input.connectedAccounts,
+    purpose: AZURE_DEVOPS_TRIAGE_PURPOSE,
+    signal: input.signal,
+  });
+  if (outcome.kind === 'failed') {
     return {
       kind: 'failed',
       failure: createAzureSourceFailure({
@@ -125,6 +131,11 @@ export async function runAzureTriageListInstances(input: Readonly<{
       }),
     };
   }
+  // No selected account is an empty set the reader can act on by connecting one,
+  // never an Azure DevOps that refused a request this source never sent.
+  const listing: ConnectedAccountMetadataList = outcome.kind === 'unbound'
+    ? { status: 'complete', accounts: [] }
+    : outcome.listing;
 
   const candidates: TriageSourceInstanceDraftV1[] = [];
   const failures: Array<Readonly<{

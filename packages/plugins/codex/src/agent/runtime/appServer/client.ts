@@ -25,7 +25,7 @@ type JsonRpcRequestHandler = (params: unknown, message: Readonly<{ id?: unknown 
 type JsonRpcNotificationHandler = (params: unknown) => Promise<void> | void;
 
 export type CodexAppServerRequestOptions = Readonly<{
-    timeoutMs?: number;
+    timeoutMs?: number | null;
 }>;
 
 export type CodexAppServerClient = Readonly<{
@@ -345,10 +345,13 @@ function wrapNativeCodexAppServerClient(
     return {
         launchFeatures,
         async request(method, requestParams, options) {
+            const timeoutMs = options?.timeoutMs === null
+                ? null
+                : options?.timeoutMs ?? readCodexAppServerRequestTimeoutMs(method, env);
             return await handle.client.request(
                 method,
                 toJsonValue(requestParams),
-                { timeoutMs: options?.timeoutMs ?? readCodexAppServerRequestTimeoutMs(method, env) },
+                { timeoutMs },
             );
         },
         async notify(method, notificationParams) {
@@ -427,6 +430,8 @@ export async function createCodexNativeAppServerClient(params: Readonly<{
     cwd?: string;
     configOverrides?: readonly string[];
     disableUserMcpServers?: boolean;
+    /** A fork dispatch must not be locally timed out after Codex has received it. */
+    forkOnly?: boolean;
     signal?: AbortSignal;
 }>): Promise<DisposableCodexAppServerClient> {
     const env = params.processEnv ?? process.env;
@@ -472,7 +477,7 @@ export async function createCodexNativeAppServerClient(params: Readonly<{
         await client.request('initialize', {
             clientInfo: CODEX_APP_SERVER_CLIENT_INFO,
             capabilities: { experimentalApi: true },
-        });
+        }, params.forkOnly ? { timeoutMs: null } : undefined);
         await client.notify('initialized');
         return client;
     } catch (error) {

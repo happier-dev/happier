@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeStrictJsonValue } from '@happier-dev/protocol';
+import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     buildMaximalSchemaValue,
@@ -48,17 +48,19 @@ import {
  *
  * `packages/triage-protocol/src/v1/maximumEncodedResult.test.ts` proves the
  * *source-facing* operation values fit. Nothing proved that this target's own
- * Action values do — and they cross the same gate. Every contributed Action
- * result is admitted by `normalizeStrictJsonValue`
- * (`packages/protocol/src/json/strictJsonValue.ts`) **before** the manifest
- * `resultSchema` is checked, and that owner throws
- * `JSON aggregate byte limit exceeded` rather than truncating: a result one
- * byte over is rejected whole, so the user sees no list at all rather than a
- * shorter one.
+ * Action values do — and they cross the same gate. Every plugin Action input
+ * and result is parsed by `AgentRuntimeJsonValueV1Schema`
+ * (`packages/protocol/src/runtime/agentSessionV1.ts`) at
+ * `packages/protocol/src/plugins/actions/invocation.ts` **before** the manifest
+ * `resultSchema` is checked, and that owner *rejects* a value past
+ * `p0MeasuredCandidates.jsonValueMaxJsonBytes` rather than truncating it: a
+ * result one byte over is refused whole, so the user sees no list at all rather
+ * than a shorter one.
  *
- * The value measured here is the real one. `normalizeStrictJsonValue` is the
- * exact function the host boundary calls, not a copy of its constant, so a
- * later change to the ceiling reaches this test on its own.
+ * The value measured here is the real one. `AgentRuntimeJsonValueV1Schema` is
+ * the exact schema the host boundary parses through, not a copy of its
+ * constant, so a later change to the ceiling — or a later relocation of it to
+ * another owner — reaches this test on its own.
  *
  * Nothing here is hand-built: the maximal values come from the one published
  * derivation in `@happier-dev/triage-protocol/testing/v1`, which the source
@@ -118,12 +120,7 @@ const measuredSchemas = { ...structurallyBoundedSchemas, ...ownerBoundedSchemas 
 const derivedMaxima = deriveMaximumEncodedBytesByLabel(measuredSchemas);
 
 function admits(value: unknown): boolean {
-    try {
-        normalizeStrictJsonValue(value);
-        return true;
-    } catch {
-        return false;
-    }
+    return AgentRuntimeJsonValueV1Schema.safeParse(value).success;
 }
 
 describe('the aggregate Action byte gate', () => {
@@ -149,9 +146,9 @@ describe('the aggregate Action byte gate', () => {
         // remaining headroom.
         expect(derivedMaxima).toEqual({
             readEntryDetailInput: 1_573,
-            readEntryDetailResult: 79_899,
-            listEntriesInput: 51_445,
-            listEntriesResult: 976_334,
+            readEntryDetailResult: 157_598,
+            listEntriesInput: 40_213,
+            listEntriesResult: 871_886,
             setEntryPinnedInput: 5_670,
             setEntryPinnedResult: 27,
             listPinnedEntriesInput: 18,
@@ -159,9 +156,9 @@ describe('the aggregate Action byte gate', () => {
             linkEntryToSessionInput: 6_359,
             linkEntryToSessionResult: 25,
             readSavedViewsInput: 7,
-            readSavedViewsResult: 1_572_322,
-            administerSavedViewInput: 49_138,
-            administerSavedViewResult: 1_572_347,
+            readSavedViewsResult: 1_245_666,
+            administerSavedViewInput: 38_930,
+            administerSavedViewResult: 1_245_691,
             administerSourceInstanceInput: 7_775,
             administerSourceInstanceResult: 81,
             readConfiguredInstancesInput: 7,
@@ -237,7 +234,13 @@ describe('the aggregate Action byte gate', () => {
             const maximal = schema.parse(buildMaximalSchemaValue(schema.jsonSchema, label));
             expect(admits(maximal), `${label} must be admitted by the host JSON gate`).toBe(true);
         }
-    });
+        // The budget is raised because of what this case DOES, not to silence a
+        // failure: it materializes a maximal value for every structurally
+        // bounded schema — payloads approaching the 1 MiB Action ceiling — and
+        // parses each one through the real host gate. That measures ~6s, just
+        // past vitest's 5s default, so it failed on duration while asserting
+        // cleanly. Anything red here is an assertion, never the clock.
+    }, 60_000);
 
     /**
      * The assertion above is only worth its line if a real breach reaches it.

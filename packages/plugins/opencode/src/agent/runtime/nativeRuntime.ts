@@ -21,6 +21,8 @@ import {
 } from './controls.js';
 import { withOpenCodeProviderConfigLaunchEnvironment } from '../providerBinding/runtime.js';
 import { prepareOpenCodeQualifiedConnectedAccounts } from '../auth/services/qualifiedPurposeLaunch.js';
+import { openCodeHandoffSurface } from '../surfaces/sessions/handoff/descriptor.js';
+import { resolveOpenCodeReplayChildLaunch } from '../surfaces/sessions/fork/descriptor.js';
 
 export {
   openCodeExternalSessionsContribution,
@@ -239,5 +241,12 @@ export const createOpenCodeAgentRuntime: AgentRuntimeFactory = () => {
       ),
     },
     executionRuns: { open: openOpenCodeExecutionRun },
+    surfaces: {
+      handoff: openCodeHandoffSurface,
+      fork: {
+        resolveReplayChildLaunch: async ({ parentMetadata }) =>
+          await resolveOpenCodeReplayChildLaunch({ parentMetadata }),
+      },
+    },
   };
 };

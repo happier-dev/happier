@@ -1,16 +1,64 @@
-import { access, lstat, mkdir, mkdtemp, readFile, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { existsSync, readdirSync } from 'node:fs';
+import { access, lstat, mkdir, mkdtemp, readFile, realpath, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AgentRuntimeHandoffSurface } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { exportClaudeSessionBundle, importClaudeSessionBundle } from './bundle.js';
-import { resolveClaudeProjectId } from './path.js';
+import { getClaudeProjectPath, resolveClaudeProjectId } from './path.js';
 import { claudeHandoffSurface } from './providerOps.js';
+import { validateClaudeExternalSessionSource } from '../external/source.js';
+
+function handoffContext(): import('@happier-dev/plugin-sdk').PluginInvocationContext {
+    return { signal: new AbortController().signal } as import('@happier-dev/plugin-sdk').PluginInvocationContext;
+}
 
 describe('Claude handoff bundle leaf', () => {
     afterEach(() => {
         vi.unstubAllEnvs();
+    });
+
+    it('derives project paths from the Happier config root when it is the only override', () => {
+        vi.stubEnv('CLAUDE_CONFIG_DIR', '');
+        vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', '/tmp/claude-happier-only');
+
+        expect(getClaudeProjectPath('/tmp/workspace')).toBe(join(
+            '/tmp/claude-happier-only',
+            'projects',
+            resolveClaudeProjectId('/tmp/workspace'),
+        ));
+    });
+
+    it('exports the exact host-admitted Session id instead of a stale generic metadata id', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-provider-export-id-'));
+        const workspace = join(root, 'workspace');
+        const configDir = join(root, '.claude');
+        const projectId = resolveClaudeProjectId(workspace);
+        const transcriptPath = join(configDir, 'projects', projectId, 'current-session.jsonl');
+        await mkdir(join(configDir, 'projects', projectId), { recursive: true });
+        await writeFile(transcriptPath, '{"type":"assistant","text":"current"}\n', 'utf8');
+        vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+
+        const result = await claudeHandoffSurface.exportBundle({
+            sessionId: 'current-session',
+            metadata: {
+                path: workspace,
+                providerSessionId: 'stale-other-agent-session',
+            },
+            directory: '/active-server',
+        }, handoffContext());
+
+        expect(result).toMatchObject({
+            ok: true,
+            value: {
+                bundle: {
+                    agentId: 'claude',
+                    remoteSessionId: 'current-session',
+                },
+            },
+        });
     });
 
     it('exports from the linked external-session source before stale transcript metadata', async () => {
@@ -26,13 +74,7 @@ describe('Claude handoff bundle leaf', () => {
             metadata: {
                 path: join(root, 'workspace'),
                 claudeTranscriptPath: staleTranscriptPath,
-                externalSessionV1: {
-                    v: 1,
-                    agentId: 'claude',
-                    machineId: 'machine-1',
-                    remoteSessionId: 'session-1',
-                    source: { kind: 'claudeConfig', configDir, projectId: 'project-live' },
-                },
+                externalSessionSource: { kind: 'claudeConfig', configDir, projectId: 'project-live' },
             },
             remoteSessionId: 'session-1',
             env: {},
@@ -45,7 +87,7 @@ describe('Claude handoff bundle leaf', () => {
         });
     });
 
-    it('reads the A13 legacy link and rejects malformed or cross-Agent linked sources', async () => {
+    it('does not read raw owner metadata when selecting a transcript source', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-handoff-compat-'));
         const workspace = join(root, 'workspace');
         const configDir = join(root, '.claude');
@@ -54,69 +96,35 @@ describe('Claude handoff bundle leaf', () => {
         await mkdir(join(configDir, 'projects', linkedProjectId), { recursive: true });
         await mkdir(join(configDir, 'projects', fallbackProjectId), { recursive: true });
         await writeFile(
-            join(configDir, 'projects', linkedProjectId, 'session-legacy.jsonl'),
-            '{"type":"assistant","text":"legacy-linked"}\n',
+            join(configDir, 'projects', linkedProjectId, 'session-owner-private.jsonl'),
+            '{"type":"assistant","text":"owner-private"}\n',
             'utf8',
         );
         await writeFile(
-            join(configDir, 'projects', fallbackProjectId, 'session-malformed.jsonl'),
-            '{"type":"assistant","text":"fallback-malformed"}\n',
-            'utf8',
-        );
-        await writeFile(
-            join(configDir, 'projects', fallbackProjectId, 'session-cross-agent.jsonl'),
-            '{"type":"assistant","text":"fallback-cross-agent"}\n',
+            join(configDir, 'projects', fallbackProjectId, 'session-owner-private.jsonl'),
+            '{"type":"assistant","text":"fallback-public"}\n',
             'utf8',
         );
 
-        const legacy = await exportClaudeSessionBundle({
-            metadata: {
-                path: workspace,
-                directSessionV1: {
-                    v: 1,
-                    providerId: 'claude',
-                    machineId: 'machine-1',
-                    remoteSessionId: 'session-legacy',
-                    source: { kind: 'claudeConfig', configDir, projectId: linkedProjectId },
-                },
+        const rawOwnerMetadata = {
+            path: workspace,
+            externalSessionV1: {
+                v: 1,
+                agentId: 'claude',
+                machineId: 'machine-1',
+                remoteSessionId: 'session-owner-private',
+                source: { kind: 'claudeConfig', configDir, projectId: linkedProjectId },
             },
-            remoteSessionId: 'session-legacy',
+        };
+        const bundle = await exportClaudeSessionBundle({
+            metadata: rawOwnerMetadata,
+            remoteSessionId: 'session-owner-private',
             env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
         });
-        expect(Buffer.from(legacy.transcriptBase64, 'base64').toString('utf8')).toContain('legacy-linked');
-
-        for (const [remoteSessionId, externalSessionV1] of [
-            [
-                'session-malformed',
-                {
-                    v: 1,
-                    agentId: 'claude',
-                    source: { kind: 'claudeConfig', configDir, projectId: linkedProjectId },
-                },
-            ],
-            [
-                'session-cross-agent',
-                {
-                    v: 1,
-                    agentId: 'codex',
-                    machineId: 'machine-1',
-                    remoteSessionId: 'session-cross-agent',
-                    source: { kind: 'claudeConfig', configDir, projectId: linkedProjectId },
-                },
-            ],
-        ] as const) {
-            const bundle = await exportClaudeSessionBundle({
-                metadata: { path: workspace, externalSessionV1 },
-                remoteSessionId,
-                env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
-            });
-            expect(Buffer.from(bundle.transcriptBase64, 'base64').toString('utf8')).toContain(
-                remoteSessionId === 'session-malformed' ? 'fallback-malformed' : 'fallback-cross-agent',
-            );
-        }
+        expect(Buffer.from(bundle.transcriptBase64, 'base64').toString('utf8')).toContain('fallback-public');
     });
 
-    it('falls back to the derived transcript when linked Claude source identity is nullish', async () => {
+    it('falls back to the derived transcript when the public source is absent', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-handoff-nullish-source-'));
         const workspace = join(root, 'workspace');
         const configDir = join(root, '.claude');
@@ -126,16 +134,7 @@ describe('Claude handoff bundle leaf', () => {
         await writeFile(transcriptPath, '{"type":"assistant","text":"derived-nullish"}\n', 'utf8');
 
         const bundle = await exportClaudeSessionBundle({
-            metadata: {
-                path: workspace,
-                externalSessionV1: {
-                    v: 1,
-                    agentId: 'claude',
-                    machineId: 'machine-1',
-                    remoteSessionId: 'session-nullish',
-                    source: { kind: 'claudeConfig', configDir: null, projectId: null },
-                },
-            },
+            metadata: { path: workspace },
             remoteSessionId: 'session-nullish',
             env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
         });
@@ -190,18 +189,132 @@ describe('Claude handoff bundle leaf', () => {
             configDir,
             projectId,
         });
-        expect(result.resume).toEqual({
+        expect(result).toMatchObject({
+            providerSessionId: 'session-2',
+            launch: {
             directory: targetPath,
-            agent: 'claude',
-            resume: 'session-2',
-            environmentVariables: { CLAUDE_CONFIG_DIR: configDir },
-            transcriptStorage: 'direct',
-            approvedNewDirectoryCreation: true,
+                environmentVariables: { CLAUDE_CONFIG_DIR: configDir },
+            },
         });
+        expect(result).not.toHaveProperty('resume');
 
         await expect(readFile(join(configDir, 'projects', projectId, 'session-2.jsonl'), 'utf8')).resolves.toBe(
             '{"type":"assistant","text":"imported"}\n',
         );
+    });
+
+    it('persists a direct source that the external-session reader accepts when both config vars differ', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-handoff-config-precedence-'));
+        const targetPath = join(root, 'workspace');
+        const claudeConfigDir = join(root, '.claude-explicit');
+        const happierConfigDir = join(root, '.claude-happier');
+        const env = {
+            CLAUDE_CONFIG_DIR: claudeConfigDir,
+            HAPPIER_CLAUDE_CONFIG_DIR: happierConfigDir,
+        };
+        await mkdir(targetPath, { recursive: true });
+
+        const imported = await importClaudeSessionBundle({
+            bundle: {
+                agentId: 'claude',
+                remoteSessionId: 'session-config-precedence',
+                transcriptBase64: Buffer.from('{"type":"assistant","text":"imported"}\n', 'utf8').toString('base64'),
+            },
+            targetPath,
+            env,
+        });
+
+        expect(imported.directSource.configDir).toBe(claudeConfigDir);
+        const validation = validateClaudeExternalSessionSource({
+            source: imported.directSource,
+            env,
+        });
+        expect(validation.ok).toBe(true);
+        if (!validation.ok) throw new Error(validation.error);
+        await expect(realpath(validation.source.configDir!)).resolves.toBe(
+            await realpath(claudeConfigDir),
+        );
+    });
+
+    it('projects the public launch hints through the canonical handoff adapter', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-handoff-adapter-'));
+        const targetPath = join(root, 'workspace');
+        const configDir = join(root, '.claude-target');
+        await mkdir(targetPath, { recursive: true });
+        vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+
+        const result = await claudeHandoffSurface.importBundle({
+            bundle: {
+                agentId: 'claude',
+                remoteSessionId: 'session-adapter',
+                transcriptBase64: Buffer.from('{"type":"assistant","text":"imported"}\n', 'utf8').toString('base64'),
+            },
+            targetDirectory: targetPath,
+        }, handoffContext());
+
+        expect(result).toEqual({
+            ok: true,
+            value: {
+                providerSessionId: 'session-adapter',
+                source: {
+                    kind: 'claudeConfig',
+                    configDir,
+                    projectId: resolveClaudeProjectId(targetPath),
+                },
+                launch: {
+                    directory: targetPath,
+                    environmentVariables: { CLAUDE_CONFIG_DIR: configDir },
+                    sessionStateUpdates: [{
+                        fieldId: 'identity.providerSessionId',
+                        value: 'session-adapter',
+                    }],
+                },
+            },
+        });
+    });
+
+    it('does not write the native transcript after its runtime generation retires mid-import', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-handoff-retired-'));
+        const targetPath = join(root, 'workspace');
+        const configDir = join(root, '.claude-target');
+        const projectId = resolveClaudeProjectId(targetPath);
+        const projectDir = join(configDir, 'projects', projectId);
+        const transcriptPath = join(configDir, 'projects', projectId, 'session-retired.jsonl');
+        vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+        const retirementReason = new Error('runtime generation retired');
+        let observedTemporaryFile = false;
+        const signal = {
+            get aborted() {
+                if (existsSync(projectDir)) {
+                    observedTemporaryFile ||= readdirSync(projectDir).some((entry) => (
+                        entry.startsWith('.happier-import-')
+                    ));
+                }
+                return observedTemporaryFile;
+            },
+            reason: retirementReason,
+            throwIfAborted() {
+                if (this.aborted) throw this.reason;
+            },
+        } as AbortSignal;
+
+        const handoffSurface: AgentRuntimeHandoffSurface = claudeHandoffSurface;
+        const result = await handoffSurface.importBundle({
+            bundle: {
+                agentId: 'claude',
+                remoteSessionId: 'session-retired',
+                transcriptBase64: Buffer.from('{"type":"assistant","text":"imported"}\n', 'utf8').toString('base64'),
+            },
+            targetDirectory: targetPath,
+        }, { signal } as import('@happier-dev/plugin-sdk').PluginInvocationContext);
+
+        expect(observedTemporaryFile).toBe(true);
+        expect(result).toMatchObject({
+            ok: false,
+            code: 'target_import_failed',
+            message: 'runtime generation retired',
+        });
+        await expect(access(transcriptPath)).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
     it('accepts an existing byte-identical native target without rewriting it', async () => {
@@ -226,7 +339,7 @@ describe('Claude handoff bundle leaf', () => {
             targetPath,
             env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
         })).resolves.toMatchObject({
-            remoteSessionId: 'session-identical',
+            providerSessionId: 'session-identical',
         });
 
         const after = await stat(transcriptPath);
@@ -252,7 +365,7 @@ describe('Claude handoff bundle leaf', () => {
                 transcriptBase64: Buffer.from('{"type":"assistant","text":"incoming"}\n', 'utf8').toString('base64'),
             },
             targetDirectory: targetPath,
-        });
+        }, handoffContext());
 
         expect(result).toMatchObject({
             ok: false,
@@ -280,7 +393,7 @@ describe('Claude handoff bundle leaf', () => {
                 transcriptBase64: Buffer.from('{"type":"assistant","text":"incoming"}\n', 'utf8').toString('base64'),
             },
             targetDirectory: targetPath,
-        });
+        }, handoffContext());
 
         expect(result).toMatchObject({
             ok: false,
@@ -395,7 +508,10 @@ describe('Claude handoff bundle leaf', () => {
         const targetPath = join(root, 'workspace');
         const configDir = join(root, '.claude-target');
         const remoteSessionId = 'session-identical-race';
-        const transcript = '{"type":"assistant","text":"same"}\n';
+        const transcript = JSON.stringify({
+            type: 'assistant',
+            text: `same-${'x'.repeat(8 * 1024 * 1024)}`,
+        }) + '\n';
         const params = {
             bundle: {
                 agentId: 'claude' as const,

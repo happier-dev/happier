@@ -1,4 +1,8 @@
-import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type {
+  InteractionTransientAuthorQuestionV1,
+  InteractionTransientQuestionAnswerV1,
+} from '@happier-dev/plugin-sdk/interactions';
 
 import type { PermissionResult } from '../sdk/types.js';
 import { isAskUserQuestionToolName } from './askUserQuestion.js';
@@ -14,7 +18,7 @@ type QuestionRecord = Readonly<{
   ];
 }>;
 
-type HostQuestion = Parameters<AgentRuntimeContext['ui']['askQuestions']>[0][number];
+type HostQuestion = InteractionTransientAuthorQuestionV1;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -70,26 +74,22 @@ function readQuestions(input: unknown): QuestionRecord[] | null {
 
 function selectedLabels(
   question: QuestionRecord,
-  answer: Readonly<Record<string, unknown>> | undefined,
+  answer: InteractionTransientQuestionAnswerV1 | undefined,
 ): string | null {
   if (!answer) return null;
   const choiceById = new Map(question.choices.map((choice) => [choice.id, choice.label]));
-  if (answer.type === 'single' && isRecord(answer.answer)) {
-    if (answer.answer.type === 'choice') return choiceById.get(String(answer.answer.choiceId)) ?? null;
-    if (answer.answer.type === 'custom') return readString(answer.answer.value);
+  if (answer.kind === 'singleChoice') {
+    if (answer.answer.kind === 'choice') return choiceById.get(answer.answer.choiceId) ?? null;
+    return readString(answer.answer.value);
   }
-  if (answer.type === 'multiple' && Array.isArray(answer.answers)) {
+  if (answer.kind === 'multipleChoice') {
     const labels = answer.answers.flatMap((item) => {
-      if (!isRecord(item)) return [];
-      if (item.type === 'choice') {
-        const label = choiceById.get(String(item.choiceId));
+      if (item.kind === 'choice') {
+        const label = choiceById.get(item.choiceId);
         return label ? [label] : [];
       }
-      if (item.type === 'custom') {
-        const custom = readString(item.value);
-        return custom ? [custom] : [];
-      }
-      return [];
+      const custom = readString(item.value);
+      return custom ? [custom] : [];
     });
     return labels.length > 0 ? labels.join(', ') : null;
   }
@@ -107,7 +107,7 @@ async function answerClaudeQuestions(
   const toHostQuestion = (question: QuestionRecord): HostQuestion => ({
     id: question.id,
     prompt: question.prompt,
-    type: question.multiple ? 'multiple' : 'single',
+    type: question.multiple ? 'multipleChoice' : 'singleChoice',
     required: true,
     choices: question.choices.map((choice) => ({
       id: choice.id,
@@ -120,11 +120,13 @@ async function answerClaudeQuestions(
   if (!firstQuestion) {
     return { behavior: 'deny', message: 'Claude supplied invalid questions', interrupt: true };
   }
-  const result = await context.ui.askQuestions([
-    toHostQuestion(firstQuestion),
-    ...remainingQuestions.map(toHostQuestion),
-  ], {
+  const result = await context.services.interactions.askQuestions({
+    kind: 'questions',
     title: 'Claude question',
+    questions: [
+      toHostQuestion(firstQuestion),
+      ...remainingQuestions.map(toHostQuestion),
+    ],
   });
   if (result.status !== 'answered') {
     return { behavior: 'deny', message: 'Permission denied', interrupt: true };
@@ -132,7 +134,7 @@ async function answerClaudeQuestions(
   const answers: Record<string, string> = {};
   for (const question of questions) {
     const answer = result.answers[question.id];
-    const label = selectedLabels(question, isRecord(answer) ? answer : undefined);
+    const label = selectedLabels(question, answer);
     if (!label) return { behavior: 'deny', message: 'Permission denied', interrupt: true };
     answers[question.prompt] = label;
   }
@@ -153,8 +155,12 @@ export function createClaudeNativePermissionEngine(
       if (isAskUserQuestionToolName(toolName)) {
         return await answerClaudeQuestions(context, input);
       }
-      const approved = await context.ui.confirm(`Allow Claude to use ${toolName}?`);
-      return approved
+      const result = await context.services.interactions.confirm({
+        kind: 'confirmation',
+        title: 'Claude permission',
+        message: `Allow Claude to use ${toolName}?`,
+      });
+      return result.status === 'approved'
         ? {
             behavior: 'allow' as const,
             updatedInput: isRecord(input) ? { ...input } : {},

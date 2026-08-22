@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/runtime';
+import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 
-import { claudeSubscriptionConnectedAccountRuntime } from './claudeSubscriptionRuntime.js';
+import { activate } from '../activate.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 
 function credentialStore(values = new Map<string, string>()) {
   return {
@@ -15,8 +16,27 @@ function credentialStore(values = new Map<string, string>()) {
   };
 }
 
-function connectedAccountRuntime(): PluginConnectedAccountRuntime {
-  return claudeSubscriptionConnectedAccountRuntime;
+function activateConnectedAccountRuntime(): PluginConnectedAccountRuntime {
+  const registrations: Array<Readonly<{ id: string; runtime: PluginConnectedAccountRuntime }>> = [];
+  activate({
+    agents: {
+      register() {},
+      registerExternalSessions() {},
+      registerExternalSessionTakeover() {},
+      registerExternalSessionHooks() {},
+      registerExternalSessionObservation() {},
+    },
+    hooks: { register() {} },
+    mcp: { registerDiscoverySource() {} },
+    connectedAccounts: {
+      register(id: string, runtime: PluginConnectedAccountRuntime) {
+        registrations.push({ id, runtime });
+      },
+    },
+  } as Parameters<typeof activate>[0]);
+  const registration = registrations.find(({ id }) => id === 'claude-subscription');
+  if (!registration) throw new Error('Claude Subscription Connected Account runtime was not registered');
+  return registration.runtime;
 }
 
 function readContext(
@@ -49,8 +69,28 @@ function readContext(
 }
 
 describe('Claude Subscription Connected Account', () => {
+  it('registers exactly the two authentication modes declared by the descriptor', () => {
+    const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.find(
+      ({ id }) => id === 'claude-subscription',
+    );
+    expect(descriptor).toBeDefined();
+    expect(descriptor?.authentication.modes).toEqual([
+      expect.objectContaining({ id: 'setup-token', outcomeReconciliation: 'none' }),
+      expect.objectContaining({
+        id: 'oauth',
+        callbackUrl: 'https://platform.claude.com/oauth/code/callback',
+        outcomeReconciliation: 'none',
+      }),
+    ]);
+    expect(Object.keys(activateConnectedAccountRuntime().authentication.modes).sort()).toEqual(
+      descriptor?.authentication.modes.map(({ id }) => id).sort(),
+    );
+    expect(activateConnectedAccountRuntime().authentication.modes.oauth)
+      .not.toHaveProperty('reconcile');
+  });
+
   it('stages a setup token without fabricating first-connect provider identity', async () => {
-    const runtime = connectedAccountRuntime();
+    const runtime = activateConnectedAccountRuntime();
     const mode = runtime.authentication.modes['setup-token'];
     if (!mode || mode.kind !== 'manual') {
       throw new Error('Claude setup-token mode is unavailable');
@@ -72,7 +112,7 @@ describe('Claude Subscription Connected Account', () => {
   });
 
   it('exchanges Claude PKCE OAuth and stages the nested immutable account identity', async () => {
-    const runtime = connectedAccountRuntime();
+    const runtime = activateConnectedAccountRuntime();
     const mode = runtime.authentication.modes.oauth;
     if (!mode || mode.kind !== 'oauthAuthorizationCode') {
       throw new Error('Claude Subscription OAuth mode is unavailable');
@@ -97,7 +137,7 @@ describe('Claude Subscription Connected Account', () => {
     const context = {
       attempt: { kind: 'connect', attemptId: 'claude-oauth-attempt' },
       signal,
-      services: { fetch: { request } },
+      services: { http: { request } },
       attemptCredentials: attempted.store,
     } as Parameters<typeof mode.complete>[1];
 
@@ -111,7 +151,14 @@ describe('Claude Subscription Connected Account', () => {
       throw new Error('Claude Subscription OAuth did not begin');
     }
     const authorizationUrl = new URL(begun.authorizationUrl);
-    expect(authorizationUrl.origin).toBe('https://platform.claude.com');
+    expect(authorizationUrl.origin).toBe('https://claude.com');
+    expect(authorizationUrl.pathname).toBe('/cai/oauth/authorize');
+    expect(authorizationUrl.searchParams.get('redirect_uri')).toBe(
+      'https://platform.claude.com/oauth/code/callback',
+    );
+    expect(authorizationUrl.searchParams.get('scope')?.split(' ')).toContain(
+      'org:create_api_key',
+    );
     expect(authorizationUrl.searchParams.get('state')).toBe('state-1');
     expect(authorizationUrl.searchParams.get('code_challenge')).toBe('challenge-1');
     expect(authorizationUrl.searchParams.get('code')).toBe('true');
@@ -145,7 +192,7 @@ describe('Claude Subscription Connected Account', () => {
   });
 
   it('materializes OAuth as an access-only native credential snapshot', async () => {
-    const runtime = connectedAccountRuntime();
+    const runtime = activateConnectedAccountRuntime();
     const credentials = credentialStore(new Map([
       ['accessToken', 'claude-access'],
       ['refreshToken', 'host-owned-refresh'],
@@ -231,7 +278,7 @@ describe('Claude Subscription Connected Account', () => {
   });
 
   it('materializes setup tokens as inference-only native credentials without a token environment', async () => {
-    const runtime = connectedAccountRuntime();
+    const runtime = activateConnectedAccountRuntime();
     const files = await runtime.materialize(
       { kind: 'files', fileIds: ['.credentials.json'] },
       readContext('setup-token', new Map([['setupToken', 'setup-token']])),
@@ -257,8 +304,8 @@ describe('Claude Subscription Connected Account', () => {
     )).resolves.toEqual({ kind: 'environment', env: {} });
   });
 
-  it('loads OAuth account quota through the connected-account runtime', async () => {
-    const runtime = connectedAccountRuntime();
+  it('loads OAuth account quota through the activated runtime and its declared fixed provider origin', async () => {
+    const runtime = activateConnectedAccountRuntime();
     const request = vi.fn(async () => ({
       status: 200,
       finalUrl: 'https://api.anthropic.com/api/oauth/usage',
@@ -289,7 +336,7 @@ describe('Claude Subscription Connected Account', () => {
     await expect(runtime.quota?.({
       ...context,
       signal,
-      services: { fetch: { request } },
+      services: { http: { request } },
     })).resolves.toMatchObject({
       observedAtMs: expect.any(Number),
       limits: expect.arrayContaining([
@@ -324,10 +371,23 @@ describe('Claude Subscription Connected Account', () => {
       redirect: 'error',
     }, { signal });
 
+    const quotaAccess = PLUGIN_MANIFEST.hostAccess.required.find(
+      ({ id }) => id === 'claude-subscription-quota',
+    );
+    expect(quotaAccess).toMatchObject({
+      capability: 'network',
+      scope: {
+        targets: expect.arrayContaining([
+          { kind: 'fixedOrigin', origin: 'https://api.anthropic.com' },
+          { kind: 'connectedAccountOrigin', service: 'claude-subscription' },
+        ]),
+        methods: ['GET'],
+      },
+    });
   });
 
   it('does not claim exact quota support for setup-token credentials', async () => {
-    const runtime = connectedAccountRuntime();
+    const runtime = activateConnectedAccountRuntime();
     const request = vi.fn(async () => ({
       status: 200,
       finalUrl: 'https://api.anthropic.com/api/oauth/usage',
@@ -345,7 +405,7 @@ describe('Claude Subscription Connected Account', () => {
     await expect(runtime.quota?.({
       ...context,
       signal,
-      services: { fetch: { request } },
+      services: { http: { request } },
     })).resolves.toEqual({ observedAtMs: expect.any(Number), limits: [] });
     expect(request).not.toHaveBeenCalled();
   });

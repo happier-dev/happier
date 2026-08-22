@@ -65,6 +65,8 @@ describe('Pi plugin manifest', () => {
                 fields: [
                   { kind: 'literal', name: 'kind', value: 'piAgentDir' },
                   { kind: 'string', name: 'agentDir', min: 1, max: 10_000, nullish: true },
+                  // Resolved carrier, deliberately absent from `key.segments`.
+                  { kind: 'string', name: 'sessionFile', min: 1, max: 10_000, nullish: true },
                 ],
               },
               key: {

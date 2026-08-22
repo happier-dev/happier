@@ -17,8 +17,15 @@ const (
 const managedPurposeConfigurationMaxBytes = 4096
 
 type ManagedPurposeConfiguration struct {
-	V        int                              `json:"v"`
-	Purposes []ManagedPurposeConfigurationRow `json:"purposes"`
+	V                int                              `json:"v"`
+	ModelListEnabled bool                             `json:"modelListEnabled"`
+	Purposes         []ManagedPurposeConfigurationRow `json:"purposes"`
+}
+
+type managedPurposeConfigurationWire struct {
+	V                int                              `json:"v"`
+	ModelListEnabled *bool                            `json:"modelListEnabled"`
+	Purposes         []ManagedPurposeConfigurationRow `json:"purposes"`
 }
 
 // ManagedPurposeConfigurationRow is a non-secret selected purpose family
@@ -43,14 +50,18 @@ func ParseManagedPurposeConfiguration(value string) (ManagedPurposeConfiguration
 	}
 	decoder := json.NewDecoder(bytes.NewReader([]byte(value)))
 	decoder.DisallowUnknownFields()
-	var configuration ManagedPurposeConfiguration
-	if err := decoder.Decode(&configuration); err != nil {
+	var wire managedPurposeConfigurationWire
+	if err := decoder.Decode(&wire); err != nil || wire.ModelListEnabled == nil {
 		return ManagedPurposeConfiguration{}, fmt.Errorf("managed purpose configuration is invalid")
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return ManagedPurposeConfiguration{}, fmt.Errorf("managed purpose configuration is invalid")
 	}
-	return normalizeManagedPurposeConfiguration(configuration)
+	return normalizeManagedPurposeConfiguration(ManagedPurposeConfiguration{
+		V:                wire.V,
+		ModelListEnabled: *wire.ModelListEnabled,
+		Purposes:         wire.Purposes,
+	})
 }
 
 // ImmutableGatewayConfig combines the process-specific endpoint and private
@@ -87,7 +98,7 @@ func ImmutableGatewayConfig(
 		RuntimeDir:       runtimeDir,
 		AuthEntries:      authEntries,
 		Protocols:        protocols,
-		ModelListEnabled: true,
+		ModelListEnabled: normalizedPurposeConfiguration.ModelListEnabled,
 	}
 	if err := config.Validate(); err != nil {
 		return Config{}, err
@@ -148,5 +159,9 @@ func normalizeManagedPurposeConfiguration(
 			Protocols:          protocols,
 		})
 	}
-	return ManagedPurposeConfiguration{V: 2, Purposes: purposes}, nil
+	return ManagedPurposeConfiguration{
+		V:                2,
+		ModelListEnabled: configuration.ModelListEnabled,
+		Purposes:         purposes,
+	}, nil
 }

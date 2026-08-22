@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { parseClaudeWorkflowFact } from './correlation.js';
 
@@ -416,5 +416,99 @@ await parallel([
       sourceSessionId: 'claude-session-1',
       uuid: 'event-3',
     });
+  });
+
+  it('extracts every alias the generic sub-agent tool carries, not only the historical one', () => {
+    // Claude Code renamed the generic sub-agent tool to `Agent`. A private `'Task'` literal here
+    // made every plain sub-agent invisible to the tracker — no start fact, no implicit run, no
+    // roster row that could say `running` — so which names ARE that tool is the protocol's answer.
+    for (const name of ['Agent', 'SubAgent'] as const) {
+      const fact = parseClaudeWorkflowFact({
+        type: 'assistant',
+        session_id: 'claude-session-1',
+        uuid: `event-${name}`,
+        message: {
+          content: [{
+            type: 'tool_use',
+            id: `toolu_${name}`,
+            name,
+            input: { description: 'Investigate failures', subagent_type: 'general-purpose' },
+          }],
+        },
+      });
+
+      expect(fact).toEqual({
+        kind: 'subagent-start',
+        toolUseId: `toolu_${name}`,
+        title: 'Investigate failures',
+        sourceSessionId: 'claude-session-1',
+        uuid: `event-${name}`,
+      });
+    }
+  });
+});
+
+/**
+ * `workflow_progress[]` is the workflow roster's only LIVE source and the Claude Agent SDK does not
+ * declare it: `SDKTaskProgressMessage` types `type/subtype/task_id/tool_use_id/description/usage/
+ * last_tool_name/summary/uuid/session_id` and nothing more. So the field can be renamed or retyped
+ * with NO compile error here, every reader below duck-types a live stream, and the roster goes
+ * permanently blank while the run itself is fine.
+ *
+ * Two absences that must NOT be conflated, which is the whole point of these cases: a suppressed
+ * tick (normal, frequent) and the shape we depend on being gone.
+ */
+describe('parseClaudeWorkflowFact - the undeclared workflow_progress shape', () => {
+  function progressTick(workflowProgress: unknown): Record<string, unknown> {
+    return {
+      type: 'system',
+      subtype: 'task_progress',
+      session_id: 'claude-session-1',
+      task_id: 'workflow-task',
+      tool_use_id: 'toolu_wf',
+      description: 'Ship feature',
+      uuid: 'event-drift',
+      ...(workflowProgress === undefined ? {} : { workflow_progress: workflowProgress }),
+    };
+  }
+
+  function readProgress(workflowProgress: unknown, report?: (message: string) => void) {
+    const fact = parseClaudeWorkflowFact(progressTick(workflowProgress), report);
+    return fact?.kind === 'task-lifecycle' ? fact.workflowProgress : undefined;
+  }
+
+  it('reports an unreadable shape once per shape, on the signal the host binds to warn', () => {
+    const report = vi.fn();
+
+    // The field is present but is no longer the array every reader below assumes.
+    expect(readProgress({ phases: [], agents: [] }, report)).toBeUndefined();
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(String(report.mock.calls[0]?.[0])).toContain('workflow_progress');
+
+    // A per-tick warning over a multi-thousand-record session would be its own defect, so the same
+    // drift is reported once and then stays quiet.
+    expect(readProgress({ phases: [], agents: [] }, report)).toBeUndefined();
+    expect(report).toHaveBeenCalledTimes(1);
+
+    // A different failure is different evidence: an array whose entries no longer name a phase or
+    // an agent yields an EMPTY roster, which reads exactly like a run that genuinely has none.
+    report.mockClear();
+    expect(readProgress([{ type: 'workflow_step', id: 'a' }, { type: 'workflow_step', id: 'b' }], report))
+      .toEqual([]);
+    expect(report).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays quiet for a suppressed tick and for a run that genuinely has no progress yet', () => {
+    // The live stream throttles, and a suppressed tick ships no `workflow_progress` key at all.
+    // Warning on those would drown the one case that matters.
+    const report = vi.fn();
+
+    expect(readProgress(undefined, report)).toBeUndefined();
+    expect(readProgress([], report)).toEqual([]);
+    expect(readProgress([{ type: 'workflow_phase', index: 0, title: 'Research' }], report)).toEqual([
+      { kind: 'phase', index: 0, title: 'Research' },
+    ]);
+
+    expect(report).not.toHaveBeenCalled();
   });
 });

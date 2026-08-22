@@ -1,6 +1,6 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 
-import { resolveClaudeConfigDirOverride } from '../surfaces/sessions/handoff/path.js';
+import { resolveClaudeConfigDirOverride } from '../environment.js';
 import { resolveClaudeExternalSandboxEnv } from '../runtime/launchSettings.js';
 
 type ClaudeDaemonResolvedTool =

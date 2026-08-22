@@ -1,3 +1,5 @@
+import { readFile, stat } from 'node:fs/promises';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -38,7 +40,6 @@ function createJsonStreamHandle() {
     const handle: ClaudeSdkExecClientHandle = {
         client,
         process: {
-            pid: 123,
             exit,
             async writeStdin() {},
             kill() {},
@@ -159,6 +160,63 @@ describe('Claude plugin SDK query', () => {
         const args = spawnClient.mock.calls[0]?.[0].launch.args as string[];
         expect(args).toEqual(expect.arrayContaining(['--settings', '{"ultracode":true}']));
         expect(args.filter((arg) => arg === '--settings')).toHaveLength(1);
+    });
+
+    it('materializes inline MCP JSON before spawn and removes the private file after exit', async () => {
+        const { ctx, spawnClient, stream } = createContextFixture();
+        const inlineConfig = JSON.stringify({
+            mcpServers: {
+                fixture: {
+                    type: 'stdio',
+                    command: 'synthetic-mcp-command',
+                    env: { TOKEN: 'synthetic-mcp-credential-marker' },
+                },
+            },
+        });
+        const sdkQuery = query(ctx, {
+            prompt: prompt(),
+            options: {
+                extraArgs: ['--mcp-config', inlineConfig],
+            },
+        });
+        await spawnClient.mock.results[0]?.value;
+
+        const args = spawnClient.mock.calls[0]?.[0].launch.args as string[];
+        expect(JSON.stringify(args)).not.toContain('synthetic-mcp-credential-marker');
+        const flagIndex = args.indexOf('--mcp-config');
+        expect(flagIndex).toBeGreaterThanOrEqual(0);
+        const configPath = args[flagIndex + 1]!;
+        expect(configPath).not.toBe(inlineConfig);
+        await expect(readFile(configPath, 'utf8')).resolves.toBe(inlineConfig);
+        if (process.platform !== 'win32') {
+            expect((await stat(configPath)).mode & 0o777).toBe(0o600);
+        }
+
+        const completion = sdkQuery.next();
+        await stream.exitWith({ exitCode: 0, signal: null });
+        await expect(completion).resolves.toEqual({ done: true, value: undefined });
+        await expect(stat(configPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('removes a materialized MCP config when the query is disposed before process exit', async () => {
+        const { ctx, spawnClient } = createContextFixture();
+        const inlineConfig = JSON.stringify({
+            mcpServers: { fixture: { command: 'mcp-server', env: { TOKEN: 'synthetic-dispose-marker' } } },
+        });
+        const sdkQuery = query(ctx, {
+            prompt: prompt(),
+            options: { extraArgs: [`--mcp-config=${inlineConfig}`] },
+        });
+        await spawnClient.mock.results[0]?.value;
+        const args = spawnClient.mock.calls[0]?.[0].launch.args as string[];
+        expect(JSON.stringify(args)).not.toContain('synthetic-dispose-marker');
+        const configArg = args.find((arg) => arg.startsWith('--mcp-config='))!;
+        const configPath = configArg.slice('--mcp-config='.length);
+        await expect(readFile(configPath, 'utf8')).resolves.toBe(inlineConfig);
+
+        await sdkQuery.dispose();
+
+        await expect(stat(configPath)).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
     it('maps the released advanced Agent SDK options to the native Claude launch without control-plane overrides', async () => {
@@ -355,12 +413,15 @@ describe('Claude plugin SDK query', () => {
         await expect(responsePromise).resolves.toEqual(response);
     });
 
-    it('propagates spawn failures to the SDK message iterator', async () => {
+    it('propagates spawn failures and removes materialized MCP config', async () => {
         const failure = new Error('spawn failed');
+        let configPath: string | undefined;
         const ctx = {
             agentRuntime: {
                 exec: {
-                    spawnClient: vi.fn(async () => {
+                    spawnClient: vi.fn(async (spec) => {
+                        const args = spec.launch.args ?? [];
+                        configPath = args[args.indexOf('--mcp-config') + 1];
                         throw failure;
                     }),
                 },
@@ -371,10 +432,17 @@ describe('Claude plugin SDK query', () => {
             prompt: prompt(),
             options: {
                 cwd: '/tmp/project',
+                extraArgs: ['--mcp-config', JSON.stringify({
+                    mcpServers: {
+                        fixture: { command: 'mcp-server', env: { TOKEN: 'synthetic-spawn-failure-marker' } },
+                    },
+                })],
             },
         });
 
         await expect(sdkQuery.next()).rejects.toThrow('spawn failed');
+        expect(configPath).toBeTruthy();
+        await expect(stat(configPath!)).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
     it('propagates failed Claude process exits with stderr to the SDK message iterator', async () => {

@@ -1,15 +1,20 @@
-import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
+import { CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME } from './provider/publicManagedRuntime.js';
 
-export const PLUGIN_MANIFEST = {
-  schemaVersion: 2,
+export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: 'happier.provider.cliproxyapi',
   version: '0.0.0',
   displayName: 'CLIProxyAPI',
   description: 'Use models served by an external or locally detected CLIProxyAPI gateway.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [], optional: [] },
-  contributes: { providers: [CLIPROXYAPI_PROVIDER_CONTRIBUTION] },
-} satisfies PluginManifest;
+  providers: {
+    cliproxyapi: {
+      declaration: CLIPROXYAPI_PROVIDER_CONTRIBUTION,
+      runtime: CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME,
+    },
+  },
+});

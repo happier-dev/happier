@@ -11,15 +11,16 @@ import type {
   VoiceSpeechTranscribeRequest,
 } from '@happier-dev/plugin-sdk/voice/speech';
 
-import { PLUGIN_MANIFEST } from '../manifest.js';
+import {
+  GOOGLE_CLOUD_TTS_VOICE_PROVIDER_DECLARATION,
+  GOOGLE_GEMINI_STT_VOICE_PROVIDER_DECLARATION,
+} from './declarations.js';
 
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
 const GOOGLE_GEMINI_INLINE_REQUEST_MAX_BYTES = 20_000_000;
 const GOOGLE_CLOUD_TTS_MAX_INPUT_UTF8_BYTES = 5_000;
-const [GOOGLE_GEMINI_STT_MANIFEST, GOOGLE_CLOUD_TTS_MANIFEST] =
-  PLUGIN_MANIFEST.contributes.voiceProviders;
-const GOOGLE_GEMINI_STT_LIMITS = GOOGLE_GEMINI_STT_MANIFEST.limits.transcribe;
-const GOOGLE_CLOUD_TTS_LIMITS = GOOGLE_CLOUD_TTS_MANIFEST.limits.synthesize;
+const GOOGLE_GEMINI_STT_LIMITS = GOOGLE_GEMINI_STT_VOICE_PROVIDER_DECLARATION.limits.transcribe;
+const GOOGLE_CLOUD_TTS_LIMITS = GOOGLE_CLOUD_TTS_VOICE_PROVIDER_DECLARATION.limits.synthesize;
 if (!GOOGLE_GEMINI_STT_LIMITS || !GOOGLE_CLOUD_TTS_LIMITS) {
   throw new Error('Google Voice manifest is missing executable speech limits');
 }
@@ -124,10 +125,24 @@ function joinBounded(values: readonly string[], maximum: number): string {
   return accepted.join(',');
 }
 
+/**
+ * The catalog rows as the provider returned them.
+ *
+ * A missing or non-array field is an unreadable payload, not an account that
+ * owns nothing: normalizing it to `[]` reports "no models/voices available" for
+ * a malformed provider response and hides the real failure. A genuinely empty
+ * array stays a legitimate empty catalog.
+ */
+function readCatalogEntries(value: unknown, field: 'models' | 'voices'): readonly unknown[] {
+  const entries = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)[field]
+    : undefined;
+  if (!Array.isArray(entries)) throw providerError('provider_response_invalid');
+  return entries;
+}
+
 function parseGeminiModels(value: unknown): readonly VoiceProviderCatalogItem[] {
-  const models = value && typeof value === 'object' && Array.isArray((value as { models?: unknown }).models)
-    ? (value as { models: unknown[] }).models
-    : [];
+  const models = readCatalogEntries(value, 'models');
   const rows = models.slice(0, 500).flatMap((raw) => {
     if (!raw || typeof raw !== 'object') return [];
     const record = raw as Record<string, unknown>;
@@ -144,9 +159,7 @@ function parseGeminiModels(value: unknown): readonly VoiceProviderCatalogItem[] 
 }
 
 function parseGoogleVoices(value: unknown): readonly VoiceProviderCatalogItem[] {
-  const voices = value && typeof value === 'object' && Array.isArray((value as { voices?: unknown }).voices)
-    ? (value as { voices: unknown[] }).voices
-    : [];
+  const voices = readCatalogEntries(value, 'voices');
   const rows = voices.slice(0, 500).flatMap((raw) => {
     if (!raw || typeof raw !== 'object') return [];
     const record = raw as Record<string, unknown>;

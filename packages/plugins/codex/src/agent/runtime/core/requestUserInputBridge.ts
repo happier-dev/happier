@@ -1,6 +1,10 @@
 import type { SessionPermissionsService as SessionPermissionsServiceV1 } from '@happier-dev/plugin-sdk/sessions';
 
-import { looksLikeCodexApprovalRequestUserInput } from './requestUserInputQuestions.js';
+import {
+  looksLikeCodexApprovalRequestUserInput,
+  resolveCodexApprovalQuestionChoice,
+  type CodexApprovalOutcome,
+} from './requestUserInputQuestions.js';
 
 type LoggerSubset = {
   debug: (message: string, ...args: unknown[]) => void;
@@ -18,67 +22,40 @@ function safeJsonParse(value: unknown): unknown {
   }
 }
 
-function decisionToToolApprovalChoice(decision: PermissionDecision): string {
+function decisionToApprovalOutcome(decision: PermissionDecision): CodexApprovalOutcome {
   switch (decision) {
     case 'approved_for_session':
-      return 'Approve this Session';
+      return 'approve_for_session';
     case 'approved_execpolicy_amendment':
     case 'approved':
-      return 'Approve Once';
+      return 'approve_once';
     case 'denied':
-      return 'Deny';
+      return 'deny';
     case 'abort':
-      return 'Cancel';
+      return 'cancel';
   }
 }
 
-function resolveToolApprovalQuestionOptions(questions: unknown): string[] {
-  if (!Array.isArray(questions)) return [];
-  const approvalQuestion = questions.find((q) => {
-    const id = (q as { id?: unknown })?.id;
-    return typeof id === 'string' && id.startsWith('mcp_tool_call_approval_');
-  }) as { options?: unknown } | undefined ?? questions.find((q) => Array.isArray((q as { options?: unknown })?.options)) as { options?: unknown } | undefined;
-  const options = approvalQuestion?.options;
-  if (!Array.isArray(options)) return [];
-  return options
-    .map((opt) => (typeof (opt as { label?: unknown })?.label === 'string' ? (opt as { label: string }).label : ''))
-    .map((label) => label.trim())
-    .filter((label) => label.length > 0);
-}
-
+/**
+ * Legacy `request_user_input` bridge projection over the canonical approval
+ * choice mapper. It shares one semantic owner with the app-server interaction
+ * handler so a decline can never resume Codex with a positive option.
+ */
 export function resolveApprovalChoiceLabel(params: {
   decision: PermissionDecision;
   questions: unknown;
   logger: LoggerSubset;
 }): string | null {
-  const options = resolveToolApprovalQuestionOptions(params.questions);
-  if (options.length === 0) return null;
-
-  const preferred = decisionToToolApprovalChoice(params.decision);
-  const direct = options.find((label) => label === preferred);
-  if (direct) return direct;
-
-  const pickFirstMatch = (re: RegExp): string | null => options.find((label) => re.test(label)) ?? null;
-
-  if (params.decision === 'denied') {
-    return pickFirstMatch(/\bdeny\b|\breject\b|\bdecline\b/i) ?? options[options.length - 1]!;
+  const outcome = decisionToApprovalOutcome(params.decision);
+  const choice = resolveCodexApprovalQuestionChoice({ questions: params.questions, outcome });
+  if (!choice) {
+    params.logger.debug('[Codex] request_user_input approval offers no option that can carry this decision; leaving it unanswered', {
+      decision: params.decision,
+      outcome,
+    });
+    return null;
   }
-  if (params.decision === 'abort') {
-    return pickFirstMatch(/\bcancel\b|\babort\b|\bstop\b/i) ?? options[options.length - 1]!;
-  }
-
-  const approve =
-    pickFirstMatch(/\bapprove\b/i) ??
-    pickFirstMatch(/\ballow\b/i) ??
-    options[0]!;
-
-  params.logger.debug('[Codex] request_user_input approval choice label did not match expected option; falling back', {
-    decision: params.decision,
-    preferred,
-    resolved: approve,
-    options,
-  });
-  return approve;
+  return choice.label;
 }
 
 export function createCodexRequestUserInputBridge(opts: {

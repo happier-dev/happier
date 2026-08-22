@@ -12,7 +12,7 @@ describe('Ollama plugin manifest', () => {
   it('declares only the exact Ollama process authority used by its public managed runtime', async () => {
     await expect(import('./manifest.js').then((module) => PluginManifestV2Schema.parse(module.PLUGIN_MANIFEST))).resolves.toMatchObject({
       id: 'happier.provider.ollama',
-      entrypoints: { daemon: './dist/index.js' },
+      entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: {
         required: [{
           id: 'ollama-process',
@@ -38,10 +38,9 @@ describe('Ollama plugin manifest', () => {
 
   it('keeps the managed Provider registration conditional on its declaration', () => {
     const family = PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'providers');
-    expect(family).toMatchObject({ identityKind: 'delegatedDomain', stability: 'delegated', disposition: 'delegated' });
+    expect(family).toMatchObject({ identityKind: 'delegatedDomain', disposition: 'delegated' });
     expect(family?.projectIntrospection(PLUGIN_MANIFEST.contributes.providers[0])).toMatchObject({
       localId: null,
-      stability: 'delegated',
       registration: 'required',
     });
   });

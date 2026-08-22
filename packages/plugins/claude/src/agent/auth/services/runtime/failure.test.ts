@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { writeClaudeCodeCredentialsFile } from '../native/credentials.js';
@@ -107,6 +107,8 @@ describe('Claude runtime auth service classification', () => {
         groupId: 'coders',
         groupGeneration: 12,
         credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+        sourceProviderAccountId: 'live-account',
+        sourceAccountLabel: 'live@example.com',
         record: createClaudeSubscriptionRecord('team'),
       },
       error: {
@@ -125,8 +127,9 @@ describe('Claude runtime auth service classification', () => {
       profileId: 'team',
       groupId: 'coders',
       groupGeneration: 12,
-      sourceProviderAccountId: 'team-account',
-      sourceAccountLabel: 'team@example.com',
+      expectedCredentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      sourceProviderAccountId: 'live-account',
+      sourceAccountLabel: 'live@example.com',
     });
   });
 
@@ -141,7 +144,7 @@ describe('Claude runtime auth service classification', () => {
         groupGeneration: 12,
         credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
         record: createClaudeSubscriptionRecord('team'),
-        targetMaterializedEnv: { CLAUDE_CONFIG_DIR: claudeConfigDir },
+        targetMaterializedRoot: claudeConfigDir,
       };
 
       expect(adapter.canHotApply({

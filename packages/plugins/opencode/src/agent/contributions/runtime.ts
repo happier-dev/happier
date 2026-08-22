@@ -26,15 +26,12 @@ import {
 } from '../auth/services/usageLimit.js';
 import { resolveOpenCodeSessionRuntimePreferences } from '../preferences/session.js';
 import { extractOpenCodeSessionHandoffAgentBundleRecords } from '../surfaces/sessions/handoff/exportRecords.js';
-import { createOpenCodeHandoffSurfaceForExec } from '../surfaces/sessions/handoff/descriptor.js';
-import { resolveOpenCodeReplayChildLaunch } from '../surfaces/sessions/fork/descriptor.js';
 import {
   OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
   OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
   OPEN_CODE_REQUEST_AUTH_TARGET_ORIGINS,
 } from '../auth/services/requestAuth/purposes.js';
 import { OPEN_CODE_SYSTEM_TOOL_ID } from '../systemTool.js';
-import type { ForkSessionMetadata as ForkSessionMetadataV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 const OPENCODE_CONNECTED_SERVICE_STATE_SHARING_DESCRIPTOR = Object.freeze({
   providerId: OPEN_CODE_AUTH_SERVICE_SHARING_DESCRIPTOR.providerId,
@@ -88,15 +85,9 @@ export const OPENCODE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     resolve: resolveOpenCodeSessionRuntimePreferences,
   },
   sessionHandoff: {
-    surface: ({ exec }: Readonly<{ exec: Parameters<
-      typeof createOpenCodeHandoffSurfaceForExec
-    >[0] }>) => createOpenCodeHandoffSurfaceForExec(exec),
     agentBundleRecords: {
       extract: extractOpenCodeSessionHandoffAgentBundleRecords,
     },
-    resolveReplayChildLaunch: async ({ parentMetadata }: Readonly<{
-      parentMetadata: ForkSessionMetadataV1;
-    }>) => await resolveOpenCodeReplayChildLaunch({ parentMetadata }),
   },
   attach: {
     resolveTarget: resolveOpenCodeAttachTarget,

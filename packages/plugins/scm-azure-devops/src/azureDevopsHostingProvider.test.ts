@@ -29,7 +29,7 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
 
     expect(mod.PLUGIN_MANIFEST).toMatchObject({
       id: 'happier.scm.forge.azure-devops',
-      entrypoints: { daemon: './dist/index.js' },
+      entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: { required: expect.arrayContaining([
         // The Triage source reads the deployment the Connected Account was configured with, so
         // the same grant now names that origin beside the incumbent hosting-provider one.

@@ -1,14 +1,7 @@
-import {
-    ProviderAccountUsageSnapshotV1Schema,
-    buildProviderAccountUsageRecordId,
-    type ProviderAccountUsageSnapshotV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/usage';
-import {
-    normalizeConnectedServiceLimitCategoryV1,
-    type ConnectedServiceLimitCategoryV1,
-    type ConnectedServiceQuotaMeterV1,
-    type ConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type {
+    AgentAccountUsageMeter,
+    AgentAccountUsageSnapshot,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type {
     ClaudeUsageSubjectRef,
@@ -34,10 +27,14 @@ export type MapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshotInput = Read
     planLabel?: string | null;
 }>;
 
-export type MapClaudeQuotaSnapshotToProviderAccountUsageSnapshotInput = Readonly<{
+export type MapClaudeProviderHttpUsageSnapshotInput = Readonly<{
     subject: ClaudeUsageSubjectRef;
-    quotaSnapshot: ConnectedServiceQuotaSnapshotV1;
-    observedAtMs?: number;
+    observedAtMs: number;
+    fetchedAtMs: number;
+    staleAfterMs: number;
+    meters: readonly AgentAccountUsageMeter[];
+    accountLabel?: string | null;
+    planLabel?: string | null;
 }>;
 
 export type MapClaudeUsageLimitDetailsToProviderAccountUsageSnapshotInput = Readonly<{
@@ -56,14 +53,14 @@ function normalizeTimestampMs(value: number): number {
 
 function normalizeQuotaScope(
     value: NormalizedClaudeUsageLimitDetails['quotaScope'] | undefined,
-): ProviderAccountUsageSnapshotV1['recordKey']['quotaScope'] {
+): AgentAccountUsageSnapshot['recordKey']['quotaScope'] {
     return value === 'provider' ? 'provider' : 'account';
 }
 
 function buildRecordKey(
     subject: ClaudeUsageSubjectRef,
-    quotaScope?: ProviderAccountUsageSnapshotV1['recordKey']['quotaScope'],
-): ProviderAccountUsageSnapshotV1['recordKey'] {
+    quotaScope?: AgentAccountUsageSnapshot['recordKey']['quotaScope'],
+): AgentAccountUsageSnapshot['recordKey'] {
     return {
         providerId: 'claude',
         accountSubjectId: subject.accountSubjectId,
@@ -79,7 +76,7 @@ function readRuntimeMeterScope(meterId: string): ClaudeRuntimeMeterScope {
     return 'unknown';
 }
 
-function runtimeMeterToQuotaMeter(meter: NormalizedClaudeRuntimeRateLimitMeter): ConnectedServiceQuotaMeterV1 {
+function runtimeMeterToQuotaMeter(meter: NormalizedClaudeRuntimeRateLimitMeter): AgentAccountUsageMeter {
     const remainingPct = meter.utilizationPct === null
         ? null
         : Math.max(0, Math.min(100, 100 - meter.utilizationPct));
@@ -107,8 +104,8 @@ function normalizeUtilizationPct(value: number | null): number | null {
     return value === null ? null : Math.max(0, Math.min(100, value));
 }
 
-function readUsageLimitCategory(details: NormalizedClaudeUsageLimitDetails): ConnectedServiceLimitCategoryV1 {
-    return normalizeConnectedServiceLimitCategoryV1(details.limitCategory ?? 'usage_limit');
+function readUsageLimitCategory(details: NormalizedClaudeUsageLimitDetails): 'usage_limit' | 'rate_limit' | 'capacity' {
+    return details.limitCategory ?? 'usage_limit';
 }
 
 function readUsageLimitMeterId(details: NormalizedClaudeUsageLimitDetails): string {
@@ -122,7 +119,7 @@ function usageLimitMeterLabel(details: NormalizedClaudeUsageLimitDetails): strin
     return 'Usage limit';
 }
 
-function usageLimitDetailsToQuotaMeter(details: NormalizedClaudeUsageLimitDetails): ConnectedServiceQuotaMeterV1 {
+function usageLimitDetailsToQuotaMeter(details: NormalizedClaudeUsageLimitDetails): AgentAccountUsageMeter {
     const utilizationPct = normalizeUtilizationPct(details.utilization);
     const meterId = readUsageLimitMeterId(details);
     const resetAtMs = details.resetAtMs;
@@ -155,20 +152,19 @@ function usageLimitDetailsToQuotaMeter(details: NormalizedClaudeUsageLimitDetail
 
 function buildSnapshot(params: Readonly<{
     subject: ClaudeUsageSubjectRef;
-    quotaScope?: ProviderAccountUsageSnapshotV1['recordKey']['quotaScope'];
-    source: ProviderAccountUsageSnapshotV1['source'];
-    state: ProviderAccountUsageSnapshotV1['state'];
+    quotaScope?: AgentAccountUsageSnapshot['recordKey']['quotaScope'];
+    source: AgentAccountUsageSnapshot['source'];
+    state: AgentAccountUsageSnapshot['state'];
     observedAtMs: number;
     fetchedAtMs: number;
     staleAfterMs: number;
-    meters: readonly ConnectedServiceQuotaMeterV1[];
+    meters: readonly AgentAccountUsageMeter[];
     accountLabel?: string | null;
     planLabel?: string | null;
-}>): ProviderAccountUsageSnapshotV1 {
+}>): AgentAccountUsageSnapshot {
     const recordKey = buildRecordKey(params.subject, params.quotaScope);
-    return ProviderAccountUsageSnapshotV1Schema.parse({
+    return {
         v: 1,
-        recordId: buildProviderAccountUsageRecordId(recordKey),
         recordKey,
         providerId: 'claude',
         accountSubject: {
@@ -183,13 +179,13 @@ function buildSnapshot(params: Readonly<{
         state: params.state,
         planLabel: params.planLabel ?? null,
         accountLabel: params.accountLabel ?? null,
-        meters: params.meters,
-    });
+        meters: [...params.meters],
+    };
 }
 
 export function mapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshot(
     params: MapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshotInput,
-): ProviderAccountUsageSnapshotV1 | null {
+): AgentAccountUsageSnapshot | null {
     if (params.observation.status === 'not_loaded') return null;
     return buildSnapshot({
         subject: params.subject,
@@ -206,25 +202,26 @@ export function mapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshot(
     });
 }
 
-export function mapClaudeQuotaSnapshotToProviderAccountUsageSnapshot(
-    params: MapClaudeQuotaSnapshotToProviderAccountUsageSnapshotInput,
-): ProviderAccountUsageSnapshotV1 {
+/** Maps Claude's private provider-HTTP quota response to the public SDK shape. */
+export function mapClaudeProviderHttpUsageSnapshot(
+    params: MapClaudeProviderHttpUsageSnapshotInput,
+): AgentAccountUsageSnapshot {
     return buildSnapshot({
         subject: params.subject,
         source: 'providerHttp',
-        state: params.quotaSnapshot.meters.length > 0 ? 'loaded_data' : 'loaded_empty',
-        observedAtMs: params.observedAtMs ?? params.quotaSnapshot.fetchedAt,
-        fetchedAtMs: params.quotaSnapshot.fetchedAt,
-        staleAfterMs: params.quotaSnapshot.staleAfterMs,
-        meters: params.quotaSnapshot.meters,
-        accountLabel: params.quotaSnapshot.accountLabel,
-        planLabel: params.quotaSnapshot.planLabel,
+        state: params.meters.length > 0 ? 'loaded_data' : 'loaded_empty',
+        observedAtMs: params.observedAtMs,
+        fetchedAtMs: params.fetchedAtMs,
+        staleAfterMs: params.staleAfterMs,
+        meters: params.meters,
+        accountLabel: params.accountLabel,
+        planLabel: params.planLabel,
     });
 }
 
 export function mapClaudeUsageLimitDetailsToProviderAccountUsageSnapshot(
     params: MapClaudeUsageLimitDetailsToProviderAccountUsageSnapshotInput,
-): ProviderAccountUsageSnapshotV1 {
+): AgentAccountUsageSnapshot {
     return buildSnapshot({
         subject: params.subject,
         quotaScope: normalizeQuotaScope(params.details.quotaScope),

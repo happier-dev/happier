@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -6,7 +7,37 @@ import {
     buildClaudeHookSettingsOverlay,
 } from './settings.js';
 
+const WINDOWS_SESSION_HOOK_NAMES = [
+    'SessionStart',
+    'UserPromptSubmit',
+    'Stop',
+    'StopFailure',
+    'SessionEnd',
+    'PostToolUse',
+    'SubagentStart',
+    'SubagentStop',
+] as const;
+
+const WINDOWS_PERMISSION_HOOK_NAMES = ['PermissionRequest', 'PreToolUse'] as const;
+
+function decodeEncodedPowerShellHookCommand(command: string): string {
+    const match = /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/]+={0,2})$/.exec(command);
+    expect(match).toBeTruthy();
+    expect(command).not.toMatch(/[&|<>'"`$();]/);
+    return Buffer.from(match![1]!, 'base64').toString('utf16le');
+}
+
 describe('Claude hook settings leaf', () => {
+    it('uses the public Agent runtime shell-command projection', () => {
+        const source = readFileSync(new URL('./settings.ts', import.meta.url), 'utf8');
+
+        expect(source).toContain(
+            "import { buildShellCommand } from '@happier-dev/plugin-sdk/agents/runtime';",
+        );
+        expect(source).not.toContain('buildEncodedPowerShellCommand');
+        expect(source).not.toContain("from '@happier-dev/agents/process/shellCommand'");
+    });
+
     it('builds the non-hook settings overlay without lifecycle hooks', () => {
         const settings = buildClaudeHookSettingsOverlay();
 
@@ -112,6 +143,37 @@ describe('Claude hook settings leaf', () => {
             + "'43127' 'Stop' '--secret-file' "
             + "'/tmp/secret path/$() `secret` &|<>^%!()'\\''token'",
         );
+    });
+
+    it('encodes every Windows hook command so the outer hook shell cannot interpret its argv', () => {
+        const nodeExecutable = String.raw`C:\Program Files\nodejs\node.exe`;
+        const sessionForwarderScript = String.raw`C:\happier hooks\session_hook_forwarder.cjs`;
+        const permissionForwarderScript = String.raw`C:\happier hooks\permission_hook_forwarder.cjs`;
+        const sessionHookSecretFile = String.raw`C:\happier hooks\session.secret`;
+        const permissionHookSecretFile = String.raw`C:\happier hooks\permission.secret`;
+        const hooksJson = buildClaudeHookPluginHooks({
+            port: 43128,
+            platform: 'win32',
+            nodeExecutable,
+            sessionForwarderScript,
+            permissionForwarderScript,
+            enableLocalPermissionBridge: true,
+            sessionHookSecretFile,
+            permissionHookSecretFile,
+        });
+
+        for (const hookName of WINDOWS_SESSION_HOOK_NAMES) {
+            const command = hooksJson.hooks[hookName]?.[0]?.hooks[0]?.command;
+            expect(decodeEncodedPowerShellHookCommand(command!)).toBe(
+                `& '${nodeExecutable}' '${sessionForwarderScript}' '43128' '${hookName}' '--secret-file' '${sessionHookSecretFile}'`,
+            );
+        }
+        for (const hookName of WINDOWS_PERMISSION_HOOK_NAMES) {
+            const command = hooksJson.hooks[hookName]?.[0]?.hooks[0]?.command;
+            expect(decodeEncodedPowerShellHookCommand(command!)).toBe(
+                `& '${nodeExecutable}' '${permissionForwarderScript}' '43128' '${hookName}' '--secret-file' '${permissionHookSecretFile}'`,
+            );
+        }
     });
 
     it('builds a session-scoped Claude plugin manifest', () => {

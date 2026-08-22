@@ -54,7 +54,7 @@ describe('OpenAI-compatible batch speech manifest', () => {
     expect(serialized).not.toContain('openai_compat');
     expect(PLUGIN_MANIFEST).toMatchObject({
       entrypoints: {
-        daemon: './dist/index.js',
+        daemon: './.happier-plugin/daemon.js',
         development: './src/index.ts',
       },
     });

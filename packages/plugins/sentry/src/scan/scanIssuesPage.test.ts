@@ -7,8 +7,13 @@ import issuesListPage1 from '../fixtures/issuesListPage1.json' with { type: 'jso
 import issuesListPage2 from '../fixtures/issuesListPage2.json' with { type: 'json' };
 import issuesListRateLimited from '../fixtures/issuesListRateLimited.json' with { type: 'json' };
 
+import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
+
 import type { SentryApiClientV1 } from '../api/sentryApiClient.js';
-import { decodeSentryScanContinuation } from './sentryContinuation.js';
+import {
+  SENTRY_CONTINUATION_UNAVAILABLE_REASON,
+  decodeSentryScanContinuation,
+} from './sentryContinuation.js';
 import { executeSentryScanPage } from './scanIssuesPage.js';
 
 const CONFIGURED = Object.freeze({
@@ -172,6 +177,26 @@ describe('executeSentryScanPage', () => {
     });
   });
 
+  it('refuses a scan response marked as a direct hit even when the marker carries no value', async () => {
+    // The marker is a flag, not a value: first-party Sentry writes it only on the
+    // short-id branch, so its presence at any value is the whole refusal signal.
+    for (const marker of ['', ' ']) {
+      const { client } = clientReturning({
+        ...issuesListDirectHit,
+        headers: { ...issuesListDirectHit.headers, 'x-sentry-direct-hit': marker },
+      });
+
+      const result = await initialPage(client);
+
+      expect(result.kind).toBe('failed');
+      if (result.kind !== 'failed') continue;
+      expect(result.failure).toEqual({
+        class: 'unsupportedContract',
+        code: 'sentry-direct-hit-in-scan',
+      });
+    }
+  });
+
   it('skips malformed rows, keeps valid siblings and reports the exact omittedItemCount', async () => {
     const { client } = clientReturning(issuesListMalformedRows);
 
@@ -279,6 +304,37 @@ describe('executeSentryScanPage', () => {
       reason: 'sentry-pagination-cursor-malformed',
     });
     expect(result.continuation).toBeNull();
+  });
+
+  it('stops with continuation-unavailable, not a cursor verdict, when the frontier exceeds the bound', async () => {
+    // The provider cursor is intact and advancing; it is simply wider than the
+    // protocol's bounded paging token, so the walk cannot be resumed.
+    const oversizedCursor = 'c'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
+    const { client } = clientReturning({
+      ...issuesListPage1,
+      headers: {
+        ...issuesListPage1.headers,
+        link: `<https://us.sentry.io/api/0/organizations/7701/issues/?&cursor=${oversizedCursor}>; rel="next"; results="true"; cursor="${oversizedCursor}"`,
+      },
+    });
+
+    const result = await initialPage(client);
+
+    expect(result.kind).toBe('page');
+    if (result.kind !== 'page') return;
+    expect(result.continuation).toBeNull();
+    expect(result.health).toEqual({
+      kind: 'partial',
+      reason: SENTRY_CONTINUATION_UNAVAILABLE_REASON,
+    });
+    // The same page with a carryable cursor is not a stop at all, so the reason
+    // above describes the bound and nothing about the cursor's shape.
+    expect(result.health).not.toEqual({
+      kind: 'partial',
+      reason: 'sentry-pagination-cursor-malformed',
+    });
+    // Rows already read are kept: an unresumable walk is still a real page.
+    expect(result.observations).toHaveLength(2);
   });
 
   it('returns ordinary failed for a 429, carrying only the deadline and no continuation', async () => {

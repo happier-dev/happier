@@ -1,5 +1,6 @@
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 
+import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
 import {
     CORPUS_DEFAULT_SMART_POLICY_V1,
     type CorpusSmartPolicyV1,
@@ -51,10 +52,6 @@ export type CorpusEffectiveViewV1 = Readonly<{
     unavailableSources: readonly PluginContributionIdentity[];
 }>;
 
-function sameSource(left: PluginContributionIdentity, right: PluginContributionIdentity): boolean {
-    return left.pluginId === right.pluginId && left.localId === right.localId;
-}
-
 function collectUnavailableSources(
     filters: SurfaceFilterSelectionV1,
     configuredSources: readonly PluginContributionIdentity[],
@@ -66,8 +63,8 @@ function collectUnavailableSources(
     ];
     const unavailable: PluginContributionIdentity[] = [];
     for (const source of named) {
-        if (configuredSources.some((configured) => sameSource(configured, source))) continue;
-        if (unavailable.some((seen) => sameSource(seen, source))) continue;
+        if (configuredSources.some((configured) => sameTriageSourceIdentity(configured, source))) continue;
+        if (unavailable.some((seen) => sameTriageSourceIdentity(seen, source))) continue;
         unavailable.push(source);
     }
     return unavailable;

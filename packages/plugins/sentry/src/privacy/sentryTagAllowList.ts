@@ -2,18 +2,28 @@
  * The one Sentry tag-key allow-list (`SENTRY.md` §7.3a, §8.3).
  *
  * A Sentry tag key space is open: anything the customer's SDK sets becomes a tag,
- * and the values ride along on every event body. That is fine for the *issue*
- * distribution, which renders a key the customer chose to index by, but it is not
- * fine for an event projection, because an event tag is a value — and a value on
- * a key nobody classified is exactly the kind of unclassifiable secret
- * (`auth_token`, `session`, a raw request id) that §8.1 calls this source's
- * largest PII surface.
+ * and the values ride along on every event body. An event tag is therefore a value
+ * on a key nobody classified — exactly the kind of unclassifiable secret
+ * (`auth_token`, `session`, a raw request id) that §8.1 calls this source's largest
+ * PII surface.
  *
- * So this module names the keys Sentry itself documents and promotes. A tag whose
- * key is not one of them is withheld from the event projection and recorded as a
- * redaction, which keeps the disclosure in §8.4 enumerable: a reader is told the
- * event carried tags this build does not publish, rather than being shown a
- * bounded subset that looks complete.
+ * So this module names the keys Sentry itself documents and promotes, and it
+ * governs the *event* projection and only that. A tag whose key is not one of them
+ * is withheld from the event projection and recorded as a redaction, which keeps
+ * the disclosure in §8.4 enumerable: a reader is told the event carried tags this
+ * build does not publish, rather than being shown a bounded subset that looks
+ * complete.
+ *
+ * The issue tag distribution is deliberately not filtered through this list, and
+ * the reason is not that it renders only the key the customer chose to index by —
+ * it renders the VALUE, in each row's subtitle and again in the drill-down, gated
+ * only by `isSentryRoutableTagKey`, which is a path-segment safety test rather than
+ * a classification. Every customer-defined key reaches the reader there. That is
+ * the product decision (§7.3a): applying this list to that plane would delete the
+ * custom-tag distribution teams triage by, and removing a user-facing capability is
+ * not an acceptable way to satisfy a document. What makes those unclassified values
+ * honest is the disclosure the plane itself carries (`ui/renderSurface.tsx`), not a
+ * second use of this list.
  *
  * `[SOURCE]` Sentry's own promoted/default tag set, as it appears on an event's
  * `tags` collection. Keys are compared verbatim, including the `sentry:` prefix

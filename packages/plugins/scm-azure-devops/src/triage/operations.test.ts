@@ -204,6 +204,8 @@ describe('Azure DevOps Triage listInstances', () => {
   function lister(
     result: unknown,
     calls: string[] = [],
+    /** `null` is a purpose the host holds no selection for. */
+    binding: Awaited<ReturnType<AzureTriageAccountService['getBinding']>> | undefined = undefined,
   ): AzureTriageAccountService {
     return {
       async listAccounts(request) {
@@ -211,11 +213,55 @@ describe('Azure DevOps Triage listInstances', () => {
         if (result instanceof Error) throw result;
         return result as Awaited<ReturnType<AzureTriageAccountService['listAccounts']>>;
       },
+      async getBinding(purpose) {
+        calls.push(`getBinding:${purpose}`);
+        return binding === undefined
+          ? ({ purpose } as Awaited<ReturnType<AzureTriageAccountService['getBinding']>>)
+          : binding;
+      },
       async materializeListedAccount() {
         throw new Error('listInstances must not materialize a credential');
       },
     };
   }
+
+  /**
+   * A reader with no connected Azure DevOps account has configured nothing. The
+   * host declines to list an unbound purpose, and reporting that decline as
+   * `account-listing-failed` accuses a provider this source never contacted.
+   */
+  it('reports an unbound purpose as a complete empty candidate set', async () => {
+    const calls: string[] = [];
+
+    const result = await runAzureTriageListInstances({
+      connectedAccounts: lister(
+        Object.assign(new Error('resource not selected'), {
+          code: 'plugin_host_access_resource_not_selected',
+        }),
+        calls,
+        null,
+      ),
+      signal: new AbortController().signal,
+    });
+
+    expect(TriageListInstancesResultV1Schema.parse(result)).toEqual(result);
+    expect(result).toEqual({ kind: 'complete', candidates: [], failures: [] });
+    expect(calls).toEqual([
+      AZURE_DEVOPS_TRIAGE_PURPOSE,
+      `getBinding:${AZURE_DEVOPS_TRIAGE_PURPOSE}`,
+    ]);
+  });
+
+  it('still fails a refused listing while the purpose is bound', async () => {
+    const result = await runAzureTriageListInstances({
+      connectedAccounts: lister(new Error('listing unavailable')),
+      signal: new AbortController().signal,
+    });
+
+    expect(result.kind).toBe('failed');
+    if (result.kind !== 'failed') throw new Error('expected a failed result');
+    expect(result.failure.code).toBe('azure-devops/account-listing-failed');
+  });
 
   it('projects two purpose-scoped account rows into two candidates with their exact binding refs', async () => {
     const calls: string[] = [];

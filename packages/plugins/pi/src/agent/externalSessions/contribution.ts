@@ -53,6 +53,7 @@ import {
   foldPiV3SessionTree,
   isPiV3SessionFileRecord,
   type PiV3SessionTreeEntry,
+  type PiV3SessionTreeFold,
 } from '../transcripts/sessionFormat.js';
 
 type PiCandidateCursorV2 = Readonly<{
@@ -184,6 +185,28 @@ function failed(
     message,
     ...(retryable === undefined ? {} : { retryable }),
   };
+}
+
+/**
+ * A branch folded across a duplicated entry id or a parent cycle is not a
+ * smaller transcript — it is a WRONG one. A duplicate id silently shadows one
+ * record, and a cycle silently truncates the walk, so the page that carries the
+ * result looks like ordinary success while history is missing and the cursor
+ * advances past it. Both fail closed on the same malformed-provider-record
+ * contract this leaf already uses two checks earlier.
+ *
+ * A missing parent is deliberately NOT an integrity failure: every page folds a
+ * WINDOW of the file, so its oldest entry always names a parent outside that
+ * window, and this leaf already consumes exactly that id as the next page's
+ * active leaf.
+ */
+function foldIntegrityFailure(fold: PiV3SessionTreeFold): AgentExternalSessionsResult<never> | null {
+  const { duplicateEntryIds, cycleEntryIds } = fold.diagnostics;
+  if (duplicateEntryIds.length === 0 && cycleEntryIds.length === 0) return null;
+  return failed(
+    'agent_error',
+    'Pi transcript branch could not be folded from unambiguous provider records.',
+  );
 }
 
 function invocationFailure(
@@ -1257,7 +1280,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
           if (!resultFits(proposed, request.maxSerializedBytes)) {
             if (candidates.length === 0) {
               await retireCandidateScan(scan);
-              return failed('invalid_request', 'Pi candidate result byte budget cannot fit one candidate.');
+              return failed('agent_error', 'Pi candidate result byte budget cannot fit one candidate.', false);
             }
             scan.pendingCandidate = candidate;
             break;
@@ -1310,7 +1333,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
         const result = ok(value);
         if (!resultFits(result, request.maxSerializedBytes)) {
           await retireCandidateScan(scan);
-          return failed('invalid_request', 'Pi candidate result byte budget cannot fit the page envelope.');
+          return failed('agent_error', 'Pi candidate result byte budget cannot fit the page envelope.', false);
         }
         if (!hasMore) await retireCandidateScan(scan);
         return result;
@@ -1480,6 +1503,8 @@ export function createPiExternalSessionsContribution(params: Readonly<{
       const folded = foldPiV3SessionTree(values, {
         ...(expectedLeafId === undefined ? {} : { activeLeafId: expectedLeafId }),
       });
+      const foldIntegrity = foldIntegrityFailure(folded);
+      if (foldIntegrity) return foldIntegrity;
       const projectedBranch = expectedLeafPresent
         ? projectBranch(request.remoteSessionId, folded.activeBranch)
         : { items: [], knownNonTranscriptPositions: [], unsupportedPositions: [] };
@@ -1567,7 +1592,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
       });
       return resultFits(result, request.maxSerializedBytes)
         ? result
-        : failed('invalid_request', 'Pi transcript result byte budget cannot fit the page envelope.');
+        : failed('agent_error', 'Pi transcript result byte budget cannot fit the page envelope.', false);
     },
 
     async readAfterTranscript(request) {
@@ -1646,6 +1671,8 @@ export function createPiExternalSessionsContribution(params: Readonly<{
         ...anchor.records,
         ...pageValues,
       ]);
+      const foldIntegrity = foldIntegrityFailure(folded);
+      if (foldIntegrity) return foldIntegrity;
       const previousLeafIndex = cursor.activeLeafId === null
         ? null
         : folded.activeBranch.findIndex((entry) => entry.id === cursor.activeLeafId);
@@ -1756,7 +1783,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
       });
       return resultFits(result, request.maxSerializedBytes)
         ? result
-        : failed('invalid_request', 'Pi transcript result byte budget cannot fit the readAfter envelope.');
+        : failed('agent_error', 'Pi transcript result byte budget cannot fit the readAfter envelope.', false);
     },
   });
 }

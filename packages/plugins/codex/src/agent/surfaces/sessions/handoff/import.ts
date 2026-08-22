@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import {
   expandHomePath,
+  isCanonicalAbsolutePathInsideRoot,
   resolveHomeDirFromEnvironment,
   withExclusiveFileLock,
 } from '@happier-dev/plugin-sdk/fs';
@@ -81,8 +82,7 @@ function resolveCodexHome(env: NodeJS.ProcessEnv): string {
 function resolveContainedCodexPath(codexHome: string, relativePath: string): string {
   const root = resolve(codexHome);
   const candidate = resolve(root, relativePath);
-  const relativeCandidate = relative(root, candidate);
-  if (relativeCandidate.startsWith('..') || isAbsolute(relativeCandidate)) {
+  if (!isCanonicalAbsolutePathInsideRoot(root, candidate)) {
     throw new Error(`Codex bundle path escapes CODEX_HOME: ${relativePath}`);
   }
   return candidate;
@@ -95,6 +95,13 @@ type PreparedCodexImportFile = Readonly<{
 }>;
 
 const CODEX_NATIVE_SESSION_IMPORT_LOCK_TIMEOUT_MS = 15_000;
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : new Error('Codex handoff import was cancelled');
+}
 
 function isNodeErrorWithCode(error: unknown, code: string): boolean {
   return error instanceof Error && (error as NodeJS.ErrnoException).code === code;
@@ -137,10 +144,14 @@ function prepareCodexImportFiles(
 async function withCodexNativeSessionImportCriticalSection<TResult>(
   codexHome: string,
   remoteSessionId: string,
+  signal: AbortSignal | undefined,
   effect: (physicalCodexHome: string) => Promise<TResult>,
 ): Promise<TResult> {
+  throwIfAborted(signal);
   await mkdir(codexHome, { recursive: true });
+  throwIfAborted(signal);
   const physicalCodexHome = await realpath(codexHome);
+  throwIfAborted(signal);
   const sessionKey = createHash('sha256').update(remoteSessionId, 'utf8').digest('hex');
   const lockPath = join(
     physicalCodexHome,
@@ -152,7 +163,12 @@ async function withCodexNativeSessionImportCriticalSection<TResult>(
   return await withExclusiveFileLock({
     lockPath,
     timeoutMs: CODEX_NATIVE_SESSION_IMPORT_LOCK_TIMEOUT_MS,
-  }, async () => await effect(physicalCodexHome));
+  }, async () => {
+    throwIfAborted(signal);
+    const result = await effect(physicalCodexHome);
+    throwIfAborted(signal);
+    return result;
+  });
 }
 
 async function assertExistingCodexNativeSessionBelongsToBundle(
@@ -195,7 +211,7 @@ async function assertExistingParentDirectoriesAreSafe(
       if (isNodeErrorWithCode(error, 'ENOENT')) {
         return;
       }
-      if (error instanceof PluginError) throw error;
+      if (isPluginError(error)) throw error;
       throw targetIdentityConflict(file.relativePath, 'an existing parent could not be verified safely', error);
     }
   }
@@ -235,10 +251,15 @@ async function inspectCodexImportDestination(
 async function createMissingCodexImportFile(
   codexHome: string,
   file: PreparedCodexImportFile,
+  signal: AbortSignal | undefined,
 ): Promise<void> {
+  throwIfAborted(signal);
   await mkdir(dirname(file.destinationPath), { recursive: true });
+  throwIfAborted(signal);
   try {
+    throwIfAborted(signal);
     await writeFile(file.destinationPath, file.content, { flag: 'wx' });
+    throwIfAborted(signal);
   } catch (error) {
     if (!isNodeErrorWithCode(error, 'EEXIST')) throw error;
 
@@ -253,7 +274,9 @@ export async function importCodexSessionBundle(params: Readonly<{
   bundle: unknown;
   targetPath: string;
   env: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
 }>): Promise<ImportedCodexSessionHandoffBundle> {
+  throwIfAborted(params.signal);
   const bundle = CodexSessionHandoffBundleSchema.parse(normalizeLegacyCodexHandoffBundle(params.bundle)) as CodexSessionHandoffBundle;
   const codexHome = resolveCodexHome(params.env);
   const runtimeBackendMode = normalizeCodexBackendMode(bundle.affinity?.backendMode) ?? 'appServer';
@@ -297,39 +320,49 @@ export async function importCodexSessionBundle(params: Readonly<{
   await withCodexNativeSessionImportCriticalSection(
     codexHome,
     bundle.remoteSessionId,
+    params.signal,
     async (physicalCodexHome) => {
       const preparedFiles = prepareCodexImportFiles(physicalCodexHome, bundle.files);
+      throwIfAborted(params.signal);
       await assertExistingCodexNativeSessionBelongsToBundle(
         physicalCodexHome,
         bundle.remoteSessionId,
         preparedFiles,
       );
+      throwIfAborted(params.signal);
       const destinationStates = await Promise.all(
         preparedFiles.map(async (file) => ({
           file,
           state: await inspectCodexImportDestination(physicalCodexHome, file),
         })),
       );
+      throwIfAborted(params.signal);
       for (const destination of destinationStates) {
+        throwIfAborted(params.signal);
         if (destination.state === 'missing') {
-          await createMissingCodexImportFile(physicalCodexHome, destination.file);
+          await createMissingCodexImportFile(physicalCodexHome, destination.file, params.signal);
         }
+        throwIfAborted(params.signal);
       }
       await assertExistingCodexNativeSessionBelongsToBundle(
         physicalCodexHome,
         bundle.remoteSessionId,
         preparedFiles,
       );
+      throwIfAborted(params.signal);
       for (const file of preparedFiles) {
+        throwIfAborted(params.signal);
         if (await inspectCodexImportDestination(physicalCodexHome, file) !== 'identical') {
           throw targetIdentityConflict(
             file.relativePath,
             'the destination disappeared during final verification',
           );
         }
+        throwIfAborted(params.signal);
       }
     }
   );
+  throwIfAborted(params.signal);
 
   return {
     remoteSessionId: bundle.remoteSessionId,

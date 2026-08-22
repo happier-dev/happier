@@ -5,11 +5,13 @@ import type { CorpusQualifiedObservationV1 } from '../corpus/fold/qualify.js';
 import { laneObservationsFromWire } from './listWindowWire.js';
 import {
     createTriageRefreshCoordinator,
+    triageRefreshPacingBlock,
     type TriageRefreshCoordinatorV1,
     type TriageRefreshPassOutcomeV1,
 } from '../refresh/refreshCoordinator.js';
 import {
     TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS,
+    type TriageRefreshPacingBlockV1,
     type TriageRefreshTriggerV1,
 } from '../refresh/refreshEligibility.js';
 import type {
@@ -19,6 +21,8 @@ import type {
 import {
     TRIAGE_LIST_DEFAULT_LENS_V1,
     foldTriageListWindow,
+    triageEntryRowKey,
+    MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     triageListCoverageLanes,
     type TriageListLaneV1,
     type TriageListLensV1,
@@ -50,13 +54,53 @@ export type TriageListWindowErrorV1 = Readonly<{
     message: string;
 }>;
 
+/**
+ * One configured connection this pass asked and could not read at all.
+ *
+ * `unavailable` health alone cannot say this. It covers both "the invocation was
+ * refused" and "no pass has asked yet", and only the store knows which of the
+ * two happened. Publishing the distinction is what lets a surface name the
+ * connection instead of blaming the aggregate list read — the store used to
+ * write the lane's own message into `error`, and the shell then told a reader
+ * "the list could not be read" beside the list.
+ */
+export type TriageListWindowUnreadableSourceV1 = Readonly<{
+    sourceInstanceId: string;
+    message: string;
+}>;
+
 export type TriageListWindowSnapshotV1 = Readonly<{
     /** The last admitted window. Retained across a failed refresh. */
     window?: TriageListWindowV1;
     freshness: 'unknown' | 'fresh' | 'stale';
     pending: 'idle' | 'initial' | 'refresh';
-    /** Retained beside the value, never instead of it. */
+    /**
+     * The aggregate list read itself failed **and produced no window at all**.
+     *
+     * It belongs to no source: a lane that failed reports itself through the
+     * window's own health, and a lane nothing could invoke reports itself
+     * through `unreadableSources`. It is never published beside a retained
+     * window, because the surface renders it as "the list could not be read" —
+     * a sentence that is self-evidently false next to rows the reader can see,
+     * and the exact regression this slot has now produced three times. A later
+     * aggregate read that fails over a retained window names its connections
+     * instead and marks the window stale.
+     */
     error?: TriageListWindowErrorV1;
+    /** Connections this pass asked and could not read. Omitted when there are none. */
+    unreadableSources?: readonly TriageListWindowUnreadableSourceV1[];
+    /**
+     * The one pacing decision, straight from the refresh coordinator: present
+     * only when the last cycle could read **no** configured connection because a
+     * source deadline or an aggregate backoff is still running.
+     *
+     * It is published rather than kept inside the coordinator because a Refresh
+     * that silently does nothing is the failure `core/CORPUS.md` §4.2 exists to
+     * prevent. Every surface reads this member; none re-derives a narrower answer
+     * from lane health, which is how the picker came to report an available
+     * Refresh the coordinator was already refusing.
+     */
+    refreshBlocked?: TriageRefreshPacingBlockV1;
     /** Every configured source instance, including ones with no admitted contribution. */
     configuredSources: TriageListEntriesResultV1['configuredSources'];
 }>;
@@ -66,7 +110,17 @@ export type TriageListWindowStoreV1 = Readonly<{
     subscribe(listener: () => void): () => void;
     /** The only way a consumer causes provider work. */
     refresh(trigger: TriageRefreshTriggerV1): Promise<void>;
-    /** A lens change rebuilds the window from retained observations and marks it stale. */
+    /**
+     * A lens change rebuilds the window from the retained page and reads no
+     * provider.
+     *
+     * It deliberately does **not** mark the window stale. That marking existed
+     * because the read carried the lens, so a new lens really did leave the
+     * retained rows unable to answer it; the read is neutral now, the retained
+     * page is exactly as fresh as the cycle that fetched it, and saying
+     * otherwise would ask the reader to refresh away a filter they had just
+     * applied.
+     */
     setLens(lens: TriageListLensV1): void;
     dispose(): void;
 }>;
@@ -97,6 +151,34 @@ function errorFrom(cause: unknown): TriageListWindowErrorV1 {
     return { code: 'plugin_action_failed', message: 'The list could not be read.' };
 }
 
+/**
+ * What a connection gets told about a pass that never reached it.
+ *
+ * It is the store's own sentence rather than the host's transport string,
+ * because the reader is being told about their connection and a dispatcher
+ * message explains nothing about it — the same reason a bare `transient` may
+ * not reach them. The cause is not discarded from the aggregate arm: it is what
+ * `error` carries when no window exists at all.
+ */
+const UNREADABLE_IN_THIS_PASS_V1: TriageListWindowErrorV1 = Object.freeze({
+    code: 'source_unavailable',
+    message: 'The source could not be read in this pass.',
+});
+
+/**
+ * The most one mount retains for a single connection.
+ *
+ * Deliberately larger than anything ONE pass can put here. The number that
+ * matters is the WIRE bound, not the pass's qualification ceiling: a pass may
+ * qualify up to `limit - 1 + pageLimit` observations (111 at today's 56), but
+ * `foldTriageListWindow` cuts to `limit` before the wire and
+ * `laneObservationsFromWire` reads only `result.window.rows`, so at most 56
+ * reach this map in one pass. Twice the window bound therefore leaves eviction
+ * unable to cut a pass's own answers and reintroduce the deletion the merge
+ * exists to prevent.
+ */
+const MAX_RETAINED_OBSERVATIONS_PER_LANE_V1 = MAX_TRIAGE_LIST_WINDOW_ROWS_V1 * 2;
+
 export function createTriageListWindowStore(deps: Readonly<{
     readEntries: TriageListWindowReaderV1;
     nowMs: () => number;
@@ -113,7 +195,6 @@ export function createTriageListWindowStore(deps: Readonly<{
     let error: TriageListWindowErrorV1 | null = null;
     let pending: TriageListWindowSnapshotV1['pending'] = 'idle';
     let lastCycleCompletedAtMs: number | null = null;
-    let lensChangedSinceCycle = false;
     let pendingTrigger: TriageRefreshTriggerV1 = 'view';
     let disposed = false;
     let retirement: Disposable | null = null;
@@ -129,21 +210,86 @@ export function createTriageListWindowStore(deps: Readonly<{
 
     function freshness(): TriageListWindowSnapshotV1['freshness'] {
         if (window === null) return 'unknown';
-        if (error !== null || lensChangedSinceCycle || lastCycleCompletedAtMs === null) return 'stale';
-        for (const lane of lanes.values()) {
-            if (lane.error !== null) return 'stale';
+        if (error !== null || lastCycleCompletedAtMs === null) return 'stale';
+        // Every configured connection, not only the ones a pass walked. A
+        // connection with no admitted contribution is skipped by the cycle
+        // and so leaves no lane behind, and a cycle in which every configured
+        // connection was skipped refused nothing — so it stamps. Deriving
+        // currentness from the walked lanes alone therefore reported a window
+        // as current over a list that had never read one configured source,
+        // and, when none of them was available, over a list that had read
+        // nothing at all. It is the same intended-versus-walked distinction
+        // `triageListCoverageLanes` already makes for coverage, asked here of
+        // the passes this mount has merged.
+        for (const summary of configuredSources) {
+            const lane = lanes.get(summary.sourceInstanceId);
+            if (lane === undefined || lane.error !== null) return 'stale';
         }
         return deps.nowMs() - lastCycleCompletedAtMs < TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS
             ? 'fresh'
             : 'stale';
     }
 
+    /**
+     * A lane that failed with provider evidence is already named by the window's
+     * own health, so it is excluded here: reporting it twice would give the same
+     * connection two answers.
+     */
+    function unreadableSources(): readonly TriageListWindowUnreadableSourceV1[] {
+        const unreadable: TriageListWindowUnreadableSourceV1[] = [];
+        for (const [sourceInstanceId, state] of lanes) {
+            if (state.error === null || state.lane.health.kind === 'failed') continue;
+            unreadable.push(Object.freeze({ sourceInstanceId, message: state.error.message }));
+        }
+        return Object.freeze(unreadable);
+    }
+
+    /**
+     * Whether a **Refresh** press could read any configured connection right now.
+     *
+     * It asks the one refresh coordinator rather than inspecting lane failures,
+     * and it asks as the `manual` trigger because that is the question a Refresh
+     * control is asking. The answer is derived on read like freshness, so a
+     * deadline that has passed stops being a refusal without waiting for a cycle
+     * to overwrite it, and a deadline set by a failure is visible before the user
+     * spends a click discovering it.
+     *
+     * One eligible connection is enough for a refresh to be worth pressing; only
+     * when every one of them is refused is the press a no-op the reader must be
+     * told about. Several refusals report the furthest deadline, because an
+     * earlier one would re-enable a Refresh the next evaluation refuses again.
+     */
+    function refreshBlock(): TriageRefreshPacingBlockV1 | null {
+        let latest: TriageRefreshPacingBlockV1 | null = null;
+        for (const summary of configuredSources) {
+            if (!summary.available) continue;
+            const blocked = coordinator.pacingBlock({
+                sourceInstanceId: summary.sourceInstanceId,
+                trigger: 'manual',
+            });
+            if (blocked === null) return null;
+            if (latest === null || blocked.nextEligibleAtMs > latest.nextEligibleAtMs) latest = blocked;
+        }
+        return latest;
+    }
+
     function publish(): void {
+        const unreadable = unreadableSources();
+        const blocked = refreshBlock();
         snapshot = Object.freeze({
             ...(window === null ? {} : { window }),
             freshness: freshness(),
             pending,
-            ...(error === null ? {} : { error }),
+            // The one gate on the store-wide slot, and the reason it is here
+            // rather than at each writer: "the list could not be read" is only
+            // true while there is no list. A writer that forgets this puts that
+            // sentence beside rows the reader is looking at, which is the
+            // failure this slot has produced three times. It still holds the
+            // retained error internally, so freshness never claims a window is
+            // current after a read that failed.
+            ...(error === null || window !== null ? {} : { error }),
+            ...(unreadable.length === 0 ? {} : { unreadableSources: unreadable }),
+            ...(blocked === null ? {} : { refreshBlocked: blocked }),
             configuredSources,
         });
         for (const listener of [...listeners]) listener();
@@ -158,6 +304,17 @@ export function createTriageListWindowStore(deps: Readonly<{
     function readSnapshot(): TriageListWindowSnapshotV1 {
         const current = freshness();
         if (current !== snapshot.freshness) snapshot = Object.freeze({ ...snapshot, freshness: current });
+        const blocked = refreshBlock();
+        if (blocked === null) {
+            if (snapshot.refreshBlocked !== undefined) {
+                const { refreshBlocked: expired, ...rest } = snapshot;
+                void expired;
+                snapshot = Object.freeze(rest);
+            }
+        } else if (snapshot.refreshBlocked?.reason !== blocked.reason
+            || snapshot.refreshBlocked.nextEligibleAtMs !== blocked.nextEligibleAtMs) {
+            snapshot = Object.freeze({ ...snapshot, refreshBlocked: blocked });
+        }
         return snapshot;
     }
 
@@ -182,14 +339,81 @@ export function createTriageListWindowStore(deps: Readonly<{
         });
     }
 
+    /**
+     * The neutral provider read this mount projects every lens from.
+     *
+     * The lens is deliberately **not** a parameter of it. The Action folds the
+     * pass through the same projection owner this store rebuilds with, so a
+     * lens sent into the read drops the excluded rows before they ever reach
+     * the wire — and this mount retains only what came back. A refresh taken
+     * while the reader had narrowed the list therefore deleted the excluded
+     * entries from the mount, and clearing the filter afterwards could not
+     * bring them back without another provider read: the reader narrowed,
+     * widened, and their entries were silently gone.
+     *
+     * So the chain runs one way only — provider page, retained raw lane, local
+     * lens projection in `rebuild` — and the read asks for no query and no
+     * filters at all. `limit` and `order` are required members, and they are
+     * the window owner's own defaults rather than a second pair of numbers.
+     *
+     * `limit` costs nothing: the shell's lens already took it from the window
+     * owner (`ui/shell/lens.ts` reads `MAX_TRIAGE_LIST_WINDOW_ROWS_V1`), so the
+     * page this mount asks for is byte-identical to the one it asked for
+     * before — same `pageLimit`, same observation budget, same provider walk.
+     *
+     * `order` is the one decision this read takes over from the reader's lens,
+     * and it is **not** inert. The Action's observation budget stops the pass's
+     * *rotation*; it does not cap a page (`projection/scanPass.ts` checks it
+     * before asking for a page, never while adopting one), so a single-instance
+     * walk whose source pages short can qualify up to `limit - 1 + pageLimit`
+     * observations — 111 at today's 56 — and `foldTriageListWindow` then cuts
+     * them to `limit` rows *after* applying the lens it was given. Two costs
+     * follow, both bounded by that over-delivery and both visible rather than
+     * silent: a cut window is `coverage: 'partial'`, and `retainedLane` is what
+     * carries that verdict into this mount's own rebuilt window rather than
+     * letting the rebuild re-derive a completeness the page it kept cannot
+     * support:
+     *
+     *  - the retained page is the *newest* rows of what came back, so a reader
+     *    looking oldest-first sees the oldest of those, not the oldest the
+     *    provider holds;
+     *  - a filter is applied to those rows here rather than to the whole walk
+     *    at the Action, so a narrow lens over a deep connection can match
+     *    fewer rows than a lens-carrying read would have returned.
+     *
+     * That is the trade this function exists to make. A page fetched under the
+     * reader's own lens cannot be re-projected through any other one, so paying
+     * for it in depth is paying once; paying for it in destroyed rows was
+     * paying every time the reader touched a filter.
+     *
+     * This is what the *mounted* store sends. The Action's parameters are
+     * untouched, and a stateless caller that genuinely wants one filtered
+     * answer still asks for one.
+     */
     function scanInputFor(sourceInstanceIds: readonly string[]): TriageListEntriesInputV1 {
         return {
             v: 1,
             sources: { kind: 'selected', sourceInstanceIds },
-            limit: lens.limit,
+            limit: TRIAGE_LIST_DEFAULT_LENS_V1.limit,
+            /*
+             * `order` IS sent, while `query` and the facets are not, and the
+             * difference is not a hedge — the two kinds of lens member fail in
+             * opposite directions.
+             *
+             * `query` and the facets EXCLUDE rows. Asking the provider to apply
+             * them throws away entries that widening the filter should bring
+             * back with no further read, which is the defect this store was
+             * changed to fix.
+             *
+             * `order` excludes nothing. It RANKS, and the window ranks before it
+             * bounds (`rankCorpusWindow` then `boundAcrossSourceLanes` in
+             * `listWindow.ts`), so whichever order is in force at the cut decides
+             * WHICH rows survive it. Sending a fixed order hands a reader on
+             * `oldest` the NEWEST page re-sorted ascending, and no local re-sort
+             * can recover the older entries already cut away — the exact loss
+             * keeping it local was meant to prevent.
+             */
             order: lens.order,
-            ...(lens.query === '' ? {} : { query: lens.query }),
-            filters: lens.filters,
         };
     }
 
@@ -234,44 +458,154 @@ export function createTriageListWindowStore(deps: Readonly<{
             return { kind: 'interrupted' };
         }
 
+        // Whatever this lane's health turned out to be, these are the answers it
+        // did give in this pass.
+        const admitted = laneObservationsFromWire(result, input.sourceInstanceId);
+
         if (lane.health.kind === 'failed') {
             recordLaneFailure(input.sourceInstanceId, lane, {
                 code: lane.health.failure.code,
                 message: lane.health.failure.detail ?? lane.health.failure.class,
-            });
+            }, admitted);
             return { kind: 'failed', failure: lane.health.failure };
         }
         if (lane.health.kind === 'unavailable') {
-            recordLaneFailure(input.sourceInstanceId, lane, {
-                code: 'source_unavailable',
-                message: 'The source could not be read in this pass.',
-            });
+            recordLaneFailure(input.sourceInstanceId, lane, UNREADABLE_IN_THIS_PASS_V1, admitted);
             return { kind: 'interrupted' };
         }
 
+        const settled = retainedLane(lane, result);
         lanes.set(input.sourceInstanceId, {
-            lane,
-            observations: laneObservationsFromWire(result, input.sourceInstanceId),
+            lane: settled,
+            // Whether this pass may REPLACE what the lane retained turns on one
+            // fact: did it finish enumerating?
+            //
+            // A finished walk is the lane's whole set, so an entry it did not
+            // name is genuinely no longer in that set and the row leaves the
+            // window. That is not a set-complement absence conclusion — no
+            // `absent` observation is recorded, and only an authoritative `get`
+            // may ever produce one (`PLAN.md` INV-02).
+            //
+            // An UNFINISHED pass is the case INV-02 is actually about. A budget
+            // or deadline can stop the rotation mid-walk, and `retainedLane`
+            // also forces `exhausted: false` when the Action cut an
+            // over-delivered page. In both, the pass never reached the entries
+            // it did not return, so replacing here deleted rows the provider had
+            // already given and never contradicted.
+            observations: settled.exhausted
+                ? admitted
+                : retainObservations(lanes.get(input.sourceInstanceId)?.observations ?? [], admitted),
             error: null,
             completedAtMs: deps.nowMs(),
         });
         return { kind: 'completed' };
     }
 
-    /** A failed lane keeps the entries it last admitted; only its health changes. */
+    /**
+     * The lane fact this mount retains, corrected for what the wire could carry.
+     *
+     * A lane may report a settled end of its walk and still have qualified more
+     * observations than one window carries: the Action folds the pass through
+     * the same projection owner and cuts it to the row bound *before* the wire,
+     * and this mount retains only what came back. The Action says so — a cut
+     * window is `coverage: 'partial'` — but that claim describes the Action's
+     * window, and this mount rebuilds its own from the lanes it has merged. Let
+     * `exhausted` through unchanged and a single connection that over-delivered
+     * tells the reader every configured source answered, over a list missing
+     * the rows that were cut, with nothing to error on.
+     *
+     * The correction is made on `exhausted` because that is the one member the
+     * coverage owner reads (`projection/listWindow.ts`), so the fold stays the
+     * single decision-maker instead of gaining a second coverage rule beside
+     * it. Reading `coverage` back is exact here rather than a guess: this pass
+     * asks one instance, so its window has exactly one lane, and with the
+     * configured set carried whole and that lane exhausted the only term left
+     * that can make it partial is the cut itself.
+     */
+    function retainedLane(lane: TriageListLaneV1, result: TriageListEntriesResultV1): TriageListLaneV1 {
+        if (!lane.exhausted
+            || result.window.coverage === 'complete'
+            || result.configuredSourcesStatus === 'truncated') {
+            return lane;
+        }
+        return Object.freeze({ ...lane, exhausted: false });
+    }
+
+    /**
+     * A failed lane keeps the entries it last admitted **and adopts the ones
+     * this pass admitted before it failed**; only its health changes.
+     *
+     * A walk that fails part way through still answered for the pages it
+     * answered for. The pass owner retains them deliberately — an unanswered
+     * page says nothing about the ones that answered (`projection/scanPass.ts`)
+     * — and the aggregate carries them back in the same result whose lane is
+     * marked failed. Reading only the health and keeping the previous
+     * observations therefore deleted rows the provider had already given: on a
+     * cold scan there is no last-known-good behind them, so page one succeeding
+     * and page two timing out made every page-one row disappear from the list.
+     *
+     * The two are merged on the canonical entry reference through the fold's
+     * own row key rather than a second join spelled here, so an entry this pass
+     * re-read replaces its retained answer instead of listing twice, and an
+     * entry the failed walk never reached keeps the answer it last gave.
+     *
+     * A settling pass no longer replaces this set wholesale — that replacement
+     * was deriving absence by set complement — so the bound it used to supply
+     * is now `retainObservations`'s explicit capacity instead.
+     */
     function recordLaneFailure(
         sourceInstanceId: string,
         lane: TriageListLaneV1,
         laneError: TriageListWindowErrorV1,
+        admitted: readonly CorpusQualifiedObservationV1[],
     ): void {
         const previous = lanes.get(sourceInstanceId);
         lanes.set(sourceInstanceId, {
             lane,
-            observations: previous?.observations ?? [],
+            observations: retainObservations(previous?.observations ?? [], admitted),
             error: laneError,
             completedAtMs: previous?.completedAtMs ?? null,
         });
-        error = laneError;
+    }
+
+    /**
+     * Last-known-good, with this pass's admitted answers layered over it by
+     * entry identity, bounded.
+     *
+     * Merging is what stops a bounded page from deleting entries it did not
+     * name, and the bound is what stops merging from retaining forever. The
+     * capacity is deliberately larger than the most one pass can put here,
+     * which is the wire bound of 56 rather than the 111 a pass may qualify
+     * before the fold cuts it, so eviction can never cut a pass's own answers
+     * and reintroduce the loss this merge exists to prevent.
+     *
+     * Eviction is CACHE eviction and nothing more: an evicted entry is dropped
+     * from this mount's retained page, never recorded as `absent`, and the next
+     * pass that names it brings it straight back. Only entries this pass did
+     * NOT re-observe are ever evicted, oldest first, which is why the layering
+     * below re-inserts a re-observed entry at the back rather than leaving it
+     * at the position it first appeared in.
+     */
+    function retainObservations(
+        retained: readonly CorpusQualifiedObservationV1[],
+        admitted: readonly CorpusQualifiedObservationV1[],
+    ): readonly CorpusQualifiedObservationV1[] {
+        if (admitted.length === 0) return retained;
+        const merged = new Map<string, CorpusQualifiedObservationV1>();
+        for (const observation of retained) merged.set(triageEntryRowKey(observation.entryRef), observation);
+        for (const observation of admitted) {
+            const key = triageEntryRowKey(observation.entryRef);
+            // Re-inserted at the back: insertion order is what eviction reads,
+            // and this pass's answers must be the last thing it would drop.
+            merged.delete(key);
+            merged.set(key, observation);
+        }
+        const values = [...merged.values()];
+        return Object.freeze(
+            values.length <= MAX_RETAINED_OBSERVATIONS_PER_LANE_V1
+                ? values
+                : values.slice(values.length - MAX_RETAINED_OBSERVATIONS_PER_LANE_V1),
+        );
     }
 
     /**
@@ -291,6 +625,10 @@ export function createTriageListWindowStore(deps: Readonly<{
      * invocation is not provider evidence about the source (`core/CORPUS.md`
      * §4.4). It is the freshness and coverage claims that must stop being made,
      * not the source that must be blamed.
+     *
+     * The lane fact is published as `unreadableSources` and never as the
+     * store-wide `error`. Those are two different failures: this one names a
+     * connection, that one is the aggregate read itself failing.
      */
     function recordLaneError(sourceInstanceId: string, laneError: TriageListWindowErrorV1): void {
         const previous = lanes.get(sourceInstanceId);
@@ -314,7 +652,6 @@ export function createTriageListWindowStore(deps: Readonly<{
                 });
             }
         }
-        error = laneError;
     }
 
     const coordinator: TriageRefreshCoordinatorV1 = createTriageRefreshCoordinator({
@@ -339,23 +676,52 @@ export function createTriageListWindowStore(deps: Readonly<{
             error = null;
         } catch (cause) {
             error = errorFrom(cause);
+            // Nothing was read, so every connection this cycle was about to ask
+            // is a connection it could not read. Naming them is what
+            // `core/SURFACE.md` §6.2 row 4 asks for over a retained window, and
+            // it is truthful for the same reason a rejected per-lane invocation
+            // is: the pass reached no provider evidence about any of them. Only
+            // instances the cycle would actually have asked are named — one no
+            // pass would have touched must not be accused.
+            for (const summary of configuredSources) {
+                if (!summary.available) continue;
+                recordLaneError(summary.sourceInstanceId, UNREADABLE_IN_THIS_PASS_V1);
+            }
             pending = 'idle';
             publish();
             return;
         }
 
-        await Promise.all(configuredSources
+        // Each connection is published as its own pass settles. Rebuilding only
+        // after every pass had settled meant one connection that answered
+        // slowly — or never — held every other connection's rows off the
+        // screen for as long as it took to give up, on a surface whose whole
+        // point is that a source it cannot reach does not erase the ones it
+        // can. Nothing about the cycle is stamped here: `pending` still says a
+        // pass is running and freshness is not claimed until the cycle ends.
+        const refusals = await Promise.all(configuredSources
             .filter((summary) => summary.available)
             .map(async (summary) => {
-                await coordinator.request({
+                const request = coordinator.request({
                     sourceInstanceId: summary.sourceInstanceId,
                     trigger,
-                }).settled;
+                });
+                await request.settled;
+                // A refused request read nothing, so it has nothing to publish.
+                if (request.disposition !== 'blocked' && isCurrent()) {
+                    rebuild();
+                    publish();
+                }
+                return triageRefreshPacingBlock(request.blocked);
             }));
 
         if (!isCurrent()) return;
-        lastCycleCompletedAtMs = deps.nowMs();
-        lensChangedSinceCycle = false;
+        // A cycle in which every requested connection was refused read no
+        // provider at all. Stamping it would extend the fresh window without a
+        // read, and publishing nothing would leave the reader believing the
+        // Refresh they pressed happened.
+        const askedNobody = refusals.length > 0 && refusals.every((refusal) => refusal !== null);
+        if (!askedNobody) lastCycleCompletedAtMs = deps.nowMs();
         pending = 'idle';
         rebuild();
         publish();
@@ -396,7 +762,6 @@ export function createTriageListWindowStore(deps: Readonly<{
         },
         setLens(next) {
             lens = next;
-            lensChangedSinceCycle = true;
             if (window !== null) rebuild();
             publish();
         },

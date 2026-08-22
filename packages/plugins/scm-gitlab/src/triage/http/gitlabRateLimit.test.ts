@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createGitlabResponseHeaders } from './gitlabHeaders.js';
-import {
-  GITLAB_MAX_RATE_LIMIT_WINDOW_MS,
-  readGitlabRetryEvidence,
-} from './gitlabRateLimit.js';
+import { readGitlabRetryEvidence } from './gitlabRateLimit.js';
 
 const NOW_MS = 1_609_844_100_000; // 2021-01-05T10:55:00Z
 
@@ -20,7 +17,6 @@ describe('readGitlabRetryEvidence', () => {
     expect(evidence).toEqual({
       retryNotBeforeMs: NOW_MS + 30_000,
       source: 'retry-after',
-      clamped: false,
     });
   });
 
@@ -43,7 +39,6 @@ describe('readGitlabRetryEvidence', () => {
     expect(evidence).toEqual({
       retryNotBeforeMs: 1_609_844_400_000,
       source: 'ratelimit-reset-time',
-      clamped: false,
     });
   });
 
@@ -66,15 +61,19 @@ describe('readGitlabRetryEvidence', () => {
     )).toBeNull();
   });
 
-  it('clamps a reset beyond the documented maximum quota window instead of parking the source', () => {
+  it('reports a reset far beyond any documented quota window as GitLab stated it, and bounds nothing here', () => {
+    // The horizon on a provider-stated deadline is one policy owned by the single
+    // consumer that honours it (`plugins/triage` `refresh/refreshEligibility.ts`).
+    // A private ceiling here would be a fifth owner of it and would hide the raw
+    // header from the one place that can bound it for every source.
+    const statedMs = NOW_MS + (86_400 * 1_000);
     const evidence = readGitlabRetryEvidence(
       createGitlabResponseHeaders({ 'RateLimit-Reset': String(Math.floor(NOW_MS / 1000) + 86_400) }),
       NOW_MS,
     );
     expect(evidence).toEqual({
-      retryNotBeforeMs: NOW_MS + GITLAB_MAX_RATE_LIMIT_WINDOW_MS,
+      retryNotBeforeMs: statedMs,
       source: 'ratelimit-reset',
-      clamped: true,
     });
   });
 });

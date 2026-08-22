@@ -27,6 +27,7 @@ import {
   DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
 } from './discordPluginConstants.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
+import { DISCORD_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
 // Records the selection basis; it does not make the external source or terms immutable.
 const DISCORD_BRAND_ASSET_PROVENANCE = {
@@ -88,6 +89,10 @@ async function readPackedDiscordBrandAsset(): Promise<Buffer> {
 }
 
 describe('Discord Channels manifest', () => {
+  it('publishes the complete plugin-owned UI translation bundles', () => {
+    expect(PLUGIN_MANIFEST.contributes.ui.translations).toEqual(DISCORD_UI_TRANSLATION_BUNDLES);
+  });
+
   it('declares and packages the official Discord brand mark through the generic Resource owner', async () => {
     expect(PLUGIN_MANIFEST.brand).toEqual({ iconResourceId: DISCORD_BRAND_RESOURCE_ID });
     expect(PLUGIN_MANIFEST.contributes.resources).toEqual([{
@@ -123,6 +128,7 @@ describe('Discord Channels manifest', () => {
         resultSchema: operation.declaration.resultSchema.jsonSchema,
         surfaces: operation.declaration.surfaces,
         dangerLevel: operation.declaration.dangerLevel,
+        execution: { target: 'daemon' },
       });
     };
 
@@ -130,6 +136,7 @@ describe('Discord Channels manifest', () => {
       resultSchema: providers.setup.declaration.resultSchema.jsonSchema,
       surfaces: providers.setup.declaration.surfaces,
       dangerLevel: providers.setup.declaration.dangerLevel,
+      execution: { target: 'daemon' },
     });
     expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.connectionTest, providers.connectionTest);
     expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.endpointResolve, providers.endpointResolve);
@@ -139,7 +146,10 @@ describe('Discord Channels manifest', () => {
     // former action returned the integration bot regardless of that endpoint.
     // Generic direct-message pairing owns the user-initiated path instead.
     expect(actions.has('discord/inspect-principal')).toBe(false);
-    expect(actions.size).toBe(6);
+    expect(actions.get(DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID)).toMatchObject({
+      execution: { target: 'daemon' },
+    });
+    expect(actions.size).toBe(7);
   });
 
   it('keeps the Gateway worker Account binding on an object-root wrapper without widening the core reconciliation union', () => {

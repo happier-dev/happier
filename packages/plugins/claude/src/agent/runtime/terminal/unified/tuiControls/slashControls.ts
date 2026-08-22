@@ -427,11 +427,19 @@ async function runSlashControl(ctx: SlashControlContext, spec: SlashControlSpec)
   }
 }
 
+function normalizeSlashControlValue(value: string): string | null {
+  const normalized = String(value ?? '').trim();
+  if (!normalized || /[\u0000-\u001f\u007f-\u009f]/.test(normalized)) return null;
+  return normalized;
+}
+
 export async function applyModelControl(ctx: SlashControlContext, model: string): Promise<ControlAttemptResult> {
+  const requested = normalizeSlashControlValue(model);
+  if (!requested) return { kind: 'failed', reason: 'invalid_control_value' };
   const { port, wait, timings } = ctx.runtime;
   return runSlashControl(ctx, {
     key: 'model',
-    commandText: `/model ${model}`,
+    commandText: `/model ${requested}`,
     resolveFinalState: async (state) => {
       if (!state.switchModelDialogVisible) return state;
       // Answer the `Switch model?` dialog deliberately: option 1 = "Yes, switch".
@@ -451,7 +459,9 @@ export async function applyModelControl(ctx: SlashControlContext, model: string)
 
 export async function applyEffortControl(ctx: SlashControlContext, effort: string): Promise<ControlAttemptResult> {
   const { port, wait, timings } = ctx.runtime;
-  const requested = effort.trim().toLowerCase();
+  const normalized = normalizeSlashControlValue(effort);
+  if (!normalized) return { kind: 'failed', reason: 'invalid_control_value' };
+  const requested = normalized.toLowerCase();
   // `/effort ultracode` runs at xhigh, so the dialog announces "Switching to xhigh" (binary source
   // 2.1.173: `ultracode` maps to `xhigh` before the confirmation component renders).
   const acceptableTargets = requested === 'ultracode' ? ['ultracode', 'xhigh'] : [requested];
@@ -482,7 +492,7 @@ export async function applyEffortControl(ctx: SlashControlContext, effort: strin
 
   return runSlashControl(ctx, {
     key: 'reasoningEffort',
-    commandText: `/effort ${effort}`,
+    commandText: `/effort ${requested}`,
     ownsDialog: (state) => state.effortChangeDialogVisible,
     resolveLeftoverDialog: async (state) => {
       if (targetMatches(state)) {

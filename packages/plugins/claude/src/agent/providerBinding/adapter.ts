@@ -2,7 +2,7 @@ import type {
   AgentProviderBindingAdapter,
   AgentProviderBindingMaterializeInput,
   AgentProviderBindingPrepared,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 type ProviderBindingMaterialization = Awaited<ReturnType<AgentProviderBindingAdapter['materialize']>>;
 type ProviderBindingEnvOverlay = Extract<ProviderBindingMaterialization, { kind: 'spawnEnv' }>['env'];

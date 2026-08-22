@@ -1,13 +1,19 @@
-export const PLUGIN_MANIFEST = Object.freeze({
-  schemaVersion: 2,
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { VoiceCredentialSlotIdSchema } from '@happier-dev/plugin-sdk/voice';
+
+import { XAI_VOICE_PROVIDER_CONTRIBUTION_ID } from './constants.js';
+
+const XAI_API_KEY_CREDENTIAL_SLOT_ID = VoiceCredentialSlotIdSchema.parse('api_key');
+
+export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: 'happier.voice.xai',
   version: '0.0.0',
   displayName: 'xAI Grok Voice',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   hostAccess: { required: [], optional: [] },
-  contributes: {
-    voiceProviders: [{
-      id: 'realtime-grok',
+  voiceProviders: {
+    [XAI_VOICE_PROVIDER_CONTRIBUTION_ID]: {
+      declaration: {
       title: 'xAI Grok Voice',
       kind: 'conversation',
       roles: ['conversation_stt', 'conversation_tts', 'realtime_conversation', 'turn_control'],
@@ -22,6 +28,7 @@ export const PLUGIN_MANIFEST = Object.freeze({
           exactMessage: true,
           interruptionPolicy: 'provider_immediate',
         },
+        tools: { effectCalls: 'stable_ids' },
       },
       settings: {
         schemaVersion: 1,
@@ -221,7 +228,7 @@ export const PLUGIN_MANIFEST = Object.freeze({
       },
       credentials: {
         slot: {
-          id: 'api_key' as import('@happier-dev/plugin-sdk/voice').VoiceCredentialSlotId,
+          id: XAI_API_KEY_CREDENTIAL_SLOT_ID,
           purpose: 'voice.client-auth',
           title: 'xAI API key',
           description: 'Used only for short-lived client authentication and the xAI voice catalog.',
@@ -239,7 +246,7 @@ export const PLUGIN_MANIFEST = Object.freeze({
           operations: [{
             id: 'client-auth',
             purpose: 'voice.client-auth',
-            credentialSlotId: 'api_key' as import('@happier-dev/plugin-sdk/voice').VoiceCredentialSlotId,
+            credentialSlotId: XAI_API_KEY_CREDENTIAL_SLOT_ID,
             effect: 'read',
             request: {
               origin: 'https://api.x.ai',
@@ -271,7 +278,7 @@ export const PLUGIN_MANIFEST = Object.freeze({
           }, {
             id: 'voices',
             purpose: 'voice.catalog.voices',
-            credentialSlotId: 'api_key' as import('@happier-dev/plugin-sdk/voice').VoiceCredentialSlotId,
+            credentialSlotId: XAI_API_KEY_CREDENTIAL_SLOT_ID,
             effect: 'read',
             request: {
               origin: 'https://api.x.ai',
@@ -301,9 +308,10 @@ export const PLUGIN_MANIFEST = Object.freeze({
       },
       client: {
         artifactId: 'voice-runtime-web',
-        modulePath: './voiceRuntime',
+        modulePath: './ui/voice',
         exportName: 'activate',
       },
-    } satisfies import('@happier-dev/plugin-sdk/voice').VoiceProviderContribution],
+      },
+    },
   },
 });

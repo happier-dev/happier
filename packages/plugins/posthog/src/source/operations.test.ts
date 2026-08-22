@@ -3,6 +3,7 @@ import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 // only the conformance helpers and the fixture builder.
 import {
     MAX_TRIAGE_INSTANCE_DRAFTS_V1,
+    MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
     TriageGetResultV1Schema,
     TriageListInstancesResultV1Schema,
     TriageScanResultV1Schema,
@@ -20,10 +21,12 @@ import queryIssueDetail from '../api/__fixtures__/queryIssueDetail.json' with { 
 import { POSTHOG_CONNECTED_ACCOUNT_PURPOSE } from '../posthogContracts.js';
 import { PosthogSampledEventsResultV1Schema } from './detail/issueEventsContract.js';
 import {
+    POSTHOG_FAILURE_CODES,
     getPosthogSourceEntry,
     listPosthogInstances,
     readPosthogSampledEvents,
     scanPosthogSource,
+    toTriageSourceFailure,
 } from './operations.js';
 import { encodePosthogConfiguration } from './instance.js';
 
@@ -34,7 +37,7 @@ const ACCOUNT = {
     accountId: 'account-1',
 } as const;
 
-function context(responses: readonly unknown[]) {
+function context(responses: readonly unknown[], statuses: readonly number[] = []) {
     let call = 0;
     const listAccounts = vi.fn(async () => ({
         status: 'complete' as const,
@@ -51,9 +54,10 @@ function context(responses: readonly unknown[]) {
         headers: { authorization: 'Bearer secret' },
     }));
     const request = vi.fn(async (input: Readonly<{ url: string }>) => {
-        const body = responses[call++];
+        const index = call++;
+        const body = responses[index];
         return {
-            status: 200,
+            status: statuses[index] ?? 200,
             finalUrl: input.url,
             headers: { 'content-type': 'application/json' },
             body: new TextEncoder().encode(JSON.stringify(body)),
@@ -167,6 +171,47 @@ describe('PostHog Triage source operations', () => {
         expect(host.request).toHaveBeenCalledTimes(2);
     });
 
+    it('ends the walk truthfully when the next continuation cannot fit the protocol bound', async () => {
+        // The target copies a token back verbatim, so the walk position this source
+        // resumes from is the widest input it can be handed. The token below is exactly
+        // at the published bound; advancing the offset by one digit puts the NEXT token
+        // one byte over it, and the token is a member of a `policy: 'closed'` result — so
+        // emitting it discards every row on this page and the reader sees no list.
+        const encoder = new TextEncoder();
+        const geometry = (offset: number, pad: number): string => JSON.stringify({
+            v: 1,
+            environmentIndex: 0,
+            offset,
+            from: `2026-07-01T00:00:00.000Z${'x'.repeat(pad)}`,
+            to: null,
+            nativeLimit: 3,
+        });
+        const pad = MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1
+            - encoder.encode(geometry(9, 0)).byteLength;
+        expect(encoder.encode(geometry(9, pad)).byteLength)
+            .toBe(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
+        expect(encoder.encode(geometry(12, pad)).byteLength)
+            .toBeGreaterThan(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
+
+        const host = context([{ ...queryIssuesPage1, nextOffset: 12 }]);
+        const result = await scanPosthogSource({
+            v: 1,
+            instance: configuredInstance(),
+            page: { kind: 'continuation', continuation: { v: 1, token: geometry(9, pad) } },
+        }, host.value);
+
+        expect(() => TriageScanResultV1Schema.parse(result)).not.toThrow();
+        // The page's rows survive: an unresumable walk is a coverage fact, not a reason
+        // to throw away entries the provider already answered with.
+        expect(result.kind).toBe('complete');
+        if (result.kind !== 'complete') return;
+        expect(result.observations).toHaveLength(3);
+        expect(result.evidence).toEqual({
+            kind: 'partial',
+            reason: POSTHOG_FAILURE_CODES.continuationUnmintable,
+        });
+    });
+
     it('performs CRUD-first get and returns one strict present observation', async () => {
         const host = context([crudIssueRead, queryIssueDetail]);
         const instance = configuredInstance();
@@ -271,5 +316,107 @@ describe('PostHog Triage source operations', () => {
         if (result.kind !== 'unavailable') return;
         expect(result.failure.class).toBe('unsupportedContract');
         expect(host.request).not.toHaveBeenCalled();
+    });
+});
+
+describe('the PostHog provider-failure projection', () => {
+    it('keeps a permanently rejected request out of the transient class', () => {
+        // 400, 409, 410 and 422 all land here: PostHog's published contract declares no
+        // meaning for them, so repeating the identical request cannot make it succeed.
+        // `transient` says the opposite, and it is the class `resolveForDispatch` reports
+        // to its caller as `retryable: true`.
+        expect(toTriageSourceFailure({ kind: 'unexpectedStatus', status: 409 })).toEqual({
+            class: 'unknown',
+            code: POSTHOG_FAILURE_CODES.unexpectedStatus,
+        });
+    });
+
+    it('names four distinct causes with four distinct codes', () => {
+        // One `response-unreadable` code covered a readable 500, a timeout with no body
+        // at all, an unexpected status and a genuinely unparseable body — true for one
+        // of the four. A reader keying on `code` could not tell them apart.
+        const projected = [
+            toTriageSourceFailure({ kind: 'server', status: 503 }),
+            toTriageSourceFailure({ kind: 'timeout' }),
+            toTriageSourceFailure({ kind: 'unexpectedStatus', status: 409 }),
+            toTriageSourceFailure({ kind: 'malformedResponse', at: 'schema' }),
+        ];
+        expect(new Set(projected.map((failure) => failure.code)).size).toBe(4);
+        // A busy server and a bodyless deadline do clear on their own; they stay transient.
+        expect(projected[0]).toMatchObject({ class: 'transient' });
+        expect(projected[1]).toMatchObject({ class: 'transient' });
+        expect(projected[3]).toMatchObject({ class: 'unsupportedContract' });
+    });
+
+    it('carries the same classification through an authoritative get', async () => {
+        const host = context([{}], [409]);
+        const result = await getPosthogSourceEntry({
+            v: 1,
+            instance: configuredInstance(),
+            localRef: {
+                kindId: 'error-issue',
+                collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1',
+                entryId: '00000000-0000-4000-8000-000000000001',
+            },
+        }, host.value);
+
+        expect(() => TriageGetResultV1Schema.parse(result)).not.toThrow();
+        expect(result.kind).toBe('unresolved');
+        if (result.kind !== 'unresolved') return;
+        expect(result.failure).toEqual({
+            class: 'unknown',
+            code: POSTHOG_FAILURE_CODES.unexpectedStatus,
+        });
+    });
+});
+
+/**
+ * A reader with no connected PostHog account has configured nothing. The host
+ * declines to list an unbound purpose; propagating that decline made the Settings
+ * page report a PostHog this source never contacted.
+ */
+describe('PostHog listInstances with no connected account', () => {
+    function unboundContext(binding: unknown) {
+        const listAccounts = vi.fn(async () => {
+            throw Object.assign(new Error('resource not selected'), {
+                code: 'plugin_host_access_resource_not_selected',
+            });
+        });
+        const getBinding = vi.fn(async () => binding);
+        const request = vi.fn(async () => {
+            throw new Error('listInstances must reach no provider with nothing connected');
+        });
+        return {
+            value: {
+                signal: new AbortController().signal,
+                services: {
+                    connectedAccounts: { listAccounts, getBinding },
+                    http: { request },
+                },
+            } as unknown as PluginInvocationContext,
+            getBinding,
+            request,
+        };
+    }
+
+    it('reports an unbound purpose as a complete empty candidate set', async () => {
+        const host = unboundContext(null);
+
+        const result = await listPosthogInstances({ v: 1 }, host.value);
+
+        expect(result).toEqual({ kind: 'complete', candidates: [], failures: [] });
+        expect(host.getBinding).toHaveBeenCalledWith(
+            POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
+            { signal: expect.anything() },
+        );
+        expect(host.request).not.toHaveBeenCalled();
+    });
+
+    it('still propagates a refused listing while the purpose is bound', async () => {
+        const host = unboundContext({ purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE });
+
+        await expect(listPosthogInstances({ v: 1 }, host.value)).rejects.toMatchObject({
+            code: 'plugin_host_access_resource_not_selected',
+        });
     });
 });

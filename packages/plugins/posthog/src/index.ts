@@ -167,19 +167,6 @@ export type {
 } from './api/types/issues.js';
 
 export {
-    POSTHOG_REQUESTED_SCOPES,
-    acceptPosthogAuthorizationServerMetadata,
-    resolvePosthogAuthenticationRoute,
-    resolvePosthogAuthenticationRouteForRawOrigin,
-    resolvePosthogCloudRegion,
-} from './connect/oauth.js';
-export type {
-    PosthogAuthenticationRoute,
-    PosthogAuthorizationServerMetadata,
-    PosthogCloudRegion,
-} from './connect/oauth.js';
-
-export {
     isSameNormalizedOrigin,
     normalizePosthogApiOrigin,
     selectPosthogApiOrigin,

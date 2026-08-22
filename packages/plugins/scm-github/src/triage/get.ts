@@ -1,3 +1,5 @@
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+
 import {
   decodeGithubJsonResponse,
   type GithubApiClientV1,
@@ -61,14 +63,6 @@ function unresolved(
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readHeader(
-  headers: Readonly<Record<string, string>>,
-  name: string,
-): string | null {
-  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name);
-  return entry?.[1]?.trim() || null;
 }
 
 export type GithubIssueRedirectDestinationV1 = Readonly<{
@@ -317,7 +311,7 @@ async function followIssueTransfer(
   dependencies: GithubGetDependenciesV1,
 ): Promise<GithubTriageObservationV1> {
   const destination = validateGithubIssueRedirect({
-    location: readHeader(response.headers, 'location'),
+    location: readTriageResponseHeaderV1(response.headers, 'location'),
     requestedUrl,
     requestedRoute: route,
     requestedNumber: input.localRef.entryId,

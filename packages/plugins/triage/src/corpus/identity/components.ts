@@ -22,9 +22,37 @@ import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifes
  * This rendering is injective because a plugin id may not contain `/`, so the
  * first `/` is unambiguously the boundary. It is not a general-purpose path:
  * appending a third `/`-bearing component to it would not be injective.
+ *
+ * A contributed source's `localId` is therefore a durable address, not a label.
+ * Renaming one retires every row keyed under the old rendering — configured
+ * source instances, pins, session links — with no error at the rename site. It
+ * is safe today only because no Account Collection row exists yet for any
+ * source; the day one does, a rename needs a row migration, not an edit.
  */
 export function renderSourceQualifiedId(source: PluginContributionIdentity): string {
     return `${source.pluginId}/${source.localId}`;
+}
+
+/**
+ * Whether two values name the same contributed source.
+ *
+ * It lives beside `renderSourceQualifiedId` because it answers the same question that
+ * rendering does — *is this the same source?* — and the two must never disagree: the
+ * rendering keys durable rows while this predicate decides whether an entry may be
+ * dispatched, opened, or checked out through a given configured instance. That gate is
+ * security-adjacent (`composer/attachmentValue.ts` names the connected account the
+ * dispatch resolver reauthorizes), and it was previously re-spelled inline at every
+ * gate and every filter predicate that needed it.
+ *
+ * The comparison is component-wise rather than over the rendered string. Rendering is
+ * injective, so both answers agree today; comparing components keeps that true without
+ * depending on the rendering staying injective, and costs nothing.
+ */
+export function sameTriageSourceIdentity(
+    left: PluginContributionIdentity,
+    right: PluginContributionIdentity,
+): boolean {
+    return left.pluginId === right.pluginId && left.localId === right.localId;
 }
 
 /**

@@ -1,12 +1,14 @@
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 
 import type {
   AgentTranscriptFileFollowHandle,
   AgentTranscriptFileFollowService,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   createClaudeWorkflowJournalWrapper,
+  createClaudeWorkflowRunRecordWrapper,
   parseClaudeWorkflowFact,
 } from './correlation.js';
 
@@ -34,10 +36,70 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
   const entriesByRunId = new Map<string, WorkflowJournalEntry>();
   const pendingRegistrations = new Set<Promise<void>>();
   const pendingClosures = new Set<Promise<void>>();
+  const pendingRecordReads = new Set<Promise<void>>();
+  const runRecordsReadByRunId = new Set<string>();
   let disposed = false;
 
   function logError(message: string, error: unknown): void {
     params.logError?.(message, error);
+  }
+
+  /**
+   * Read the run's durable record, which sits BESIDE the sidecar directory rather than inside it.
+   *
+   * Layout, verified on disk:
+   *   `<sessionRoot>/subagents/workflows/<runId>/`   <- `transcriptDir`, the journal
+   *   `<sessionRoot>/workflows/<runId>.json`         <- this record
+   * so the path is derived structurally from the directory this follower already holds — three
+   * levels up, then the run id, which IS that directory's own name. Nothing is guessed.
+   *
+   * Written once at terminal state, so it is retried until it appears and then never re-read. A
+   * missing file is the NORMAL state of a live run, not a fault, and is not latched: latching it
+   * would permanently deny a finished run the only phase attribution it will ever have.
+   *
+   * Treated as an INTERNAL, undocumented artifact throughout: unknown shapes are dropped by the
+   * shared `workflow_progress[]` parser rather than trusted, and a read that yields nothing is
+   * REPORTED rather than swallowed, so a shape change downgrades this run's detail instead of
+   * failing the session.
+   */
+  function readRunRecord(entry: WorkflowJournalEntry): void {
+    if (runRecordsReadByRunId.has(entry.workflowToolUseId)) return;
+    const runId = basename(entry.transcriptDir);
+    if (!runId.startsWith('wf_')) return;
+    const recordPath = join(dirname(dirname(dirname(entry.transcriptDir))), 'workflows', `${runId}.json`);
+    const read = (async () => {
+      let raw: string;
+      try {
+        raw = await readFile(recordPath, 'utf8');
+      } catch {
+        // The overwhelmingly common case while a run is still going: it has not been written yet.
+        return;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (error) {
+        logError(`workflow run record ${recordPath} is not readable JSON`, error);
+        return;
+      }
+      const progress = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>).workflowProgress
+        : undefined;
+      if (!Array.isArray(progress) || progress.length === 0) {
+        logError(`workflow run record ${recordPath} carries no workflowProgress`, null);
+        return;
+      }
+      // Latched only now — the file exists, parsed, and had content, so re-reading it cannot say
+      // anything new.
+      runRecordsReadByRunId.add(entry.workflowToolUseId);
+      params.onJournalValue(createClaudeWorkflowRunRecordWrapper({
+        workflowToolUseId: entry.workflowToolUseId,
+        workflowProgress: progress,
+        ...(entry.sourceSessionId ? { sourceSessionId: entry.sourceSessionId } : {}),
+      }));
+    })();
+    pendingRecordReads.add(read);
+    void read.finally(() => pendingRecordReads.delete(read));
   }
 
   function closeEntry(runId: string, options?: Readonly<{ finalDrain?: boolean }>): void {
@@ -121,6 +183,10 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
       });
     },
     markRunCompleted(runId) {
+      // The record is written at terminal state, so the run ending is the first moment it can
+      // exist — and it is read BEFORE the entry closes, because closing forgets the entry.
+      const entry = entriesByRunId.get(runId);
+      if (entry) readRunRecord(entry);
       closeEntry(runId, { finalDrain: true });
     },
     async syncAll() {
@@ -130,8 +196,16 @@ export function createClaudeWorkflowJournalFollower(params: Readonly<{
       for (const entry of entriesByRunId.values()) {
         await entry.handle.drainNow({ timeoutMs: 5_000 });
       }
+      // The same drain is the BACKFILL trigger: a resumed session replays the transcript that
+      // launched an already-finished run, so its record is on disk before this follower ever saw
+      // it, and no completion event is coming to ask for it.
+      for (const entry of entriesByRunId.values()) readRunRecord(entry);
       if (pendingClosures.size > 0) {
         await Promise.allSettled([...pendingClosures]);
+      }
+      // Record reads are started BY the loop above, so they are awaited after it.
+      while (pendingRecordReads.size > 0) {
+        await Promise.allSettled([...pendingRecordReads]);
       }
     },
     dispose() {

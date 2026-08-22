@@ -1,3 +1,4 @@
+import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 import {
   MAX_TRIAGE_INSTANCE_DRAFTS_V1,
   MAX_TRIAGE_INSTANCE_FAILURES_V1,
@@ -51,18 +52,21 @@ function buildLocator(workspace: BitbucketWorkspaceRef): TriageSourceInstanceDra
 export async function listBitbucketSourceInstances(
   runtime: BitbucketSourceRuntime,
 ): Promise<TriageListInstancesResultV1> {
-  let listing: Awaited<ReturnType<BitbucketSourceRuntime['connectedAccounts']['listAccounts']>>;
-  try {
-    listing = await runtime.connectedAccounts.listAccounts(
-      { purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE },
-      { ...(runtime.signal === undefined ? {} : { signal: runtime.signal }) },
-    );
-  } catch (error) {
+  const outcome = await readTriageSourceAccountListingV1({
+    connectedAccounts: runtime.connectedAccounts,
+    purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE,
+    ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
+  });
+  if (outcome.kind === 'failed') {
     return {
       kind: 'failed',
-      failure: toTriageSourceFailure(classifyBitbucketAuthorizationThrow(error)),
+      failure: toTriageSourceFailure(classifyBitbucketAuthorizationThrow(outcome.error)),
     };
   }
+  // A purpose with no selected account has an empty authorized set. Bitbucket was
+  // never asked, so it is not what refused the reader.
+  const listing: Awaited<ReturnType<BitbucketSourceRuntime['connectedAccounts']['listAccounts']>>
+    = outcome.kind === 'unbound' ? { status: 'complete', accounts: [] } : outcome.listing;
 
   const candidates: TriageSourceInstanceDraftV1[] = [];
   const failures: InstanceFailure[] = [];

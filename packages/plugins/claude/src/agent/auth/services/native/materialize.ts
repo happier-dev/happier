@@ -1,8 +1,11 @@
 import { chmod, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type {
+    OauthCredentialRecord,
+    TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import {
     buildClaudeCodeCredentialPayload,
@@ -22,6 +25,7 @@ import {
     writeClaudeCodeNativeAuthProvenance,
 } from './provenance.js';
 import { reconcileClaudeAccountScopedRootConfig } from '../workspaceTrust.js';
+import { readClaudeNativeAccountIdentity } from './accountIdentity.js';
 
 export type ClaudeNativeAuthMaterializationDiagnostic = Readonly<{
     code: string;
@@ -146,7 +150,7 @@ export function buildClaudeCodeNativeAuthDiagnostic(
 }
 
 export function diagnoseClaudeCodeNativeAuthMaterialization(params: Readonly<{
-    record: ConnectedServiceCredentialRecordV1;
+    record: OauthCredentialRecord | TokenCredentialRecord;
 }>): readonly ClaudeNativeAuthMaterializationDiagnostic[] {
     const built = buildClaudeCodeCredentialPayload(params.record);
     return built.status === 'ok' ? [] : [diagnosticForHealth(built.health)];
@@ -177,7 +181,7 @@ function lazySweepKey(params: Readonly<{
 }
 
 function scheduleLazyStaleKeychainSweep(params: Readonly<{
-    exec: PluginExecService;
+    exec: ExecService;
     username?: string | null | undefined;
     homeDir?: string | null | undefined;
 }>): void {
@@ -216,7 +220,7 @@ function readNonBlankString(value: unknown): string | null {
 }
 
 async function shouldPreserveClaudeAccountScopedState(params: Readonly<{
-    record: ConnectedServiceCredentialRecordV1;
+    record: OauthCredentialRecord | TokenCredentialRecord;
     claudeConfigDir: string;
     existingProvenance: Awaited<ReturnType<typeof readClaudeCodeNativeAuthProvenance>>;
     incomingPayload: ReturnType<typeof buildClaudeCodeCredentialPayload> & { status: 'ok' };
@@ -237,11 +241,9 @@ async function shouldPreserveClaudeAccountScopedState(params: Readonly<{
     const existingOauth = existingCredential.claudeAiOauth;
     const incomingOauth = params.incomingPayload.payload.claudeAiOauth;
     if (existingOauth.subscriptionType !== incomingOauth.subscriptionType || existingOauth.rateLimitTier !== incomingOauth.rateLimitTier) return false;
-    const oauthAccount = root?.oauthAccount && typeof root.oauthAccount === 'object' && !Array.isArray(root.oauthAccount)
-        ? root.oauthAccount as Record<string, unknown>
-        : null;
-    const accountId = readNonBlankString(oauthAccount?.accountUuid) ?? readNonBlankString(oauthAccount?.uuid);
-    const email = readNonBlankString(oauthAccount?.emailAddress) ?? readNonBlankString(oauthAccount?.email);
+    const accountIdentity = readClaudeNativeAccountIdentity(root);
+    const accountId = accountIdentity?.providerAccountId ?? null;
+    const email = accountIdentity?.providerEmail ?? null;
     if (params.record.oauth.providerAccountId && accountId !== params.record.oauth.providerAccountId) return false;
     if (params.record.oauth.providerEmail && email !== params.record.oauth.providerEmail) return false;
     return true;
@@ -273,8 +275,8 @@ async function restoreFileSnapshots(snapshots: readonly FileRollbackSnapshot[]):
 }
 
 export async function materializeClaudeCodeNativeAuth(params: Readonly<{
-    exec?: PluginExecService | null | undefined;
-    record: ConnectedServiceCredentialRecordV1;
+    exec?: ExecService | null | undefined;
+    record: OauthCredentialRecord | TokenCredentialRecord;
     claudeConfigDir: string;
     homeDir?: string | null | undefined;
     username?: string | null | undefined;

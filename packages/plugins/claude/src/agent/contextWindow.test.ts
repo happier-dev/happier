@@ -28,7 +28,9 @@ describe('Claude 1M model-id variant facts', () => {
 
     it('classifies always-1M vs opt-in 1M models, [1m]-tolerant', () => {
         expect(isClaude1mAlwaysOnModelId('claude-opus-5')).toBe(true);
+        expect(isClaude1mAlwaysOnModelId('claude-sonnet-5')).toBe(true);
         expect(isClaude1mAlwaysOnModelId('claude-fable-5')).toBe(true);
+        expect(isClaude1mAlwaysOnModelId('claude-mythos-5')).toBe(true);
         expect(isClaude1mAlwaysOnModelId('claude-opus-4-8')).toBe(true);
         expect(isClaude1mAlwaysOnModelId('claude-opus-4-7')).toBe(true);
         expect(isClaude1mAlwaysOnModelId('claude-sonnet-4-6')).toBe(false);
@@ -48,7 +50,11 @@ describe('resolveClaudeContextWindowTokensForModelId', () => {
     it('resolves 1M for always-1M models even with a BASE id (JSONL reports base ids)', () => {
         expect(resolveClaudeContextWindowTokensForModelId('claude-opus-5'))
             .toBe(CLAUDE_1M_CONTEXT_WINDOW_TOKENS);
+        expect(resolveClaudeContextWindowTokensForModelId('claude-sonnet-5'))
+            .toBe(CLAUDE_1M_CONTEXT_WINDOW_TOKENS);
         expect(resolveClaudeContextWindowTokensForModelId('claude-fable-5'))
+            .toBe(CLAUDE_1M_CONTEXT_WINDOW_TOKENS);
+        expect(resolveClaudeContextWindowTokensForModelId('claude-mythos-5'))
             .toBe(CLAUDE_1M_CONTEXT_WINDOW_TOKENS);
     });
 

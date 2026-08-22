@@ -8,6 +8,7 @@ import {
 import {
   ScmSelectedMutationPathSchema,
 } from '@happier-dev/plugin-sdk/scm';
+import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 
 import { GIT_INSTALLABLE_DEP_ID } from './installables/gitInstallable.js';
 
@@ -68,7 +69,7 @@ function validateContainedPath(rawPath: string, cwd: string): { ok: true; relati
   })();
   const resolvedPath = path.resolve(canonicalCwd, rawPath);
   const rel = relative(canonicalCwd, resolvedPath);
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+  if (!isCanonicalAbsolutePathInsideRoot(canonicalCwd, resolvedPath)) {
     return { ok: false, error: `Path outside working directory: ${rawPath}` };
   }
   return { ok: true, relativePath: rel === '' ? '.' : rel.split(sep).join('/') };

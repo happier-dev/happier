@@ -10,6 +10,7 @@ import {
     TriageConfiguredSourceInstanceV1Schema,
     TriageEntryRefV1Schema,
     TriageLinkedSessionProjectionV1Schema,
+    TriageSourceDescriptorV1Schema,
     TriageSourceInstanceIdV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -61,6 +62,20 @@ export const TriageReadEntryDetailInputV1JsonSchema: PluginJsonSchema =
  * keeps its `sessionId` and omits the two presentation fields, exactly as
  * `CONTRACT.md` §7 requires; no reader may infer that such a Session was never
  * linked.
+ *
+ * `sourceDescriptor` is the entry's own source's declared descriptor, exactly
+ * as the target parsed it from the admitted snapshot — the same typed value the
+ * aggregate list Action reads its declared kind vocabulary from. It is carried
+ * here rather than on the aggregate list result because it is bounded per
+ * *entry* here and per *configured connection* there: `descriptor` measures
+ * 77_679 encoded bytes at its structural maximum, and thirty-two of them do not
+ * fit under the one Action byte gate the list result already spends 871_886 of
+ * (`actions/maximumEncodedActionValue.test.ts`).
+ *
+ * It is optional and absent means "no admitted V1 contribution from that source
+ * right now" — never a placeholder, and never a claim that the source declared
+ * nothing. The reader that has it names the source and the entry kind in the
+ * source's own words; the reader that does not says neither.
  */
 export const TriageReadEntryDetailResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
@@ -69,6 +84,7 @@ export const TriageReadEntryDetailResultV1Schema = defineProtocolUnion([
         linkedSessions: defineProtocolArray(TriageLinkedSessionProjectionV1Schema, {
             maxItems: MAX_TRIAGE_LINKED_SESSIONS_V1,
         }),
+        sourceDescriptor: TriageSourceDescriptorV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('unavailable'),

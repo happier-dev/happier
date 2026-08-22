@@ -1,3 +1,5 @@
+import { assertClaudeMcpConfigArgsSafeForDirectSpawn } from '../../mcp/materializeConfigArgs.js';
+
 export type ClaudeTerminalSpawnOptionOverrides = Readonly<{
     model?: string | null;
     fallbackModel?: string | null;
@@ -13,7 +15,7 @@ export type ClaudeTerminalUserArgPartition = Readonly<{
 
 export const CLAUDE_TERMINAL_YOLO_ALLOW_FLAG = '--allow-dangerously-skip-permissions';
 
-const FLAGS_WITH_VALUE = new Set<string>([
+const FLAGS_WITH_REQUIRED_VALUE = new Set<string>([
     '--model',
     '--effort',
     '--permission-mode',
@@ -30,9 +32,10 @@ const FLAGS_WITH_VALUE = new Set<string>([
     '--append-system-prompt',
     '--fallback-model',
     '--setting-sources',
-    '--resume',
     '--session-id',
 ]);
+
+const FLAGS_WITH_OPTIONAL_VALUE = new Set<string>(['--resume', '-r']);
 
 function normalizeNonEmptyString(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
@@ -148,6 +151,7 @@ export function partitionClaudeTerminalUserArgs(args: readonly string[] | undefi
     if (!args) {
         return { flagArgs, positionalArgs, trailingPermissionFlagArgs };
     }
+    assertClaudeMcpConfigArgsSafeForDirectSpawn(args);
 
     for (let index = 0; index < args.length; index += 1) {
         const arg = args[index];
@@ -185,8 +189,11 @@ export function partitionClaudeTerminalUserArgs(args: readonly string[] | undefi
         }
         if (arg.startsWith('-')) {
             flagArgs.push(arg);
-            if (FLAGS_WITH_VALUE.has(arg) && index + 1 < args.length) {
-                flagArgs.push(args[index + 1]!);
+            const nextArg = index + 1 < args.length ? args[index + 1] : undefined;
+            const consumesNextArg = FLAGS_WITH_REQUIRED_VALUE.has(arg)
+                || (FLAGS_WITH_OPTIONAL_VALUE.has(arg) && readNextFlagValue(args, index) !== undefined);
+            if (consumesNextArg && nextArg !== undefined) {
+                flagArgs.push(nextArg);
                 index += 1;
             }
             continue;

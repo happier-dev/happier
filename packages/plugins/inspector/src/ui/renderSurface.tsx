@@ -28,6 +28,7 @@ import {
   Text,
   defineUiSurface,
   usePluginTheme,
+  usePluginTranslation,
   useSurfaceContext,
 } from '@happier-dev/plugin-ui';
 
@@ -164,14 +165,9 @@ export function InspectorSurface({ hostApi, surface, subPath }: InspectorRenderS
   const [quickActionsContextMenuOpen, setQuickActionsContextMenuOpen] = React.useState(false);
   const surfaceContext = useSurfaceContext();
   const theme = usePluginTheme();
-  // §3.2: the host projects this plugin's own translation bundle for the active
-  // locale onto the surface, already merged over its English fallback. The
-  // surface resolves keys synchronously and owns no string catalog; an author
-  // fallback is always supplied so an unknown key never renders raw.
-  const text = React.useCallback(
-    (key: string, fallback: string) => surfaceContext.translations[key] ?? fallback,
-    [surfaceContext.translations],
-  );
+  // §3.2: built-in and external authors use the same public translation seam,
+  // including bounded interpolation of host-projected plugin messages.
+  const text = usePluginTranslation();
 
   // EU-5b: the host owns the route; the plugin owns everything under it. On the
   // page placement the surface reads its own location from `subPath` and moves
@@ -362,12 +358,29 @@ export function InspectorSurface({ hostApi, surface, subPath }: InspectorRenderS
           <Stack testID="inspector-last-reload" gap="small">
             <Status
               tone={lastReload.ok ? 'success' : 'danger'}
-              label={`${lastReload.ok
+              label={lastReload.ok
                 ? text('plugins.inspector.surface.reloadSucceeded', 'Last reload succeeded')
-                : text('plugins.inspector.surface.reloadFailed', 'Last reload failed')}${lastReload.registryStatus ? ` — registry: ${lastReload.registryStatus}` : ''}`}
+                : text('plugins.inspector.surface.reloadFailed', 'Last reload failed')}
             />
+            {lastReload.registryStatus ? (
+              <Text
+                value={text(
+                  'plugins.inspector.surface.registryStatus',
+                  'Registry: {status}',
+                  { status: lastReload.registryStatus },
+                )}
+                variant="caption"
+                tone="secondary"
+              />
+            ) : null}
             {lastReload.changedPluginIds && lastReload.changedPluginIds.length > 0 ? (
-              <Text value={`Changed: ${lastReload.changedPluginIds.join(', ')}`} />
+              <Text
+                value={text(
+                  'plugins.inspector.surface.changedPlugins',
+                  'Changed: {plugins}',
+                  { plugins: lastReload.changedPluginIds.join(', ') },
+                )}
+              />
             ) : null}
             <CodeBlock
               code={JSON.stringify(lastReload, null, 2)}
@@ -433,6 +446,7 @@ export function InspectorSurface({ hostApi, surface, subPath }: InspectorRenderS
             <Action.Copy
               value={JSON.stringify(plugins ?? [], null, 2)}
               title="Copy plugin inventory"
+              titleKey="plugins.inspector.surface.copyInventory"
             />
             <Action.Refresh
               onRefresh={refreshPluginList}
@@ -443,12 +457,14 @@ export function InspectorSurface({ hostApi, surface, subPath }: InspectorRenderS
             <Action.OpenExternal
               url="https://happier.dev/docs/plugins"
               title="Open plugin documentation"
+              titleKey="plugins.inspector.surface.openDocumentation"
             />
             {canOpenSurface ? (
               <Action.OpenSurface
                 view="inspector-page"
                 input={{ source: 'inspector-action-panel' }}
                 title="Open inspector page"
+                titleKey="plugins.inspector.surface.openInspector"
               />
             ) : null}
           </ActionPanel.Section>

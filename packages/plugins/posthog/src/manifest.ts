@@ -40,6 +40,7 @@ import {
     POSTHOG_SOURCE_CONTRIBUTION_ID,
 } from './posthogContracts.js';
 import { POSTHOG_ENTRY_KIND } from './source/map/entrySnapshot.js';
+import { POSTHOG_UI_TRANSLATIONS } from './ui/translations.js';
 import {
     PosthogIssueActivityInputV1Schema,
     PosthogIssueActivityResultV1Schema,
@@ -149,7 +150,7 @@ export const POSTHOG_PLUGIN = definePlugin({
     description: 'Brings PostHog error issues into PRs & Issues with their own detail body.',
     engines: { happier: '^0.0.0' },
     runtime: { apiVersion: 1 },
-    entrypoints: { daemon: './dist/index.js' },
+    entrypoints: { daemon: './.happier-plugin/daemon.js' },
     hostAccess: {
         required: [{
             id: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
@@ -192,11 +193,17 @@ export const POSTHOG_PLUGIN = definePlugin({
             // empty shell rather than a useful surface.
             requiredHostMethods: ['executeAction'],
         }, {
+            // Selected by the host only when the native renderer above cannot be
+            // mounted, through the chain the contribution binds below. Declaring it
+            // here does not place it: an unbound fallback can never be reached.
             id: POSTHOG_DETAIL_FALLBACK_RENDERER_ID,
             kind: 'declarative',
             root: {
                 kind: 'text',
-                text: 'This PostHog issue needs a host that can mount its detail surface.',
+                text: {
+                    key: 'plugins.posthog.detail.fallback.body',
+                    fallback: 'PostHog issue details are unavailable on this surface.',
+                },
             },
         }, {
             id: POSTHOG_TRIAGE_SETTINGS_RENDERER_ID,
@@ -228,16 +235,38 @@ export const POSTHOG_PLUGIN = definePlugin({
         translations: [{
             locale: 'en',
             messages: {
+                ...POSTHOG_UI_TRANSLATIONS.en,
                 'plugins.posthog.settings.group': 'PostHog',
                 'plugins.posthog.settings.sources': 'PRs & Issues',
                 'plugins.posthog.settings.sources.subtitle':
                     'Choose which PostHog organizations and projects appear in PRs & Issues.',
             },
+        }, {
+            locale: 'ru', messages: { ...POSTHOG_UI_TRANSLATIONS.ru, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR и задачи', 'plugins.posthog.settings.sources.subtitle': 'Выберите организации и проекты PostHog, которые будут отображаться в разделе PR и задач.' },
+        }, {
+            locale: 'pl', messages: { ...POSTHOG_UI_TRANSLATIONS.pl, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR-y i zgłoszenia', 'plugins.posthog.settings.sources.subtitle': 'Wybierz organizacje i projekty PostHog wyświetlane w sekcji PR-ów i zgłoszeń.' },
+        }, {
+            locale: 'es', messages: { ...POSTHOG_UI_TRANSLATIONS.es, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR e incidencias', 'plugins.posthog.settings.sources.subtitle': 'Elige qué organizaciones y proyectos de PostHog aparecen en PR e incidencias.' },
+        }, {
+            locale: 'fr', messages: { ...POSTHOG_UI_TRANSLATIONS.fr, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR et tickets', 'plugins.posthog.settings.sources.subtitle': 'Choisissez les organisations et projets PostHog affichés dans PR et tickets.' },
+        }, {
+            locale: 'it', messages: { ...POSTHOG_UI_TRANSLATIONS.it, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR e segnalazioni', 'plugins.posthog.settings.sources.subtitle': 'Scegli le organizzazioni e i progetti PostHog da mostrare in PR e segnalazioni.' },
+        }, {
+            locale: 'pt', messages: { ...POSTHOG_UI_TRANSLATIONS.pt, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PRs e problemas', 'plugins.posthog.settings.sources.subtitle': 'Escolha as organizações e os projetos PostHog apresentados em PRs e problemas.' },
+        }, {
+            locale: 'ca', messages: { ...POSTHOG_UI_TRANSLATIONS.ca, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR i incidències', 'plugins.posthog.settings.sources.subtitle': 'Tria les organitzacions i els projectes de PostHog que es mostren a PR i incidències.' },
+        }, {
+            locale: 'zh-Hans', messages: { ...POSTHOG_UI_TRANSLATIONS['zh-Hans'], 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR 和问题', 'plugins.posthog.settings.sources.subtitle': '选择要在 PR 和问题中显示的 PostHog 组织和项目。' },
+        }, {
+            locale: 'zh-Hant', messages: { ...POSTHOG_UI_TRANSLATIONS['zh-Hant'], 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR 與問題', 'plugins.posthog.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 PostHog 組織和專案。' },
+        }, {
+            locale: 'ja', messages: { ...POSTHOG_UI_TRANSLATIONS.ja, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR と課題', 'plugins.posthog.settings.sources.subtitle': 'PR と課題に表示する PostHog の組織とプロジェクトを選択します。' },
         }],
     },
     actions: {
         [POSTHOG_ACTION_IDS.listInstances]: {
             title: 'Discover PostHog organizations',
+            execution: { target: 'daemon' },
             description: 'Lists the PostHog organizations each connected PostHog account can reach.',
             scopes: ['global'],
             surfaces: sources.operations.listInstances.declaration.surfaces,
@@ -249,6 +278,7 @@ export const POSTHOG_PLUGIN = definePlugin({
         },
         [POSTHOG_ACTION_IDS.scan]: {
             title: 'Scan PostHog error issues',
+            execution: { target: 'daemon' },
             description: 'Reads one page of the configured PostHog error-issue walk.',
             scopes: ['global'],
             surfaces: sources.operations.scan.declaration.surfaces,
@@ -261,6 +291,7 @@ export const POSTHOG_PLUGIN = definePlugin({
         },
         [POSTHOG_ACTION_IDS.issueEvents]: {
             title: 'Read sampled PostHog occurrences',
+            execution: { target: 'daemon' },
             description: 'Reads one bounded page of sampled exception events for one PostHog issue.',
             scopes: ['global'],
             // The published Triage roles declare the `plugin` surface; this native read
@@ -275,6 +306,7 @@ export const POSTHOG_PLUGIN = definePlugin({
         },
         [POSTHOG_ACTION_IDS.issueActivity]: {
             title: 'Read PostHog issue activity',
+            execution: { target: 'daemon' },
             description: 'Reads one page of the recorded activity for one PostHog issue.',
             scopes: ['global'],
             surfaces: ['plugin'],
@@ -287,6 +319,7 @@ export const POSTHOG_PLUGIN = definePlugin({
         },
         [POSTHOG_ACTION_IDS.get]: {
             title: 'Read a PostHog error issue',
+            execution: { target: 'daemon' },
             description: 'Reads one PostHog error issue authoritatively through its configured environment.',
             scopes: ['global'],
             surfaces: sources.operations.get.declaration.surfaces,
@@ -343,7 +376,12 @@ export const POSTHOG_PLUGIN = definePlugin({
                         scan: sources.operations.scan.bind(POSTHOG_ACTION_IDS.scan),
                         get: sources.operations.get.bind(POSTHOG_ACTION_IDS.get),
                     },
-                    surfaces: { detail: { renderer: POSTHOG_DETAIL_RENDERER_ID } },
+                    surfaces: {
+                        detail: {
+                            renderer: POSTHOG_DETAIL_RENDERER_ID,
+                            fallbackRenderers: [POSTHOG_DETAIL_FALLBACK_RENDERER_ID],
+                        },
+                    },
                 }),
             },
         },

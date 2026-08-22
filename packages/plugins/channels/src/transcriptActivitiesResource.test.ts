@@ -15,6 +15,7 @@ import {
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 import { TRANSCRIPT_ACTIVITIES_RESOURCE_RUNTIME } from './transcriptActivitiesResource.js';
+import { resourceText } from './testkit/resourceContract.js';
 
 class MemoryAccountCollection {
   readonly rows = new Map<string, Readonly<{
@@ -224,7 +225,7 @@ describe('Channels transcript Activities Resource', () => {
       accountStorage: accountStorageFor(state, deliveries),
     });
 
-    expect(JSON.parse(serialized)).toEqual({
+    expect(JSON.parse(resourceText(serialized))).toEqual({
       version: 1,
       activities: [{
         localActivityId: expect.stringMatching(/^delivery-[a-f0-9]{64}$/u),

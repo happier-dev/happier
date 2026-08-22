@@ -9,6 +9,28 @@ import {
 import * as entry from './index.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
+/**
+ * `PluginManifest` types each Collection declaration as `{ id, [key: string]: unknown }`.
+ * Read its declared migration ids explicitly so a manifest that stops declaring
+ * them fails here instead of comparing against an absent list.
+ */
+function declaredMigrationIds(
+  declaration: Readonly<{ readonly [key: string]: unknown }>,
+): readonly string[] {
+  const migrations = declaration.migrations;
+  if (!Array.isArray(migrations)) {
+    throw new Error('Expected the Collection declaration to declare its migrations.');
+  }
+  return migrations.map((migration) => {
+    const id = (migration as Readonly<{ id?: unknown }>).id;
+    if (typeof id !== 'string') {
+      throw new Error('Expected each declared Collection migration to carry a string id.');
+    }
+    return id;
+  });
+}
+
+
 describe('Channels plugin daemon entry', () => {
   it('exposes the callable activation the host resolves from the declared entrypoint', () => {
     expect(PLUGIN_MANIFEST.entrypoints?.daemon).toBe('./dist/index.js');
@@ -38,7 +60,7 @@ describe('Channels plugin daemon entry', () => {
     );
     for (const declaration of parsed.manifest.contributes.accountCollections) {
       expect(projection[declaration.id]?.map((migration) => migration.id))
-        .toEqual(declaration.migrations.map((migration) => migration.id));
+        .toEqual(declaredMigrationIds(declaration));
     }
   });
 });

@@ -22,7 +22,7 @@ function readTimestampMs(value: unknown): number | null {
   if (typeof value === 'number') return parseTimestampMs(value);
   const numeric = Number(value);
   if (Number.isFinite(numeric) && numeric >= 0) {
-    return Math.trunc(numeric < 10_000_000_000 ? numeric * 1000 : numeric);
+    return parseTimestampMs(numeric);
   }
   const text = readString(value);
   if (!text) return null;

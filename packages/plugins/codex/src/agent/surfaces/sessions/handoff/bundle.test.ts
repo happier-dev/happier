@@ -607,6 +607,27 @@ describe('codex session handoff bundle', () => {
     }
   });
 
+  it('imports a rollout below a dot-dot-prefixed directory without treating it as traversal', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-dot-dot-prefix-'));
+    const content = Buffer.from('{"event":"dot-dot-prefix"}\n', 'utf8');
+
+    await importCodexSessionBundle({
+      bundle: {
+        agentId: 'codex',
+        remoteSessionId: 'thread_dot_dot_prefix',
+        files: [{
+          relativePath: '..build/rollout-dot-dot-prefix.jsonl',
+          contentBase64: content.toString('base64'),
+        }],
+      },
+      targetPath: '/repo-target',
+      env: { CODEX_HOME: codexHome },
+    });
+
+    await expect(readFile(join(codexHome, '..build', 'rollout-dot-dot-prefix.jsonl')))
+      .resolves.toEqual(content);
+  });
+
   it('does not import source-machine codex homePath affinity into the target runtime descriptor', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-homepath-'));
     const targetPath = join(tmpdir(), 'repo-target-homepath');

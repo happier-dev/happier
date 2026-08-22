@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { join } from 'node:path';
 
 import {
@@ -11,8 +11,8 @@ import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js
 function createContext(): AgentSessionRuntimeContext {
   return {
     services: {
-      settings: { get: vi.fn(async () => null) },
-      storage: { session: { get: vi.fn(), set: vi.fn() } },
+      settings: { forScope: vi.fn(() => ({ get: vi.fn(async () => null) })) },
+      storage: { daemonSession: { get: vi.fn(), set: vi.fn() } },
       logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       exec: {},
     },
@@ -30,7 +30,6 @@ function createContext(): AgentSessionRuntimeContext {
         transcripts: { fileFollow: {} },
         accountUsage: {},
         auth: {},
-        systemRecords: {},
         workflowActivity: {},
       },
     },

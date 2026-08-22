@@ -5,11 +5,15 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-  SessionMetadataWriteRequestV1,
   SessionSystemRecordReadRequestV1,
   SessionSystemRecordReadResultV1,
   SessionSystemRecordWriteRequestV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/agents';
+import {
+  SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY,
+  type SessionActivityHeadlineBundleV1,
+  type SessionWorkStateV1,
+} from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import {
   createEventsFixture,
@@ -36,14 +40,6 @@ const TWO_AGENT_PROGRESS: unknown[] = [
   { type: 'workflow_agent', agentId: 'agent_1', label: 'web_search', phaseIndex: 1, phaseTitle: 'Research', state: 'done' },
   { type: 'workflow_agent', agentId: 'agent_2', label: 'coder', phaseIndex: 2, phaseTitle: 'Implementation', state: 'running' },
 ];
-
-function applyMetadataWrite(
-  current: Record<string, unknown>,
-  request: SessionMetadataWriteRequestV1,
-): Record<string, unknown> {
-  if (request.kind === 'set') return { ...request.metadata };
-  return { ...request.handler(current) };
-}
 
 describe('Claude agent-SDK session work-state ingress', () => {
   it('publishes a Dynamic Workflow run (phases/agents) from the SDK stream and binds the host writers', async () => {
@@ -82,8 +78,13 @@ describe('Claude agent-SDK session work-state ingress', () => {
         payload: request.payload,
       };
     });
-    const writeMetadata = vi.fn(async (request: SessionMetadataWriteRequestV1) => {
-      metadata = applyMetadataWrite(metadata, request);
+    const publishHeadline = vi.fn(async (bundle: SessionActivityHeadlineBundleV1) => {
+      // One mutation, both keys — the same merge the host performs.
+      metadata = {
+        ...metadata,
+        sessionWorkflowActivityHeadlineV1: bundle.workflow,
+        [SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY]: bundle.agentActivity,
+      };
     });
     const readSystemRecord = vi.fn(async (
       request: SessionSystemRecordReadRequestV1,
@@ -94,7 +95,7 @@ describe('Claude agent-SDK session work-state ingress', () => {
       exec: exec.service,
       sessionWriteSystemRecord: writeSystemRecord,
       sessionReadSystemRecord: readSystemRecord,
-      sessionWriteMetadata: writeMetadata,
+      sessionPublishWorkflowHeadline: publishHeadline,
     });
 
     const sessionRuntime = await bindClaudeAgentSdkFallbackSession({
@@ -209,7 +210,7 @@ describe('Claude agent-SDK session work-state ingress', () => {
     const ctx = createPluginContextFixture(terminalHost.service, events.service, {
       exec: exec.service,
       sessionWriteSystemRecord: writeSystemRecord,
-      sessionWriteMetadata: vi.fn(async () => undefined),
+      sessionPublishWorkflowHeadline: vi.fn(async () => undefined),
     });
 
     const sessionRuntime = await bindClaudeAgentSdkFallbackSession({
@@ -303,13 +304,9 @@ describe('Claude agent-SDK session work-state ingress', () => {
     };
     await writeFile(transcriptPath, `${JSON.stringify(goalRow)}\n`, 'utf8');
 
-    let metadata: Record<string, unknown> = {};
-    const writeMetadata = vi.fn(async (request: SessionMetadataWriteRequestV1) => {
-      metadata = applyMetadataWrite(metadata, request);
-    });
+    const goalSnapshots: SessionWorkStateV1[] = [];
     const ctx = createPluginContextFixture(terminalHost.service, events.service, {
       exec: exec.service,
-      sessionWriteMetadata: writeMetadata,
     });
 
     const sessionRuntime = createClaudeAgentSdkTurnOperations({
@@ -320,6 +317,7 @@ describe('Claude agent-SDK session work-state ingress', () => {
       happierSessionId: 'happy-session-goal',
       publishTranscriptMessages: true,
       enableSessionWorkState: true,
+      publishGoalWorkState: (snapshot) => { goalSnapshots.push(snapshot); },
     });
     const runtime = expectRuntimeEnvelope(sessionRuntime).operations;
 
@@ -334,10 +332,7 @@ describe('Claude agent-SDK session work-state ingress', () => {
       await exec.emit({ type: 'system', subtype: 'init', session_id: providerSessionId });
 
       await vi.waitFor(() => {
-        expect(writeMetadata).toHaveBeenCalled();
-        const workState = metadata.sessionWorkStateV1 as
-          | { items?: Array<{ id: string; kind: string }> }
-          | undefined;
+        const workState = goalSnapshots.at(-1);
         const goalItem = workState?.items?.find((item) => item.id === 'goal:claude');
         expect(goalItem?.kind).toBe('goal');
       });

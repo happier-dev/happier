@@ -28,7 +28,10 @@ export type PosthogUnresolvedReason =
     | 'permission'
     | 'rateLimited'
     | 'redirected'
-    | 'transient'
+    | 'server'
+    | 'timeout'
+    /** A status PostHog's contract gives no meaning to: `400`, `409`, `410`, `422`. */
+    | 'unexpectedStatus'
     | 'transport'
     | 'malformedResponse'
     | 'cancelled'
@@ -51,10 +54,15 @@ export function resolvePosthogCrudFailure(failure: PosthogFailure): PosthogIssue
             return { kind: 'unresolved', because: 'rateLimited' };
         case 'redirected':
             return { kind: 'unresolved', because: 'redirected' };
+        // Three distinct causes, three distinct reasons. Folding them into one
+        // `transient` told the caller that a request PostHog will always reject is
+        // about to succeed, and left one failure code standing for all three.
         case 'server':
+            return { kind: 'unresolved', because: 'server' };
         case 'timeout':
+            return { kind: 'unresolved', because: 'timeout' };
         case 'unexpectedStatus':
-            return { kind: 'unresolved', because: 'transient' };
+            return { kind: 'unresolved', because: 'unexpectedStatus' };
         case 'transport':
             return { kind: 'unresolved', because: 'transport' };
         case 'malformedResponse':

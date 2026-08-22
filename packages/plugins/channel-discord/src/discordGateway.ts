@@ -24,6 +24,12 @@ export type DiscordGatewaySessionStartLimit = Readonly<{
   observedAtMs: number;
 }>;
 
+/** The reconnect window Discord applies to one kind of disconnect. */
+export type DiscordGatewayReconnectDelayBounds = Readonly<{
+  minDelayMs: number;
+  maxDelayMs: number;
+}>;
+
 export type DiscordGatewayEffect =
   | Readonly<{ kind: 'send'; payload: Readonly<{ op: number; d: unknown }> }>
   | Readonly<{ kind: 'dispatch'; sequence: number; event: string; payload: unknown }>
@@ -33,7 +39,7 @@ export type DiscordGatewayEffect =
       reason: 'heartbeatAckMissing' | 'invalidSession' | 'serverRequestedReconnect' | 'applicationAdmissionLost';
     }>
   | Extract<ConversationTransportFactReportInputV1['fact'], Readonly<{ kind: 'historyGap' }>>
-  | Readonly<{ kind: 'reconnect'; canResume: boolean; minDelayMs: number; maxDelayMs: number }>
+  | (Readonly<{ kind: 'reconnect'; canResume: boolean }> & DiscordGatewayReconnectDelayBounds)
   | Readonly<{ kind: 'blocked'; reason: 'identifyLimit' | 'sessionStartLimitRefreshRequired'; retryAtMs: number }>
   | Readonly<{
       kind: 'terminal';
@@ -61,6 +67,16 @@ const DISCORD_RECONNECT_MIN_DELAY_MS = 1_000;
 const DISCORD_RECONNECT_MAX_DELAY_MS = 30_000;
 const DISCORD_INVALID_SESSION_RECONNECT_MIN_DELAY_MS = 1_000;
 const DISCORD_INVALID_SESSION_RECONNECT_MAX_DELAY_MS = 5_000;
+
+/**
+ * The window that applies when the socket ends without the session emitting a
+ * `reconnect` effect — a transport error or an unparseable frame. Discord
+ * states no shorter bound for those, so they use the generic reconnect window.
+ */
+export const DISCORD_DEFAULT_RECONNECT_DELAY_BOUNDS: DiscordGatewayReconnectDelayBounds = Object.freeze({
+  minDelayMs: DISCORD_RECONNECT_MIN_DELAY_MS,
+  maxDelayMs: DISCORD_RECONNECT_MAX_DELAY_MS,
+});
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -398,9 +414,27 @@ export function createDiscordGatewaySession(input: Readonly<{
   };
 }
 
-export function calculateDiscordReconnectDelayMs(attempt: number): number {
+/**
+ * Discord does not use one reconnect window for every disconnect: an Invalid
+ * Session must be re-identified inside a much shorter window than a generic
+ * reconnect. Every `reconnect` effect therefore carries the bounds that apply
+ * to the disconnect that produced it, and the backoff below is computed from
+ * those bounds rather than from a module constant the caller cannot see.
+ */
+export function calculateDiscordReconnectDelayMs(
+  attempt: number,
+  bounds: DiscordGatewayReconnectDelayBounds,
+): number {
   if (!Number.isSafeInteger(attempt) || attempt < 0) {
     throw new Error('Discord Gateway reconnect attempt must be a non-negative integer.');
   }
-  return Math.min(DISCORD_RECONNECT_MAX_DELAY_MS, DISCORD_RECONNECT_MIN_DELAY_MS * (2 ** attempt));
+  if (
+    !Number.isSafeInteger(bounds.minDelayMs)
+    || bounds.minDelayMs <= 0
+    || !Number.isSafeInteger(bounds.maxDelayMs)
+    || bounds.maxDelayMs < bounds.minDelayMs
+  ) {
+    throw new Error('Discord Gateway reconnect delay bounds are invalid.');
+  }
+  return Math.min(bounds.maxDelayMs, bounds.minDelayMs * (2 ** attempt));
 }

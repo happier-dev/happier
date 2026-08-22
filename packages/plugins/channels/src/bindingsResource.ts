@@ -1,4 +1,4 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type {
   PluginDynamicResourceInvocationOptionsV1,
   PluginDynamicResourceRuntime,
@@ -34,13 +34,13 @@ async function readBindingsResource(
       signal: options.signal,
     }));
   } catch (cause) {
-    if (cause instanceof PluginError && cause.code === 'channels_binding_management_row_invalid') {
+    if (isPluginError(cause) && cause.code === 'channels_binding_management_row_invalid') {
       throw new PluginError({
         code: 'channels_bindings_resource_binding_row_invalid',
         message: 'The Channels bindings Resource received an invalid binding row.',
       }, { cause });
     }
-    if (cause instanceof PluginError && cause.code === 'channels_binding_management_page_invalid') {
+    if (isPluginError(cause) && cause.code === 'channels_binding_management_page_invalid') {
       throw new PluginError({
         code: 'channels_bindings_resource_binding_page_invalid',
         message: 'The Channels bindings Resource exceeded the canonical binding bound.',

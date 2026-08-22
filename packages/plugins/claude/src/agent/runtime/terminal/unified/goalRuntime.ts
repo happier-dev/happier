@@ -1,10 +1,5 @@
-import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
-import { mergeSessionWorkStateMetadataV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/sessions/work-state';
 
-import {
-  CLAUDE_GOAL_WORK_STATE_ITEM_ID,
-  CLAUDE_GOAL_WORK_STATE_OWNED_SOURCE_FAMILY,
-} from '../../../transcripts/goalStatus.js';
 import {
   createClaudeGoalWorkStateSource,
   type ClaudeGoalWorkStateSource,
@@ -33,13 +28,6 @@ type GoalControlError = Readonly<{ ok: false; errorCode: string; error: string }
 function stableError(errorCode: string): GoalControlError {
   return { ok: false, errorCode, error: errorCode };
 }
-
-/** Read-modify-write metadata update (the host's merge-safe write seam). */
-export type ClaudeGoalMetadataUpdate = (request: Readonly<{
-  kind: 'update';
-  handler: (current: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>;
-  reason?: string;
-}>) => Promise<void>;
 
 export type ClaudeGoalCommandDelivery =
   | Readonly<{ kind: 'queued' }>
@@ -97,7 +85,6 @@ export function createClaudeUnifiedGoalRuntime(params: Readonly<{
   backendId: string;
   agentId?: string;
   getCurrentClaudeSessionId: () => string | null;
-  writeMetadataUpdate?: ClaudeGoalMetadataUpdate;
   publishWorkStateSnapshot?: (snapshot: SessionWorkStateV1) => void;
   injectGoalCommand: ClaudeGoalCommandInjector;
   logError?: (message: string, error: unknown) => void;
@@ -107,26 +94,10 @@ export function createClaudeUnifiedGoalRuntime(params: Readonly<{
       params.publishWorkStateSnapshot(snapshot);
       return;
     }
-    if (!params.writeMetadataUpdate) {
-      params.logError?.('failed to publish Claude goal work-state snapshot (non-fatal)', new Error('goal work-state publisher unavailable'));
-      return;
-    }
-    void params.writeMetadataUpdate({
-      kind: 'update',
-      // The merge chokepoint resolves `primaryItemId` canonically over the MERGED
-      // item set (shared `resolveSessionWorkStatePrimaryItemId`), preserving a
-      // still-present active task/todo primary so the goal source never steals
-      // primacy (MED-2). No runtime-local primary preservation step.
-      handler: (current) => mergeSessionWorkStateMetadataV1({
-        metadata: current,
-        nextOwned: snapshot,
-        ownedItemIds: [CLAUDE_GOAL_WORK_STATE_ITEM_ID],
-        ownedSourceFamilies: [CLAUDE_GOAL_WORK_STATE_OWNED_SOURCE_FAMILY],
-      }),
-      reason: 'claude_goal_work_state',
-    }).catch((error) => {
-      params.logError?.('failed to publish Claude goal work-state snapshot (non-fatal)', error);
-    });
+    params.logError?.(
+      'failed to publish Claude goal work-state snapshot (non-fatal)',
+      new Error('goal work-state publisher unavailable'),
+    );
   };
 
   const source = createClaudeGoalWorkStateSource({

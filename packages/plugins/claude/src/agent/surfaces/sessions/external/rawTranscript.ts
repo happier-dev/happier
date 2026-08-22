@@ -1,8 +1,7 @@
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
 import {
     readJsonlFileBackwardPage,
     readJsonlFileForward,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import {
     projectClaudeJsonlLineToRawMessage,
@@ -10,6 +9,7 @@ import {
 } from '../../../transcripts/index.js';
 
 import { readClaudeJsonlFileSize, resolveClaudeJsonlSessionFile } from './files.js';
+import type { ClaudeExternalSessionSource } from './source.js';
 
 const DEFAULT_MAX_BYTES = 1024 * 1024;
 const DEFAULT_MAX_ITEMS = 1000;
@@ -141,7 +141,7 @@ async function readFullRawHistory(params: Readonly<{
 }
 
 export async function pageClaudeRawExternalSessionTranscript(params: Readonly<{
-    source: ExternalSessionsSource;
+    source: ClaudeExternalSessionSource;
     env: NodeJS.ProcessEnv;
     remoteSessionId: string;
     cursor?: string;
@@ -276,7 +276,7 @@ export async function readClaudeRawJsonlSessionMessages(params: Readonly<{
 }
 
 export async function readAfterClaudeRawExternalSessionTranscript(params: Readonly<{
-    source: ExternalSessionsSource;
+    source: ClaudeExternalSessionSource;
     env: NodeJS.ProcessEnv;
     remoteSessionId: string;
     cursor: string | null;

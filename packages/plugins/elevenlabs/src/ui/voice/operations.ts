@@ -59,7 +59,12 @@ function readVoiceCatalogEntries(value: unknown): readonly unknown[] | null {
 }
 
 function parseVoices(value: unknown): readonly VoiceProviderCatalogItem[] {
-  const voices = readVoiceCatalogEntries(value) ?? [];
+  // Same rule the provisioning stage already enforces in
+  // `assertProvisionVoiceOwnedByAccount`: a payload with no `voices` array is
+  // unreadable, not an account that owns nothing. Normalizing it to `[]` would
+  // tell the user "no voices available" for a malformed provider response.
+  const voices = readVoiceCatalogEntries(value);
+  if (!voices) throw providerError('provider_response_invalid');
   const rows: VoiceProviderCatalogItem[] = [];
   for (const raw of voices.slice(0, 500)) {
     if (!raw || typeof raw !== 'object') continue;

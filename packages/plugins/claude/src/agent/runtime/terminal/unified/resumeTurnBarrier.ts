@@ -13,6 +13,7 @@ export function createClaudeUnifiedResumeTurnBarrier(params: Readonly<{
   observePromptStart(): boolean;
   observeTerminal(): void;
   dispose(): void;
+  isActive(): boolean;
   isProvisional(): boolean;
 }> {
   let state: 'none' | 'provisional' | 'confirmed' = 'none';
@@ -55,9 +56,8 @@ export function createClaudeUnifiedResumeTurnBarrier(params: Readonly<{
     observeProviderSessionStart(source) {
       if (state !== 'provisional') return;
       sessionStarted = true;
-      // A resume request can legitimately fall back to a fresh provider session (missing/invalid
-      // provider transcript). That SessionStart still proves startup, but only `source=resume`
-      // authorizes the special first-prompt classification below.
+      // Only an authenticated resume SessionStart authorizes the special first-prompt
+      // classification. The enclosing runtime rejects a fresh-start or identity mismatch.
       resumePromptPending = source === 'resume';
       scheduleIdleRelease();
     },
@@ -83,6 +83,7 @@ export function createClaudeUnifiedResumeTurnBarrier(params: Readonly<{
     },
     observeTerminal,
     dispose: observeTerminal,
+    isActive: () => state !== 'none',
     isProvisional: () => state === 'provisional',
   };
 }

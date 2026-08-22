@@ -39,7 +39,6 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
   behavior: {
     descriptorId: 'opencode.uiBehavior.v1',
     guidance: { includeInSessionGettingStartedCliExamples: true },
-    mcpServers: { supportsDetectedConfigScan: true },
     newSession: {
       transcriptStorageModesByBackendMode: {
         server: ['persisted', 'direct'],
@@ -49,7 +48,6 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
     externalSessions: {
       browseDescriptorId: 'opencode.externalSessions.browse.v1',
       sessionHandoffDescriptorId: 'opencode.sessionHandoff.v1',
-      supportsBackgroundFollow: true,
       browse: {
         order: 30,
         sourceOptions: [

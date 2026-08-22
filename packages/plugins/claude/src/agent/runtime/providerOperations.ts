@@ -1,8 +1,8 @@
 import type {
   AgentSessionProviderBinding,
   AgentSessionRuntime,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import type { RuntimeConfigUpdateOutcomeV1 } from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { RuntimeConfigUpdateOutcomeV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { ClaudeProviderEvent } from './providerEvents.js';
 

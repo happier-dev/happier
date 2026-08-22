@@ -221,9 +221,9 @@ describe('buildClaudeSdkResultUsageObservation', () => {
         });
     });
 
-    it('preserves trustworthy upstream cost for a Provider-bound model', () => {
+    it('keeps gateway-routed Claude cost unavailable without billing provenance', () => {
         const observation = buildClaudeSdkResultUsageObservation({
-            modelId: 'deepseek-ai/DeepSeek-V3.1',
+            modelId: 'claude-sonnet-4-6',
             modelSource: 'provider',
             result: {
                 type: 'result',
@@ -237,13 +237,7 @@ describe('buildClaudeSdkResultUsageObservation', () => {
             },
         });
 
-        expect(observation?.cost).toEqual({
-            reportedUsd: 0.25,
-            estimatedUsd: 0,
-            billingContext: 'unknown',
-            costSource: 'provider_reported',
-            currency: 'USD',
-        });
+        expect(observation?.cost).toBeNull();
     });
 
     it('drops a result with no tokens, cost, or context usage', () => {

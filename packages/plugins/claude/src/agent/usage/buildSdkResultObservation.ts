@@ -68,7 +68,11 @@ export function buildClaudeSdkResultUsageObservation(params: Readonly<{
         (outputTokens ?? 0) +
         (cacheReadTokens ?? 0) +
         (cacheCreationTokens ?? 0);
-    const reportedCost = asFiniteNonNegativeNumber(result.total_cost_usd);
+    // The Claude SDK result does not establish what a provider-bound gateway charged.
+    // Do not project its cost field as the selected Provider's reported billing amount.
+    const reportedCost = params.modelSource === 'provider'
+        ? null
+        : asFiniteNonNegativeNumber(result.total_cost_usd);
     const contextWindowTokens = readContextWindowTokensFromModelUsage({
         modelUsage: result.modelUsage,
         modelId: params.modelId,
@@ -89,7 +93,7 @@ export function buildClaudeSdkResultUsageObservation(params: Readonly<{
             output_tokens: outputTokens ?? undefined,
             cache_read_input_tokens: cacheReadTokens ?? undefined,
             cache_creation_input_tokens: cacheCreationTokens ?? undefined,
-        }, params.modelId);
+        }, params.modelId, params.observedAtMs);
     const cost = reportedCost != null
         ? {
             reportedUsd: reportedCost,

@@ -25,6 +25,7 @@ import type { SentryIssueSnapshotV1 } from '../entries/sentryIssueTypes.js';
 import type { SentryInvokedInstanceV1 } from '../instances/sentryCollisionScope.js';
 
 import {
+  SENTRY_CONTINUATION_UNAVAILABLE_REASON,
   decodeSentryScanContinuation,
   encodeSentryScanContinuation,
   resolveSentryNativeLimit,
@@ -69,11 +70,17 @@ function failedResult(failure: SentryFailureV1): SentryScanPageResultV1 {
   });
 }
 
-function readHeaderCaseInsensitive(
-  headers: Readonly<Record<string, string>>,
-  name: string,
-): string | undefined {
-  return Object.entries(headers).find(([key]) => key.toLowerCase() === name)?.[1];
+/**
+ * The direct-hit marker is a flag, not a value.
+ *
+ * First-party Sentry writes it only on the short-id branch, so the header being
+ * there at all is the whole signal and an empty one is still that branch. The
+ * shared value reader deliberately reports a present-but-empty header as absent
+ * — right for `Retry-After` and `Link`, where an empty value states nothing —
+ * which is the opposite of what this refusal needs, so presence is asked here.
+ */
+function hasSentryDirectHitMarker(headers: Readonly<Record<string, string>>): boolean {
+  return Object.keys(headers).some((key) => key.toLowerCase() === 'x-sentry-direct-hit');
 }
 
 export async function executeSentryScanPage(
@@ -128,7 +135,7 @@ export async function executeSentryScanPage(
     }));
   }
 
-  if (readHeaderCaseInsensitive(response.headers, 'x-sentry-direct-hit') !== undefined) {
+  if (hasSentryDirectHitMarker(response.headers)) {
     // `scan` never sends `shortIdLookup`, so a direct hit can only mean the
     // request was not the one this source built.
     return failedResult(Object.freeze({
@@ -198,19 +205,22 @@ export async function executeSentryScanPage(
     return page(sentryPartialHealth(SENTRY_FAILURE_CODES.paginationCursorNotAdvancing), null);
   }
 
-  let continuation: string;
-  try {
-    continuation = encodeSentryScanContinuation({
-      v: 1,
-      scanLimit,
-      nativeLimit,
-      cursor: next.cursor,
-      query: SENTRY_SCAN_QUERY,
-      statsPeriod: '90d',
-      sort: SENTRY_SCAN_SORT,
-    });
-  } catch {
-    return page(sentryPartialHealth(SENTRY_FAILURE_CODES.paginationCursorMalformed), null);
+  const continuation = encodeSentryScanContinuation({
+    v: 1,
+    scanLimit,
+    nativeLimit,
+    cursor: next.cursor,
+    query: SENTRY_SCAN_QUERY,
+    statsPeriod: '90d',
+    sort: SENTRY_SCAN_SORT,
+  });
+  if (continuation === null) {
+    // The walk is open and the cursor is intact; the frontier simply does not
+    // fit the bounded token, so this page is the last one this pass can hand
+    // back. Saying `cursor-malformed` here would blame the provider for a bound
+    // this side owns, and it outranks the row caveat because it is the reason
+    // the walk stops.
+    return page(sentryPartialHealth(SENTRY_CONTINUATION_UNAVAILABLE_REASON), null);
   }
 
   return page(rowHealth, continuation);

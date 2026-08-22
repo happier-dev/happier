@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DISCORD_DEFAULT_RECONNECT_DELAY_BOUNDS,
   DISCORD_IDENTIFY_LIMIT_PER_24_HOURS,
   calculateDiscordReconnectDelayMs,
   createDiscordGatewaySession,
@@ -199,9 +200,16 @@ describe('Discord Gateway receive-progress owner', () => {
       reason: 'identifyLimit',
       retryAtMs: NOW + (24 * 60 * 60 * 1_000),
     });
-    expect(calculateDiscordReconnectDelayMs(0)).toBe(1_000);
-    expect(calculateDiscordReconnectDelayMs(5)).toBe(30_000);
-    expect(calculateDiscordReconnectDelayMs(50)).toBe(30_000);
+    expect(calculateDiscordReconnectDelayMs(0, DISCORD_DEFAULT_RECONNECT_DELAY_BOUNDS)).toBe(1_000);
+    expect(calculateDiscordReconnectDelayMs(5, DISCORD_DEFAULT_RECONNECT_DELAY_BOUNDS)).toBe(30_000);
+    expect(calculateDiscordReconnectDelayMs(50, DISCORD_DEFAULT_RECONNECT_DELAY_BOUNDS)).toBe(30_000);
+    // Discord's Invalid Session window is a different, much shorter ceiling
+    // than the generic reconnect window; the backoff is computed from the
+    // bounds the effect carried rather than from one module-wide maximum.
+    expect(calculateDiscordReconnectDelayMs(3, { minDelayMs: 1_000, maxDelayMs: 5_000 })).toBe(5_000);
+    expect(calculateDiscordReconnectDelayMs(3, DISCORD_DEFAULT_RECONNECT_DELAY_BOUNDS)).toBe(8_000);
+    expect(() => calculateDiscordReconnectDelayMs(0, { minDelayMs: 5_000, maxDelayMs: 1_000 }))
+      .toThrow('Discord Gateway reconnect delay bounds are invalid.');
   });
 
   it('uses authoritative Get Gateway Bot remaining/reset_after facts instead of fabricating a local renewed budget', () => {

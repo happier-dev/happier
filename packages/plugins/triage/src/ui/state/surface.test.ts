@@ -1,6 +1,9 @@
 import type { TriageEntryRefV1, TriageSourceInstanceIdV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
+import { CORPUS_DEFAULT_SMART_POLICY_V1 } from '../../corpus/query/smartPolicy.js';
+import { TRIAGE_LIST_NO_FILTERS_V1 } from '../../projection/listWindow.js';
+import { MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 } from '../../settings/savedViews.js';
 import {
   TRIAGE_SURFACE_INITIAL_STATE_V1,
   reduceTriageSurfaceV1,
@@ -49,64 +52,6 @@ function selectedAndFocused(): TriageSurfaceStateV1 {
 }
 
 describe('Triage surface reducer — focus and selection are independent cursors', () => {
-  it('moves focus through the section-flattened visible order without touching selection', () => {
-    const selected = selectedAndFocused();
-
-    const moved = reduceTriageSurfaceV1(selected, {
-      kind: 'focusMoved',
-      movement: 'next',
-      visibleOrder: VISIBLE,
-    });
-
-    expect(moved.focus).toEqual({ sectionId: '2-open', entryRef: entry('13') });
-    // The whole point of the split: arrowing does not open a different detail.
-    expect(moved.selection).toBe(selected.selection);
-  });
-
-  it('crosses a section boundary in flattened order rather than stopping at the section edge', () => {
-    const atSectionEnd = focusedOn('13');
-
-    const forward = reduceTriageSurfaceV1(atSectionEnd, {
-      kind: 'focusMoved',
-      movement: 'next',
-      visibleOrder: VISIBLE,
-    });
-    const backward = reduceTriageSurfaceV1(focusedOn('07', '1-pinned'), {
-      kind: 'focusMoved',
-      movement: 'next',
-      visibleOrder: VISIBLE,
-    });
-
-    expect(forward.focus).toEqual({ sectionId: '3-done', entryRef: entry('21') });
-    expect(backward.focus).toEqual({ sectionId: '2-open', entryRef: entry('11') });
-  });
-
-  it('clamps at both ends and lands Home/End on the flattened extremes', () => {
-    const first = reduceTriageSurfaceV1(focusedOn('07', '1-pinned'), {
-      kind: 'focusMoved',
-      movement: 'previous',
-      visibleOrder: VISIBLE,
-    });
-    const last = reduceTriageSurfaceV1(focusedOn('21', '3-done'), {
-      kind: 'focusMoved',
-      movement: 'next',
-      visibleOrder: VISIBLE,
-    });
-
-    expect(first.focus).toEqual({ sectionId: '1-pinned', entryRef: entry('07') });
-    expect(last.focus).toEqual({ sectionId: '3-done', entryRef: entry('21') });
-    expect(reduceTriageSurfaceV1(focusedOn('12'), {
-      kind: 'focusMoved',
-      movement: 'last',
-      visibleOrder: VISIBLE,
-    }).focus).toEqual({ sectionId: '3-done', entryRef: entry('21') });
-    expect(reduceTriageSurfaceV1(focusedOn('12'), {
-      kind: 'focusMoved',
-      movement: 'first',
-      visibleOrder: VISIBLE,
-    }).focus).toEqual({ sectionId: '1-pinned', entryRef: entry('07') });
-  });
-
   it('takes the qualified selection from the CURRENT focus when the focused row is activated', () => {
     const focused = focusedOn('13');
 
@@ -150,10 +95,13 @@ describe('Triage surface reducer — focus and selection are independent cursors
   });
 
   it('clears selection on detail dismissal while returning focus to the row that was selected', () => {
+    // `plugin-ui`'s List owns focus MOVEMENT and reports the result through
+    // `onFocusedKeyChange`; this reducer only records it. Landing directly on
+    // row 13 is what arrowing off the selected row used to produce.
     const arrowedAway = reduceTriageSurfaceV1(selectedAndFocused(), {
-      kind: 'focusMoved',
-      movement: 'next',
-      visibleOrder: VISIBLE,
+      kind: 'rowFocused',
+      sectionId: '2-open',
+      entryRef: entry('13'),
     });
 
     const dismissed = reduceTriageSurfaceV1(arrowedAway, {
@@ -165,12 +113,56 @@ describe('Triage surface reducer — focus and selection are independent cursors
     expect(dismissed.focus).toEqual({ sectionId: '2-open', entryRef: entry('12') });
   });
 
+  it('selects a launched entry this page lists nowhere, without moving the keyboard cursor', () => {
+    // `core/SURFACE.md` §3.2: a validated direct launch names an entry the
+    // destination page's own lens may exclude, and that ref must still select
+    // behind the honest not-yet-materialized header. There is no row for it, so
+    // there is nothing for the cursor to move to and no section to name.
+    const reading = focusedOn('13');
+
+    const activated = reduceTriageSurfaceV1(reading, {
+      kind: 'rowActivated',
+      sectionId: null,
+      entryRef: entry('99'),
+      sourceInstanceId: INSTANCE_B,
+    });
+
+    expect(activated.selection).toEqual({
+      sectionId: null,
+      entryRef: entry('99'),
+      sourceInstanceId: INSTANCE_B,
+    });
+    // The reader's cursor is theirs. An activation with no row of its own must
+    // not drag it to an entry that is not on the page.
+    expect(activated.focus).toBe(reading.focus);
+  });
+
+  it('returns focus to the section the dismissed row is in NOW, not the one it was selected in', () => {
+    // The section a selection was made in is a snapshot; the order the shell
+    // reports at dismissal is current. A row that changed section while the
+    // detail was open would otherwise send the cursor to a section it has left,
+    // and `repairFocus` would then filter an order that never held it.
+    const selected = selectedAndFocused();
+    const regrouped = [row('1-pinned', '07'), row('3-done', '12'), row('2-open', '13')];
+
+    const dismissed = reduceTriageSurfaceV1(selected, {
+      kind: 'detailDismissed',
+      visibleOrder: regrouped,
+    });
+
+    expect(dismissed.selection).toBe(null);
+    expect(dismissed.focus).toEqual({ sectionId: '3-done', entryRef: entry('12') });
+  });
+
   it('leaves focus where it is when the dismissed selection is no longer a visible row', () => {
     const withoutSelectedRow = VISIBLE.filter((visible) => visible.entryRef.entryId !== '12');
+    // `plugin-ui`'s List owns focus MOVEMENT and reports the result through
+    // `onFocusedKeyChange`; this reducer only records it. Landing directly on
+    // row 13 is what arrowing off the selected row used to produce.
     const arrowedAway = reduceTriageSurfaceV1(selectedAndFocused(), {
-      kind: 'focusMoved',
-      movement: 'next',
-      visibleOrder: VISIBLE,
+      kind: 'rowFocused',
+      sectionId: '2-open',
+      entryRef: entry('13'),
     });
 
     const dismissed = reduceTriageSurfaceV1(arrowedAway, {
@@ -344,5 +336,159 @@ describe('Triage surface reducer — collapse, lens and search', () => {
     // Referential stability is what keeps the list container from re-rendering
     // on every settled corpus result at 2,000 rows.
     expect(settled).toBe(TRIAGE_SURFACE_INITIAL_STATE_V1);
+  });
+});
+
+describe('Triage surface reducer — the five filter facets compose', () => {
+  it('adds one facet value and leaves every other facet exactly as it was', () => {
+    const filtered = reduceTriageSurfaceV1(TRIAGE_SURFACE_INITIAL_STATE_V1, {
+      kind: 'filterValueToggled',
+      facet: 'sources',
+      value: { source: SOURCE },
+    });
+
+    expect(filtered.filters.sources).toEqual([{ source: SOURCE }]);
+    expect(filtered.filters.types).toEqual([]);
+    expect(filtered.filters.scopes).toEqual([]);
+    expect(filtered.filters.states).toEqual([]);
+    expect(filtered.filters.attention).toEqual([]);
+    expect(TRIAGE_SURFACE_INITIAL_STATE_V1.filters.sources).toEqual([]);
+
+    // The same value again is a removal, not a duplicate: one press is one
+    // constraint, and a duplicated value would also spend the facet bound.
+    expect(reduceTriageSurfaceV1(filtered, {
+      kind: 'filterValueToggled',
+      facet: 'sources',
+      value: { source: SOURCE },
+    }).filters.sources).toEqual([]);
+  });
+
+  it('never weakens, substitutes or clears one facet when another is selected', () => {
+    const sourced = reduceTriageSurfaceV1(TRIAGE_SURFACE_INITIAL_STATE_V1, {
+      kind: 'filterValueToggled',
+      facet: 'sources',
+      value: { source: SOURCE },
+    });
+    const stated = reduceTriageSurfaceV1(sourced, {
+      kind: 'filterValueToggled',
+      facet: 'states',
+      value: 'open',
+    });
+    const attended = reduceTriageSurfaceV1(stated, {
+      kind: 'filterValueToggled',
+      facet: 'attention',
+      value: 'required',
+    });
+
+    expect(attended.filters.sources).toEqual([{ source: SOURCE }]);
+    expect(attended.filters.states).toEqual(['open']);
+    expect(attended.filters.attention).toEqual(['required']);
+
+    // Clearing one facet leaves the others untouched, which is the half a
+    // "reset the rail" implementation gets wrong.
+    const clearedAttention = reduceTriageSurfaceV1(attended, {
+      kind: 'filterValueToggled',
+      facet: 'attention',
+      value: 'required',
+    });
+    expect(clearedAttention.filters.sources).toEqual([{ source: SOURCE }]);
+    expect(clearedAttention.filters.states).toEqual(['open']);
+  });
+
+  it('compares a facet value componentwise, so two contract-valid values never merge', () => {
+    const oneKind = reduceTriageSurfaceV1(TRIAGE_SURFACE_INITIAL_STATE_V1, {
+      kind: 'filterValueToggled',
+      facet: 'types',
+      value: { source: SOURCE, kindId: 'pull-request' },
+    });
+    const twoKinds = reduceTriageSurfaceV1(oneKind, {
+      kind: 'filterValueToggled',
+      facet: 'types',
+      value: { source: SOURCE, kindId: 'issue' },
+    });
+
+    // Same source, different kind: a comparator that only read `source` would
+    // have toggled the first value off.
+    expect(twoKinds.filters.types).toEqual([
+      { source: SOURCE, kindId: 'pull-request' },
+      { source: SOURCE, kindId: 'issue' },
+    ]);
+
+    // The exact pair `core/CORPUS.md` §6 records as unmergeable: a delimiter
+    // join of source and scope would read these two as one value.
+    const scoped = reduceTriageSurfaceV1(TRIAGE_SURFACE_INITIAL_STATE_V1, {
+      kind: 'filterValueToggled',
+      facet: 'scopes',
+      value: { source: SOURCE, collisionScope: 'originregion' },
+    });
+    const bothScopes = reduceTriageSurfaceV1(scoped, {
+      kind: 'filterValueToggled',
+      facet: 'scopes',
+      value: { source: SOURCE, collisionScope: 'origin' },
+    });
+
+    expect(bothScopes.filters.scopes).toEqual([
+      { source: SOURCE, collisionScope: 'originregion' },
+      { source: SOURCE, collisionScope: 'origin' },
+    ]);
+  });
+
+  it('refuses a value beyond the one facet bound instead of dropping a selected one', () => {
+    let state = TRIAGE_SURFACE_INITIAL_STATE_V1;
+    for (let index = 0; index < MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1; index += 1) {
+      state = reduceTriageSurfaceV1(state, {
+        kind: 'filterValueToggled',
+        facet: 'scopes',
+        value: { source: SOURCE, collisionScope: `scope-${index}` },
+      });
+    }
+    expect(state.filters.scopes).toHaveLength(MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1);
+
+    const refused = reduceTriageSurfaceV1(state, {
+      kind: 'filterValueToggled',
+      facet: 'scopes',
+      value: { source: SOURCE, collisionScope: 'one-too-many' },
+    });
+
+    // The bound is the wire's: a wider facet is a lens the list Action refuses
+    // whole, so the honest answer is to keep the sixteen the reader chose
+    // rather than silently evict the oldest.
+    expect(refused).toBe(state);
+    // Removing a value at the bound still works, so the reader is never stuck.
+    expect(reduceTriageSurfaceV1(state, {
+      kind: 'filterValueToggled',
+      facet: 'scopes',
+      value: { source: SOURCE, collisionScope: 'scope-0' },
+    }).filters.scopes).toHaveLength(MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 - 1);
+  });
+
+  it('clears every facet at once and returns the same state when nothing is selected', () => {
+    const filtered = reduceTriageSurfaceV1(reduceTriageSurfaceV1(TRIAGE_SURFACE_INITIAL_STATE_V1, {
+      kind: 'filterValueToggled',
+      facet: 'sources',
+      value: { source: SOURCE },
+    }), { kind: 'filterValueToggled', facet: 'states', value: 'done' });
+
+    const cleared = reduceTriageSurfaceV1(filtered, { kind: 'filtersCleared' });
+
+    expect(cleared.filters).toEqual(TRIAGE_LIST_NO_FILTERS_V1);
+    expect(reduceTriageSurfaceV1(cleared, { kind: 'filtersCleared' })).toBe(cleared);
+  });
+
+  it('retains the Smart precedence across an order change so a preference is not silently reset', () => {
+    const policy = reduceTriageSurfaceV1(TRIAGE_SURFACE_INITIAL_STATE_V1, {
+      kind: 'smartPolicyChanged',
+      smartPolicy: { v: 1, precedence: ['activity', 'attention'] },
+    });
+
+    expect(TRIAGE_SURFACE_INITIAL_STATE_V1.smartPolicy).toEqual(CORPUS_DEFAULT_SMART_POLICY_V1);
+    expect(policy.smartPolicy).toEqual({ v: 1, precedence: ['activity', 'attention'] });
+
+    const backToNewest = reduceTriageSurfaceV1(policy, { kind: 'orderChanged', order: 'newest' });
+    expect(backToNewest.smartPolicy).toEqual({ v: 1, precedence: ['activity', 'attention'] });
+    expect(reduceTriageSurfaceV1(policy, {
+      kind: 'smartPolicyChanged',
+      smartPolicy: { v: 1, precedence: ['activity', 'attention'] },
+    })).toBe(policy);
   });
 });

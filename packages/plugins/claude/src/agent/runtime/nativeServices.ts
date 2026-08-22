@@ -1,17 +1,18 @@
 import type {
-  AgentRuntimeContext,
-  AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agent-runtime';
+    AgentRuntimeContext,
+    AgentSessionRuntimeContext,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import type { PluginSessionWorkStateItem } from '@happier-dev/plugin-sdk/runtime';
-import type { SessionMetadataWriteRequestV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
+import type { WorkStateItem } from '@happier-dev/plugin-sdk/sessions/work-state';
 import {
-  SessionWorkflowActivityHeadlineV1Schema,
+  SessionActivityHeadlineBundleV1Schema,
   type SessionWorkStateV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+} from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import { createClaudeNativeSdkQueryContext } from '../sdk/nativeExec.js';
+import {
+  createClaudeWorkflowSystemRecordBridge,
+} from '../workflowRecords/workflowRuntime.js';
 import type { ClaudeAgentSdkContext } from './remote/sdk/session.js';
 
 function jsonFields(
@@ -33,28 +34,6 @@ function unavailable(name: string): never {
   throw new Error(`Claude ${name} is unavailable outside a native session invocation.`);
 }
 
-const WORKFLOW_ACTIVITY_HEADLINE_METADATA_KEY = 'sessionWorkflowActivityHeadlineV1';
-const WORKFLOW_ACTIVITY_HEADLINE_WRITE_REASON = 'claude_workflow_activity_headline';
-
-function readWorkflowActivityHeadlineWrite(request: SessionMetadataWriteRequestV1) {
-  if (request.kind !== 'update' || request.reason !== WORKFLOW_ACTIVITY_HEADLINE_WRITE_REASON) {
-    return unavailable('legacy metadata writes');
-  }
-  const candidate = request.handler({});
-  if (
-    !candidate
-    || typeof candidate !== 'object'
-    || Array.isArray(candidate)
-    || Object.keys(candidate).length !== 1
-    || !Object.prototype.hasOwnProperty.call(candidate, WORKFLOW_ACTIVITY_HEADLINE_METADATA_KEY)
-  ) {
-    throw new Error('Claude workflow activity may publish only the compact session headline.');
-  }
-  return SessionWorkflowActivityHeadlineV1Schema.parse(
-    candidate[WORKFLOW_ACTIVITY_HEADLINE_METADATA_KEY],
-  );
-}
-
 function isNativeConnectedServiceId(
   serviceId: string,
 ): serviceId is 'anthropic' | 'bitbucket' | 'claude-subscription' | 'gemini' | 'github' | 'openai' | 'openai-codex' {
@@ -69,7 +48,7 @@ function isNativeConnectedServiceId(
 
 function toNativeGoalWorkStateItem(
   item: SessionWorkStateV1['items'][number],
-): PluginSessionWorkStateItem | null {
+): WorkStateItem | null {
   if (item.kind !== 'goal') return null;
   return {
     localId: item.id,
@@ -102,7 +81,7 @@ export function createClaudeNativeGoalWorkStatePublisher(
   return (snapshot) => {
     const items = snapshot.items
       .map(toNativeGoalWorkStateItem)
-      .filter((item): item is PluginSessionWorkStateItem => item !== null);
+      .filter((item): item is WorkStateItem => item !== null);
     const primaryLocalId = items.some((item) => item.localId === snapshot.primaryItemId)
       ? snapshot.primaryItemId
       : null;
@@ -124,6 +103,11 @@ export function createClaudeNativeAgentSdkContext(
   sessionContext?: AgentSessionRuntimeContext,
 ): ClaudeAgentSdkContext {
   const services = sessionContext?.session.services;
+  const currentSession = context.services.sessions?.current;
+  const workflowSystemRecords = createClaudeWorkflowSystemRecordBridge(
+    currentSession,
+  );
+  const sessionAuth = currentSession?.auth;
   return {
     logger: {
       debug(message, fields) { context.services.logger.debug(message, jsonFields(fields)); },
@@ -164,6 +148,10 @@ export function createClaudeNativeAgentSdkContext(
             return await services.transcripts.fileFollow.follow(input);
           },
         },
+        async publishSessionEvent(event) {
+          if (!services) return unavailable('durable transcript publication');
+          return await services.transcripts.publishSessionEvent(event);
+        },
       },
       accountUsage: {
         async resolveSourceContext(input, options) {
@@ -177,18 +165,26 @@ export function createClaudeNativeAgentSdkContext(
           return await services.accountUsage.recordSnapshot(nativeInput, options);
         },
       },
+      toolExecution: services?.toolExecution ?? Object.freeze({
+        async before(request) {
+          // Execution-run contexts do not own the session-scoped interception
+          // service. Preserve their existing permission path without claiming a
+          // hook result or denying an otherwise valid provider tool proposal.
+          return { status: 'continue' as const, input: request.input };
+        },
+      }),
     },
     sessions: {
       current: {
         auth: {
           services: {
             async refreshRuntimeAuth(request, options) {
-              if (!services) return unavailable('runtime authentication refresh');
+              if (!sessionAuth) return unavailable('runtime authentication refresh');
               const { agentId: _agentId, ...nativeRequest } = request;
               if (!isNativeConnectedServiceId(nativeRequest.serviceId)) {
                 return unavailable(`runtime authentication service ${nativeRequest.serviceId}`);
               }
-              return await services.auth.refreshRuntimeAuth(nativeRequest, options);
+              return await sessionAuth.services.refreshRuntimeAuth(nativeRequest, options);
             },
           },
         },
@@ -201,21 +197,22 @@ export function createClaudeNativeAgentSdkContext(
           },
         },
         async readSystemRecord(request) {
-          if (!services) return unavailable('session system-record reads');
-          const { reason: _reason, ...nativeRequest } = request;
-          return await services.systemRecords.read(nativeRequest);
+          if (!workflowSystemRecords) return unavailable('session system-record reads');
+          return await workflowSystemRecords.read(request);
         },
         async writeSystemRecord(request) {
-          if (!services) return unavailable('session system-record writes');
-          const { reason: _reason, payload, ...nativeRequest } = request;
-          await services.systemRecords.write({
-            ...nativeRequest,
-            payload: AgentRuntimeJsonValueSchema.parse(payload),
-          });
+          if (!workflowSystemRecords) return unavailable('session system-record writes');
+          await workflowSystemRecords.write(request);
         },
-        async writeMetadata(request) {
-          if (!services) return unavailable('workflow activity headline publication');
-          await services.workflowActivity.publishHeadline(readWorkflowActivityHeadlineWrite(request));
+        workflowActivity: {
+          async publishHeadlines(bundle) {
+            if (!services) return unavailable('workflow activity headline publication');
+            // Fail closed on the whole bundle: publishing one key of a pair meant to describe the
+            // same snapshots would leave the two disagreeing about what exists.
+            await services.workflowActivity.publishHeadlines(
+              SessionActivityHeadlineBundleV1Schema.parse(bundle),
+            );
+          },
         },
         async writeStateField() {
           return unavailable('legacy state-field writes');

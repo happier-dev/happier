@@ -119,6 +119,137 @@ describe('Codex V3 oai-events decoder', () => {
     })).toEqual([]);
   });
 
+  it('batches Realtime function calls at their response terminal edge exactly once', () => {
+    const decode = createCodexV3ControlDecoder({ attemptId: 1 });
+
+    expect(decode({
+      type: 'response.function_call_arguments.done',
+      response_id: 'response-1',
+      call_id: 'call-2',
+      name: 'readCurrentUiContext',
+      arguments: '{}',
+      output_index: 1,
+    })).toEqual([]);
+    expect(decode({
+      type: 'response.function_call_arguments.done',
+      response_id: 'response-1',
+      call_id: 'call-1',
+      name: 'readCurrentUiContext',
+      arguments: '{"includeCommands":true}',
+      output_index: 0,
+    })).toEqual([]);
+
+    expect(decode({
+      type: 'response.done',
+      response: { id: 'response-1', status: 'completed' },
+    })).toContainEqual({
+      type: 'tool_calls',
+      responseId: 'response-1',
+      calls: [
+        {
+          v: 1,
+          responseId: 'response-1',
+          callId: 'call-1',
+          toolName: 'readCurrentUiContext',
+          order: 0,
+          arguments: { includeCommands: true },
+        },
+        {
+          v: 1,
+          responseId: 'response-1',
+          callId: 'call-2',
+          toolName: 'readCurrentUiContext',
+          order: 1,
+          arguments: {},
+        },
+      ],
+    });
+    expect(decode({
+      type: 'response.done',
+      response: { id: 'response-1', status: 'completed' },
+    })).not.toContainEqual(expect.objectContaining({ type: 'tool_calls' }));
+  });
+
+  it('closes a Realtime response only on its pinned terminal status', () => {
+    const decode = createCodexV3ControlDecoder({ attemptId: 1 });
+
+    expect(decode({
+      type: 'response.function_call_arguments.done',
+      response_id: 'response-2',
+      call_id: 'call-1',
+      name: 'readCurrentUiContext',
+      arguments: '{}',
+      output_index: 0,
+    })).toEqual([]);
+
+    expect(decode({
+      type: 'response.done',
+      response: { id: 'response-2', status: 'in_progress' },
+    })).toEqual([]);
+
+    expect(decode({
+      type: 'response.function_call_arguments.done',
+      response_id: 'response-2',
+      call_id: 'call-2',
+      name: 'readCurrentUiContext',
+      arguments: '{}',
+      output_index: 1,
+    })).toEqual([]);
+
+    expect(decode({
+      type: 'response.done',
+      response: { id: 'response-2', status: 'completed' },
+    })).toEqual([{
+      type: 'tool_calls',
+      responseId: 'response-2',
+      calls: [
+        {
+          v: 1,
+          responseId: 'response-2',
+          callId: 'call-1',
+          toolName: 'readCurrentUiContext',
+          order: 0,
+          arguments: {},
+        },
+        {
+          v: 1,
+          responseId: 'response-2',
+          callId: 'call-2',
+          toolName: 'readCurrentUiContext',
+          order: 1,
+          arguments: {},
+        },
+      ],
+    }]);
+
+    expect(decode({
+      type: 'response.done',
+      response: { id: 'response-2', status: 'completed' },
+    })).toEqual([]);
+  });
+
+  it('still closes a Realtime response whose pinned status is omitted', () => {
+    const decode = createCodexV3ControlDecoder({ attemptId: 1 });
+
+    expect(decode({
+      type: 'response.function_call_arguments.done',
+      response_id: 'response-3',
+      call_id: 'call-1',
+      name: 'readCurrentUiContext',
+      arguments: '{}',
+      output_index: 0,
+    })).toEqual([]);
+
+    expect(decode({
+      type: 'response.done',
+      response: { id: 'response-3' },
+    })).toContainEqual(expect.objectContaining({ type: 'tool_calls', responseId: 'response-3' }));
+    expect(decode({
+      type: 'response.done',
+      response: { id: 'response-3' },
+    })).toEqual([]);
+  });
+
   it('ignores unknown bounded event types and known malformed finals', () => {
     const diagnostics: string[] = [];
     const decode = createCodexV3ControlDecoder({

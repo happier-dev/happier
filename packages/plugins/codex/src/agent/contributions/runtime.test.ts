@@ -34,9 +34,9 @@ type CodexRuntimeContributionModule = typeof runtimeContribution & Partial<{
       resolveCandidatePersistedSessionFile?: unknown;
     }>;
     sessionHandoff?: Readonly<{
-      surface?: () => Readonly<{
-        exportBundle?: unknown;
-        importBundle?: unknown;
+      surface?: unknown;
+      nativeSessionLog?: Readonly<{
+        resolvePath?: unknown;
       }>;
     }>;
     runtimeControl?: unknown;
@@ -195,12 +195,20 @@ describe('Codex runtime contribution leaves', () => {
     ).toBeTypeOf('function');
   });
 
-  it('publishes the native handoff surface through the generated Agent contribution', () => {
-    expect(moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION?.sessionHandoff?.surface?.())
-      .toMatchObject({
-        exportBundle: expect.any(Function),
-        importBundle: expect.any(Function),
-      });
+  it('does not retain a catalog-owned handoff operation factory', () => {
+    // The family still carries METADATA PROJECTION leaves (see the native
+    // session-log derivation below); what it may no longer carry is an
+    // operation factory, because handoff operations are registered by the
+    // AgentRuntime itself.
+    expect(moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION?.sessionHandoff)
+      .not.toHaveProperty('surface');
+  });
+
+  it('declares how its own session log is derived, since it persists no path for one', () => {
+    expect(
+      moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION
+        ?.sessionHandoff?.nativeSessionLog?.resolvePath,
+    ).toBeTypeOf('function');
   });
 
   it('declares the provider-owned in-turn hot-auth capability that its routable runtime implements', () => {

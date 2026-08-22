@@ -624,6 +624,86 @@
             "settingsVoice.mode.codexRealtime": "Codex Realtime (Experimental)",
             "settingsVoice.mode.codexRealtimeSubtitle": "Speak directly with the active Codex agent session."
           }
+        },
+        {
+          "locale": "ru",
+          "messages": {
+            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
+            "settingsVoice.mode.codexRealtime": "Codex Realtime (экспериментально)",
+            "settingsVoice.mode.codexRealtimeSubtitle": "Говорите напрямую с активной сессией агента Codex."
+          }
+        },
+        {
+          "locale": "pl",
+          "messages": {
+            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
+            "settingsVoice.mode.codexRealtime": "Codex Realtime (eksperymentalne)",
+            "settingsVoice.mode.codexRealtimeSubtitle": "Rozmawiaj bezpośrednio z aktywną sesją agenta Codex."
+          }
+        },
+        {
+          "locale": "es",
+          "messages": {
+            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
+            "settingsVoice.mode.codexRealtime": "Codex Realtime (experimental)",
+            "settingsVoice.mode.codexRealtimeSubtitle": "Habla directamente con la sesión activa del agente Codex."
+          }
+        },
+        {
+          "locale": "fr",
+          "messages": {
+            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
+            "settingsVoice.mode.codexRealtime": "Codex Realtime (expérimental)",
+            "settingsVoice.mode.codexRealtimeSubtitle": "Parlez directement avec la session active de l’agent Codex."
+          }
+        },
+        {
+          "locale": "it",
+          "messages": {
+            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
+            "settingsVoice.mode.codexRealtime": "Codex Realtime (sperimentale)",
+            "settingsVoice.mode.codexRealtimeSubtitle": "Parla direttamente con la sessione attiva dell’agente Codex."
+          }
+        },
+        {
+          "locale": "pt",
+          "messages": {
+            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
+            "settingsVoice.mode.codexRealtime": "Codex Realtime (experimental)",
+            "settingsVoice.mode.codexRealtimeSubtitle": "Fale diretamente com a sessão ativa do agente Codex."
+          }
+        },
+        {
+          "locale": "ca",
+          "messages": {
+            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
+            "settingsVoice.mode.codexRealtime": "Codex Realtime (experimental)",
+            "settingsVoice.mode.codexRealtimeSubtitle": "Parla directament amb la sessió activa de l’agent Codex."
+          }
+        },
+        {
+          "locale": "zh-Hans",
+          "messages": {
+            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
+            "settingsVoice.mode.codexRealtime": "Codex 实时模式（实验性）",
+            "settingsVoice.mode.codexRealtimeSubtitle": "直接与当前 Codex 智能体会话交谈。"
+          }
+        },
+        {
+          "locale": "zh-Hant",
+          "messages": {
+            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
+            "settingsVoice.mode.codexRealtime": "Codex 即時模式（實驗性）",
+            "settingsVoice.mode.codexRealtimeSubtitle": "直接與目前的 Codex 代理程式工作階段交談。"
+          }
+        },
+        {
+          "locale": "ja",
+          "messages": {
+            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
+            "settingsVoice.mode.codexRealtime": "Codex Realtime（実験的）",
+            "settingsVoice.mode.codexRealtimeSubtitle": "アクティブな Codex エージェントセッションと直接会話します。"
+          }
         }
       ],
       "views": []
@@ -632,6 +712,9 @@
     "voiceProviders": [
       {
         "capabilities": {
+          "tools": {
+            "effectCalls": "none"
+          },
           "turn": {
             "bargeIn": false,
             "cancelResponse": false
@@ -691,7 +774,7 @@
     "happier": "^0.0.0"
   },
   "entrypoints": {
-    "daemon": "./dist/index.js"
+    "daemon": "./.happier-plugin/daemon.js"
   },
   "hostAccess": {
     "optional": [],

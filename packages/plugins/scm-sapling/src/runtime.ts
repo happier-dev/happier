@@ -1,8 +1,9 @@
 import { realpathSync } from 'node:fs';
-import path, { isAbsolute, relative, sep } from 'node:path';
+import path, { relative, sep } from 'node:path';
 
 import {
     ScmSelectedMutationPathSchema } from '@happier-dev/plugin-sdk/scm';
+import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import {
     resolveBackendCommandMaxOutputBytes as resolveScmBackendCommandMaxOutputBytes,
     runBackendCommand as runScmBackendCommand,
@@ -65,7 +66,7 @@ export function normalizePathspec(rawPath: string, cwd: string): { ok: true; pat
     if (rel === '' || rel === '.') {
         return { ok: false, error: 'Path must identify a file or subdirectory' };
     }
-    if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    if (!isCanonicalAbsolutePathInsideRoot(canonicalCwd, resolvedPath)) {
         return { ok: false, error: `Path outside working directory: ${rawPath}` };
     }
     if (rel.startsWith('-')) {

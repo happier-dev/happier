@@ -1,11 +1,8 @@
-import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agent-runtime';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type {
-  PluginExecService,
-  PluginProcessResult,
-  PluginProtocolClientHandle,
-} from '@happier-dev/plugin-sdk/runtime';
-
+  ExecService,
+  PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type {
   ClaudeSdkExecClientHandle,
   ClaudeSdkExecResult,
@@ -17,7 +14,7 @@ const CLAUDE_SDK_MAX_FRAME_BYTES = 32 * 1024 * 1024;
 
 function readJsonStreamWriteOutcome(error: unknown): 'rejected_before_write' | 'write_may_have_occurred' | null {
   if (
-    !(error instanceof PluginError)
+    !isPluginError(error)
     || !error.details
     || typeof error.details !== 'object'
     || !('jsonStreamWriteOutcome' in error.details)
@@ -46,7 +43,7 @@ function toClaudeSdkExecResult(result: PluginProcessResult): ClaudeSdkExecResult
   };
 }
 
-export function createClaudeNativeSdkQueryContext(exec: PluginExecService): ClaudeSdkQueryContext {
+export function createClaudeNativeSdkQueryContext(exec: ExecService): ClaudeSdkQueryContext {
   return Object.freeze({
     async spawnClient(spec, options): Promise<ClaudeSdkExecClientHandle> {
       if (spec.launch.kind !== 'agent-cli' || spec.launch.agentId !== 'claude') {
@@ -67,7 +64,7 @@ export function createClaudeNativeSdkQueryContext(exec: PluginExecService): Clau
           ...(spec.launch.env ? { env: spec.launch.env } : {}),
         },
         maxFrameBytes: CLAUDE_SDK_MAX_FRAME_BYTES,
-      }, options?.signal ? { signal: options.signal } : undefined) as PluginProtocolClientHandle<'jsonStream'>;
+      }, options?.signal ? { signal: options.signal } : undefined);
       let status: 'running' | 'exited' | 'disposed' = 'running';
       const exit = handle.wait().then((result) => {
         status = 'exited';
@@ -84,7 +81,9 @@ export function createClaudeNativeSdkQueryContext(exec: PluginExecService): Clau
           if (!parsedRecord.success) {
             return {
               kind: 'rejected_before_write',
-              error: parsedRecord.error,
+              error: new Error('Claude SDK JSON-stream record is not valid JSON data.', {
+                cause: parsedRecord.error,
+              }),
             };
           }
           try {
@@ -102,7 +101,6 @@ export function createClaudeNativeSdkQueryContext(exec: PluginExecService): Clau
       return {
         client,
         process: {
-          pid: handle.process.pid,
           exit,
           async writeStdin(input) {
             await handle.process.write(typeof input === 'string' ? new TextEncoder().encode(input) : input);

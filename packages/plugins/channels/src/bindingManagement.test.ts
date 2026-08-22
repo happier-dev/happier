@@ -1,13 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+
 import * as management from './management.js';
 import {
   createCurrentConversationConnectionFixture,
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 
-type StateValue = Readonly<Record<string, unknown>> & Readonly<{ id: string }>;
+type StateValue = Readonly<Record<string, JsonValue>>
+  & Readonly<{ id: string; payload?: Readonly<Record<string, JsonValue>> }>;
 type StateRow = Readonly<{ rowId: string; revision: number; value: StateValue }>;
+/** Mirrors the canonical Collection query request the host actually passes. */
+type StateQueryInput = Readonly<{
+  index: string;
+  prefix?: readonly (string | number | boolean | null)[];
+  order: 'asc' | 'desc';
+  cursor?: string;
+  limit?: number;
+}>;
 type StateMutation =
   | Readonly<{ kind: 'assert'; rowId: string; expectedRevision: number }>
   | Readonly<{ kind: 'put'; value: StateValue; expectedRevision: number | 'absent' }>;
@@ -88,7 +99,10 @@ const bindingResolutionPrincipal = Object.freeze({
   label: 'Person one',
 });
 
-function bindingCreateInput(target: unknown, selected = [{ id: 'person-1', kind: 'human' }] as const) {
+function bindingCreateInput(
+  target: JsonValue,
+  selected: readonly Readonly<{ id: string; kind: string }>[] = [{ id: 'person-1', kind: 'human' }],
+) {
   return {
     connectionId: 'connection-1',
     expectedConnectionRevision: 4,
@@ -132,13 +146,7 @@ function createCollection(initial: readonly StateRow[]) {
   const rows = new Map(initial.map((row) => [row.rowId, row]));
   const batches: StateMutation[][] = [];
   const gets: string[] = [];
-  const queries: Array<Readonly<{
-    index: string;
-    prefix?: readonly string[];
-    order: 'asc' | 'desc';
-    cursor?: string;
-    limit?: number;
-  }>> = [];
+  const queries: StateQueryInput[] = [];
   return {
     rows,
     batches,
@@ -148,13 +156,7 @@ function createCollection(initial: readonly StateRow[]) {
       gets.push(rowId);
       return rows.get(rowId) ?? null;
     },
-    async query(input: Readonly<{
-      index: string;
-      prefix?: readonly string[];
-      order: 'asc' | 'desc';
-      cursor?: string;
-      limit?: number;
-    }>) {
+    async query(input: StateQueryInput) {
       queries.push(input);
       if (input.index !== 'by-kind' || input.order !== 'asc') {
         throw new Error('Expected the canonical ascending Channel binding index.');
@@ -176,26 +178,32 @@ function createCollection(initial: readonly StateRow[]) {
     },
     async batch(operations: readonly StateMutation[]) {
       batches.push([...operations]);
-      for (const operation of operations) {
+      // The Account Data owner answers a conflict with the exact conflicting
+      // rows, and `management.ts` iterates them. Publish them here so the
+      // fake cannot silently exercise a shape the writer never receives.
+      const conflicts = operations.flatMap((operation) => {
         const rowId = operation.kind === 'put' ? operation.value.id : operation.rowId;
         const current = rows.get(rowId);
         const matches = operation.expectedRevision === 'absent'
           ? current === undefined
           : current?.revision === operation.expectedRevision;
-        if (!matches) return { status: 'conflict' as const, results: [] };
-      }
+        return matches ? [] : [{ rowId, revision: current?.revision ?? 0, deleted: false as const }];
+      });
+      if (conflicts.length > 0) return { status: 'conflict' as const, conflicts };
       const results = operations.flatMap((operation) => {
         if (operation.kind !== 'put') return [];
         const revision = (rows.get(operation.value.id)?.revision ?? 0) + 1;
         rows.set(operation.value.id, { rowId: operation.value.id, revision, value: operation.value });
         return [{ rowId: operation.value.id, revision, deleted: false as const }];
       });
-      return { status: 'updated' as const, results };
+      // These cases never reread across a write, so the fake reports the same
+      // stable change cursor its query pages publish.
+      return { status: 'updated' as const, results, changeCursor: 1 };
     },
   };
 }
 
-function connectionRow(payloadOverrides: Readonly<Record<string, unknown>> = {}): StateRow {
+function connectionRow(payloadOverrides: Readonly<Record<string, JsonValue>> = {}): StateRow {
   const authority = {
     providerPluginId: materialization.pluginId,
     providerContributionSelection: {
@@ -235,9 +243,9 @@ function connectionRow(payloadOverrides: Readonly<Record<string, unknown>> = {})
 }
 
 function bindingRow(
-  target: unknown,
+  target: JsonValue,
   revision = 5,
-  payloadOverrides: Readonly<Record<string, unknown>> = {},
+  payloadOverrides: Readonly<Record<string, JsonValue>> = {},
 ): StateRow {
   return {
     rowId: 'binding-1',
@@ -271,7 +279,7 @@ function bindingRow(
 function context(
   collection: ReturnType<typeof createCollection>,
   execute: ReturnType<typeof vi.fn>,
-  executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown) => {
+  executeAdmittedTargetedOperationWithExecutionOrigin: (action: unknown) => Promise<unknown> = vi.fn(async (action: unknown) => {
     if (action === endpointResolveAction) {
       return {
         result: { kind: 'resolved' as const, candidates: [bindingResolutionEndpoint] },
@@ -292,7 +300,7 @@ function context(
     }
     throw new Error('Unexpected provider resolution Action.');
   }),
-  readCurrent = vi.fn(async () => ({
+  readCurrent: () => Promise<unknown> = vi.fn(async () => ({
     generation: 'channels-generation-1',
     contributions: [{
       contributor: {
@@ -307,7 +315,7 @@ function context(
       },
     }],
   })),
-) {
+): PluginInvocationContext {
   return {
     signal: new AbortController().signal,
     services: {
@@ -324,7 +332,7 @@ function context(
         },
       },
     },
-  };
+  } as unknown as PluginInvocationContext;
 }
 
 describe('Channels target-persisting binding management', () => {
@@ -816,9 +824,15 @@ describe('Channels target-persisting binding management', () => {
       context(collection, execute),
     );
 
+    // The exact binding named to the verifier is this create's own freshly
+    // minted identity, not any id the caller could have known beforehand.
+    const createdBindingId = (result as Readonly<{ binding: Readonly<{ id: string }> }>).binding.id;
     expect(execute).toHaveBeenCalledWith(
       'automation.conversation.target.verify',
-      { automationId: 'automation-1', expectedTemplateVersion: 3 },
+      {
+        automationId: 'automation-1',
+        expectedTemplateVersion: 3,
+      },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(result).toMatchObject({
@@ -988,15 +1002,18 @@ describe('Channels target-persisting binding management', () => {
     if (typeof create !== 'function') return;
 
     const collection = createCollection([connectionRow()]);
-    const execute = vi.fn(async () => ({ kind: 'notVerified' as const, reason: 'notConversation' as const }));
+    const execute = vi.fn(async () => ({ kind: 'notVerified' as const, reason: 'templateVersionMismatch' as const }));
     await expect(create(
       bindingCreateInput(automationTarget),
       context(collection, execute),
-    )).resolves.toEqual({ kind: 'notVerified', reason: 'notConversation' });
+    )).resolves.toEqual({ kind: 'notVerified', reason: 'templateVersionMismatch' });
 
     expect(execute).toHaveBeenCalledWith(
       'automation.conversation.target.verify',
-      { automationId: 'automation-1', expectedTemplateVersion: 3 },
+      {
+        automationId: 'automation-1',
+        expectedTemplateVersion: 3,
+      },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(collection.batches).toHaveLength(0);
@@ -1018,7 +1035,10 @@ describe('Channels target-persisting binding management', () => {
 
     expect(execute).toHaveBeenCalledWith(
       'automation.conversation.target.verify',
-      { automationId: 'automation-1', expectedTemplateVersion: 3 },
+      {
+        automationId: 'automation-1',
+        expectedTemplateVersion: 3,
+      },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(collection.rows.get('binding-1')?.value.payload).toMatchObject({
@@ -1198,7 +1218,10 @@ describe('Channels target-persisting binding management', () => {
 
     expect(execute).toHaveBeenCalledWith(
       'automation.conversation.target.verify',
-      { automationId: 'automation-1', expectedTemplateVersion: 3 },
+      {
+        automationId: 'automation-1',
+        expectedTemplateVersion: 3,
+      },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(collection.batches).toHaveLength(0);
@@ -1429,7 +1452,7 @@ describe('Channels target-persisting binding management', () => {
       allowBotSenders: true,
       inputMode: 'addressedMessages',
       inboundDebounceMs: 1_500,
-      linkPreviewPolicy: 'allow',
+      linkPreviewPolicy: 'providerDefault',
       senderFeedback: 'eligibleRefusals',
       enabled: true,
       signal: new AbortController().signal,
@@ -1451,7 +1474,7 @@ describe('Channels target-persisting binding management', () => {
             allowBotSenders: true,
             inputMode: 'addressedMessages',
             inboundDebounceMs: 1_500,
-            linkPreviewPolicy: 'allow',
+            linkPreviewPolicy: 'providerDefault',
             senderFeedback: 'eligibleRefusals',
             enabled: true,
             authorityEpoch: 2,

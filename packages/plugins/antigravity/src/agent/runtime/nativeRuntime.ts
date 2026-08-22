@@ -6,6 +6,7 @@ import type {
   AgentRuntimeContext,
   AgentSessionOpenRequest,
   AgentSessionRuntime,
+  AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { ConcreteAntigravityRuntimeMode } from '../lifecycle/runtimeMode.js';
@@ -17,16 +18,23 @@ type NativeExecutionRunEventInput = AgentExecutionRunEvent extends infer Event
     : never
   : never;
 
-export type AntigravityNativeSessionFactory = (input: Readonly<{
+type AntigravityNativeRuntimeFactory<TContext extends AgentRuntimeContext> = (input: Readonly<{
   mode: ConcreteAntigravityRuntimeMode;
   request: AgentSessionOpenRequest;
-  context: AgentRuntimeContext;
+  context: TContext;
   connectedAccountEnv?: Readonly<Record<string, string>>;
   materializeAuthEnv?: () => Promise<Readonly<Record<string, string>> | null>;
 }>) => AgentSessionRuntime | Promise<AgentSessionRuntime>;
 
+export type AntigravityNativeSessionFactory =
+  AntigravityNativeRuntimeFactory<AgentSessionRuntimeContext>;
+
+export type AntigravityNativeExecutionRunFactory =
+  AntigravityNativeRuntimeFactory<AgentRuntimeContext>;
+
 export type CreateAntigravityNativeRuntimeOptions = Readonly<{
   openSession: AntigravityNativeSessionFactory;
+  openExecutionRun: AntigravityNativeExecutionRunFactory;
   resolveMode?: (input: Readonly<{
     request: AgentSessionOpenRequest;
     context: AgentRuntimeContext;
@@ -72,11 +80,13 @@ async function materializeAntigravityGeminiEnvironment(
   return Object.freeze(env);
 }
 
-async function openAntigravitySessionWithConnectedAccount(input: Readonly<{
+async function openAntigravityRuntimeWithConnectedAccount<
+  TContext extends AgentRuntimeContext,
+>(input: Readonly<{
   mode: ConcreteAntigravityRuntimeMode;
   request: AgentSessionOpenRequest;
-  context: AgentRuntimeContext;
-  openSession: AntigravityNativeSessionFactory;
+  context: TContext;
+  openRuntime: AntigravityNativeRuntimeFactory<TContext>;
 }>): Promise<AgentSessionRuntime> {
   let initialResyncPending = true;
   let invalidated = false;
@@ -104,7 +114,7 @@ async function openAntigravitySessionWithConnectedAccount(input: Readonly<{
     const connectedAccountEnv = materializeAuthEnv && input.mode === 'cliPrint'
       ? await materializeAuthEnv()
       : undefined;
-    const session = await input.openSession({
+    const session = await input.openRuntime({
       mode: input.mode,
       request: input.request,
       context: input.context,
@@ -212,16 +222,37 @@ export function createAntigravityNativeRuntime(
 ): AgentRuntime {
   const openSession = async (
     request: AgentSessionOpenRequest,
-    context: AgentRuntimeContext,
+    context: AgentSessionRuntimeContext,
   ): Promise<AgentSessionRuntime> => {
     const mode = request.kind === 'resume'
       ? 'cliPrint'
       : await (options.resolveMode?.({ request, context }) ?? readRequestedMode(request));
-    return await openAntigravitySessionWithConnectedAccount({
+    return await openAntigravityRuntimeWithConnectedAccount({
       mode,
       request,
       context,
-      openSession: options.openSession,
+      openRuntime: options.openSession,
+    });
+  };
+  const openExecutionRunRuntime = async (
+    request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>,
+    context: AgentRuntimeContext,
+  ): Promise<AgentSessionRuntime> => {
+    const sessionRequest: AgentSessionOpenRequest = {
+      kind: 'create',
+      sessionId: request.runId,
+      cwd: request.cwd,
+      ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
+    };
+    const mode = await (
+      options.resolveMode?.({ request: sessionRequest, context })
+      ?? readRequestedMode(sessionRequest)
+    );
+    return await openAntigravityRuntimeWithConnectedAccount({
+      mode,
+      request: sessionRequest,
+      context,
+      openRuntime: options.openExecutionRun,
     });
   };
 
@@ -232,12 +263,7 @@ export function createAntigravityNativeRuntime(
         if (request.kind !== 'create') {
           throw new Error(`Antigravity execution runs do not support ${request.kind}.`);
         }
-        const session = await openSession({
-          kind: 'create',
-          sessionId: request.runId,
-          cwd: request.cwd,
-          ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
-        }, context);
+        const session = await openExecutionRunRuntime(request, context);
         const runtime = createExecutionRunRuntime(request, session);
         const result = await runtime.send(request.input);
         if (result.status !== 'admitted') await runtime.dispose();

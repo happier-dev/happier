@@ -12,6 +12,7 @@ function asFiniteNonNegativeNumber(value: unknown): number | null {
 export function buildClaudeAssistantUsageObservation(params: Readonly<{
     modelId?: string | null;
     modelSource?: ClaudeUsageModelSource;
+    observedAtMs?: number;
     usage: ClaudeTokenUsage;
 }>): ClaudeUsageObservation | null {
     const inputTokens = asFiniteNonNegativeNumber(params.usage.input_tokens);
@@ -35,7 +36,7 @@ export function buildClaudeAssistantUsageObservation(params: Readonly<{
         (cacheReadTokens ?? 0);
     const costs = params.modelSource === 'provider'
         ? null
-        : estimateClaudeUsageCost(params.usage, params.modelId ?? undefined);
+        : estimateClaudeUsageCost(params.usage, params.modelId ?? undefined, params.observedAtMs);
     const tokens: ClaudeUsageObservation['tokens'] = {
         total,
         input: inputTokens ?? 0,

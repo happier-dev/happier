@@ -14,9 +14,7 @@ describe('Antigravity UI descriptor', () => {
         connectedService: { serviceId: 'gemini' },
         localControl: true,
       },
-      behavior: {
-        externalSessions: { supportsBackgroundFollow: true },
-      },
+      behavior: {},
     });
     expect(ANTIGRAVITY_UI_DESCRIPTOR).not.toHaveProperty('settings');
   });

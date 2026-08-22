@@ -6,10 +6,11 @@ import {
   type ConversationPairingResourceV1,
   type ConversationResolvedEndpointV1,
 } from '@happier-dev/channels-protocol/v1';
-import { PluginError, type PluginMachineMaterializationRefV1 } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, type PluginMachineMaterializationRefV1 } from '@happier-dev/plugin-sdk';
 import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 
 import type { ConversationCommandClassification } from './commands.js';
+import { areConversationMaterializationRefsEqual } from './connectionLifecycle.js';
 import { renderConversationPairingDeepLink } from './pairingLink.js';
 
 export const CONVERSATION_PAIRING_EXPIRY_MS = 10 * 60 * 1_000;
@@ -137,15 +138,6 @@ function encodePairingToken(bytes: Uint8Array): string {
   return token;
 }
 
-function sameMaterialization(
-  left: PluginMachineMaterializationRefV1,
-  right: PluginMachineMaterializationRefV1,
-): boolean {
-  return left.machineId === right.machineId
-    && left.materializationId === right.materializationId
-    && left.pluginId === right.pluginId;
-}
-
 export function createConversationPairingManager(dependencies: Readonly<{
   generationId: string;
   now: () => number;
@@ -161,6 +153,14 @@ export function createConversationPairingManager(dependencies: Readonly<{
   const consumedTokens = new Map<string, number>();
   const proposals = new Map<string, Proposal>();
   const failedAttemptsByRequester = new Map<string, number>();
+  /**
+   * A failed `/pair` is charged to its requester once per provider
+   * occurrence, never once per delivery. A checkpointed pull re-presents
+   * its whole page until the checkpoint advances, so charging per call let
+   * one unsettled batch silently burn a requester's whole budget on a single
+   * mistyped token. The census ID is that occurrence's immutable identity.
+   */
+  const chargedFailureCensusIds = new Set<string>();
   const proposalByFinalizeKey = new Map<string, string>();
   const proposalByCensusId = new Map<string, string>();
   const listeners = new Set<() => void>();
@@ -393,7 +393,15 @@ export function createConversationPairingManager(dependencies: Readonly<{
       const challenge = challengeId === undefined ? undefined : challengesById.get(challengeId);
       if (challenge === undefined
         || challenge.connectionId !== input.connectionId
-        || !sameMaterialization(challenge.materialization, input.materialization)) {
+        || !areConversationMaterializationRefsEqual(challenge.materialization, input.materialization)) {
+        const ownerReason = consumedTokens.has(input.command.token) ? 'challengeConsumed' : 'tokenMismatch';
+        if (chargedFailureCensusIds.has(input.censusId)) {
+          return {
+            kind: 'silent',
+            ownerReason,
+            attemptsRemaining: MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER - requesterAttempts,
+          } as const;
+        }
         if (requesterAttempts === 0
           && failedAttemptsByRequester.size >= MAX_CONVERSATION_PAIRING_TRACKED_REQUESTERS) {
           return {
@@ -404,9 +412,10 @@ export function createConversationPairingManager(dependencies: Readonly<{
         }
         const attempts = requesterAttempts + 1;
         failedAttemptsByRequester.set(requesterKey, attempts);
+        addBoundedTombstone(chargedFailureCensusIds, input.censusId);
         return {
           kind: 'silent',
-          ownerReason: consumedTokens.has(input.command.token) ? 'challengeConsumed' : 'tokenMismatch',
+          ownerReason,
           attemptsRemaining: MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER - attempts,
         } as const;
       }
@@ -447,7 +456,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
         challenge === undefined
         || challenge.token !== reservation.challengeToken
         || challenge.connectionId !== reservation.connectionId
-        || !sameMaterialization(challenge.materialization, reservation.materialization)
+        || !areConversationMaterializationRefsEqual(challenge.materialization, reservation.materialization)
       ) {
         return { kind: 'silent', ownerReason: 'reservationUnavailable' } as const;
       }
@@ -578,7 +587,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
           return result;
         } catch (cause) {
           proposal.state = 'proposed';
-          if (cause instanceof PluginError && (
+          if (isPluginError(cause) && (
             cause.code === 'plugin_action_unavailable'
             || cause.code === 'channels_binding_create_corrupt'
           )) {

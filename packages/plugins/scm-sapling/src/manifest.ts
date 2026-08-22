@@ -1,8 +1,8 @@
-import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { ScmBackendContribution } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { SAPLING_INSTALLABLE_DEP_ID, SAPLING_INSTALLABLE_DESCRIPTOR } from './installables/saplingInstallable.js';
-import { SAPLING_SCM_BACKEND_ID } from './backend.js';
+import { createSaplingScmBackendRegistration, SAPLING_SCM_BACKEND_ID } from './backend.js';
 
 export const SAPLING_SCM_BACKEND_CONTRIBUTION = Object.freeze({
     id: SAPLING_SCM_BACKEND_ID,
@@ -12,14 +12,15 @@ export const SAPLING_SCM_BACKEND_CONTRIBUTION = Object.freeze({
     capabilities: ['detect', 'fetch', 'status', 'diff', 'commit', 'push'],
 } satisfies ScmBackendContribution);
 
-export const PLUGIN_MANIFEST = {
-    schemaVersion: 2,
+const saplingScmBackendRegistration = createSaplingScmBackendRegistration();
+
+export const SAPLING_PLUGIN = definePlugin({
     id: 'happier.scm.backend.sapling',
     version: '0.0.0',
     displayName: 'Sapling SCM backend',
     description: 'Provides the first-party local Sapling SCM backend with audited limited capabilities.',
     engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
-    entrypoints: { daemon: './dist/index.js' },
+    entrypoints: { daemon: './.happier-plugin/daemon.js' },
     hostAccess: {
         required: [{
             id: 'sapling-process',
@@ -29,8 +30,18 @@ export const PLUGIN_MANIFEST = {
         }],
         optional: [],
     },
-    contributes: {
-        managedDependencies: [SAPLING_INSTALLABLE_DESCRIPTOR],
-        scmBackends: [SAPLING_SCM_BACKEND_CONTRIBUTION],
+    managedDependencies: {
+        [SAPLING_INSTALLABLE_DEP_ID]: SAPLING_INSTALLABLE_DESCRIPTOR,
     },
-} satisfies PluginManifest;
+    scmBackends: {
+        [SAPLING_SCM_BACKEND_ID]: {
+            declaration: SAPLING_SCM_BACKEND_CONTRIBUTION,
+            runtime: {
+                runtime: saplingScmBackendRegistration.runtime,
+                handlers: saplingScmBackendRegistration.handlers,
+            },
+        },
+    },
+});
+
+export const PLUGIN_MANIFEST = SAPLING_PLUGIN.manifest;

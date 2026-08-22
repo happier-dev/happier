@@ -1,16 +1,23 @@
-import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 
+import { AGENT_DEFINITION } from './agent/definition.js';
+import { createDeepSecExecutionRunFactory } from './agent/reviews/execution.js';
 import { createDeepSecReviewExecutionProfile } from './agent/reviews/profile.js';
 import { DEEPSEC_SYSTEM_TOOL_ID } from './agent/reviews/systemTool.js';
 
-export const PLUGIN_MANIFEST = {
-  schemaVersion: 2,
+const createDeepSecRuntime: AgentRuntimeFactory = () => Object.freeze({
+  executionRuns: createDeepSecExecutionRunFactory(),
+});
+
+export const DEEPSEC_PLUGIN = definePlugin({
   id: 'happier.review.deepsec',
   version: '0.0.0',
   displayName: 'DeepSec review engine',
   description: 'Runs DeepSec as a review and security-review execution engine.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
-  entrypoints: { daemon: './dist/index.js' },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
       id: 'deepsec-workspace',
@@ -36,63 +43,74 @@ export const PLUGIN_MANIFEST = {
     }],
     optional: [],
   },
-  contributes: {
-    agents: [{
-      id: 'deepsec',
-      title: 'DeepSec',
-      runtime: { kind: 'custom' },
-      cli: {
-        executable: {
-          binaryName: 'deepsec',
-          knownUserBinDirSuffixes: null,
-          sourcePreference: 'system-first',
-        },
-        install: {
-          managed: null,
-          manual: { kind: 'command' },
-          guideUrl: null,
-          docsUrl: null,
-        },
-        auth: {
-          support: 'status_only',
-          probe: {
-            parser: 'unknown',
-            backgroundChecks: 'safe',
-            statusArgs: null,
-            envVars: ['AI_GATEWAY_API_KEY'],
+  agents: {
+    deepsec: {
+      declaration: {
+        title: 'DeepSec',
+        runtime: { kind: 'custom' },
+        cli: {
+          executable: {
+            binaryName: 'deepsec',
+            knownUserBinDirSuffixes: null,
+            sourcePreference: 'system-first',
           },
-          loginLaunches: [],
+          install: {
+            managed: null,
+            manual: { kind: 'command' },
+            guideUrl: null,
+            docsUrl: null,
+          },
+          auth: {
+            support: 'status_only',
+            probe: {
+              parser: 'unknown',
+              backgroundChecks: 'safe',
+              statusArgs: null,
+              envVars: ['AI_GATEWAY_API_KEY'],
+            },
+            loginLaunches: [],
+          },
         },
+        primary: 'executionRuns',
+        capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, { executionRuns: { open: ['create'], checkpoint: false, stop: true } }),
       },
-      primary: 'executionRuns',
-      capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } },
-    }],
-    executionRunProfiles: [
-      createDeepSecReviewExecutionProfile('review'),
-      createDeepSecReviewExecutionProfile('repository_security_audit'),
-    ],
-    resources: [{
-      id: 'review-prompt-resource',
+      factory: createDeepSecRuntime,
+    },
+  },
+  executionRunProfiles: {
+    review: createDeepSecReviewExecutionProfile('review'),
+    'repository-security-audit': createDeepSecReviewExecutionProfile('repository_security_audit'),
+  },
+  resources: {
+    'review-prompt-resource': {
       kind: 'prompt',
       path: './resources/review-prompt.md',
       contentType: 'text/markdown',
-    }, {
-      id: 'repository-security-audit-prompt-resource',
+    },
+    'repository-security-audit-prompt-resource': {
       kind: 'prompt',
       path: './resources/repository-security-audit-prompt.md',
       contentType: 'text/markdown',
-    }],
-    promptAssets: [{
-      id: 'review-prompt',
+    },
+  },
+  promptAssets: {
+    'review-prompt': {
       kind: 'systemPrompt',
       resource: 'review-prompt-resource',
       target: { kind: 'agent', agent: 'deepsec' },
-    }, {
-      id: 'repository-security-audit-prompt',
+    },
+    'repository-security-audit-prompt': {
       kind: 'systemPrompt',
       resource: 'repository-security-audit-prompt-resource',
       target: { kind: 'agent', agent: 'deepsec' },
-    }],
-    systemTools: [{ id: DEEPSEC_SYSTEM_TOOL_ID, title: 'DeepSec CLI', executableNames: ['deepsec'] }],
+    },
   },
-} satisfies PluginManifest;
+  systemTools: {
+    [DEEPSEC_SYSTEM_TOOL_ID]: {
+      title: 'DeepSec CLI',
+      executableNames: ['deepsec'],
+    },
+  },
+});
+
+export const PLUGIN_MANIFEST = DEEPSEC_PLUGIN.manifest;

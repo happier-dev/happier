@@ -1,0 +1,2028 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "executionRuns": {
+            "checkpoint": true,
+            "open": [
+              "create"
+            ],
+            "stop": true
+          },
+          "sessions": {
+            "cancel": true,
+            "configuration": true,
+            "delivery": [
+              "newTurn",
+              "steer",
+              "followUp"
+            ],
+            "goals": {
+              "active": {
+                "clear": true,
+                "set": {
+                  "fields": [
+                    "objective"
+                  ]
+                }
+              },
+              "inactive": {
+                "clear": true,
+                "get": true,
+                "set": {
+                  "fields": [
+                    "objective"
+                  ]
+                }
+              },
+              "source": "goals"
+            },
+            "open": [
+              "create",
+              "resume"
+            ],
+            "runtimeActivitySnapshots": true,
+            "workStateSources": [
+              {
+                "id": "goals",
+                "itemKinds": [
+                  "goal"
+                ]
+              }
+            ]
+          },
+          "surfaces": [
+            "terminal",
+            "externalSessions"
+          ]
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [
+              {
+                "args": [],
+                "initialInput": "/login\r",
+                "kind": "primary"
+              }
+            ],
+            "machineLoginKey": "claude-code",
+            "probe": {
+              "backgroundChecks": "safe",
+              "credentialPaths": [
+                "~/.claude/.credentials.json",
+                "~/.claude/.claude.json"
+              ],
+              "envVars": [
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_AUTH_TOKEN"
+              ],
+              "parser": "claudeCredentialsFile",
+              "statusArgs": null
+            },
+            "support": "login_terminal"
+          },
+          "displayName": "Claude Code CLI",
+          "executable": {
+            "acceptsJavaScriptFileOverride": true,
+            "binaryName": "claude",
+            "knownUserBinDirSuffixes": [
+              ".local/bin"
+            ],
+            "sourcePreference": "system-first",
+            "systemCommandResolutionStrategy": "known-user-first-runnable"
+          },
+          "install": {
+            "docsUrl": "https://claude.ai",
+            "guideUrl": "https://code.claude.com/docs/en/setup",
+            "managed": null,
+            "manual": {
+              "kind": "vendor_recipe",
+              "recipes": {
+                "darwin": [
+                  {
+                    "args": [
+                      "-lc",
+                      "curl -fsSL https://claude.ai/install.sh | bash"
+                    ],
+                    "cmd": "bash"
+                  }
+                ],
+                "linux": [
+                  {
+                    "args": [
+                      "-lc",
+                      "curl -fsSL https://claude.ai/install.sh | bash"
+                    ],
+                    "cmd": "bash"
+                  }
+                ],
+                "win32": [
+                  {
+                    "args": [
+                      "-NoProfile",
+                      "-ExecutionPolicy",
+                      "Bypass",
+                      "-Command",
+                      "irm https://claude.ai/install.ps1 | iex"
+                    ],
+                    "cmd": "powershell"
+                  }
+                ]
+              }
+            },
+            "recommendationOrder": 10
+          }
+        },
+        "connectedAccounts": [
+          {
+            "materializationKinds": [
+              "environment",
+              "files",
+              "httpHeaders"
+            ],
+            "purpose": "model_upstream",
+            "required": false,
+            "service": "claude-subscription"
+          },
+          {
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "model_upstream_api_key",
+            "required": false,
+            "service": "anthropic"
+          }
+        ],
+        "id": "claude",
+        "primary": "sessions",
+        "providerRequirements": {
+          "acceptsProtocols": [
+            "anthropic"
+          ],
+          "applyPolicy": "live",
+          "authIsolation": {
+            "ownedEnvKeys": [
+              "ANTHROPIC_BASE_URL",
+              "ANTHROPIC_CUSTOM_HEADERS",
+              "ANTHROPIC_API_KEY",
+              "ANTHROPIC_AUTH_TOKEN",
+              "ANTHROPIC_OAUTH_TOKEN",
+              "CLAUDE_CODE_OAUTH_TOKEN",
+              "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+              "CLAUDE_CODE_OAUTH_SCOPES",
+              "CLAUDE_CODE_SETUP_TOKEN",
+              "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
+            ],
+            "suppressConnectedServiceIds": [
+              "claude-subscription",
+              "anthropic"
+            ]
+          },
+          "credentialSupport": {
+            "apiKeyTransports": [
+              {
+                "destination": {
+                  "formats": [
+                    "bearer"
+                  ],
+                  "kind": "httpHeader",
+                  "names": [
+                    "authorization"
+                  ]
+                },
+                "protocol": "anthropic"
+              },
+              {
+                "destination": {
+                  "formats": [
+                    "raw"
+                  ],
+                  "kind": "httpHeader",
+                  "names": [
+                    "x-api-key"
+                  ]
+                },
+                "protocol": "anthropic"
+              }
+            ],
+            "supportsNoAuth": true
+          },
+          "materialization": "spawnEnv",
+          "required": {
+            "streaming": true,
+            "toolRoundTrips": true
+          },
+          "supportsFreeformModelIds": true
+        },
+        "runtime": {
+          "kind": "custom"
+        },
+        "surfaces": {
+          "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
+            "sources": [
+              {
+                "instances": [
+                  {
+                    "constants": {},
+                    "kind": "default"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "claudeConfig"
+                    },
+                    {
+                      "field": "configDir",
+                      "kind": "field"
+                    },
+                    {
+                      "field": "projectId",
+                      "kind": "field"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "claudeConfig"
+                    },
+                    {
+                      "kind": "string",
+                      "max": 10000,
+                      "min": 1,
+                      "name": "configDir",
+                      "nullish": true
+                    },
+                    {
+                      "kind": "string",
+                      "max": 2000,
+                      "min": 1,
+                      "name": "projectId",
+                      "nullish": true
+                    }
+                  ]
+                },
+                "sourceKind": "claudeConfig"
+              }
+            ]
+          }
+        },
+        "title": "Claude"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [
+      {
+        "authentication": {
+          "defaultModeId": "setup-token",
+          "modes": [
+            {
+              "fields": [
+                {
+                  "id": "token",
+                  "schema": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "secret": true,
+                  "title": "Claude setup token"
+                }
+              ],
+              "id": "setup-token",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "title": "Setup token"
+            },
+            {
+              "callbackUrl": "https://platform.claude.com/oauth/code/callback",
+              "id": "oauth",
+              "kind": "oauthAuthorizationCode",
+              "outcomeReconciliation": "none",
+              "pkce": "required",
+              "scopes": [
+                "org:create_api_key",
+                "user:profile",
+                "user:inference",
+                "user:sessions:claude_code",
+                "user:mcp_servers",
+                "user:file_upload"
+              ]
+            }
+          ]
+        },
+        "id": "claude-subscription",
+        "title": "Claude"
+      },
+      {
+        "authentication": {
+          "defaultModeId": "api-key",
+          "modes": [
+            {
+              "fields": [
+                {
+                  "id": "token",
+                  "schema": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "secret": true,
+                  "title": "Anthropic API key"
+                }
+              ],
+              "id": "api-key",
+              "kind": "manual",
+              "outcomeReconciliation": "none"
+            }
+          ]
+        },
+        "id": "anthropic",
+        "title": "Anthropic API key"
+      }
+    ],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [
+      {
+        "category": "decision",
+        "executionKind": "decide",
+        "filters": {
+          "agentId": "claude"
+        },
+        "hookApiVersion": 1,
+        "id": "resolve-prerequisites",
+        "on": "agent.resolvePrerequisites",
+        "scope": "agent"
+      },
+      {
+        "category": "augmentation",
+        "executionKind": "augment",
+        "filters": {
+          "agentId": "claude"
+        },
+        "hookApiVersion": 1,
+        "id": "augment-spawn-env",
+        "on": "agent.spawnEnv.augment",
+        "scope": "daemon"
+      }
+    ],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [
+        {
+          "id": "config",
+          "metadata": {
+            "agentId": "claude"
+          },
+          "title": "Claude MCP configuration"
+        }
+      ],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [
+      {
+        "catalog": {
+          "manualModelPolicy": "allowed",
+          "membershipPolicy": "probe-authoritative",
+          "probes": [
+            {
+              "endpointTemplateId": "anthropic",
+              "parser": "anthropic-models",
+              "path": "/v1/models?limit=1000"
+            }
+          ],
+          "source": "static+probe",
+          "staticModels": [
+            {
+              "contextWindowTokens": 1000000,
+              "description": "Latest highest-capability Claude model for the hardest coding and reasoning tasks.",
+              "id": "claude-opus-5",
+              "modelOptions": [
+                {
+                  "currentValue": "high",
+                  "id": "reasoning_effort",
+                  "name": "Thinking",
+                  "options": [
+                    {
+                      "name": "Low",
+                      "value": "low"
+                    },
+                    {
+                      "name": "Medium",
+                      "value": "medium"
+                    },
+                    {
+                      "name": "High",
+                      "value": "high"
+                    },
+                    {
+                      "name": "XHigh",
+                      "value": "xhigh"
+                    },
+                    {
+                      "name": "Max",
+                      "value": "max"
+                    }
+                  ],
+                  "type": "select"
+                },
+                {
+                  "currentValue": "false",
+                  "description": "Maximum coding effort. Forces XHigh Thinking effort while enabled.",
+                  "id": "ultracode",
+                  "name": "Ultracode",
+                  "overridesWhenOn": {
+                    "forcedValue": "xhigh",
+                    "optionIds": [
+                      "reasoning_effort"
+                    ]
+                  },
+                  "type": "boolean"
+                }
+              ],
+              "name": "Opus 5"
+            },
+            {
+              "contextWindowTokens": 1000000,
+              "description": "Latest balanced Claude model for coding, agentic work, editing, and analysis.",
+              "id": "claude-sonnet-5",
+              "modelOptions": [
+                {
+                  "currentValue": "high",
+                  "id": "reasoning_effort",
+                  "name": "Thinking",
+                  "options": [
+                    {
+                      "name": "Low",
+                      "value": "low"
+                    },
+                    {
+                      "name": "Medium",
+                      "value": "medium"
+                    },
+                    {
+                      "name": "High",
+                      "value": "high"
+                    },
+                    {
+                      "name": "XHigh",
+                      "value": "xhigh"
+                    },
+                    {
+                      "name": "Max",
+                      "value": "max"
+                    }
+                  ],
+                  "type": "select"
+                },
+                {
+                  "currentValue": "false",
+                  "description": "Maximum coding effort. Forces XHigh Thinking effort while enabled.",
+                  "id": "ultracode",
+                  "name": "Ultracode",
+                  "overridesWhenOn": {
+                    "forcedValue": "xhigh",
+                    "optionIds": [
+                      "reasoning_effort"
+                    ]
+                  },
+                  "type": "boolean"
+                }
+              ],
+              "name": "Sonnet 5"
+            },
+            {
+              "contextWindowTokens": 1000000,
+              "description": "Newest highest-capability generally available Claude model for the hardest coding and reasoning tasks.",
+              "id": "claude-fable-5",
+              "modelOptions": [
+                {
+                  "currentValue": "high",
+                  "id": "reasoning_effort",
+                  "name": "Thinking",
+                  "options": [
+                    {
+                      "name": "Low",
+                      "value": "low"
+                    },
+                    {
+                      "name": "Medium",
+                      "value": "medium"
+                    },
+                    {
+                      "name": "High",
+                      "value": "high"
+                    },
+                    {
+                      "name": "XHigh",
+                      "value": "xhigh"
+                    },
+                    {
+                      "name": "Max",
+                      "value": "max"
+                    }
+                  ],
+                  "type": "select"
+                },
+                {
+                  "currentValue": "false",
+                  "description": "Maximum coding effort. Forces XHigh Thinking effort while enabled.",
+                  "id": "ultracode",
+                  "name": "Ultracode",
+                  "overridesWhenOn": {
+                    "forcedValue": "xhigh",
+                    "optionIds": [
+                      "reasoning_effort"
+                    ]
+                  },
+                  "type": "boolean"
+                }
+              ],
+              "name": "Fable 5"
+            },
+            {
+              "contextWindowTokens": 1000000,
+              "description": "Limited-availability Claude model for approved Project Glasswing customers.",
+              "id": "claude-mythos-5",
+              "modelOptions": [
+                {
+                  "currentValue": "high",
+                  "id": "reasoning_effort",
+                  "name": "Thinking",
+                  "options": [
+                    {
+                      "name": "Low",
+                      "value": "low"
+                    },
+                    {
+                      "name": "Medium",
+                      "value": "medium"
+                    },
+                    {
+                      "name": "High",
+                      "value": "high"
+                    },
+                    {
+                      "name": "XHigh",
+                      "value": "xhigh"
+                    },
+                    {
+                      "name": "Max",
+                      "value": "max"
+                    }
+                  ],
+                  "type": "select"
+                },
+                {
+                  "currentValue": "false",
+                  "description": "Maximum coding effort. Forces XHigh Thinking effort while enabled.",
+                  "id": "ultracode",
+                  "name": "Ultracode",
+                  "overridesWhenOn": {
+                    "forcedValue": "xhigh",
+                    "optionIds": [
+                      "reasoning_effort"
+                    ]
+                  },
+                  "type": "boolean"
+                }
+              ],
+              "name": "Mythos 5"
+            },
+            {
+              "contextWindowTokens": 1000000,
+              "description": "Newest highest-capability Claude model for the hardest coding and reasoning tasks.",
+              "id": "claude-opus-4-8",
+              "modelOptions": [
+                {
+                  "currentValue": "high",
+                  "id": "reasoning_effort",
+                  "name": "Thinking",
+                  "options": [
+                    {
+                      "name": "Low",
+                      "value": "low"
+                    },
+                    {
+                      "name": "Medium",
+                      "value": "medium"
+                    },
+                    {
+                      "name": "High",
+                      "value": "high"
+                    },
+                    {
+                      "name": "XHigh",
+                      "value": "xhigh"
+                    },
+                    {
+                      "name": "Max",
+                      "value": "max"
+                    }
+                  ],
+                  "type": "select"
+                },
+                {
+                  "currentValue": "false",
+                  "description": "Maximum coding effort. Forces XHigh Thinking effort while enabled.",
+                  "id": "ultracode",
+                  "name": "Ultracode",
+                  "overridesWhenOn": {
+                    "forcedValue": "xhigh",
+                    "optionIds": [
+                      "reasoning_effort"
+                    ]
+                  },
+                  "type": "boolean"
+                }
+              ],
+              "name": "Opus 4.8"
+            },
+            {
+              "contextWindowTokens": 1000000,
+              "description": "Prior highest-capability Claude model for hard coding and reasoning tasks.",
+              "id": "claude-opus-4-7",
+              "modelOptions": [
+                {
+                  "currentValue": "xhigh",
+                  "id": "reasoning_effort",
+                  "name": "Thinking",
+                  "options": [
+                    {
+                      "name": "Low",
+                      "value": "low"
+                    },
+                    {
+                      "name": "Medium",
+                      "value": "medium"
+                    },
+                    {
+                      "name": "High",
+                      "value": "high"
+                    },
+                    {
+                      "name": "XHigh",
+                      "value": "xhigh"
+                    },
+                    {
+                      "name": "Max",
+                      "value": "max"
+                    }
+                  ],
+                  "type": "select"
+                },
+                {
+                  "currentValue": "false",
+                  "description": "Maximum coding effort. Forces XHigh Thinking effort while enabled.",
+                  "id": "ultracode",
+                  "name": "Ultracode",
+                  "overridesWhenOn": {
+                    "forcedValue": "xhigh",
+                    "optionIds": [
+                      "reasoning_effort"
+                    ]
+                  },
+                  "type": "boolean"
+                }
+              ],
+              "name": "Opus 4.7"
+            },
+            {
+              "description": "Highest-capability Claude model for the hardest coding and reasoning tasks.",
+              "extendedContextModelId": "claude-opus-4-6[1m]",
+              "id": "claude-opus-4-6",
+              "modelOptions": [
+                {
+                  "currentValue": "high",
+                  "id": "reasoning_effort",
+                  "name": "Thinking",
+                  "options": [
+                    {
+                      "name": "Low",
+                      "value": "low"
+                    },
+                    {
+                      "name": "Medium",
+                      "value": "medium"
+                    },
+                    {
+                      "name": "High",
+                      "value": "high"
+                    },
+                    {
+                      "name": "Max",
+                      "value": "max"
+                    }
+                  ],
+                  "type": "select"
+                }
+              ],
+              "name": "Opus 4.6"
+            },
+            {
+              "description": "Balanced Claude model for everyday coding, editing, and analysis.",
+              "extendedContextModelId": "claude-sonnet-4-6[1m]",
+              "id": "claude-sonnet-4-6",
+              "modelOptions": [
+                {
+                  "currentValue": "high",
+                  "id": "reasoning_effort",
+                  "name": "Thinking",
+                  "options": [
+                    {
+                      "name": "Low",
+                      "value": "low"
+                    },
+                    {
+                      "name": "Medium",
+                      "value": "medium"
+                    },
+                    {
+                      "name": "High",
+                      "value": "high"
+                    },
+                    {
+                      "name": "Max",
+                      "value": "max"
+                    }
+                  ],
+                  "type": "select"
+                }
+              ],
+              "name": "Sonnet 4.6"
+            },
+            {
+              "description": "Fastest Claude option for lighter tasks and lower-latency replies.",
+              "id": "claude-haiku-4-5",
+              "name": "Haiku 4.5"
+            },
+            {
+              "description": "Prior Opus generation alias for compatibility with existing Claude setups.",
+              "id": "claude-opus-4-5",
+              "modelOptions": [
+                {
+                  "currentValue": "high",
+                  "id": "reasoning_effort",
+                  "name": "Thinking",
+                  "options": [
+                    {
+                      "name": "Low",
+                      "value": "low"
+                    },
+                    {
+                      "name": "Medium",
+                      "value": "medium"
+                    },
+                    {
+                      "name": "High",
+                      "value": "high"
+                    }
+                  ],
+                  "type": "select"
+                }
+              ],
+              "name": "Opus 4.5"
+            },
+            {
+              "description": "Prior Sonnet generation alias for compatibility with existing Claude setups.",
+              "id": "claude-sonnet-4-5",
+              "name": "Sonnet 4.5"
+            }
+          ]
+        },
+        "credential": {
+          "keyUrl": "https://console.anthropic.com/settings/keys",
+          "kind": "apiKey",
+          "required": true,
+          "slotId": "apiKey",
+          "transports": [
+            {
+              "destination": {
+                "format": "raw",
+                "kind": "httpHeader",
+                "name": "x-api-key"
+              },
+              "id": "anthropic-x-api-key",
+              "protocols": [
+                "anthropic"
+              ],
+              "uses": [
+                "probe",
+                "runtime"
+              ]
+            }
+          ]
+        },
+        "endpointTemplates": [
+          {
+            "baseUrl": "https://api.anthropic.com/",
+            "capabilities": {
+              "reasoningControls": "supported",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "anthropic",
+            "protocol": "anthropic",
+            "publicHeaders": {
+              "anthropic-version": "2023-06-01"
+            }
+          }
+        ],
+        "id": "anthropic",
+        "kind": "frontier",
+        "name": "Anthropic",
+        "v": 1,
+        "websiteUrl": "https://www.anthropic.com"
+      }
+    ],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [
+      {
+        "actions": [],
+        "fields": [
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "boolean"
+            },
+            "default": true,
+            "description": {
+              "fallback": "Use the official @anthropic-ai/claude-agent-sdk for remote mode.",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteAgentSdkEnabled.subtitle"
+            },
+            "id": "claudeRemoteAgentSdkEnabled",
+            "presentation": {
+              "control": "switch"
+            },
+            "schema": {
+              "description": "Use Claude Agent SDK in remote mode",
+              "type": "boolean"
+            },
+            "title": {
+              "fallback": "Use Agent SDK (remote)",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteAgentSdkEnabled.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "boolean"
+            },
+            "default": false,
+            "description": {
+              "fallback": "Keep Claude Code as the canonical terminal session and send supported Happier prompts into that session.",
+              "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalEnabled.subtitle"
+            },
+            "id": "claudeUnifiedTerminalEnabled",
+            "presentation": {
+              "control": "switch"
+            },
+            "schema": {
+              "description": "Enable Claude unified terminal runtime",
+              "type": "boolean"
+            },
+            "title": {
+              "fallback": "Use unified terminal mode",
+              "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalEnabled.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "boolean"
+            },
+            "default": false,
+            "description": {
+              "fallback": "Enable Claude Code experimental Agent Teams in every Claude session started by Happier.",
+              "key": "settingsAgents.plugins.claude.fields.claudeCodeExperimentalAgentTeamsEnabled.subtitle"
+            },
+            "id": "claudeCodeExperimentalAgentTeamsEnabled",
+            "presentation": {
+              "control": "switch"
+            },
+            "schema": {
+              "description": "Force-enable Claude experimental agent teams",
+              "type": "boolean"
+            },
+            "title": {
+              "fallback": "Force-enable Agent Teams",
+              "key": "settingsAgents.plugins.claude.fields.claudeCodeExperimentalAgentTeamsEnabled.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "enum"
+            },
+            "default": "auto",
+            "description": {
+              "fallback": "Choose which terminal multiplexer Happier uses for unified Claude sessions.",
+              "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalHost.subtitle"
+            },
+            "id": "claudeUnifiedTerminalHost",
+            "presentation": {
+              "control": "select",
+              "options": [
+                {
+                  "description": {
+                    "fallback": "Prefer the best supported host on this machine.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalHost.options.auto.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Auto",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalHost.options.auto.title"
+                  },
+                  "value": "auto"
+                },
+                {
+                  "description": {
+                    "fallback": "Use tmux when it is available.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalHost.options.tmux.subtitle"
+                  },
+                  "title": {
+                    "fallback": "tmux",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalHost.options.tmux.title"
+                  },
+                  "value": "tmux"
+                },
+                {
+                  "description": {
+                    "fallback": "Use Zellij when it is available and supported.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalHost.options.zellij.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Zellij",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalHost.options.zellij.title"
+                  },
+                  "value": "zellij"
+                }
+              ]
+            },
+            "schema": {
+              "description": "Claude unified terminal host adapter preference",
+              "enum": [
+                "auto",
+                "tmux",
+                "zellij"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "fallback": "Terminal host",
+              "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalHost.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "enum"
+            },
+            "default": "ask_every_time",
+            "description": {
+              "fallback": "Choose how Happier responds when Claude asks how to resume a large session.",
+              "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalResumeChoice.subtitle"
+            },
+            "id": "claudeUnifiedTerminalResumeChoice",
+            "presentation": {
+              "control": "select",
+              "options": [
+                {
+                  "description": {
+                    "fallback": "Show a user action in the session whenever Claude asks.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalResumeChoice.options.ask_every_time.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Ask every time",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalResumeChoice.options.ask_every_time.title"
+                  },
+                  "value": "ask_every_time"
+                },
+                {
+                  "description": {
+                    "fallback": "Use Claude's summary so large sessions resume faster.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalResumeChoice.options.resume_from_summary.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Resume from summary",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalResumeChoice.options.resume_from_summary.title"
+                  },
+                  "value": "resume_from_summary"
+                },
+                {
+                  "description": {
+                    "fallback": "Load the full session context when Claude offers the choice.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalResumeChoice.options.resume_full_session.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Resume full session",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalResumeChoice.options.resume_full_session.title"
+                  },
+                  "value": "resume_full_session"
+                }
+              ]
+            },
+            "schema": {
+              "description": "Default action for Claude heavy-session resume choice prompts",
+              "enum": [
+                "ask_every_time",
+                "resume_from_summary",
+                "resume_full_session"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "fallback": "Large-session resume",
+              "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalResumeChoice.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "enum"
+            },
+            "default": "ask_every_time",
+            "description": {
+              "fallback": "Choose how Happier responds when Claude asks whether to trust a workspace.",
+              "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalWorkspaceTrust.subtitle"
+            },
+            "id": "claudeUnifiedTerminalWorkspaceTrust",
+            "presentation": {
+              "control": "select",
+              "options": [
+                {
+                  "description": {
+                    "fallback": "Show the exact workspace trust question in the session.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalWorkspaceTrust.options.ask_every_time.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Ask every time",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalWorkspaceTrust.options.ask_every_time.title"
+                  },
+                  "value": "ask_every_time"
+                },
+                {
+                  "description": {
+                    "fallback": "Trust the current recaptured Claude prompt for workspaces opened by Happier.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalWorkspaceTrust.options.always_trust_happier_workspaces.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Always trust Happier workspaces",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalWorkspaceTrust.options.always_trust_happier_workspaces.title"
+                  },
+                  "value": "always_trust_happier_workspaces"
+                },
+                {
+                  "description": {
+                    "fallback": "Reject the current recaptured Claude prompt for workspaces opened by Happier.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalWorkspaceTrust.options.always_reject_happier_workspaces.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Always reject Happier workspaces",
+                    "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalWorkspaceTrust.options.always_reject_happier_workspaces.title"
+                  },
+                  "value": "always_reject_happier_workspaces"
+                }
+              ]
+            },
+            "schema": {
+              "description": "Default action for Claude workspace trust prompts opened by Happier",
+              "enum": [
+                "ask_every_time",
+                "always_trust_happier_workspaces",
+                "always_reject_happier_workspaces"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "fallback": "Workspace trust",
+              "key": "settingsAgents.plugins.claude.fields.claudeUnifiedTerminalWorkspaceTrust.title"
+            }
+          },
+          {
+            "default": "user_project",
+            "description": {
+              "fallback": "Legacy Claude settings source mode.",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSources.subtitle"
+            },
+            "id": "claudeRemoteSettingSources",
+            "presentation": {
+              "control": "select",
+              "options": [
+                {
+                  "description": {
+                    "fallback": "Load project settings only.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSources.options.project.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Project",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSources.options.project.title"
+                  },
+                  "value": "project"
+                },
+                {
+                  "description": {
+                    "fallback": "Load user and project settings.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSources.options.user_project.subtitle"
+                  },
+                  "title": {
+                    "fallback": "User and project",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSources.options.user_project.title"
+                  },
+                  "value": "user_project"
+                },
+                {
+                  "description": {
+                    "fallback": "Do not load Claude settings.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSources.options.none.subtitle"
+                  },
+                  "title": {
+                    "fallback": "None",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSources.options.none.title"
+                  },
+                  "value": "none"
+                }
+              ]
+            },
+            "schema": {
+              "description": "Legacy Claude settings source mode",
+              "enum": [
+                "project",
+                "user_project",
+                "none"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "fallback": "Legacy setting sources",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSources.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "serializeCurrentRule": "orderedEnumArrayJoin",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "enum"
+            },
+            "default": [
+              "user",
+              "project",
+              "local"
+            ],
+            "description": {
+              "fallback": "Controls which Claude settings are loaded.",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSourcesV2.subtitle"
+            },
+            "id": "claudeRemoteSettingSourcesV2",
+            "presentation": {
+              "control": "multiSelect",
+              "options": [
+                {
+                  "description": {
+                    "fallback": "Loads user-global Claude config.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSourcesV2.options.user.subtitle"
+                  },
+                  "title": {
+                    "fallback": "User",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSourcesV2.options.user.title"
+                  },
+                  "value": "user"
+                },
+                {
+                  "description": {
+                    "fallback": "Loads repo settings (including CLAUDE.md).",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSourcesV2.options.project.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Project",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSourcesV2.options.project.title"
+                  },
+                  "value": "project"
+                },
+                {
+                  "description": {
+                    "fallback": "Loads local-only overrides.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSourcesV2.options.local.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Local",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSourcesV2.options.local.title"
+                  },
+                  "value": "local"
+                }
+              ]
+            },
+            "schema": {
+              "description": "Claude settings sources",
+              "items": {
+                "enum": [
+                  "user",
+                  "project",
+                  "local"
+                ],
+                "type": "string"
+              },
+              "maxItems": 3,
+              "type": "array"
+            },
+            "title": {
+              "fallback": "Setting sources",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteSettingSourcesV2.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "boolean"
+            },
+            "default": true,
+            "description": {
+              "fallback": "Forward Claude local-mode permission prompts to Happier so you can approve or deny from the app UI.",
+              "key": "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.subtitle"
+            },
+            "id": "claudeLocalPermissionBridgeEnabled",
+            "presentation": {
+              "control": "switch"
+            },
+            "schema": {
+              "description": "Enable local Claude permission bridge",
+              "type": "boolean"
+            },
+            "title": {
+              "fallback": "Experimental: local permission bridge",
+              "key": "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeEnabled.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "boolean"
+            },
+            "default": true,
+            "description": {
+              "fallback": "When enabled, Happier keeps Claude local permission requests pending until you approve or deny them from the app UI.",
+              "key": "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeWaitIndefinitely.subtitle"
+            },
+            "id": "claudeLocalPermissionBridgeWaitIndefinitely",
+            "presentation": {
+              "control": "switch"
+            },
+            "schema": {
+              "description": "Keep local permission requests open until the user responds",
+              "type": "boolean"
+            },
+            "title": {
+              "fallback": "Keep requests open until answered",
+              "key": "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeWaitIndefinitely.title"
+            }
+          },
+          {
+            "default": 600,
+            "description": {
+              "fallback": "Only used when indefinite waiting is turned off. After this delay, Happier falls back to Claude's terminal prompt.",
+              "key": "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeTimeoutSeconds.subtitle"
+            },
+            "id": "claudeLocalPermissionBridgeTimeoutSeconds",
+            "presentation": {
+              "control": "number",
+              "placeholder": {
+                "fallback": "Default",
+                "key": "common.default"
+              },
+              "step": 30
+            },
+            "schema": {
+              "description": "Local permission bridge timeout in seconds",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "title": {
+              "fallback": "Optional permission timeout (seconds)",
+              "key": "settingsAgents.plugins.claude.fields.claudeLocalPermissionBridgeTimeoutSeconds.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "boolean"
+            },
+            "default": false,
+            "description": {
+              "fallback": "Enables file checkpoints and /rewind (files-only; does not rewind the conversation). Use /checkpoints to list and /rewind --confirm to apply (higher overhead).",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteEnableFileCheckpointing.subtitle"
+            },
+            "id": "claudeRemoteEnableFileCheckpointing",
+            "presentation": {
+              "control": "switch"
+            },
+            "schema": {
+              "description": "Enable Claude file checkpointing",
+              "type": "boolean"
+            },
+            "title": {
+              "fallback": "File checkpointing + /rewind",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteEnableFileCheckpointing.title"
+            }
+          },
+          {
+            "default": null,
+            "description": {
+              "fallback": "Limit Claude's internal thinking budget (null = default).",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteMaxThinkingTokens.subtitle"
+            },
+            "id": "claudeRemoteMaxThinkingTokens",
+            "presentation": {
+              "control": "number",
+              "placeholder": {
+                "fallback": "Default",
+                "key": "common.default"
+              },
+              "step": 100
+            },
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Maximum Claude thinking tokens override"
+            },
+            "title": {
+              "fallback": "Max thinking tokens",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteMaxThinkingTokens.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "boolean"
+            },
+            "default": false,
+            "description": {
+              "fallback": "Prevent Claude from creating TODO items in remote mode.",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteDisableTodos.subtitle"
+            },
+            "id": "claudeRemoteDisableTodos",
+            "presentation": {
+              "control": "switch"
+            },
+            "schema": {
+              "description": "Disable TODO generation in Claude remote mode",
+              "type": "boolean"
+            },
+            "title": {
+              "fallback": "Disable TODOs",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteDisableTodos.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "boolean"
+            },
+            "default": false,
+            "description": {
+              "fallback": "Fail if any MCP server config is invalid.",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteStrictMcpServerConfig.subtitle"
+            },
+            "id": "claudeRemoteStrictMcpServerConfig",
+            "presentation": {
+              "control": "switch"
+            },
+            "schema": {
+              "description": "Fail if Claude MCP server config is invalid",
+              "type": "boolean"
+            },
+            "title": {
+              "fallback": "Strict MCP server config",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteStrictMcpServerConfig.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "boolean"
+            },
+            "default": false,
+            "description": {
+              "fallback": "Enables Claude Code debug logs (same as passing --debug).",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugEnabled.subtitle"
+            },
+            "id": "claudeRemoteDebugEnabled",
+            "presentation": {
+              "control": "switch"
+            },
+            "schema": {
+              "description": "Enable Claude Code debug mode (remote)",
+              "type": "boolean"
+            },
+            "title": {
+              "fallback": "Debug mode",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugEnabled.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "boolean"
+            },
+            "default": false,
+            "description": {
+              "fallback": "Enables verbose logging (same as passing --verbose).",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteVerboseEnabled.subtitle"
+            },
+            "id": "claudeRemoteVerboseEnabled",
+            "presentation": {
+              "control": "switch"
+            },
+            "schema": {
+              "description": "Enable Claude Code verbose logging (remote)",
+              "type": "boolean"
+            },
+            "title": {
+              "fallback": "Verbose",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteVerboseEnabled.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "serializeCurrentRule": "orderedEnumArrayJoin",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "enum"
+            },
+            "default": [],
+            "description": {
+              "fallback": "Optional debug category filter. When empty, Claude logs all debug categories.",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.subtitle"
+            },
+            "id": "claudeRemoteDebugCategories",
+            "presentation": {
+              "control": "multiSelect",
+              "options": [
+                {
+                  "description": {
+                    "fallback": "HTTP/API requests and responses.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.options.api.subtitle"
+                  },
+                  "title": {
+                    "fallback": "API",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.options.api.title"
+                  },
+                  "value": "api"
+                },
+                {
+                  "description": {
+                    "fallback": "MCP server connections and tool traffic.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.options.mcp.subtitle"
+                  },
+                  "title": {
+                    "fallback": "MCP",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.options.mcp.title"
+                  },
+                  "value": "mcp"
+                },
+                {
+                  "description": {
+                    "fallback": "Hook lifecycle and hook command execution.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.options.hooks.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Hooks",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.options.hooks.title"
+                  },
+                  "value": "hooks"
+                },
+                {
+                  "description": {
+                    "fallback": "Filesystem operations and file helpers.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.options.file.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Files",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.options.file.title"
+                  },
+                  "value": "file"
+                },
+                {
+                  "description": {
+                    "fallback": "First-party internal debug category.",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.options.1p.subtitle"
+                  },
+                  "title": {
+                    "fallback": "1p",
+                    "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.options.1p.title"
+                  },
+                  "value": "1p"
+                }
+              ]
+            },
+            "schema": {
+              "description": "Claude Code debug categories filter (remote)",
+              "items": {
+                "enum": [
+                  "api",
+                  "mcp",
+                  "hooks",
+                  "file",
+                  "1p"
+                ],
+                "type": "string"
+              },
+              "maxItems": 5,
+              "type": "array"
+            },
+            "title": {
+              "fallback": "Debug categories",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.title"
+            }
+          },
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "presence_only",
+              "serializeCurrentRule": "jsonObjectStringPresence",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "presence"
+            },
+            "default": "",
+            "description": {
+              "fallback": "Power-user Claude Agent SDK overrides. The value must be empty or a JSON object.",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteAdvancedOptionsJson.subtitle"
+            },
+            "id": "claudeRemoteAdvancedOptionsJson",
+            "presentation": {
+              "control": "textarea"
+            },
+            "schema": {
+              "description": "Advanced Claude remote options JSON",
+              "maxLength": 16384,
+              "type": "string"
+            },
+            "title": {
+              "fallback": "Advanced options (JSON)",
+              "key": "settingsAgents.plugins.claude.fields.claudeRemoteAdvancedOptionsJson.title"
+            }
+          }
+        ],
+        "id": "agent-settings",
+        "presentation": {
+          "icon": {
+            "color": {
+              "kind": "theme",
+              "token": "orange"
+            },
+            "ionName": "sparkles-outline"
+          },
+          "sections": [
+            {
+              "description": {
+                "fallback": "These settings apply to both terminal and Agent SDK sessions started by Happier.",
+                "key": "settingsAgents.plugins.claude.sections.claudeCodeExperiments.footer"
+              },
+              "fields": [
+                "claudeCodeExperimentalAgentTeamsEnabled"
+              ],
+              "id": "claude-code-experiments",
+              "title": {
+                "fallback": "Claude Code experiments",
+                "key": "settingsAgents.plugins.claude.sections.claudeCodeExperiments.title"
+              }
+            },
+            {
+              "description": {
+                "fallback": "Remote mode runs Claude on your machine, but controlled from the Happier UI. Local mode is the Claude Code TUI in your terminal. These settings affect remote mode only.",
+                "key": "settingsAgents.plugins.claude.sections.claudeRemoteSdk.footer"
+              },
+              "fields": [
+                "claudeRemoteAgentSdkEnabled",
+                "claudeRemoteDebugEnabled",
+                "claudeRemoteVerboseEnabled",
+                "claudeRemoteDebugCategories",
+                "claudeRemoteAdvancedOptionsJson",
+                "claudeRemoteSettingSourcesV2",
+                "claudeLocalPermissionBridgeEnabled",
+                "claudeLocalPermissionBridgeWaitIndefinitely",
+                "claudeLocalPermissionBridgeTimeoutSeconds",
+                "claudeRemoteEnableFileCheckpointing",
+                "claudeRemoteMaxThinkingTokens",
+                "claudeRemoteDisableTodos",
+                "claudeRemoteStrictMcpServerConfig"
+              ],
+              "id": "claude-remote-sdk",
+              "title": {
+                "fallback": "Claude Agent SDK (remote mode)",
+                "key": "settingsAgents.plugins.claude.sections.claudeRemoteSdk.title"
+              }
+            },
+            {
+              "description": {
+                "fallback": "Runs Claude Code in a terminal-hosted session and lets Happier deliver supported prompts through the terminal host.",
+                "key": "settingsAgents.plugins.claude.sections.claudeUnifiedTerminal.footer"
+              },
+              "fields": [
+                "claudeUnifiedTerminalEnabled",
+                "claudeUnifiedTerminalHost",
+                "claudeUnifiedTerminalResumeChoice",
+                "claudeUnifiedTerminalWorkspaceTrust"
+              ],
+              "id": "claude-unified-terminal",
+              "title": {
+                "fallback": "Claude unified terminal",
+                "key": "settingsAgents.plugins.claude.sections.claudeUnifiedTerminal.title"
+              }
+            }
+          ],
+          "subagentSections": [
+            {
+              "description": {
+                "fallback": "Agent-specific subagent behavior stays owned by the agent settings screen.",
+                "key": "subAgentGuidance.settings.agents.claude.footer"
+              },
+              "id": "claude-teams",
+              "items": [
+                {
+                  "description": {
+                    "fallback": "Manage Agent Teams and other Claude-specific subagent behavior.",
+                    "key": "subAgentGuidance.settings.agents.claude.openSubtitle"
+                  },
+                  "iconIonName": "sparkles-outline",
+                  "id": "claude-teams-agent-settings",
+                  "route": "/(app)/settings/agents/claude",
+                  "title": {
+                    "fallback": "Claude subagent options",
+                    "key": "subAgentGuidance.settings.agents.claude.openTitle"
+                  }
+                }
+              ],
+              "title": {
+                "fallback": "Claude team agents",
+                "key": "subAgentGuidance.settings.agents.claude.title"
+              }
+            }
+          ]
+        },
+        "scope": "account",
+        "target": {
+          "agent": "claude",
+          "kind": "agent"
+        },
+        "title": {
+          "fallback": "Claude (remote)",
+          "key": "settingsAgents.plugins.claude.title"
+        },
+        "version": 1
+      }
+    ],
+    "systemTools": [
+      {
+        "executableNames": [
+          "claude"
+        ],
+        "id": "claude-cli",
+        "title": "Claude Code CLI"
+      },
+      {
+        "executableNames": [
+          "security"
+        ],
+        "id": "macos-security",
+        "title": "macOS Keychain security"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [
+        {
+          "locale": "en",
+          "messages": {
+            "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "subAgentGuidance.settings.agents.claude.footer": "Agent-specific subagent behavior stays owned by the agent settings screen.",
+            "subAgentGuidance.settings.agents.claude.openSubtitle": "Manage Agent Teams and other Claude-specific subagent behavior.",
+            "subAgentGuidance.settings.agents.claude.openTitle": "Claude subagent options",
+            "subAgentGuidance.settings.agents.claude.title": "Claude team agents"
+          }
+        },
+        {
+          "locale": "ru",
+          "messages": {
+            "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "subAgentGuidance.settings.agents.claude.footer": "Поведение субагентов для конкретного агента настраивается на экране настроек агента.",
+            "subAgentGuidance.settings.agents.claude.openSubtitle": "Управляйте Agent Teams и другими особенностями субагентов Claude.",
+            "subAgentGuidance.settings.agents.claude.openTitle": "Параметры субагентов Claude",
+            "subAgentGuidance.settings.agents.claude.title": "Командные агенты Claude"
+          }
+        },
+        {
+          "locale": "pl",
+          "messages": {
+            "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "subAgentGuidance.settings.agents.claude.footer": "Ustawienia agenta nadal odpowiadają za zachowanie jego podagentów.",
+            "subAgentGuidance.settings.agents.claude.openSubtitle": "Zarządzaj Agent Teams i innymi zachowaniami podagentów Claude.",
+            "subAgentGuidance.settings.agents.claude.openTitle": "Opcje podagentów Claude",
+            "subAgentGuidance.settings.agents.claude.title": "Agenci zespołowi Claude"
+          }
+        },
+        {
+          "locale": "es",
+          "messages": {
+            "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "subAgentGuidance.settings.agents.claude.footer": "La pantalla de ajustes del agente sigue controlando el comportamiento específico de sus subagentes.",
+            "subAgentGuidance.settings.agents.claude.openSubtitle": "Gestiona Agent Teams y otros comportamientos específicos de los subagentes de Claude.",
+            "subAgentGuidance.settings.agents.claude.openTitle": "Opciones de subagentes de Claude",
+            "subAgentGuidance.settings.agents.claude.title": "Agentes de equipo de Claude"
+          }
+        },
+        {
+          "locale": "fr",
+          "messages": {
+            "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "subAgentGuidance.settings.agents.claude.footer": "L’écran des réglages de l’agent reste responsable du comportement de ses sous-agents.",
+            "subAgentGuidance.settings.agents.claude.openSubtitle": "Gérez Agent Teams et les autres comportements propres aux sous-agents Claude.",
+            "subAgentGuidance.settings.agents.claude.openTitle": "Options des sous-agents Claude",
+            "subAgentGuidance.settings.agents.claude.title": "Agents d’équipe Claude"
+          }
+        },
+        {
+          "locale": "it",
+          "messages": {
+            "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "subAgentGuidance.settings.agents.claude.footer": "La schermata delle impostazioni dell’agente continua a gestire il comportamento specifico dei suoi sottoagenti.",
+            "subAgentGuidance.settings.agents.claude.openSubtitle": "Gestisci Agent Teams e gli altri comportamenti specifici dei sottoagenti Claude.",
+            "subAgentGuidance.settings.agents.claude.openTitle": "Opzioni dei sottoagenti Claude",
+            "subAgentGuidance.settings.agents.claude.title": "Agenti del team Claude"
+          }
+        },
+        {
+          "locale": "pt",
+          "messages": {
+            "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "subAgentGuidance.settings.agents.claude.footer": "O ecrã de definições do agente continua responsável pelo comportamento específico dos respetivos subagentes.",
+            "subAgentGuidance.settings.agents.claude.openSubtitle": "Gira Agent Teams e outros comportamentos específicos dos subagentes Claude.",
+            "subAgentGuidance.settings.agents.claude.openTitle": "Opções dos subagentes Claude",
+            "subAgentGuidance.settings.agents.claude.title": "Agentes de equipa Claude"
+          }
+        },
+        {
+          "locale": "ca",
+          "messages": {
+            "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "subAgentGuidance.settings.agents.claude.footer": "La pantalla de configuració de l’agent continua gestionant el comportament específic dels seus subagents.",
+            "subAgentGuidance.settings.agents.claude.openSubtitle": "Gestiona Agent Teams i altres comportaments específics dels subagents de Claude.",
+            "subAgentGuidance.settings.agents.claude.openTitle": "Opcions dels subagents de Claude",
+            "subAgentGuidance.settings.agents.claude.title": "Agents d’equip de Claude"
+          }
+        },
+        {
+          "locale": "zh-Hans",
+          "messages": {
+            "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "subAgentGuidance.settings.agents.claude.footer": "代理专属的子代理行为仍由代理设置页面管理。",
+            "subAgentGuidance.settings.agents.claude.openSubtitle": "管理 Agent Teams 和其他 Claude 子代理专属行为。",
+            "subAgentGuidance.settings.agents.claude.openTitle": "Claude 子代理选项",
+            "subAgentGuidance.settings.agents.claude.title": "Claude 团队代理"
+          }
+        },
+        {
+          "locale": "zh-Hant",
+          "messages": {
+            "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "subAgentGuidance.settings.agents.claude.footer": "代理專屬的子代理行為仍由代理設定畫面管理。",
+            "subAgentGuidance.settings.agents.claude.openSubtitle": "管理 Agent Teams 和其他 Claude 子代理專屬行為。",
+            "subAgentGuidance.settings.agents.claude.openTitle": "Claude 子代理選項",
+            "subAgentGuidance.settings.agents.claude.title": "Claude 團隊代理"
+          }
+        },
+        {
+          "locale": "ja",
+          "messages": {
+            "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "subAgentGuidance.settings.agents.claude.footer": "エージェント固有のサブエージェント動作は、引き続きエージェント設定画面で管理されます。",
+            "subAgentGuidance.settings.agents.claude.openSubtitle": "Agent Teams とその他の Claude 固有のサブエージェント動作を管理します。",
+            "subAgentGuidance.settings.agents.claude.openTitle": "Claude サブエージェントのオプション",
+            "subAgentGuidance.settings.agents.claude.title": "Claude チームエージェント"
+          }
+        }
+      ],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "Claude Code coding agent.",
+  "displayName": "Claude",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./.happier-plugin/daemon.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "filesystem",
+        "id": "claude-workspace",
+        "reason": "Use the admitted Agent workspace as the Claude process working directory.",
+        "scope": {
+          "access": [
+            "read"
+          ],
+          "locations": [
+            {
+              "root": "workspace"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "process",
+        "id": "claude-process",
+        "reason": "Run the declared Claude Code executable and its macOS keychain boundary.",
+        "scope": {
+          "envKeys": [
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_CUSTOM_HEADERS",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_OAUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+            "CLAUDE_CODE_OAUTH_SCOPES",
+            "CLAUDE_CODE_SETUP_TOKEN",
+            "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+            "CLAUDE_CONFIG_DIR",
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+            "CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH",
+            "HAPPIER_CLAUDE_CONFIG_DIR",
+            "HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON",
+            "HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON",
+            "USER"
+          ],
+          "executables": [
+            {
+              "id": "claude-cli",
+              "kind": "systemTool"
+            },
+            {
+              "id": "macos-security",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "terminal",
+        "id": "claude-terminal-control",
+        "reason": "Run Claude through the host-owned terminal session substrate.",
+        "scope": {
+          "operations": [
+            "open",
+            "send",
+            "resize",
+            "close"
+          ]
+        }
+      },
+      {
+        "capability": "sessions",
+        "id": "claude-session-runtime-control",
+        "reason": "Read Claude lifecycle events and control authenticated hooks for the current Agent session.",
+        "scope": {
+          "access": [
+            "read",
+            "control"
+          ]
+        }
+      },
+      {
+        "capability": "network",
+        "id": "claude-subscription-oauth",
+        "reason": "Exchange and refresh Claude OAuth credentials for the exact Connected Account.",
+        "scope": {
+          "methods": [
+            "POST"
+          ],
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://platform.claude.com"
+            },
+            {
+              "kind": "connectedAccountOrigin",
+              "service": "claude-subscription"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "network",
+        "id": "claude-subscription-quota",
+        "reason": "Read quota for the exact Claude Subscription Connected Account.",
+        "scope": {
+          "methods": [
+            "GET"
+          ],
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://api.anthropic.com"
+            },
+            {
+              "kind": "connectedAccountOrigin",
+              "service": "claude-subscription"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.agent.claude",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

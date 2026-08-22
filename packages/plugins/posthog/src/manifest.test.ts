@@ -14,6 +14,10 @@ import {
     POSTHOG_DETAIL_FALLBACK_RENDERER_ID,
     POSTHOG_DETAIL_RENDERER_ID,
 } from './manifest.js';
+import {
+    POSTHOG_API_ORIGIN_FIELD_ID,
+    POSTHOG_PERSONAL_API_KEY_MODE_ID,
+} from './posthogContracts.js';
 
 /**
  * Declares one Action carrying the *published* scan input — the discriminated union
@@ -31,7 +35,7 @@ function defineScanBindingProbe(bindingPath: string): unknown {
         displayName: 'PostHog manifest probe',
         engines: { happier: '^0.0.0' },
         runtime: { apiVersion: 1 },
-        entrypoints: { daemon: './dist/index.js' },
+        entrypoints: { daemon: './.happier-plugin/daemon.js' },
         hostAccess: {
             required: [{
                 id: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
@@ -71,6 +75,7 @@ function defineScanBindingProbe(bindingPath: string): unknown {
         actions: {
             probe: {
                 title: 'Probe',
+                execution: { target: 'daemon' },
                 scopes: ['global'],
                 surfaces: ['plugin'],
                 dangerLevel: 'safe',
@@ -133,6 +138,7 @@ describe('PostHog plugin manifest', () => {
 
         const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
         for (const id of Object.values(POSTHOG_ACTION_IDS)) {
+            expect(actions.get(id)?.execution).toEqual({ target: 'daemon' });
             expect(actions.get(id)?.hostAccess)
                 .toEqual([POSTHOG_CONNECTED_ACCOUNT_PURPOSE, 'posthog-network']);
         }
@@ -186,9 +192,17 @@ describe('PostHog plugin manifest', () => {
             kind: 'declarative',
         });
 
+        // Declaring the fallback is not what makes it render: the contribution's own
+        // detail binding is the renderer chain the host resolves, so a fallback missing
+        // from it can never be selected.
         const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions
             .find((candidate) => candidate.target.pluginId === 'happier.triage');
-        expect(contribution?.surfaces).toEqual({ detail: { renderer: POSTHOG_DETAIL_RENDERER_ID } });
+        expect(contribution?.surfaces).toEqual({
+            detail: {
+                renderer: POSTHOG_DETAIL_RENDERER_ID,
+                fallbackRenderers: [POSTHOG_DETAIL_FALLBACK_RENDERER_ID],
+            },
+        });
     });
 
     it('declares the source-native sampled read without giving it a Triage role', () => {
@@ -231,5 +245,34 @@ describe('PostHog plugin manifest', () => {
             .find((candidate) => candidate.target.pluginId === 'happier.triage');
         expect(Object.values(contribution?.operations ?? {}))
             .not.toContain(POSTHOG_ACTION_IDS.issueActivity);
+    });
+
+    it('takes the PostHog deployment only from the declared origin-semantic field', () => {
+        // This guards what is left of a deleted plugin-local OAuth module that
+        // re-decided which deployments may run authorization code and which fall
+        // back to a pasted key. That decision has no implementation here at all
+        // any more — the canonical Connected Accounts owner keeps it — so the one
+        // thing worth holding is that this plugin names no deployment of its own:
+        // the route comes from an explicit `connectedAccountOrigin` field. An
+        // origin field that stopped carrying that semantic, or a mode that named
+        // an issuer or region itself, would put a second routing authority back
+        // inside the plugin.
+        //
+        // It deliberately does NOT assert the exhaustive list of modes. Pinning
+        // "exactly one mode" restates today's configuration rather than a
+        // contract: it catches no defect, and it would make legitimately adding
+        // an OAuth route later a test edit rather than a product decision. The
+        // mode is therefore looked up BY ID, so a second mode neither breaks this
+        // guard nor silently shifts which one it inspects.
+        const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors
+            .find((candidate) => candidate.id === POSTHOG_CONNECTED_ACCOUNT_PURPOSE);
+        const personalApiKeyMode = descriptor?.authentication.modes
+            .find((mode) => mode.id === POSTHOG_PERSONAL_API_KEY_MODE_ID);
+
+        expect(descriptor?.authentication.defaultModeId).toBe(POSTHOG_PERSONAL_API_KEY_MODE_ID);
+        expect(personalApiKeyMode?.kind).toBe('manual');
+        expect(personalApiKeyMode?.configuration?.fields
+            .map((field) => [field.id, field.semantic]))
+            .toEqual([[POSTHOG_API_ORIGIN_FIELD_ID, 'connectedAccountOrigin']]);
     });
 });

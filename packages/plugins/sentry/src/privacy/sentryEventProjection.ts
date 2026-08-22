@@ -24,6 +24,14 @@
  * The `_meta` parser is private and bounded by the closed output paths above, never by
  * provider-controlled annotation depth. An absent annotation on an allow-listed path is
  * only "no provider annotation observed" — it is never a clean-data claim.
+ *
+ * Every retained provider string is read through `projectField`, which is what makes the
+ * annotation rule cover the whole event rather than a corner of it. `_meta` consultation,
+ * the redaction record and the `sensitivePaths` entry are produced by the one call that
+ * produced the value, so a field cannot be added to the projection while being forgotten
+ * by the disclosure — the exact way the exception message, the stack frames, the
+ * breadcrumbs and the top-level strings once rendered a provider-scrubbed value in full
+ * while tags and user honoured the same annotations.
  */
 
 import {
@@ -193,11 +201,35 @@ function readTimestampMs(value: unknown): number | null {
  * with it.
  */
 type Ledger = {
+  /**
+   * The provider's annotation root, carried here because every recorded decision
+   * needs it: a `providerScrubbed` record cannot be produced without consulting the
+   * same `_meta` the value was read against.
+   */
+  meta: unknown;
   redactions: SentryRedactionV1[];
   sensitivePaths: string[];
   truncated: boolean;
   omitted: { sections: number; frames: number; breadcrumbs: number; tags: number };
 };
+
+/**
+ * The segments of one value's path in the raw event body — and of its `_meta` mirror.
+ *
+ * They are the same walk, which is the point: the dotted path a redaction publishes and
+ * the path the annotation parser follows are built from one array, so a disclosure can
+ * never name a path the parser did not actually ask about.
+ */
+type SentryPathV1 = readonly (string | number)[];
+
+function formatPath(segments: SentryPathV1): string {
+  let formatted = '';
+  for (const segment of segments) {
+    if (typeof segment === 'number') formatted += `[${String(segment)}]`;
+    else formatted += formatted === '' ? segment : `.${segment}`;
+  }
+  return formatted;
+}
 
 function record(ledger: Ledger, path: string, reason: SentryRedactionReasonV1): void {
   if (ledger.redactions.length >= SENTRY_EVENT_BOUNDS_V1.maxRedactions) return;
@@ -252,7 +284,7 @@ function boundedOrNull(
  * recognize, is conservatively a scrub. Unknown provider structure is never evidence
  * that a value is safe.
  */
-function isProviderScrubbed(meta: unknown, segments: readonly (string | number)[]): boolean {
+function isProviderScrubbed(meta: unknown, segments: SentryPathV1): boolean {
   let node: unknown = meta;
   for (const segment of segments) {
     if (node === undefined || node === null) return false;
@@ -277,46 +309,121 @@ function isProviderScrubbed(meta: unknown, segments: readonly (string | number)[
   return true;
 }
 
+/**
+ * One allow-listed provider string becomes one bounded, disclosed display value.
+ *
+ * This is the only way a provider string enters the projection. It exists so the three
+ * decisions that must agree about a field — did `_meta` say it was already scrubbed,
+ * what does the redaction publish as its path, and does the surviving value belong in
+ * `sensitivePaths` — are made once, at the point the value is read.
+ *
+ * `sensitiveAs` is passed rather than derived because a repeated field discloses its
+ * *field*, not its element: forty frames of one stack carry one kind of sensitive
+ * content, and spending the published `maxSensitivePaths` ceiling on forty copies of it
+ * would silently push out the Tier-C user paths the disclosure exists to name.
+ *
+ * `metaAlias` is a second `_meta` mirror consulted for the same value. `_meta` is
+ * `additionalProperties:{}` `[SCHEMA]` and the nesting it uses under `entries` is
+ * `[UNKNOWN]`, so where two shapes are both plausible this asks about both: an
+ * annotation on either is a scrub, because §8.2's rule is that unknown provider
+ * structure is never evidence a value is safe.
+ */
+function projectField(input: Readonly<{
+  raw: unknown;
+  path: SentryPathV1;
+  metaAlias?: SentryPathV1;
+  maxUtf8Bytes: number;
+  sensitiveAs?: string;
+  ledger: Ledger;
+}>): string | null {
+  const { ledger } = input;
+  if (
+    isProviderScrubbed(ledger.meta, input.path)
+    || (input.metaAlias !== undefined && isProviderScrubbed(ledger.meta, input.metaAlias))
+  ) {
+    record(ledger, formatPath(input.path), 'providerScrubbed');
+    return null;
+  }
+  const value = boundedOrNull(input.raw, input.maxUtf8Bytes, ledger);
+  if (value !== null && input.sensitiveAs !== undefined) markSensitive(ledger, input.sensitiveAs);
+  return value;
+}
+
 /* ------------------------------------------------------------------- frames */
+
+/**
+ * Where one frame collection lives, in the provider's body and in its annotations.
+ *
+ * Both are carried because they can differ: the redaction path names the shape §8.3
+ * publishes, while `metaAlias` covers the second nesting Sentry can mirror the same
+ * frames under.
+ */
+type SentryFramesLocationV1 = Readonly<{
+  path: SentryPathV1;
+  metaAlias: SentryPathV1 | null;
+}>;
 
 /**
  * `[SCHEMA]` a frame's `context` is a list of `[lineNo, source]` pairs. The one the
  * reader means by "the line" is the pair whose number is the frame's own.
  */
-function readContextLine(
-  raw: unknown,
-  lineNo: number | null,
-  ledger: Ledger,
-): string | null {
+function readContextLineValue(raw: unknown, lineNo: number | null): unknown {
   if (!Array.isArray(raw)) return null;
   for (const pair of raw) {
     if (!Array.isArray(pair) || pair.length < 2) continue;
     if (readInteger(pair[0]) !== lineNo) continue;
-    return boundedOrNull(pair[1], SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, ledger);
+    return pair[1];
   }
   return null;
 }
 
 function projectFrame(
   raw: unknown,
-  framePath: string,
+  index: number,
+  frames: SentryFramesLocationV1,
   ledger: Ledger,
 ): SentryFrameV1 | null {
   if (!isRecord(raw)) return null;
   const lineNo = readInteger(raw['lineNo']);
+  const sensitiveStem = `${formatPath(frames.path)}[]`;
+  const field = (
+    value: unknown,
+    name: string,
+    maxUtf8Bytes: number,
+  ): string | null => projectField({
+    raw: value,
+    path: [...frames.path, index, name],
+    ...(frames.metaAlias === null
+      ? {}
+      : { metaAlias: [...frames.metaAlias, index, name] }),
+    maxUtf8Bytes,
+    sensitiveAs: `${sensitiveStem}.${name}`,
+    ledger,
+  });
   // Local variables are the highest density of unclassifiable secrets in the whole
   // payload, and no triage decision in this product's core loop needs them. A frame
   // that carried none has nothing to withhold, so it records nothing.
   if (raw['vars'] !== undefined && raw['vars'] !== null) {
-    record(ledger, `${framePath}.vars`, 'pluginWithheld');
+    record(ledger, formatPath([...frames.path, index, 'vars']), 'pluginWithheld');
   }
   return Object.freeze({
-    filename: boundedOrNull(raw['filename'], SENTRY_EVENT_BOUNDS_V1.locationUtf8Bytes, ledger),
-    function: boundedOrNull(raw['function'], SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, ledger),
+    filename: field(raw['filename'], 'filename', SENTRY_EVENT_BOUNDS_V1.locationUtf8Bytes),
+    function: field(raw['function'], 'function', SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes),
     lineNo,
     colNo: readInteger(raw['colNo']),
     inApp: raw['inApp'] === true,
-    contextLine: readContextLine(raw['context'], lineNo, ledger),
+    // The context line's own annotation mirrors the `context` field it was read from;
+    // the disclosure names it `contextLine`, which is what the reader sees.
+    contextLine: projectField({
+      raw: readContextLineValue(raw['context'], lineNo),
+      path: [...frames.path, index, 'context'],
+      ...(frames.metaAlias === null
+        ? {}
+        : { metaAlias: [...frames.metaAlias, index, 'context'] }),
+      maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes,
+      sensitiveAs: `${sensitiveStem}.contextLine`,
+      ledger,
+    }),
     vars: Object.freeze({}),
   });
 }
@@ -332,7 +439,7 @@ function projectFrame(
  */
 function projectFrames(
   raw: unknown,
-  framesPath: string,
+  frames: SentryFramesLocationV1,
   ledger: Ledger,
 ): readonly SentryFrameV1[] {
   if (!Array.isArray(raw)) return Object.freeze([]);
@@ -344,7 +451,7 @@ function projectFrames(
       ledger.truncated = true;
       continue;
     }
-    const frame = projectFrame(candidate, `${framesPath}[${String(index)}]`, ledger);
+    const frame = projectFrame(candidate, index, frames, ledger);
     if (frame !== null) parsed.push(frame);
   }
   return Object.freeze(parsed);
@@ -354,11 +461,12 @@ function projectFrames(
 
 function projectBreadcrumbs(
   raw: unknown,
-  valuesPath: string,
+  valuesPath: SentryPathV1,
   ledger: Ledger,
 ): readonly SentryBreadcrumbV1[] {
   if (!Array.isArray(raw)) return Object.freeze([]);
   const parsed: SentryBreadcrumbV1[] = [];
+  const sensitiveStem = `${formatPath(valuesPath)}[]`;
   for (const [index, candidate] of raw.entries()) {
     if (!isRecord(candidate)) continue;
     if (parsed.length >= SENTRY_EVENT_BOUNDS_V1.maxBreadcrumbs) {
@@ -369,19 +477,26 @@ function projectBreadcrumbs(
     // A breadcrumb's own payload bag is the request/response content §8.1 withholds;
     // only the four stated scalars survive.
     if (candidate['data'] !== undefined && candidate['data'] !== null) {
-      record(ledger, `${valuesPath}[${String(index)}].data`, 'pluginWithheld');
+      record(ledger, formatPath([...valuesPath, index, 'data']), 'pluginWithheld');
     }
-    const message = boundedOrNull(
-      candidate['message'],
-      SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes,
+    const field = (
+      name: string,
+      maxUtf8Bytes: number,
+      sensitive: boolean,
+    ): string | null => projectField({
+      raw: candidate[name],
+      path: [...valuesPath, index, name],
+      maxUtf8Bytes,
+      ...(sensitive ? { sensitiveAs: `${sensitiveStem}.${name}` } : {}),
       ledger,
-    );
-    if (message !== null) markSensitive(ledger, `${valuesPath}[${String(index)}].message`);
+    });
     parsed.push(Object.freeze({
       timestampMs: readTimestampMs(candidate['timestamp']),
-      category: boundedOrNull(candidate['category'], SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, ledger),
-      level: boundedOrNull(candidate['level'], SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, ledger),
-      message,
+      // A breadcrumb category is free-form provider text; its level is a fixed
+      // vocabulary, and naming that in the disclosure would only dilute it.
+      category: field('category', SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, true),
+      level: field('level', SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, false),
+      message: field('message', SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, true),
     }));
   }
   return Object.freeze(parsed);
@@ -398,7 +513,7 @@ function projectBreadcrumbs(
  */
 function projectSection(
   raw: unknown,
-  entryPath: string,
+  entryPath: SentryPathV1,
   ledger: Ledger,
 ): readonly SentryEventSectionV1[] {
   if (!isRecord(raw)) return Object.freeze([]);
@@ -414,24 +529,38 @@ function projectSection(
       for (const [index, candidate] of values.entries()) {
         if (!isRecord(candidate)) continue;
         const stacktrace = isRecord(candidate['stacktrace']) ? candidate['stacktrace'] : null;
-        const value = boundedOrNull(
-          candidate['value'],
-          SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes,
-          ledger,
-        );
+        const valuePath: SentryPathV1 = [...entryPath, 'data', 'values', index, 'value'];
+        const nestedFrames: SentryPathV1 = [
+          ...entryPath, 'data', 'values', index, 'stacktrace', 'frames',
+        ];
+        // The redaction path names the provider's own shape, and Sentry nests the
+        // frames of the `i`th exception under the entry's `data.frames` in the
+        // single-value case its `_meta` mirrors.
+        const single = values.length === 1;
         sections.push(Object.freeze({
           kind: 'exception' as const,
-          type: boundedOrNull(candidate['type'], SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, ledger)
-            ?? '',
-          value: value ?? '',
-          // The redaction path names the provider's own shape, and Sentry nests the
-          // frames of the `i`th exception under the entry's `data.frames` in the
-          // single-value case its `_meta` mirrors.
+          // The exception type is the first half of the Tier-A `title` this projection
+          // already carries, so it is not separately disclosed; the full `value` is
+          // not — `title` truncates it — and is.
+          type: projectField({
+            raw: candidate['type'],
+            path: [...entryPath, 'data', 'values', index, 'type'],
+            maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes,
+            ledger,
+          }) ?? '',
+          value: projectField({
+            raw: candidate['value'],
+            path: valuePath,
+            maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes,
+            sensitiveAs: formatPath(valuePath),
+            ledger,
+          }) ?? '',
           frames: projectFrames(
             stacktrace === null ? null : stacktrace['frames'],
-            values.length === 1
-              ? `${entryPath}.data.frames`
-              : `${entryPath}.data.values[${String(index)}].stacktrace.frames`,
+            Object.freeze({
+              path: single ? [...entryPath, 'data', 'frames'] : nestedFrames,
+              metaAlias: single ? nestedFrames : null,
+            }),
             ledger,
           ),
         }));
@@ -443,7 +572,7 @@ function projectSection(
         kind: 'stacktrace' as const,
         frames: projectFrames(
           data === null ? null : data['frames'],
-          `${entryPath}.data.frames`,
+          Object.freeze({ path: [...entryPath, 'data', 'frames'], metaAlias: null }),
           ledger,
         ),
       })]);
@@ -452,7 +581,7 @@ function projectSection(
         kind: 'breadcrumbs' as const,
         entries: projectBreadcrumbs(
           data === null ? null : data['values'],
-          `${entryPath}.data.values`,
+          [...entryPath, 'data', 'values'],
           ledger,
         ),
       })]);
@@ -460,10 +589,19 @@ function projectSection(
       // This `formatted` is the message interface's own rendered text, built by the
       // projection. It is not the API's top-level `formatted` (§8.5) and is not derived
       // from it.
+      const messageText = (name: string): string | null => {
+        const path: SentryPathV1 = [...entryPath, 'data', name];
+        return projectField({
+          raw: data === null ? null : data[name],
+          path,
+          maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes,
+          sensitiveAs: formatPath(path),
+          ledger,
+        });
+      };
       const formatted = data === null
         ? null
-        : boundedOrNull(data['formatted'], SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, ledger)
-          ?? boundedOrNull(data['message'], SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, ledger);
+        : messageText('formatted') ?? messageText('message');
       return formatted === null
         ? Object.freeze([])
         : Object.freeze([Object.freeze({ kind: 'message' as const, formatted })]);
@@ -483,7 +621,7 @@ function projectSections(
   if (!Array.isArray(raw)) return Object.freeze([]);
   const sections: SentryEventSectionV1[] = [];
   for (const [index, candidate] of raw.entries()) {
-    for (const section of projectSection(candidate, `entries[${String(index)}]`, ledger)) {
+    for (const section of projectSection(candidate, ['entries', index], ledger)) {
       if (sections.length >= SENTRY_EVENT_BOUNDS_V1.maxSections) {
         ledger.omitted.sections += 1;
         ledger.truncated = true;
@@ -499,33 +637,34 @@ function projectSections(
 
 function projectTags(
   raw: unknown,
-  meta: unknown,
   ledger: Ledger,
 ): readonly SentryEventTagProjectionV1[] {
   if (!Array.isArray(raw)) return Object.freeze([]);
   const tags: SentryEventTagProjectionV1[] = [];
   for (const [index, candidate] of raw.entries()) {
-    const path = `tags[${String(index)}]`;
     if (!isRecord(candidate)) continue;
     const key = readString(candidate['key']);
     // A key nobody classified carries a value nobody classified. The withheld tag is
     // named so a reader is told the event had more, rather than shown a subset that
     // looks like the whole set.
     if (key === null || !isSentryAllowedTagKey(key)) {
-      record(ledger, path, 'pluginWithheld');
+      record(ledger, formatPath(['tags', index]), 'pluginWithheld');
       continue;
     }
-    if (isProviderScrubbed(meta, ['tags', index, 'value'])) {
-      record(ledger, `${path}.value`, 'providerScrubbed');
-      continue;
-    }
+    const value = projectField({
+      raw: candidate['value'],
+      path: ['tags', index, 'value'],
+      maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes,
+      ledger,
+    });
+    if (value === null) continue;
     if (tags.length >= SENTRY_EVENT_BOUNDS_V1.maxTags) {
       ledger.omitted.tags += 1;
       ledger.truncated = true;
       continue;
     }
-    const value = boundedOrNull(candidate['value'], SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, ledger);
-    if (value === null) continue;
+    // A tag discloses its key, not its index: the same key repeated is one fact about
+    // what this projection carries, and it is only claimed for a tag that survived.
     if (isSentrySensitiveTagKey(key)) markSensitive(ledger, `tags.${key}`);
     tags.push(Object.freeze({ key, value }));
   }
@@ -546,25 +685,27 @@ const WITHHELD_USER_FIELDS = Object.freeze(['geo', 'data'] as const);
 
 function projectUser(
   raw: unknown,
-  meta: unknown,
   ledger: Ledger,
 ): SentryEventUserProjectionV1 | null {
   if (!isRecord(raw)) return null;
   for (const field of WITHHELD_USER_FIELDS) {
     if (raw[field] !== undefined && raw[field] !== null) {
-      record(ledger, `user.${field}`, 'pluginWithheld');
+      record(ledger, formatPath(['user', field]), 'pluginWithheld');
     }
   }
   const projected: Record<string, string | null> = {};
   for (const [name, rawName, maxUtf8Bytes] of USER_FIELDS) {
-    if (isProviderScrubbed(meta, ['user', rawName])) {
-      record(ledger, `user.${name}`, 'providerScrubbed');
+    // The redaction and the disclosure both name the projection's own field, while the
+    // annotation is looked up under the provider's raw key.
+    const projectedPath = formatPath(['user', name]);
+    if (isProviderScrubbed(ledger.meta, ['user', rawName])) {
+      record(ledger, projectedPath, 'providerScrubbed');
       projected[name] = null;
       continue;
     }
     const value = boundedOrNull(raw[rawName], maxUtf8Bytes, ledger);
     projected[name] = value;
-    if (value !== null) markSensitive(ledger, `user.${name}`);
+    if (value !== null) markSensitive(ledger, projectedPath);
   }
   return Object.freeze(projected) as SentryEventUserProjectionV1;
 }
@@ -615,6 +756,7 @@ export function projectSentryEventForDisplay(rawEventBody: unknown): SentryEvent
   if (!isRecord(rawEventBody)) return EMPTY_PROJECTION;
   const body = rawEventBody;
   const ledger: Ledger = {
+    meta: body['_meta'],
     redactions: [],
     sensitivePaths: [],
     truncated: false,
@@ -625,26 +767,44 @@ export function projectSentryEventForDisplay(rawEventBody: unknown): SentryEvent
     if (body[key] !== undefined && body[key] !== null) record(ledger, key, 'pluginWithheld');
   }
 
-  const meta = body['_meta'];
+  // The event id is addressing, not content: it is what §8.4a's exact dispatch reread
+  // proves it is rereading the same event, and a provider does not scrub the key it
+  // hands the value back under. It is read plainly, and it is not disclosed as
+  // sensitive for the same reason.
   const eventId = boundedOrNull(
     body['eventID'] ?? body['id'],
     SENTRY_EVENT_BOUNDS_V1.identifierUtf8Bytes,
     ledger,
   );
-  const title = boundedOrNull(body['title'], SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, ledger);
-  const message = boundedOrNull(body['message'], SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, ledger);
+  const topLevel = (
+    name: string,
+    maxUtf8Bytes: number,
+    sensitive: boolean,
+  ): string | null => projectField({
+    raw: body[name],
+    path: [name],
+    maxUtf8Bytes,
+    ...(sensitive ? { sensitiveAs: name } : {}),
+    ledger,
+  });
+
+  // `title` and `culprit` are the Tier-A list row (§8.1): this projection is not where
+  // they first become visible, so naming them again in the disclosure would describe the
+  // row rather than the evidence. `message` and `location` are not on that row.
+  const title = topLevel('title', SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, false);
+  const message = topLevel('message', SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, true);
   const sections = projectSections(body['entries'], ledger);
-  const tags = projectTags(body['tags'], meta, ledger);
-  const user = projectUser(body['user'], meta, ledger);
+  const tags = projectTags(body['tags'], ledger);
+  const user = projectUser(body['user'], ledger);
 
   return Object.freeze({
     eventId: eventId ?? '',
     dateCreatedMs: readTimestampMs(body['dateCreated']),
     title: title ?? message ?? '',
     message: message ?? '',
-    location: boundedOrNull(body['location'], SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, ledger),
-    culprit: boundedOrNull(body['culprit'], SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, ledger),
-    platform: boundedOrNull(body['platform'], SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, ledger),
+    location: topLevel('location', SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, true),
+    culprit: topLevel('culprit', SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, false),
+    platform: topLevel('platform', SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, false),
     sections,
     tags,
     user,

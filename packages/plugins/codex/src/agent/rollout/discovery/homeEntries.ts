@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 
 import {
   expandHomePath,
+  isCanonicalAbsolutePathInsideRoot,
   resolveHomeDirFromEnvironment,
 } from '@happier-dev/plugin-sdk/fs';
 import { readTrimmedString as readEnvString } from '@happier-dev/plugin-sdk';
@@ -64,6 +65,17 @@ export function resolveConfiguredCodexHomePath(env: Readonly<Record<string, stri
   return override ? expandHomeDirPath(override, env) : resolve(resolveHomeDirFromEnvironment(env), '.codex');
 }
 
+/**
+ * The canonical form of a requested Codex home, produced the same way as the
+ * configured home so the host admission boundary compares like with like.
+ */
+export function canonicalizeCodexHomePath(
+  raw: string,
+  env: Readonly<Record<string, string | undefined>>,
+): string {
+  return expandHomeDirPath(raw, env);
+}
+
 export function resolveDefaultCodexHomePath(codexHome?: string | null): string {
   return typeof codexHome === 'string' && codexHome.trim().length > 0
     ? normalizeHomePath(codexHome)
@@ -118,7 +130,7 @@ export function inferCodexExternalSessionsSourceFromHome(params: Readonly<{
 
   if (activeServerDir) {
     const homesRoot = join(activeServerDir, 'daemon', 'connected-services', 'homes');
-    const relativeParts = codexHome.startsWith(`${homesRoot}/`) || codexHome.startsWith(`${homesRoot}\\`)
+    const relativeParts = isCanonicalAbsolutePathInsideRoot(homesRoot, codexHome)
       ? codexHome.slice(homesRoot.length + 1).split(/[/\\]+/)
       : null;
     if (relativeParts && relativeParts.length === 4 && relativeParts[2] === 'codex' && relativeParts[3] === 'codex-home') {
