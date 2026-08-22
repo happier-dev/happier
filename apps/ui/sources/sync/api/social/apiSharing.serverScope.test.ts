@@ -63,6 +63,7 @@ import {
     createSessionShare,
     getSessionShares,
 } from './apiSharing';
+import { getSessionFriendsList } from './createSessionSocialRequest';
 
 function expectHeaderValue(headers: HeadersInit | undefined, key: string, value: string) {
     expect(new Headers(headers).get(key)).toBe(value);
@@ -207,5 +208,42 @@ describe('apiSharing server-scoped session routes', () => {
             'x-happier-account-stored-content-protocol',
             String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION),
         );
+    });
+
+    it('gets shareable friends through the preferred session owner server', async () => {
+        const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
+        const ownerServer = upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue(ownerServer.id);
+        const ownerToken = tokenForSub('owner-account');
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
+        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
+        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
+            friends: [{
+                id: 'user-2',
+                username: 'lee',
+                firstName: 'Lee',
+                lastName: null,
+                avatar: null,
+                bio: null,
+                publicKey: null,
+                status: 'friend',
+            }],
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+
+        const friends = await getSessionFriendsList(
+            { token: 'active-token', secret: 'active-secret' },
+            'session-1',
+        );
+
+        expect(friends.map((friend) => friend.id)).toEqual(['user-2']);
+        expect(serverFetchMock).not.toHaveBeenCalled();
+        const requestCall = runtimeFetchMock.mock.calls.find(([input]) =>
+            String(input) === 'https://owner.example/v1/friends');
+        expect(requestCall?.[1]).toEqual(expect.objectContaining({ method: 'GET' }));
+        expectHeaderValue(requestCall?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
     });
 });

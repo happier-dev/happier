@@ -15,6 +15,7 @@ import { Modal } from '@/modal';
 import { HappyError } from '@/utils/errors/errors';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
+import { resolveSessionShareRecipientEligibility } from '@/sync/domains/social/sessionShareRecipientEligibility';
 
 
 /**
@@ -154,15 +155,25 @@ export const FriendSelector = memo(function FriendSelector({
 
                     <View style={styles.friendList}>
                         {filteredFriends.map((item) => {
-                            const canShare = Boolean(item.contentPublicKey && item.contentPublicKeySig);
+                            const eligibility = resolveSessionShareRecipientEligibility(item);
+                            const canShare = eligibility.eligible;
                             const isSelected = selectedUserId === item.id;
+                            const unavailableReason = eligibility.eligible
+                                ? undefined
+                                : eligibility.reason === 'relationship-pending'
+                                    ? t('friends.status.pending')
+                                    : eligibility.reason === 'relationship-requested'
+                                        ? t('friends.status.requested')
+                                        : eligibility.reason === 'relationship-unavailable'
+                                            ? t(`friends.status.${item.status}`)
+                                            : t('session.sharing.recipientMissingKeys');
                             return (
                                 <View key={item.id} style={styles.friendItem}>
                                     <UserCard
                                         user={item}
                                         onPress={canShare ? () => setSelectedUserId(item.id) : undefined}
                                         disabled={!canShare}
-                                        subtitle={!canShare ? t('session.sharing.recipientMissingKeys') : undefined}
+                                        subtitle={unavailableReason}
                                     />
                                     {isSelected ? <View style={styles.selectedIndicator} /> : null}
                                 </View>

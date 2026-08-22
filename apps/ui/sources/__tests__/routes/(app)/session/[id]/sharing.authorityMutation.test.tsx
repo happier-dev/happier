@@ -183,8 +183,8 @@ vi.mock('@/sync/api/social/apiSharing', () => ({
     createPublicShare: api.createPublicShare,
     deletePublicShare: api.deletePublicShare,
 }));
-vi.mock('@/sync/api/social/apiFriends', () => ({
-    getFriendsList: (...args: unknown[]) => api.getFriendsList(...args),
+vi.mock('@/sync/api/social/createSessionSocialRequest', () => ({
+    getSessionFriendsList: (...args: unknown[]) => api.getFriendsList(...args),
 }));
 vi.mock('@/sync/encryption/publicShareEncryption', () => ({
     encryptDataKeyForPublicShare: (...args: unknown[]) => state.encryptPublicDataKey(...args),

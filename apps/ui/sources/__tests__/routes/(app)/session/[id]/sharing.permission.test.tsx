@@ -70,8 +70,8 @@ vi.mock('@/sync/api/social/apiSharing', () => ({
     deletePublicShare: vi.fn(),
 }));
 
-vi.mock('@/sync/api/social/apiFriends', () => ({
-    getFriendsList: (...args: any[]) => getFriendsListSpy(...args),
+vi.mock('@/sync/api/social/createSessionSocialRequest', () => ({
+    getSessionFriendsList: (...args: any[]) => getFriendsListSpy(...args),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -154,7 +154,7 @@ describe('Session Sharing Screen permissions', () => {
 
         expect(getSessionSharesSpy).toHaveBeenCalled();
         expect(getPublicShareSpy).toHaveBeenCalled();
-        expect(getFriendsListSpy).toHaveBeenCalled();
+        expect(getFriendsListSpy).toHaveBeenCalledWith(expect.any(Object), 'session-1');
     });
 
     it('does not attempt to load or manage shares when user is not an admin', async () => {

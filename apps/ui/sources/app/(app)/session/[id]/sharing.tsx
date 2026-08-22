@@ -31,7 +31,7 @@ import {
 import { sync } from '@/sync/sync';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { HappyError } from '@/utils/errors/errors';
-import { getFriendsList } from '@/sync/api/social/apiFriends';
+import { getSessionFriendsList } from '@/sync/api/social/createSessionSocialRequest';
 import { UserProfile } from '@/sync/domains/social/friendTypes';
 import { encryptDataKeyForPublicShare } from '@/sync/encryption/publicShareEncryption';
 import { getRandomBytes } from 'expo-crypto';
@@ -75,6 +75,7 @@ import {
     resolveExternalSessionOperationOriginAvailability,
 } from '@/components/sessions/external/progress/externalSessionOperationProgressPresentation';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { resolveSessionShareRecipientEligibility } from '@/sync/domains/social/sessionShareRecipientEligibility';
 
 type SharingData = Readonly<{
     shares: SessionShare[];
@@ -358,7 +359,7 @@ function SharingManagementContent({
             const [sharesData, publicShareData, friendsData] = await Promise.all([
                 getSessionShares(credentials, sessionId),
                 getPublicShare(credentials, sessionId),
-                getFriendsList(credentials),
+                getSessionFriendsList(credentials, sessionId),
             ]);
             if (
                 currentSharingDataScopeRef.current !== sharingDataScopeKey
@@ -429,6 +430,15 @@ function SharingManagementContent({
             const friend = friends.find(f => f.id === userId);
             if (!friend) {
                 throw new HappyError(t('errors.operationFailed'), false);
+            }
+            const eligibility = resolveSessionShareRecipientEligibility(friend);
+            if (!eligibility.eligible) {
+                throw new HappyError(
+                    eligibility.reason === 'missing-content-keys'
+                        ? t('session.sharing.recipientMissingKeys')
+                        : t(`friends.status.${friend.status}`),
+                    false,
+                );
             }
             const sessionEncryptionMode = currentSession.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 
