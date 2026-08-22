@@ -145,6 +145,7 @@ describe('voice provider registry', () => {
           platforms: ['web'],
           capabilities: {
             turn: { cancelResponse: false, bargeIn: false },
+            tools: { effectCalls: 'none' },
           },
           settings: {
             schemaVersion: 2,

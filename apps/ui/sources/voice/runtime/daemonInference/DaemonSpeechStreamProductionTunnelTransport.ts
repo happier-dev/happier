@@ -701,15 +701,26 @@ function createSelection(input: Readonly<{
     }),
     transport: {
       start: async (payload) => {
-        const response = await tunnelTransport.start(payload);
-        if (response.ok) {
-          receipt.recordStreamIdentity({
-            machineId: input.machineId,
-            packId: payload.packId ?? null,
-            streamId: response.streamId,
-            generation: response.generation,
-          });
+        let response: Awaited<ReturnType<typeof tunnelTransport.start>>;
+        try {
+          response = await tunnelTransport.start(payload);
+        } catch (error) {
+          // A start that never produced a stream leaves this tunnel unusable.
+          // Close it before surfacing the original failure so the caller's
+          // fresh selection opens a new tunnel instead of leaking this one.
+          await recordLocalTransportClose().catch(() => undefined);
+          throw error;
         }
+        if (!response.ok) {
+          await recordLocalTransportClose().catch(() => undefined);
+          return response;
+        }
+        receipt.recordStreamIdentity({
+          machineId: input.machineId,
+          packId: payload.packId ?? null,
+          streamId: response.streamId,
+          generation: response.generation,
+        });
         return response;
       },
       chunk: tunnelTransport.chunk,

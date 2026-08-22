@@ -1,3 +1,4 @@
+import { uriToFilePath } from '@/platform/fileUri';
 import { randomUUID } from '@/platform/randomUUID';
 import {
   getSharedVoicePcmCapture,
@@ -58,8 +59,6 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
   const endpointController = deps.endpointController ?? createTurnEndpointController({
     onSignal: (signal) => deps.onEndpointSignal?.(signal),
   });
-
-  const uriToFilePath = (uri: string): string => uri.startsWith('file://') ? uri.slice('file://'.length) : uri;
 
   const clearHandle = async (expected?: SherpaSttHandle): Promise<void> => {
     if (stopping) {

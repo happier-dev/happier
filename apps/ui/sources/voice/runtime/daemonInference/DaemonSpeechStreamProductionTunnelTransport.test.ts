@@ -1165,7 +1165,13 @@ describe('DaemonSpeechStreamProductionTunnelTransport', () => {
         modelPackId: 'stt-pack-1',
         events: [],
       })),
-      cancel: vi.fn(),
+      // The relay encryption-failure path cancels the daemon-side stream, so
+      // this boundary must return the real cancel response shape.
+      cancel: vi.fn(async (payload) => ({
+        ok: true as const,
+        streamId: payload.streamId,
+        generation: payload.generation,
+      })),
     };
 
     const { createProductionDaemonSpeechStreamingSttTransport } = await import('./DaemonSpeechStreamProductionTunnelTransport');

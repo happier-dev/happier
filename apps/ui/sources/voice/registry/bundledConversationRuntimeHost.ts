@@ -14,11 +14,15 @@ import {
   SessionLookupByTagsResponseV2Schema,
   VoiceRealtimeJsonValueSchema,
   zodSchemaToJsonSchemaObject,
+  type ActionId,
   type ConnectedServiceBindingsV1,
   type VoiceRealtimeJsonValue,
 } from '@happier-dev/protocol';
 import type { VoiceHostedConversationService } from '@happier-dev/plugin-sdk/voice/client';
-import { realtimeReadOnlyClientTools } from '@/realtime/realtimeClientTools';
+import {
+  createRealtimeClientTools,
+  createRealtimeReadOnlyClientTools,
+} from '@/realtime/realtimeClientTools';
 import { fetchHappierVoiceToken, completeHappierVoiceSession, releaseHappierVoiceSession } from '@/sync/api/voice/apiVoice';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import {
@@ -35,6 +39,7 @@ import {
 } from '@/sync/domains/settings/voiceSettings';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import {
   captureSessionRequestAuthorityForServerAccountScope,
@@ -50,7 +55,10 @@ import {
   voiceSessionBindingStore,
 } from '@/voice/binding/voiceConversationBindingStore';
 import { redactVoiceToolResultForProvider } from '@/voice/context/redactVoiceToolResult';
-import { voiceHooks } from '@/voice/context/voiceHooks';
+import {
+  createCurrentUiContextAutomaticUpdateProjector,
+  voiceHooks,
+} from '@/voice/context/voiceHooks';
 import {
   createSdkHandleConnection,
   createWebSocketPcmConnection,
@@ -68,7 +76,6 @@ import {
   useVoiceConversationRuntimeStore,
 } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 import { createRealtimeMicSession } from '@/voice/runtime/mic/createRealtimeMicSession';
-import { createRealtimeInboundWatchdog } from '@/voice/runtime/realtime/realtimeInboundWatchdog';
 import { voiceRuntimeLevelStore } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 import { voiceOutputStatusStore } from '@/voice/runtime/outputStatus/voiceOutputStatusStore';
 import {
@@ -90,7 +97,13 @@ import {
 } from '@/voice/transcript/voiceConversationTranscript';
 import { acquireBundledConversationRuntimeGeneration } from './bundledConversationRuntimeGeneration';
 import { createDefaultRealtimeToolBarrier } from '@/voice/tools/defaultRealtimeToolBarrier';
-import { resolveEnabledVoiceSdkSafeToolActionSpecsFromState } from '@/voice/tools/resolveDisabledVoiceActionIds';
+import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
+import type { VoiceHostAuthoredContextScope } from '@/voice/session/types';
+import {
+  isCurrentUiContextVoiceAction,
+  resolveEnabledVoiceSdkSafeToolActionSpecsFromState,
+  resolveEnabledVoiceToolActionSpecsFromState,
+} from '@/voice/tools/resolveDisabledVoiceActionIds';
 import {
   readVoiceProviderConversationMetadata,
   writeVoiceProviderConversationMetadata,
@@ -120,7 +133,10 @@ function formatHostedLeaseDuration(ms: number): string {
     ? `${Math.max(1, Math.ceil(bounded / 1000))}s`
     : `${Math.max(1, Math.ceil(bounded / 60_000))}m`;
 }
-import { createAgentSessionRealtimeService } from '@/voice/runtime/agentRealtime/createAgentSessionRealtimeService';
+import {
+    AGENT_REALTIME_REQUEST_ABORTED_REJECTION,
+    createAgentSessionRealtimeService,
+} from '@/voice/runtime/agentRealtime/createAgentSessionRealtimeService';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   resolveAgentRealtimeVoiceConversationBinding,
@@ -381,6 +397,10 @@ async function inspectAgentRealtimeSession(input: Readonly<{
   try {
     const raw = await sessionRpcWithServerScope({
       sessionId: input.sessionId,
+      // The session's own server, not whichever server happens to be active:
+      // an Account/server switch mid-inspect would otherwise ask server B
+      // about a server-A session and read the miss as unavailability.
+      serverId: resolvePreferredServerIdForSessionId(input.sessionId) ?? null,
       method: SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT,
       payload: { v: 1, provider: input.provider },
     });
@@ -422,8 +442,48 @@ export function getCurrentBundledConversationRuntimeHost(): BundledRealtimeProvi
   return currentRuntimeHost?.isCurrent() === true ? currentRuntimeHost.host : null;
 }
 
-export function createBundledConversationRuntimeHostLease() {
+export function createBundledConversationRuntimeHostLease(input: Readonly<{
+  currentUiContext?: VoiceCurrentUiToolPort;
+}> = {}) {
   const generation = acquireBundledConversationRuntimeGeneration();
+  let currentUiContextSubscription: Readonly<{
+    sessionId: string;
+    unsubscribe: () => void;
+  }> | null = null;
+  const stopCurrentUiContextSubscription = (): void => {
+    const subscription = currentUiContextSubscription;
+    currentUiContextSubscription = null;
+    subscription?.unsubscribe();
+  };
+  const startCurrentUiContextSubscription = (sessionId: string): void => {
+    stopCurrentUiContextSubscription();
+    const port = input.currentUiContext;
+    if (!port) return;
+    const automaticUpdateProjector = createCurrentUiContextAutomaticUpdateProjector();
+
+    let unsubscribe: (() => void) | null = null;
+    const subscription = Object.freeze({
+      sessionId,
+      unsubscribe: () => unsubscribe?.(),
+    });
+    currentUiContextSubscription = subscription;
+    const publishCurrentSnapshot = (): void => {
+      generation.runIfCurrent(() => {
+        if (currentUiContextSubscription !== subscription) return;
+        const snapshot = port.readCurrentUiContext();
+        voiceHooks.onCurrentUiContextChanged(sessionId, snapshot, automaticUpdateProjector);
+      });
+    };
+    const registeredUnsubscribe = port.subscribe(publishCurrentSnapshot);
+    if (currentUiContextSubscription !== subscription) {
+      registeredUnsubscribe();
+      return;
+    }
+    unsubscribe = registeredUnsubscribe;
+    // Subscription begins only once the realtime controller reports this
+    // attempt connected, so the initial snapshot has an existing context sink.
+    publishCurrentSnapshot();
+  };
   // This is intentionally not another transcript owner or queue. A permit is
   // minted synchronously only while this host is current, then remains valid
   // only for the exact direct-media tail which already crossed provider input
@@ -513,10 +573,28 @@ export function createBundledConversationRuntimeHostLease() {
         providerConfig: readVoiceProviderSettingsConfig(voice, providerId),
       });
     },
-    getRealtimeClientToolDefinitions() {
-      return Object.freeze(resolveEnabledVoiceSdkSafeToolActionSpecsFromState(storage.getState()).flatMap((spec) => {
+    getRealtimeClientToolDefinitions({ effectCalls, exposure }) {
+      const canRunEffects = effectCalls === 'stable_ids';
+      const enabledSpecs = canRunEffects
+        ? resolveEnabledVoiceToolActionSpecsFromState(storage.getState())
+        : resolveEnabledVoiceSdkSafeToolActionSpecsFromState(storage.getState());
+      // An attached Agent session already owns cross-session, machine, server,
+      // activity, and transcript discovery through its canonical tools. Its
+      // realtime surface receives only the current-UI tools the Voice
+      // disclosure policy above already authorized.
+      const actionSpecs = exposure === 'current_ui_only'
+        ? enabledSpecs.filter((spec) => isCurrentUiContextVoiceAction(spec.id as ActionId))
+        : enabledSpecs;
+      const handlers = canRunEffects
+        ? createRealtimeClientTools({
+          ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
+        })
+        : createRealtimeReadOnlyClientTools({
+          ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
+        });
+      return Object.freeze(actionSpecs.flatMap((spec) => {
         const name = String(spec.bindings?.voiceClientToolName ?? '').trim();
-        const handler = realtimeReadOnlyClientTools[name];
+        const handler = handlers[name];
         if (!name || typeof handler !== 'function') return [];
         return [Object.freeze({
           name,
@@ -525,7 +603,6 @@ export function createBundledConversationRuntimeHostLease() {
           async execute(parameters: VoiceRealtimeJsonValue): Promise<VoiceRealtimeJsonValue> {
             if (!generation.isCurrent()) throw new Error('voice_runtime_generation_revoked');
             const raw = await handler(parameters);
-            if (!generation.isCurrent()) throw new Error('voice_runtime_generation_revoked');
             let value: unknown = raw;
             try {
               value = JSON.parse(raw);
@@ -606,7 +683,10 @@ export function createBundledConversationRuntimeHostLease() {
     createWebRtcConnection: createHostWebRtcConnection,
     createWebSocketPcmConnection,
     createWebSocketPcmMedia,
-    createToolBarrier: createDefaultRealtimeToolBarrier,
+    createToolBarrier: (deps) => createDefaultRealtimeToolBarrier({
+      ...deps,
+      ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
+    }),
     getPlatform: () => {
       if (Platform.OS === 'ios' || Platform.OS === 'android') return Platform.OS;
       return 'web';
@@ -860,6 +940,14 @@ export function createBundledConversationRuntimeHostLease() {
       ) return null;
       const boundApplicationAttemptId =
         `${input.applicationAttemptId}:${randomUUID()}`;
+      // The attempt's server authority is captured once, here, at binding. Every
+      // later operation — including the retired-bound cleanup Stop that runs
+      // after the attempt was fenced — must reach the server this conversation
+      // lives on. Resolving per call would follow an Account/server switch to
+      // server B and either strand the live server-A attempt or answer from the
+      // wrong server.
+      const boundServerId =
+        resolvePreferredServerIdForSessionId(conversationSessionId) ?? null;
       return createAgentSessionRealtimeService({
         provider: input.provider,
         conversationSessionId,
@@ -874,10 +962,11 @@ export function createBundledConversationRuntimeHostLease() {
             signal.aborted
             || (!generation.isCurrent() && !isRetiredBoundCleanup)
           ) {
-            throw new Error('agent_realtime_request_aborted');
+            throw new Error(AGENT_REALTIME_REQUEST_ABORTED_REJECTION);
           }
           return await sessionRpcWithServerScope({
             sessionId,
+            serverId: boundServerId,
             method,
             payload,
             ...(method === SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_WATCH
@@ -1160,10 +1249,17 @@ export function createBundledConversationRuntimeHostLease() {
     clearAttemptStatus: (controlSessionId: string) => {
       generation.runIfCurrent(() => voiceOutputStatusStore.clearAttemptForSession(controlSessionId));
     },
-    createInboundWatchdog: createRealtimeInboundWatchdog,
     voiceHooks: Object.freeze({
-      onStarted: (sessionId: string) => generation.runIfCurrent(() => voiceHooks.onVoiceStarted(sessionId)) ?? '',
-      onStopped: () => { generation.runIfCurrent(() => voiceHooks.onVoiceStopped()); },
+      onStarted: (sessionId: string, scope: VoiceHostAuthoredContextScope) => generation.runIfCurrent(
+        () => voiceHooks.onVoiceStarted(sessionId, scope),
+      ) ?? '',
+      onConnected: (sessionId: string) => {
+        generation.runIfCurrent(() => startCurrentUiContextSubscription(sessionId));
+      },
+      onStopped: () => {
+        stopCurrentUiContextSubscription();
+        generation.runIfCurrent(() => voiceHooks.onVoiceStopped());
+      },
     }),
   });
   const current = Object.freeze({ host, isCurrent: generation.isCurrent });
@@ -1171,6 +1267,7 @@ export function createBundledConversationRuntimeHostLease() {
   return Object.freeze({
     host,
     revoke() {
+      stopCurrentUiContextSubscription();
       generation.revoke();
       if (currentRuntimeHost === current) currentRuntimeHost = null;
     },

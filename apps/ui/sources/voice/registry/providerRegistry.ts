@@ -328,7 +328,13 @@ function deriveRequirementsByMode(
     : [])));
 }
 
-function createDeclaredSettingsProjector(
+/**
+ * The one declaration-driven settings projector. Bundled and external
+ * descriptors share it so a declared `settings.readiness` rule and the selected
+ * mode are answered from the manifest, never from where the contribution came
+ * from.
+ */
+export function createDeclaredSettingsProjector(
   declaration: VoiceProviderContribution,
   providerSettings: ExternalVoiceProviderSettingsDescriptor,
   selectionOptions: readonly VoiceProviderSelectionOption[],

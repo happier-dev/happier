@@ -22,16 +22,17 @@ export function resolveActiveLocalVoiceAgentBinding(): ActiveLocalVoiceAgentBind
     return null;
   }
 
-  const boundSessionId = resolveVoiceOperationalSessionId(binding, VOICE_AGENT_GLOBAL_SESSION_ID);
+  const controlSessionId = binding.controlSessionId;
+  const boundSessionId = resolveVoiceOperationalSessionId(binding, controlSessionId);
 
-  if (boundSessionId && localVoiceRuntimeController.isAgentActive(boundSessionId)) {
+  if (localVoiceRuntimeController.isAgentActive(controlSessionId)) {
     const announcementSessionId = binding?.conversationSessionId?.trim() || boundSessionId;
     return {
       binding,
-      operationalSessionId: boundSessionId,
+      operationalSessionId: controlSessionId,
       announcementSessionId,
-      sendContextualUpdate: (update) => localVoiceRuntimeController.appendAgentContextUpdate(boundSessionId, update),
-      sendTextUpdate: (update) => localVoiceRuntimeController.sendAgentTextUpdate(boundSessionId, update),
+      sendContextualUpdate: (update) => localVoiceRuntimeController.appendAgentContextUpdate(controlSessionId, update),
+      sendTextUpdate: (update) => localVoiceRuntimeController.sendAgentTextUpdate(controlSessionId, update),
       announceAssistantText: (text) => localVoiceRuntimeController.announceAgentAssistantText(announcementSessionId, text),
     };
   }

@@ -30,11 +30,11 @@ import {
 
 import {
   createExternalVoiceProviderRuntimeContribution,
-  createExternalVoiceProviderActivationScope,
   createDeclaredVoiceClientRawCredentialAccess,
   bindVoiceProviderSettingsActions,
   type VoiceConversationProviderContribution,
 } from './externalVoiceProviderActivation';
+import { createExternalVoiceProviderActivationScope } from './externalVoiceProviderActivation.testkit';
 import {
   listExternalVoiceProviderRegistrations,
   subscribeExternalVoiceProviderRegistrations,
@@ -950,6 +950,60 @@ describe('external Voice provider activation', () => {
       schemaVersion: 1,
       config: { voice: 'calm', expressive: false },
     });
+  });
+
+  it('answers declared settings readiness identically for bundled and external descriptors', async () => {
+    const readinessDeclaration = requireConversationDeclaration(PluginContributesV2Schema.parse({
+      voiceProviders: [{
+        ...declaration,
+        id: 'readiness-parity',
+        settings: {
+          schemaVersion: 1,
+          fields: [{
+            id: 'model',
+            title: 'Model',
+            schema: { type: 'string', maxLength: 64 },
+            default: '',
+            presentation: { control: 'text' },
+          }],
+          readiness: [{ kind: 'setting_nonempty', settingId: 'model' }],
+        },
+      }],
+    }).voiceProviders[0]!);
+    const pluginId = 'acme.readiness-parity';
+    const providerId = `${pluginId}/${readinessDeclaration.id}`;
+    const bundled = createVoiceProviderRegistry({
+      bundledContributions: [{ pluginId, providerId, declaration: readinessDeclaration }],
+      bundledPresentations: [{ providerId, settingsSectionId: providerId }],
+    });
+    const hostLease = createBundledConversationRuntimeHostLease();
+    const scope = createExternalVoiceProviderActivationScope({
+      pluginId,
+      declarations: [readinessDeclaration],
+      hostPlatform: 'web',
+    });
+    onTestFinished(async () => {
+      await scope.unwind();
+      hostLease.revoke();
+    });
+    scope.api.voiceProviders.register(readinessDeclaration.id, createProviderLeaf());
+    await scope.commit();
+    const external = createDefaultVoiceProviderRegistry();
+
+    for (const [source, entry] of [
+      ['bundled', bundled.get(providerId)],
+      ['external', external.get(providerId)],
+    ] as const) {
+      expect({
+        source,
+        blank: entry?.projectSettings?.({ schemaVersion: 1, config: { model: '' } }),
+        filled: entry?.projectSettings?.({ schemaVersion: 1, config: { model: 'fixture-model' } }),
+      }).toEqual({
+        source,
+        blank: { status: 'missing_required_setting', modeId: 'default' },
+        filled: { status: 'ready', modeId: 'default' },
+      });
+    }
   });
 
   it('projects only the one exact host-mediated credential slot and rejects mismatched declarations', async () => {

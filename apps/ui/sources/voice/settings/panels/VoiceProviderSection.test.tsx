@@ -1953,7 +1953,7 @@ describe('VoiceProviderSection', () => {
 
     it('updates an already-mounted provider selector when an external activation is added and removed', async () => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
-        const { createExternalVoiceProviderActivationScope } = await import('@/voice/registry/externalVoiceProviderActivation');
+        const { createExternalVoiceProviderActivationScope } = await import('@/voice/registry/externalVoiceProviderActivation.testkit');
         const { createBundledConversationRuntimeHostLease } = await import('@/voice/registry/bundledConversationRuntimeHost');
         const declaration = PluginContributesV2Schema.parse({ voiceProviders: [{
             id: 'conversation',
@@ -2019,7 +2019,7 @@ describe('VoiceProviderSection', () => {
 
     it('renders and persists an active external provider select through the canonical qualified envelope', async () => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
-        const { createExternalVoiceProviderActivationScope } = await import('@/voice/registry/externalVoiceProviderActivation');
+        const { createExternalVoiceProviderActivationScope } = await import('@/voice/registry/externalVoiceProviderActivation.testkit');
         const { createBundledConversationRuntimeHostLease } = await import('@/voice/registry/bundledConversationRuntimeHost');
         const declaration = PluginContributesV2Schema.parse({ voiceProviders: [{
             id: 'conversation',
@@ -2120,11 +2120,178 @@ describe('VoiceProviderSection', () => {
         }));
     });
 
+    it('keeps an externally installed provider selectable when its credential source resolution is unknown', async () => {
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        const { VoiceProviderSection } = await import('./VoiceProviderSection');
+        const { createExternalVoiceProviderActivationScope } = await import('@/voice/registry/externalVoiceProviderActivation.testkit');
+        const { createBundledConversationRuntimeHostLease } = await import('@/voice/registry/bundledConversationRuntimeHost');
+        installCodexConnectedAccountDescriptor();
+        const declaration = PluginContributesV2Schema.parse({ voiceProviders: [{
+            id: 'conversation',
+            title: 'Acme selectable voice',
+            kind: 'conversation',
+            roles: ['realtime_conversation'],
+            platforms: ['web'],
+            capabilities: { turn: { cancelResponse: false, bargeIn: false } },
+            credentials: {
+                slot: { id: 'api_key', purpose: 'voice.client-auth', title: 'API key' },
+                requirement: { kind: 'always' },
+                sources: [{
+                    kind: 'savedSecret',
+                    secretKinds: ['apiKey'],
+                    rawGrants: [{
+                        realm: 'web',
+                        phase: 'prepare',
+                        request: {
+                            kind: 'httpHeaders',
+                            origin: 'https://voice.example.com',
+                            headerNames: ['authorization'],
+                        },
+                    }],
+                }, {
+                    kind: 'connectedAccount',
+                    service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+                    rawGrants: [{
+                        realm: 'web',
+                        phase: 'prepare',
+                        request: {
+                            kind: 'httpHeaders',
+                            origin: 'https://voice.example.com',
+                            headerNames: ['authorization'],
+                        },
+                    }],
+                }],
+            },
+            settings: {
+                schemaVersion: 1,
+                fields: [{
+                    id: 'voice',
+                    title: 'Voice',
+                    schema: { type: 'string', minLength: 1, maxLength: 64 },
+                    default: 'calm',
+                    presentation: { control: 'text' },
+                }],
+            },
+            client: { artifactId: 'voice-runtime-web', modulePath: './voiceRuntime', exportName: 'activate' },
+        }] }).voiceProviders[0]!;
+        if (declaration.kind !== 'conversation' || !declaration.credentials) {
+            throw new Error('expected credential conversation declaration');
+        }
+        const scope = createExternalVoiceProviderActivationScope({
+            pluginId: 'acme.selectable-voice', declarations: [declaration], hostPlatform: 'web',
+        });
+        const hostLease = createBundledConversationRuntimeHostLease();
+        const account = {
+            ref: {
+                service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+                accountId: 'codex-work',
+            },
+            status: 'connected' as const,
+            configurationReady: false,
+            authenticationModeId: 'oauth',
+            revisionSemantics: 'revisioned' as const,
+            credentialRevision: 'cred-1',
+            configurationRevision: null,
+            scopes: ['openid', 'profile', 'email', 'offline_access'],
+        };
+        onTestFinished(async () => {
+            storageBoundary.settings = null;
+            passiveSetupBoundary.profile = null;
+            await scope.unwind();
+            hostLease.revoke();
+            installConnectedAccountDescriptorProjection({
+                scopeKey: 'voice-provider-section-test-cleanup',
+                status: 'ready',
+                descriptors: [],
+                conflicts: [],
+                errorReason: null,
+            });
+        });
+        scope.api.voiceProviders.register('conversation', {
+            kind: 'conversation',
+            protocol: {
+                async prepare() {
+                    return { kind: 'prepared', session: { config: {}, safeMetadata: null } };
+                },
+                decodeControl: () => [],
+                encodeTurnControl: () => null,
+            },
+            async createConnection() {
+                return {
+                    kind: 'sdk_handle',
+                    async connect() {}, async sendControl() {},
+                    controlEvents: () => ({ async *[Symbol.asyncIterator]() {} }),
+                    transportEvents: () => ({ async *[Symbol.asyncIterator]() {} }),
+                    async close() {}, state: () => 'closed',
+                    currentProviderSessionId: () => null, playbackCursorMs: () => null,
+                    beginOutputInterruptionCandidate: () => 'unsupported',
+                    resolveOutputInterruptionCandidate() {},
+                };
+            },
+            encodeToolResults: () => [],
+            encodeToolContinuation: () => null,
+            encodeContextUpdate: () => [],
+            encodeTextTurn: () => [],
+            microphoneMode: 'provider_managed',
+        });
+        await scope.commit();
+
+        const providerId = 'acme.selectable-voice/conversation';
+        storageBoundary.settings = settingsParse({
+            secrets: [{
+                id: 'surviving-acme-secret',
+                name: 'Saved Acme key',
+                kind: 'apiKey',
+                encryptedValue: {
+                    _isSecretValue: true,
+                    encryptedValue: { t: 'enc-v1', c: 'Y2lwaGVydGV4dA==' },
+                },
+                createdAt: 1,
+                updatedAt: 1,
+            }],
+            voiceSettingsV1: { credentialBindings: [] },
+            connectedAccountPurposeBindingsV1: {
+                v: 1,
+                bindings: [{
+                    purpose: {
+                        consumer: { pluginId: 'acme.selectable-voice', localId: 'conversation' },
+                        purpose: 'voice.client-auth',
+                    },
+                    target: { kind: 'account', account: account.ref },
+                }],
+            },
+        });
+        passiveSetupBoundary.profile = {
+            connectedAccountsV4: [account],
+            connectedAccountGroupsV4: [],
+            connectedServicesV2: [],
+        };
+
+        const { tree } = await renderScreen(React.createElement(VoiceProviderSection, {
+            voice: { providerId: null } as any,
+            setVoice: vi.fn(),
+            happierVoiceSupported: true,
+            platformOs: 'web',
+        }));
+        const row = tree.root.findAll((node) => (
+            typeof node.props.testID === 'string'
+            && node.props.testID.startsWith(`settings.voice.provider.${encodeURIComponent(providerId)}.`)
+        ))[0];
+
+        expect(row).toBeTruthy();
+        expect(row.props.detail).toContain('voice.readiness.credential_unknown');
+        // The declaration names savedSecret and connectedAccount sources, so
+        // the credential is configurable once the row can be selected. A
+        // bundled row in this exact state stays selectable; provenance is not
+        // evidence about whether a credential can be supplied.
+        expect(row.props.disabled).not.toBe(true);
+    }, 120_000);
+
     it('keeps a dormant external SavedSecret edit standalone while Connected Account is selected', async () => {
         const { settingsParse } = await import('@/sync/domains/settings/settings');
         const { applyAccountVoiceCredentialSourceSelection } = await import('@/voice/credentials/accountVoiceCredential');
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
-        const { createExternalVoiceProviderActivationScope } = await import('@/voice/registry/externalVoiceProviderActivation');
+        const { createExternalVoiceProviderActivationScope } = await import('@/voice/registry/externalVoiceProviderActivation.testkit');
         const { createBundledConversationRuntimeHostLease } = await import('@/voice/registry/bundledConversationRuntimeHost');
         installCodexConnectedAccountDescriptor();
         const declaration = PluginContributesV2Schema.parse({ voiceProviders: [{
@@ -2267,7 +2434,7 @@ describe('VoiceProviderSection', () => {
 
     it('qualifies a same-plugin shorthand Agent binding before rendering Connected Services settings', async () => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
-        const { createExternalVoiceProviderActivationScope } = await import('@/voice/registry/externalVoiceProviderActivation');
+        const { createExternalVoiceProviderActivationScope } = await import('@/voice/registry/externalVoiceProviderActivation.testkit');
         const { createBundledConversationRuntimeHostLease } = await import('@/voice/registry/bundledConversationRuntimeHost');
         const declaration = PluginContributesV2Schema.parse({ voiceProviders: [{
             id: 'conversation',

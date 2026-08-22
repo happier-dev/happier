@@ -1,5 +1,6 @@
 import type {
   ConnectedServiceBindingsV1,
+  VoiceConversationToolEffectCalls,
   VoiceRealtimeJsonValue,
   VoiceRealtimeToolResultV1,
   VoiceTranscriptCanonicalEventV1,
@@ -30,13 +31,20 @@ import type {
   BundledVoiceRuntimeContribution,
   VoiceAdapterConversationBinding,
   VoiceAdapterSurfaceCapabilities,
+  VoiceHostAuthoredContextScope,
   VoiceSessionSnapshot,
 } from '@/voice/session/types';
 import type {
   VoiceMachineError,
   VoiceMachineErrorKind,
 } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
-import type { RealtimeInboundWatchdog } from '@/voice/runtime/realtime/realtimeInboundWatchdog';
+
+/**
+ * How much of the canonical Voice Action inventory an execution kind may
+ * project into a provider's own tool surface. Both values read the same
+ * canonical Action registry; this only bounds the projection.
+ */
+export type VoiceHostToolExposure = 'voice_assistant' | 'current_ui_only';
 
 export type BundledVoiceMicSession = Readonly<{
   /** Native host-PCM capture requests OS permission without creating a WebRTC stream. */
@@ -142,7 +150,17 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
   /** Atomically starts a live runtime effect and reports whether it ran. */
   runCurrentGenerationEffect(callback: () => void): boolean;
   getPlatform(): 'web' | 'ios' | 'android';
-  getRealtimeClientToolDefinitions(): readonly Readonly<{
+  getRealtimeClientToolDefinitions(input: Readonly<{
+    effectCalls: VoiceConversationToolEffectCalls;
+    /**
+     * How much of the canonical Voice Action inventory this execution kind may
+     * publish into the provider's own tool surface. `current_ui_only` leaves
+     * cross-session and cross-device discovery with the attached Agent
+     * runtime's canonical tools and exposes only the authorized current-UI
+     * tools; `voice_assistant` keeps the full Voice-assistant inventory.
+     */
+    exposure: VoiceHostToolExposure;
+  }>): readonly Readonly<{
     name: string;
     description: string;
     parameters: Readonly<Record<string, VoiceRealtimeJsonValue>>;
@@ -155,12 +173,6 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
   }> | null;
   machine: BundledVoiceRuntimeMachinePort;
   createConversationController: CreateVoiceConversationController;
-  /**
-   * Host-owned provider-neutral inbound liveness. The production host supplies
-   * this once; every bundled or external realtime contribution consumes it
-   * through the same runtime composition.
-   */
-  createInboundWatchdog?(input: Readonly<{ onStall(): void }>): RealtimeInboundWatchdog;
   createMicSession(input: Readonly<{
     onFailure(failure: Readonly<{ kind: VoiceMachineErrorKind; reason: string }>): void;
     onLevel(level: number): void;
@@ -308,6 +320,8 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
   }>): void;
   clearAttemptStatus(controlSessionId: string): void;
   createToolBarrier(input: Readonly<{
+    /** Provider-declared effect-call custody, fail-closed for undeclared adapters. */
+    effectCalls: VoiceConversationToolEffectCalls;
     resolveSessionId(explicitSessionId?: string | null): string | null;
     submitResults(
       responseId: string,
@@ -317,7 +331,14 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
     continueResponse(responseId: string, signal: AbortSignal): Promise<void>;
   }>): VoiceConversationToolBarrier;
   voiceHooks: Readonly<{
-    onStarted(sessionId: string): string;
+    /**
+     * Host-authored startup context for this attempt. `current_ui_only`
+     * execution yields no bootstrap item: the attached Agent runtime owns the
+     * authoritative realtime prompt and startup context.
+     */
+    onStarted(sessionId: string, scope: VoiceHostAuthoredContextScope): string;
+    /** Called only after this exact realtime attempt has reached connected state. */
+    onConnected?(sessionId: string): void;
     onStopped(): void;
   }>;
   createMachineError(input: Readonly<{

@@ -1,18 +1,39 @@
+import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRecipientContractDigestV1 } from '@happier-dev/protocol';
+import {
+  createRecipientContractDigestV1,
+  type PluginMachineExecutionOriginV1,
+} from '@happier-dev/protocol';
 import type { VoiceAccountOperationService } from '@happier-dev/plugin-sdk/voice';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import {
   createSessionFixture,
   installVoiceWebRtcBrowserBoundary,
+  renderScreen,
   TestVoiceWebRtcPeer,
 } from '@/dev/testkit';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import {
+  CurrentUiContextProvider,
+  type CurrentUiContextReader,
+  useOptionalCurrentUiContextReader,
+  usePublishCurrentUiContext,
+} from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import {
+  createPluginSurfaceDestinationNavigationBinding,
+  PluginSurfaceDestinationNavigationBindingProvider,
+} from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import { encodeBase64 } from '@/encryption/base64';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
@@ -52,7 +73,10 @@ import {
   registerVoiceAdapters,
   resetVoiceAdapterRegistryForTests,
 } from '@/voice/session/voiceAdapterRegistry';
+import { VoiceSessionRuntime } from '@/voice/session/VoiceSessionRuntime';
+import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { resetVoiceSessionStoreForTests } from '@/voice/session/voiceSessionStore';
+import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
 import {
   readCanonicalVoiceTranscriptSnapshot,
@@ -67,13 +91,42 @@ import {
   createBundledConversationRuntimeHostLease,
   getCurrentBundledConversationRuntimeHost,
 } from './bundledConversationRuntimeHost';
-import {
-  createExternalVoiceProviderActivationScope,
-} from './externalVoiceProviderActivation';
+import { createExternalVoiceProviderActivationScope } from './externalVoiceProviderActivation.testkit';
 import { getExternalVoiceProviderRegistration } from './externalVoiceProviderRegistrations';
 import {
   BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES,
 } from './generatedBundledVoiceRuntimeEntries';
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// The composed gate crosses the real AppShell provider. Router, native host,
+// and active-window state remain framework/host boundaries; all current-UI,
+// adapter, lifecycle, and attempt logic stays real below.
+vi.mock('expo-router', async () => {
+  const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+  return createExpoRouterMock({
+    pathname: '/',
+    params: {},
+    segments: [],
+  }).module;
+});
+
+vi.mock('react-native', async () => {
+  const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+  return createReactNativeWebMock({ Platform: { OS: 'web' } });
+});
+
+vi.mock('@/utils/runtime/useHostActivelyViewed', () => ({
+  readHostActivelyViewed: () => true,
+  useHostActivelyViewed: () => true,
+}));
+
+vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', async () => {
+  const { createMainAppTabStateProviderMock } = await import(
+    '@/dev/testkit/mocks/mainAppTabState'
+  );
+  return createMainAppTabStateProviderMock().module;
+});
 
 function openAiEntry() {
   const entry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES
@@ -167,6 +220,11 @@ function installOpenAiSettings(): void {
     ...current,
     settings: {
       ...credentialSettings,
+      voiceSettingsV1: {
+        ...credentialSettings.voiceSettingsV1,
+        providerId: voice.providerId,
+        providers: voice.providers,
+      },
       voice: {
         ...voice,
         credentialBindings: credentialSettings.voice.credentialBindings,
@@ -263,6 +321,156 @@ function installOpenAiFetchBoundary(): ReturnType<typeof vi.fn> {
   });
   vi.stubGlobal('fetch', fetch);
   return fetch;
+}
+
+const COMPOSED_CURRENT_UI_DESTINATION = Object.freeze({
+  pluginId: 'happier.current-ui-composed-gate',
+  localId: 'account-bound-destination',
+});
+
+const composedCurrentUiDestinationBinding = normalizePluginUiDestinationBindingV1({
+  pluginId: COMPOSED_CURRENT_UI_DESTINATION.pluginId,
+  destinationId: COMPOSED_CURRENT_UI_DESTINATION.localId,
+  rendererId: 'account-bound-renderer',
+  container: 'appPage',
+  target: { kind: 'app' },
+});
+
+if (!composedCurrentUiDestinationBinding) {
+  throw new Error('Expected a normalized Account-retirement current-UI destination fixture.');
+}
+
+const composedCurrentUiPlacement = Object.freeze({
+  id: 'surfacePlacement:happier.current-ui-composed-gate:account-bound-destination',
+  pluginId: COMPOSED_CURRENT_UI_DESTINATION.pluginId,
+  contributionKind: 'surfacePlacement',
+  descriptorId: COMPOSED_CURRENT_UI_DESTINATION.localId,
+  binding: composedCurrentUiDestinationBinding,
+  target: composedCurrentUiDestinationBinding.target,
+  renderer: { kind: 'reactNative', contributionId: 'account-bound-renderer' },
+  display: { developerFallback: 'Account-bound destination' },
+  availability: { state: 'available', reason: 'available', diagnostics: [] },
+  headerActions: [],
+  hostOrigin: {
+    machineId: 'current-ui-composed-machine',
+    serverId: 'current-ui-composed-server',
+    generation: 1,
+    phase: 'current',
+    interactionEnabled: true,
+    executionOrigin: {
+      serverIdentityId: 'srv_current-ui-composed-server-identity',
+      materializationRef: {
+        pluginId: COMPOSED_CURRENT_UI_DESTINATION.pluginId,
+        machineId: 'current-ui-composed-machine',
+        materializationId: 'current-ui-composed-materialization',
+      },
+    } satisfies PluginMachineExecutionOriginV1,
+  },
+} satisfies PluginUiSurfacePlacementProjection);
+
+function CurrentUiContextPublication(props: Readonly<{
+  label: string;
+  onReader: (reader: CurrentUiContextReader | null) => void;
+}>): null {
+  const enrichment = React.useMemo(() => Object.freeze({
+    entity: Object.freeze({
+      kind: 'issue',
+      label: props.label,
+      reference: Object.freeze({ number: props.label === 'Account A' ? 1 : 2 }),
+    }),
+    commands: Object.freeze([Object.freeze({
+      title: `Open ${props.label}`,
+      command: Object.freeze({
+        kind: 'openSurface' as const,
+        destination: COMPOSED_CURRENT_UI_DESTINATION,
+      }),
+    })]),
+  }), [props.label]);
+  usePublishCurrentUiContext(enrichment);
+  const reader = useOptionalCurrentUiContextReader();
+  React.useLayoutEffect(() => {
+    props.onReader(reader);
+  }, [props.onReader, reader]);
+  return null;
+}
+
+function renderAccountRetirementVoiceComposition(input: Readonly<{
+  label: string;
+  navigationBinding: ReturnType<typeof createPluginSurfaceDestinationNavigationBinding>;
+  onReader: (reader: CurrentUiContextReader | null) => void;
+}>): React.ReactElement {
+  return React.createElement(
+    AppPaneProvider,
+    null,
+    React.createElement(
+      CurrentUiContextProvider,
+      null,
+      React.createElement(
+        PluginSurfaceDestinationNavigationBindingProvider,
+        { binding: input.navigationBinding },
+        React.createElement(
+          PluginSurfaceFocusEligibilityProvider,
+          {
+            active: true,
+            currentUiContextActive: true,
+            children: React.createElement(
+              React.Fragment,
+              null,
+              React.createElement(CurrentUiContextPublication, {
+                label: input.label,
+                onReader: input.onReader,
+              }),
+              React.createElement(VoiceSessionRuntime),
+            ),
+          },
+        ),
+      ),
+    ),
+  );
+}
+
+function readOpenAiFunctionCallOutputIds(sent: readonly string[]): readonly string[] {
+  return sent.flatMap((serialized) => {
+    const event = JSON.parse(serialized) as Readonly<{
+      type?: unknown;
+      item?: Readonly<{ type?: unknown; call_id?: unknown }>;
+    }>;
+    return event.type === 'conversation.item.create'
+      && event.item?.type === 'function_call_output'
+      && typeof event.item.call_id === 'string'
+      ? [event.item.call_id]
+      : [];
+  });
+}
+
+function sendOpenAiCurrentUiToolCalls(input: Readonly<{
+  channel: TestVoiceWebRtcPeer['channel'];
+  responseId: string;
+  commandId: string;
+}>): void {
+  input.channel.message(JSON.stringify({
+    type: 'response.done',
+    event_id: `${input.responseId}:done`,
+    response: {
+      id: input.responseId,
+      object: 'realtime.response',
+      status: 'completed',
+      output: [
+        {
+          type: 'function_call',
+          call_id: `${input.responseId}:read`,
+          name: 'readCurrentUiContext',
+          arguments: '{}',
+        },
+        {
+          type: 'function_call',
+          call_id: `${input.responseId}:invoke`,
+          name: 'invokeCurrentUiCommand',
+          arguments: JSON.stringify({ commandId: input.commandId }),
+        },
+      ],
+    },
+  }));
 }
 
 function setBufferedAmount(
@@ -661,6 +869,147 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     resetVoiceAdapterRegistryForTests();
     __resetVoiceTurnInterruptions();
     voiceConversationRuntimeMachine.reset();
+  });
+
+  it('fences an Account-retired real OpenAI attempt before retained current-UI read or command tool calls can reach A or B', async () => {
+    const browser = installVoiceWebRtcBrowserBoundary();
+    const openSurface = vi.fn(async () => ({ ok: true as const }));
+    const navigationBinding = createPluginSurfaceDestinationNavigationBinding({
+      placements: [composedCurrentUiPlacement],
+      targetKind: 'app',
+      runtimeAdmission: { platform: 'web', formFactor: 'tablet' },
+    });
+    const unregisterNavigationOwner = navigationBinding.registerOwner({
+      container: 'appPage',
+      handler: openSurface,
+    });
+    const readerRef: { current: CurrentUiContextReader | null } = { current: null };
+    let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
+
+    try {
+      screen = await renderScreen(renderAccountRetirementVoiceComposition({
+        label: 'Account A',
+        navigationBinding,
+        onReader: (next) => { readerRef.current = next; },
+      }));
+      await vi.waitFor(() => expect(readerRef.current?.readCurrentUiContext()?.entity?.label).toBe('Account A'));
+      const commandA = readerRef.current?.readCurrentUiContext()?.commands[0]?.id ?? '';
+      expect(commandA).toMatch(/^current-ui-command:/);
+
+      await vi.waitFor(() => expect(
+        getExternalVoiceProviderRegistration(openAiEntry().providerId)?.adapter,
+      ).not.toBeNull());
+      const configuredVoice = voiceSettingsParse(storage.getState().settings.voiceSettingsV1);
+      expect(configuredVoice.providerId).toBe(openAiEntry().providerId);
+      await vi.waitFor(() => expect(
+        getVoiceSessionLifecycleController()?.getConfiguredProviderId(),
+      ).toBe(openAiEntry().providerId));
+      voiceSessionBindingStore.getState().bind({
+        adapterId: openAiEntry().providerId,
+        controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+        conversationSessionId: OPENAI_HISTORY_SESSION_ID,
+        lifetime: 'runtime_attempt',
+        transcriptMode: 'synthetic',
+        targetSessionId: null,
+        updatedAt: 1,
+      });
+      const controller = getVoiceSessionLifecycleController();
+      if (!controller) throw new Error('Expected the real Voice lifecycle controller.');
+      const starting = controller.toggle(VOICE_AGENT_GLOBAL_SESSION_ID);
+      await vi.waitFor(() => expect(browser.peer.createDataChannel).toHaveBeenCalledWith('oai-events'));
+      browser.peer.channel.open();
+      await starting;
+
+      // The real assembly advertised both tools. This prevents the test from
+      // passing merely because a mock or privacy branch never bound them.
+      expect(openAiSessionUpdates(browser.peer.channel.sent)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          session: expect.objectContaining({
+            tools: expect.arrayContaining([
+              expect.objectContaining({ name: 'readCurrentUiContext' }),
+              expect.objectContaining({ name: 'invokeCurrentUiCommand' }),
+            ]),
+          }),
+        }),
+      ]));
+
+      // Establish the live side of the contract through the same incoming
+      // provider transport before retiring its Account. Tool advertisement
+      // alone would also pass if the real handlers were inert.
+      sendOpenAiCurrentUiToolCalls({
+        channel: browser.peer.channel,
+        responseId: 'active-account-a',
+        commandId: commandA,
+      });
+      await vi.waitFor(() => {
+        expect(readOpenAiFunctionCallOutputIds(browser.peer.channel.sent)).toEqual(
+          expect.arrayContaining(['active-account-a:read', 'active-account-a:invoke']),
+        );
+      });
+      await vi.waitFor(() => expect(openSurface).toHaveBeenCalledTimes(1));
+      const functionCallOutputIdsBeforeRetirement = readOpenAiFunctionCallOutputIds(
+        browser.peer.channel.sent,
+      );
+      openSurface.mockClear();
+
+      // This is the deciding synchronous window: do not rerender or yield
+      // before the old attempt receives real provider tool calls.
+      retireActiveServerAccountScopeLifetime();
+      sendOpenAiCurrentUiToolCalls({
+        channel: browser.peer.channel,
+        responseId: 'retired-account-a',
+        commandId: commandA,
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(readOpenAiFunctionCallOutputIds(browser.peer.channel.sent))
+        .toEqual(functionCallOutputIdsBeforeRetirement);
+      expect(openSurface).not.toHaveBeenCalled();
+      await vi.waitFor(() => {
+        expect(browser.micTrack.stop).toHaveBeenCalledTimes(1);
+        expect(controller.getSnapshot().status).toBe('disconnected');
+      });
+
+      const serverB = upsertServerProfile({
+        serverUrl: 'https://openai-composed-account-b.example.test',
+        name: 'OpenAI composed Account B',
+      });
+      setActiveServerId(serverB.id, { scope: 'device' });
+      storage.getState().activateProfileScope({
+        serverId: serverB.id,
+        accountId: 'openai-composed-account-b',
+      });
+      await screen.update(renderAccountRetirementVoiceComposition({
+        label: 'Account B',
+        navigationBinding,
+        onReader: (next) => { readerRef.current = next; },
+      }));
+      await vi.waitFor(() => expect(readerRef.current?.readCurrentUiContext()?.entity?.label).toBe('Account B'));
+      const commandB = readerRef.current?.readCurrentUiContext()?.commands[0]?.id ?? '';
+      expect(commandB).toMatch(/^current-ui-command:/);
+
+      // The same real provider transport still has the late attempt event,
+      // but no former handler can follow the stable port into Account B.
+      sendOpenAiCurrentUiToolCalls({
+        channel: browser.peer.channel,
+        responseId: 'retired-account-b',
+        commandId: commandB,
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(readOpenAiFunctionCallOutputIds(browser.peer.channel.sent))
+        .toEqual(functionCallOutputIdsBeforeRetirement);
+      expect(openSurface).not.toHaveBeenCalled();
+    } finally {
+      unregisterNavigationOwner();
+      if (screen) await screen.unmount();
+      retireActiveServerAccountScopeLifetime();
+      await vi.waitFor(() => expect(getVoiceSessionLifecycleController()).toBeNull());
+      browser.restore();
+    }
   });
 
   it('rehydrates an existing history carrier before reusing it for a new runtime attempt', async () => {

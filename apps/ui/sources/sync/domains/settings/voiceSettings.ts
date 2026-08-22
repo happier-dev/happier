@@ -90,6 +90,10 @@ const VoicePrivacySchema = z.object({
   // Privacy hardening: do not share file paths or tool arguments with voice providers by default.
   shareFilePaths: z.boolean().default(false),
   shareToolArgs: z.boolean().default(false),
+  // Current UI context has an independent disclosure policy. It must not be
+  // coupled to transcript-update settings because it governs a different
+  // client-local source.
+  currentUiContextMode: z.enum(['off', 'on_demand', 'automatic']).default('on_demand'),
 });
 
 const VoiceUiUpdatesSchema = z.object({
@@ -761,6 +765,11 @@ export function voiceSettingsParse(
     if (s7.success) base.privacy.shareFilePaths = s7.data;
     const s8 = parseBool('shareToolArgs');
     if (s8.success) base.privacy.shareToolArgs = s8.data;
+    const currentUiContextMode = z.enum(['off', 'on_demand', 'automatic'])
+      .safeParse(p.currentUiContextMode);
+    if (currentUiContextMode.success) {
+      base.privacy.currentUiContextMode = currentUiContextMode.data;
+    }
   }
 
   // Privacy hardening: never allow sharing file paths or tool args over voice transport.

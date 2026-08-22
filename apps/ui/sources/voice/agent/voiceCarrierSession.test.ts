@@ -20,6 +20,7 @@ const refreshSessions = vi.fn();
 const patchSessionMetadataWithRetry = vi.fn();
 const ensureSessionVisibleForMessageRoute = vi.fn();
 const loadDaemonMergedProjectionInputs = vi.fn();
+const applySettings = vi.fn();
 
 const getActiveServerSnapshot = vi.fn(() => ({ serverId: 'server-a', serverUrl: 'http://localhost', generation: 1 }));
 
@@ -162,6 +163,19 @@ vi.mock('@/sync/sync', () => ({
     patchSessionMetadataWithRetry: (sessionId: string, updater: (m: any) => any) =>
       patchSessionMetadataWithRetry(sessionId, updater),
   },
+}));
+
+// The sticky auto-target write reaches the sync singleton through its own lazy accessor,
+// which is a bundler-only `require` and therefore never sees the `@/sync/sync` mock above.
+// Mock the accessor that owns it, exactly as `voiceConversationSession.spec.ts` does.
+vi.mock('@/sync/runtime/getSyncSingleton', () => ({
+  getSyncSingleton: () => ({
+    applySettings: (...args: any[]) => applySettings(...args),
+    refreshSessions: (...args: any[]) => refreshSessions(...args),
+    ensureSessionVisibleForMessageRoute: (sessionId: string) => ensureSessionVisibleForMessageRoute(sessionId),
+    patchSessionMetadataWithRetry: (sessionId: string, updater: (m: any) => any) =>
+      patchSessionMetadataWithRetry(sessionId, updater),
+  }),
 }));
 
 describe('voiceConversationSession', () => {

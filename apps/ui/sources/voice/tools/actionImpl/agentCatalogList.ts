@@ -1,4 +1,4 @@
-import { AGENT_IDS, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { AGENT_IDS, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 import {
     readBackendTargetRefV2,
@@ -50,8 +50,22 @@ function normalizeId(raw: unknown): string {
 
 const CONFIGURED_ACP_CLI_CAPABILITY_ID = 'configuredAcp';
 
-function resolvePluginRuntimeCarrierAgentId(catalogAgentId: string | null | undefined): AgentId | null {
-  return catalogAgentId && isAgentId(catalogAgentId) ? catalogAgentId : null;
+/**
+ * The Agent id a catalog backend's model probe runs under.
+ *
+ * A backend that declares a bundled carrier keeps that carrier's CLI capability
+ * (`cli.claude`). An externally installed Agent has no bundled carrier and
+ * probes under its own projected id: `isBundledAgentId` answers only whether a
+ * bundled fact exists and must never reject the Agent.
+ */
+function resolveBackendModelProbeAgentId(entry: Readonly<{
+  catalogAgentId: string | null | undefined;
+  agentId: string | null | undefined;
+}>): AgentId | null {
+  const carrierAgentId = normalizeId(entry.catalogAgentId);
+  if (carrierAgentId && isBundledAgentId(carrierAgentId)) return carrierAgentId;
+  const projectedAgentId = normalizeId(entry.agentId);
+  return projectedAgentId ? (projectedAgentId as AgentId) : null;
 }
 
 function resolveConfiguredAcpCompatProbeAgentId(params: Readonly<{
@@ -223,7 +237,7 @@ async function projectVoiceToolProviderModels(params: Readonly<{
   };
 }
 
-type AgentUiConnectedService = ReturnType<typeof getAgentCore>['uiConnectedService'];
+type AgentUiConnectedService = NonNullable<ReturnType<typeof getAgentCore>>['uiConnectedService'];
 type VoiceToolConnectedService = Readonly<{
   serviceId: AgentUiConnectedService['serviceId'];
   label: string;
@@ -279,8 +293,8 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
     const enabled = backendEnabledByTargetKey?.[effectiveTargetKey] !== false;
     if (!params.includeDisabled && !enabled) continue;
 
-    if (entry.builtInAgentId) {
-      const core = getAgentCore(entry.builtInAgentId);
+    const core = entry.builtInAgentId ? getAgentCore(entry.builtInAgentId) : null;
+    if (entry.builtInAgentId && core) {
       items.push({
         targetKey: effectiveTargetKey,
         label: entry.title,
@@ -297,18 +311,18 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
     }
 
     if (entry.kind === 'pluginBackend') {
-      const carrierAgentId = resolvePluginRuntimeCarrierAgentId(entry.catalogAgentId);
+      const probeAgentId = resolveBackendModelProbeAgentId(entry);
       items.push({
         targetKey: effectiveTargetKey,
         label: entry.title,
         subtitle: entry.subtitle,
         enabled,
-        ...(carrierAgentId ? { agentId: carrierAgentId } : {}),
+        ...(probeAgentId ? { agentId: probeAgentId } : {}),
         experimental: false,
         uiConnectedService: null,
         flavorAliases: [],
-        supportsModelSelection: carrierAgentId != null,
-        supportsFreeformModels: carrierAgentId != null,
+        supportsModelSelection: probeAgentId != null,
+        supportsFreeformModels: probeAgentId != null,
       });
       continue;
     }
@@ -380,27 +394,20 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
     }
   }
   const providedAgentId = normalizeId(params.agentId);
-  const requiresPluginCarrierAgent = backendTarget?.kind === 'builtInAgent' && !isAgentId(backendTarget.agentId);
   const compatConfiguredAcpProbeAgentId = resolveConfiguredAcpCompatProbeAgentId({
     backendTarget,
     providedAgentId,
   });
+  // An Agent id is open: an externally installed Agent names itself and the
+  // machine capability probe owns whether that Agent can list models. Only an
+  // absent id is unknown here.
   const agentIdRaw = compatConfiguredAcpProbeAgentId
     || providedAgentId
-    || (
-      backendTarget?.kind === 'builtInAgent'
-        ? (isAgentId(backendTarget.agentId) ? backendTarget.agentId : '')
-        : compatConfiguredAcpProbeAgentId
-          ? compatConfiguredAcpProbeAgentId
-          : ''
-    );
-  if (requiresPluginCarrierAgent && !isAgentId(agentIdRaw)) {
-    return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', agentId: agentIdRaw };
-  }
-  if (!agentIdRaw || (!isAgentId(agentIdRaw) && !isLegacyCompatAgentType(agentIdRaw))) {
+    || (backendTarget?.kind === 'builtInAgent' ? normalizeId(backendTarget.agentId) : '');
+  if (!agentIdRaw) {
     return { ok: false, errorCode: 'unknown_agent', errorMessage: 'unknown_agent', agentId: agentIdRaw };
   }
-  if (backendTarget && backendTarget.kind === 'builtInAgent' && isAgentId(backendTarget.agentId) && agentIdRaw !== backendTarget.agentId) {
+  if (backendTarget && backendTarget.kind === 'builtInAgent' && isBundledAgentId(backendTarget.agentId) && agentIdRaw !== backendTarget.agentId) {
     return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', agentId: agentIdRaw };
   }
   if (backendTarget && backendTarget.kind === 'configuredAcpBackend' && !isLegacyCompatAgentType(agentIdRaw)) {
@@ -414,13 +421,12 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
   const limitRaw = Number(params.limit);
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : null;
   const isLegacyCompatProbe = isLegacyCompatAgentType(agentIdRaw);
-  let supportsSelection = true;
-  let supportsFreeformFallback = true;
-  if (!isLegacyCompatProbe) {
-    const core = getAgentCore(agentId);
-    supportsSelection = core?.model.supportsSelection === true;
-    supportsFreeformFallback = core?.model.supportsFreeform === true;
-  }
+  // Only a bundled Agent carries a build-time model fact. Without one the
+  // machine capability probe answers whether this Agent supports selection, so
+  // a missing bundled core must not be read as "no model selection".
+  const bundledCore = isLegacyCompatProbe ? null : getAgentCore(agentId);
+  const supportsSelection = bundledCore ? bundledCore.model.supportsSelection === true : true;
+  const supportsFreeformFallback = bundledCore ? bundledCore.model.supportsFreeform === true : true;
 
   if (supportsSelection !== true) {
     return {

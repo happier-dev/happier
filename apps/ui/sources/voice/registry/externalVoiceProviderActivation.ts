@@ -36,9 +36,11 @@ import type {
   PluginSettingsActionInput,
   PluginSettingsActionRuntime,
 } from '@happier-dev/plugin-sdk/settings';
-import { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
 
-import type { PluginUiExecutableActivationScope } from '@/components/plugins/reactNative/executableModuleHost';
+import type {
+  PluginUiClientExecutableDerivedScope,
+  PluginUiClientExecutableRegistrationScope,
+} from '@/components/plugins/reactNative/clientExecutableContributions';
 import {
   readVoiceSettingsInput,
   voiceSettingsParse,
@@ -65,6 +67,7 @@ import {
 import { subscribeBundledConversationRuntimeGeneration } from './bundledConversationRuntimeGeneration';
 import { createBundledRealtimeProviderRuntime } from './createBundledRealtimeProviderRuntime';
 import {
+  createDeclaredSettingsProjector,
   projectVoiceProviderDeclarationRequirements,
   type VoiceProviderRegistryEntry,
 } from './providerRegistry';
@@ -314,6 +317,22 @@ export type ExternalVoiceProviderActivationApi = Readonly<{
   }>;
 }>;
 
+/**
+ * The generic executable composition supplies this transaction for projected
+ * installed targets. The static first-party bundle adapter supplies the same
+ * public registration contract until those entries carry a truthful installed
+ * execution origin and can migrate into that composition.
+ */
+export type VoiceProviderActivationRegistrationScope = Pick<
+  PluginUiClientExecutableRegistrationScope,
+  'api' | 'commit' | 'registrations' | 'isCurrent' | 'unwind'
+>;
+
+export type ExternalVoiceProviderActivationScope = PluginUiClientExecutableDerivedScope & Readonly<{
+  /** Test-only/direct-owner convenience; generic activation always exposes PluginClientApi. */
+  api: ExternalVoiceProviderActivationApi;
+}>;
+
 export type VoiceProviderActivationHostBinding = Readonly<{
   recipientContract?: RecipientContractV1 | null;
   createInvocationAccountOperations?(
@@ -366,6 +385,7 @@ function createUnavailableInvocationUi(): PluginUiHostApi {
     }),
     context: async () => unavailable(),
     watchContext: unavailable,
+    publishCurrentUiContext: unavailable,
     activeComposer: async () => unavailable(),
     readComposer: async () => unavailable(),
     watchComposer: async () => unavailable(),
@@ -543,6 +563,7 @@ export function createExternalProtocol(
   return Object.freeze({
     ...leaf,
     id: providerId,
+    toolEffectCalls: declaration.capabilities.tools.effectCalls,
     turnControls: Object.freeze({
       cancelResponse: declaration.capabilities.turn.cancelResponse ? 'immediate' as const : 'unsupported' as const,
       truncatePlayback: 'unsupported' as const,
@@ -696,6 +717,16 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
   if (supportsProviderConversationForget && !forgetProviderConversationState) {
     throw activationError('voice_provider_resumption_forget_host_unavailable');
   }
+  const protocol = createExternalProtocol(
+    input.host,
+    providerId,
+    input.platform,
+    declaration,
+    runtime.protocol,
+    input.createInvocationAccountOperations,
+    input.createInvocationHostedConversation,
+    input.createInvocationRawCredentials,
+  );
   const config: BundledRealtimeProviderRuntimeConfig = Object.freeze({
     providerId,
     ...(input.providerRef
@@ -713,16 +744,7 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
           agent: execution.agent,
         })
       : Object.freeze({ kind: 'direct_media' as const }),
-    protocol: createExternalProtocol(
-      input.host,
-      providerId,
-      input.platform,
-      declaration,
-      runtime.protocol,
-      input.createInvocationAccountOperations,
-      input.createInvocationHostedConversation,
-      input.createInvocationRawCredentials,
-    ),
+    protocol,
     async createConnection(connectionInput) {
       return await withVoiceProviderInvocationLifetime({
         callerSignal: connectionInput.signal,
@@ -752,7 +774,14 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
               raw: input.createInvocationRawCredentials?.('connection', signal) ?? null,
             }),
             tools: bindVoiceClientToolsToAttempt(
-              input.host.getRealtimeClientToolDefinitions(),
+              input.host.getRealtimeClientToolDefinitions({
+                effectCalls: protocol.toolEffectCalls ?? 'none',
+                // An Agent-session attachment reaches Happier sessions,
+                // machines, servers, activity, and transcripts through the
+                // Agent's own canonical tools. Its realtime surface publishes
+                // only the authorized current-UI tools.
+                exposure: execution ? 'current_ui_only' : 'voice_assistant',
+              }),
               connectionInput.signal,
             ),
             ui: createVoiceAttemptInvocationUi({
@@ -922,6 +951,8 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
   generation?: string;
   declarations: readonly VoiceConversationProviderContribution[];
   hostPlatform: string;
+  /** The generic executable-composition transaction; Voice never rebuilds rights. */
+  registrationScope: VoiceProviderActivationRegistrationScope;
   runtimeHost?: BundledRealtimeProviderRuntimeHost;
   isRuntimeHostCurrent?(): boolean;
   recipientContractsByLocalId?: Readonly<Record<string, RecipientContractV1>>;
@@ -936,7 +967,7 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
     signal: AbortSignal;
     isCurrent(): boolean;
   }>): PluginUiHostApi;
-}>): PluginUiExecutableActivationScope<ExternalVoiceProviderActivationApi> {
+}>): ExternalVoiceProviderActivationScope {
   if (input.declarations.length === 0) throw activationError('external_voice_provider_declaration_required');
   const declarations = input.declarations.map((declaration) => {
     const parsed = VoiceProviderContributionSchema.safeParse(declaration);
@@ -958,29 +989,7 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
   if (declarations.some((declaration) => !declaration.platforms.includes(hostPlatform))) {
     throw activationError('external_voice_provider_platform_unavailable');
   }
-  const clientTarget = declarations[0]!.client;
-  const registrationScope = createPluginRegistrationScope({
-    pluginId: input.pluginId,
-    target: Object.freeze({
-      realm: 'client' as const,
-      artifactId: clientTarget.artifactId,
-      modulePath: clientTarget.modulePath,
-      exportName: clientTarget.exportName,
-      platform: hostPlatform,
-    }),
-    rights: declarations.map((declaration) => Object.freeze({
-      family: 'voiceProviders',
-      localId: declaration.id,
-      target: Object.freeze({
-        realm: 'client' as const,
-        artifactId: declaration.client.artifactId,
-        modulePath: declaration.client.modulePath,
-        exportName: declaration.client.exportName,
-        platforms: declaration.platforms,
-      }),
-      voiceProviderDeclaration: declaration,
-    })),
-  });
+  const registrationScope = input.registrationScope;
   const token = Object.freeze({});
   let committedRuntimeCleanups: readonly CommittedVoiceRuntimeCleanupOwner[] = Object.freeze([]);
   let committedHost: BundledRealtimeProviderRuntimeHost | null = null;
@@ -997,6 +1006,7 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
   );
   const isCurrent = () => (
     committed
+    && registrationScope.isCurrent()
     && !unwound
     && committedHost !== null
     && readCurrentHost() === committedHost
@@ -1043,15 +1053,22 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
      * teardown is deferred.
      */
     async commit() {
-      if (unwound || committed) throw activationError('external_voice_provider_registration_closed');
+      if (unwound || !registrationScope.isCurrent()) {
+        throw activationError('external_voice_provider_registration_closed');
+      }
       const host = readCurrentHost();
       if (!host) throw activationError('voice_runtime_host_unavailable');
       const committedById = new Map<string, Readonly<{
         runtime: ExternalVoiceProviderRuntimeRegistration;
         cleanup: CommittedVoiceRuntimeCleanupOwner;
       }>>();
-      for (const registration of registrationScope.commit()) {
-        if (registration.family !== 'voiceProviders' || registration.value.kind !== 'conversation') {
+      registrationScope.commit();
+      for (const registration of registrationScope.registrations()) {
+        // One target can legitimately contain Actions plus Voice. The generic
+        // composition owns their shared transaction; Voice projects only its
+        // own declared family from that immutable result.
+        if (registration.family !== 'voiceProviders') continue;
+        if (registration.value.kind !== 'conversation') {
           throw activationError('invalid_external_voice_provider_leaf_registration');
         }
         committedById.set(registration.localId, Object.freeze({
@@ -1256,12 +1273,25 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
                     isCurrent: isInvocationCurrent,
                   })
                 ),
-                getRealtimeClientToolDefinitions: () => host.getRealtimeClientToolDefinitions(),
+                getRealtimeClientToolDefinitions: () => host.getRealtimeClientToolDefinitions({
+                  effectCalls: 'none',
+                  // Settings actions provision a direct-media provider's own
+                  // remote assistant; only that execution kind declares them.
+                  exposure: declaration.execution?.kind === 'experimental_agent_session_realtime'
+                    ? 'current_ui_only'
+                    : 'voice_assistant',
+                }),
                 isCurrent,
                 revocationSignal: settingsOperationsRevocation.signal,
               })
             : undefined;
           const requirements = projectVoiceProviderDeclarationRequirements(declaration);
+          const selectionOptions = Object.freeze([Object.freeze({
+            id: 'default', modeId: 'default', order: 10_000,
+            titleKey: declarationTitle(declaration),
+            subtitleKey: input.pluginId,
+            configPatch: providerSettings.defaultConfig,
+          })]);
           commitExternalVoiceProviderRegistration(Object.freeze({
             token,
             pluginId: input.pluginId,
@@ -1275,15 +1305,12 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
               roles: declaration.roles,
               requirements,
               supportedPlatforms: declaration.platforms,
-              selectionOptions: [Object.freeze({
-                id: 'default', modeId: 'default', order: 10_000,
-                titleKey: declarationTitle(declaration),
-                subtitleKey: input.pluginId,
-                configPatch: providerSettings.defaultConfig,
-              })],
-              projectSettings: (
-                envelope: Readonly<{ schemaVersion: number; config: unknown }> | null,
-              ) => projectExternalVoiceProviderSettings(envelope, providerSettings),
+              selectionOptions,
+              projectSettings: createDeclaredSettingsProjector(
+                declaration,
+                providerSettings,
+                selectionOptions,
+              ),
               providerSettings,
               declaration,
               ...(accountCredentialSlot ? { accountCredentialSlot } : {}),
@@ -1318,7 +1345,6 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
       if (unwound) return;
       unwound = true;
       await disposeCommittedRuntimes();
-      await registrationScope.dispose();
     },
   });
 }

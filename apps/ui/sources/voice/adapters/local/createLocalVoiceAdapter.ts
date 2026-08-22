@@ -1,4 +1,5 @@
 import { localVoiceRuntimeController } from '@/voice/local/localVoiceRuntimeController';
+import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
 import { deriveLocalVoiceSessionSnapshot } from '@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot';
 import {
   getVoiceConversationRuntimeSnapshot,
@@ -31,6 +32,8 @@ export type LocalVoiceAdapterCapabilities = Readonly<{
   resolveBindingTranscriptMode?: (settings: unknown) => VoiceAdapterTranscriptMode | null;
   resolveSurfaceCapabilities?: (voiceSettings: unknown) => VoiceAdapterSurfaceCapabilities | null;
   resolveContextChannel?: (voiceSettings: unknown) => VoiceAdapterContextChannel | null;
+  /** Provider-owned local context port, carried only into this adapter's attempts. */
+  currentUiContext?: VoiceCurrentUiToolPort;
 }>;
 
 /**
@@ -49,7 +52,7 @@ export function createLocalVoiceAdapter(
 
   const start = async (opts: Readonly<{ sessionId: string; initialContext?: string }>) => {
     void opts.initialContext;
-    await localVoiceRuntimeController.toggleTurn(opts.sessionId);
+    await localVoiceRuntimeController.toggleTurn(opts.sessionId, capabilities.currentUiContext);
   };
 
   const toggle = async (opts: Readonly<{ sessionId: string }>) => start(opts);
@@ -63,7 +66,7 @@ export function createLocalVoiceAdapter(
   };
 
   const bargeIn = async (opts: Readonly<{ sessionId: string }>) => {
-    await localVoiceRuntimeController.toggleTurn(opts.sessionId);
+    await localVoiceRuntimeController.toggleTurn(opts.sessionId, capabilities.currentUiContext);
   };
 
   const setMuted = async (opts: Readonly<{ sessionId: string; muted: boolean }>) => {

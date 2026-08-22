@@ -58,10 +58,17 @@ const DAEMON_STT_START_ERROR_REASONS = new Set([
 
 function createDefaultDaemonVoiceInferenceClient(): DaemonStreamingSttClient {
     // Keep the controller's hot import graph small; the client pulls in transfer
-    // readers/encryption and is only needed for the default runtime path.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const mod = require('./DaemonVoiceInferenceClient.ts') as typeof import('./DaemonVoiceInferenceClient');
-    return new mod.DaemonVoiceInferenceClient();
+    // readers/encryption and is only needed for the default runtime path. The deferral
+    // is a dynamic import rather than a bundler-only `require`: every host that executes
+    // this module resolves the target through its own module graph, so the client stays
+    // one module instance under Metro and under the Vitest/Vite graph alike. A `require`
+    // here reaches Node's CommonJS loader in tests and loads a second, unaliased copy.
+    return {
+        createStreamingSttSender: async (options) => {
+            const { DaemonVoiceInferenceClient } = await import('./DaemonVoiceInferenceClient');
+            return new DaemonVoiceInferenceClient().createStreamingSttSender(options);
+        },
+    };
 }
 
 function resolveDaemonStreamingSttStartErrorReason(error: unknown): string {

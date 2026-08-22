@@ -24,4 +24,19 @@ describe('readVoicePrivacySettings', () => {
             voice: { privacy: { sharePermissionRequests: true } },
         }).sharePermissionRequests).toBe(true);
     });
+
+    it('retains the independently parsed current UI context mode while provider-bound share bits fail closed', () => {
+        const privacy = readVoicePrivacySettings({
+            voice: { privacy: { currentUiContextMode: 'automatic' } },
+        });
+
+        expect(privacy.currentUiContextMode).toBe('automatic');
+        expect(privacy.shareSessionSummary).toBe(false);
+        expect(privacy.shareRecentMessages).toBe(false);
+    });
+
+    it('defaults a missing current UI context mode to on demand', () => {
+        expect(readVoicePrivacySettings({ voice: { privacy: {} } }).currentUiContextMode)
+            .toBe('on_demand');
+    });
 });

@@ -285,8 +285,13 @@ function createConnection(input: Readonly<{
     closePromise = (async () => {
       pcmTerminalSubscription?.remove();
       pcmTerminalSubscription = null;
-      await input.pcm?.stop().catch(() => {});
-      await input.driver.close(reason).catch(() => {});
+      // Socket and capture teardown are independent owners. Serializing them
+      // lets a capture stop that is still draining — or stalled behind an
+      // unsettled startup — retain the transport it no longer feeds.
+      await Promise.all([
+        input.pcm?.stop().catch(() => {}),
+        input.driver.close(reason).catch(() => {}),
+      ]);
     })();
     await closePromise;
   };

@@ -39,6 +39,7 @@ describe('voice provider settings catalog', () => {
           platforms: ['web'],
           capabilities: {
             turn: { cancelResponse: false, bargeIn: false },
+            tools: { effectCalls: 'none' },
           },
           settings: {
             schemaVersion: 2,

@@ -5,8 +5,9 @@ import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from
 import { createNativeMicSession } from './NativeMicSession';
 import type { CreateMicSessionOptions } from './MicSession';
 
-export function createRealtimeMicSession(_options: CreateMicSessionOptions = {}) {
+export function createRealtimeMicSession(options: CreateMicSessionOptions = {}) {
     return createNativeMicSession({
+        ...(options.onFailure ? { onFailure: options.onFailure } : {}),
         ensurePermission: async () => {
             const permission = await requestMicrophonePermission();
             if (!permission.granted) {

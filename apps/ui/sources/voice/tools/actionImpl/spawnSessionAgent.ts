@@ -6,7 +6,7 @@ import {
     type BackendTargetRefV2,
 } from '@happier-dev/protocol';
 
-import { isAgentId } from '@/agents/registry/registryCore';
+import { isBundledAgentId } from '@/agents/registry/registryCore';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
@@ -51,10 +51,10 @@ export function resolveVoiceToolSpawnBackendTarget(params: Readonly<{
 
   const isLegacyCompatCarrier = isLegacyCompatAgentType(requestedAgentId) || Boolean(requestedConfiguredCompatBackendId);
 
-  if (requestedAgentId && !isAgentId(requestedAgentId) && !isLegacyCompatCarrier) {
-    return { ok: false, errorCode: 'agent_not_found', errorMessage: 'agent_not_found' };
-  }
-
+  // Agent identity is open: an installed Agent legitimately carries an id outside the bundled
+  // set, so existence is decided by the daemon that owns the installed catalog, never by
+  // `isBundledAgentId` here. This resolver only checks that the requested id and an explicit
+  // backend target key describe the same target.
   let parsedBackendTarget: BackendTargetRefV2 | null = null;
   if (requestedBackendTargetKey) {
     try {
@@ -64,7 +64,7 @@ export function resolveVoiceToolSpawnBackendTarget(params: Readonly<{
       const requiresExplicitRuntimeCarrier =
         isCanonicalBackendKey
         && !isConfiguredTarget
-        && !isAgentId(canonicalBackendTarget.backendId);
+        && !isBundledAgentId(canonicalBackendTarget.backendId);
 
       if (isConfiguredTarget) {
         const configuredBackendId = canonicalBackendTarget.configuredBackendId ?? canonicalBackendTarget.backendId;
@@ -119,9 +119,14 @@ export function resolveVoiceToolSpawnBackendTarget(params: Readonly<{
           ...(requestedBackendTargetKey ? { backendTargetKey: requestedBackendTargetKey } : {}),
         };
       }
-    } else if (!isAgentId(parsedBackendTarget.backendId)) {
-      // For non-built-in backends, the caller must supply an explicit runtime carrier agent id.
-      if (!isAgentId(requestedAgentId) || isLegacyCompatAgentType(requestedAgentId)) {
+    } else if (!isBundledAgentId(parsedBackendTarget.backendId)) {
+      // A non-bundled backend either runs itself — an installed Agent whose id IS the backend id —
+      // or is carried by an explicit bundled runtime carrier Agent. `isBundledAgentId` selects the
+      // carrier form; it never decides whether the installed Agent exists.
+      const runsItself = requestedAgentId === parsedBackendTarget.backendId;
+      const hasBundledRuntimeCarrier =
+        isBundledAgentId(requestedAgentId) && !isLegacyCompatAgentType(requestedAgentId);
+      if (!runsItself && !hasBundledRuntimeCarrier) {
         return {
           ok: false,
           errorCode: 'invalid_parameters',
@@ -140,7 +145,7 @@ export function resolveVoiceToolSpawnBackendTarget(params: Readonly<{
     }
   }
 
-  if ((isLegacyCompatAgentType(requestedAgentId) || requestedConfiguredCompatBackendId) && !parsedBackendTarget) {
+  if (isLegacyCompatCarrier && !parsedBackendTarget) {
     return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', agentId: requestedAgentId };
   }
 

@@ -246,9 +246,12 @@ export function createWebSocketPcmMedia(input: Readonly<{
     playback = null;
     latestInputLevel = 0;
     stopPromise = (async () => {
-      await currentCapture?.stop();
+      // Playback is released before capture shutdown is awaited (the same order the
+      // native transport uses): a capture stop that rejects or never settles must
+      // not leave the assistant still audible after Stop.
       currentPlayback?.stop();
       publishOutputLevel(0);
+      await currentCapture?.stop();
     })().finally(() => {
       stopPromise = null;
     });

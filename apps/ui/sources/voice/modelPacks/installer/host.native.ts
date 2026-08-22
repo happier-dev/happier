@@ -52,7 +52,7 @@ import {
   getPackSiblingDir,
   getPackSiblingFile,
 } from './paths';
-import type { ExpoFsDirectory, ExpoFsFile, InstallerFs } from './types';
+import type { ExpoFsDirectory, ExpoFsFile, InstallerFs, InvalidatePackRuntime } from './types';
 
 const SCRATCH_SUFFIX = '.scratch';
 const BACKUP_SUFFIX = '.backup';
@@ -255,6 +255,13 @@ export function createExpoModelPackInstallerHost(opts: {
   fs: InstallerFs;
   fetchImpl: typeof fetch;
   timeoutMs: number;
+  /**
+   * Awaited immediately before this pack's live directory bytes change, while
+   * the superseded pack is still the one on disk. Native engines cache by that
+   * stable directory path, so dropping them after the swap would leave a window
+   * in which the replaced pack still serves its predecessor's bytes.
+   */
+  invalidatePackRuntime?: InvalidatePackRuntime;
 }): ModelPackInstallerHost {
   const { fs, fetchImpl } = opts;
 
@@ -381,6 +388,10 @@ export function createExpoModelPackInstallerHost(opts: {
           }
           writeIntent();
 
+          // The live bytes are about to be replaced: drop everything keyed on this
+          // directory while it still holds the superseded pack.
+          await opts.invalidatePackRuntime?.(getPackRootDir(fs, packId).uri);
+
           let backupCreated = false;
           let swapWindowClosed = false;
           try {
@@ -435,6 +446,9 @@ export function createExpoModelPackInstallerHost(opts: {
               if (promotionSettled) return;
               promotionPhase = 'rollback_pending';
               writeIntent();
+              // Rollback swaps the promoted bytes back out of the same live path,
+              // so anything cached against it is stale again.
+              await opts.invalidatePackRuntime?.(getPackRootDir(fs, packId).uri);
               deleteRequired(getPackRootDir(fs, packId));
               if (backupCreated && freshBackupDir().exists) {
                 if (promotionPriorInstall) freshBackupDir().move(getPackRootDir(fs, packId));
@@ -479,6 +493,8 @@ export async function reconcileExpoModelPackPromotion(opts: {
   fs: InstallerFs;
   packId: string;
   outcome?: 'commit' | 'rollback';
+  /** Awaited before a rollback rewrites the live directory (see `createExpoModelPackInstallerHost`). */
+  invalidatePackRuntime?: InvalidatePackRuntime;
 }): Promise<boolean> {
   return reconcileExpoModelPackPromotionOwned(opts);
 }
@@ -487,6 +503,7 @@ async function reconcileExpoModelPackPromotionOwned(opts: {
   fs: InstallerFs;
   packId: string;
   outcome?: 'commit' | 'rollback';
+  invalidatePackRuntime?: InvalidatePackRuntime;
 }, lease?: ExpoModelPackOperationLease): Promise<boolean> {
   const { fs, packId } = opts;
   assertOperationAvailable(fs, packId, lease);
@@ -552,7 +569,9 @@ async function reconcileExpoModelPackPromotionOwned(opts: {
   let restored = false;
 
   if (backupDir.exists) {
-    // Crash in the swap window: roll back to the prior install.
+    // Crash in the swap window: roll back to the prior install. The live bytes
+    // change here too, so this is a live-directory mutation like promote/remove.
+    await opts.invalidatePackRuntime?.(liveDir.uri);
     try {
       if (liveDir.exists) deleteRequired(liveDir);
       if (intent.priorInstall) {
@@ -585,16 +604,22 @@ export async function removeExpoModelPackWithHost(opts: {
   fs: InstallerFs;
   packId: string;
   signal?: AbortSignal;
+  /** Awaited before the live directory is deleted (see `createExpoModelPackInstallerHost`). */
+  invalidatePackRuntime?: InvalidatePackRuntime;
 }): Promise<void> {
   const { fs, packId, signal } = opts;
   const lease = acquireOperationLease(fs, packId);
   try {
     throwIfRemoveAborted(signal);
-    await reconcileExpoModelPackPromotionOwned({ fs, packId, outcome: 'rollback' }, lease);
+    await reconcileExpoModelPackPromotionOwned(
+      { fs, packId, outcome: 'rollback', invalidatePackRuntime: opts.invalidatePackRuntime },
+      lease,
+    );
     throwIfRemoveAborted(signal);
 
     deleteRequired(getPackSiblingDir(fs, packId, SCRATCH_SUFFIX));
     throwIfRemoveAborted(signal);
+    await opts.invalidatePackRuntime?.(getPackRootDir(fs, packId).uri);
     deleteRequired(getPackRootDir(fs, packId));
     throwIfRemoveAborted(signal);
     deleteRequired(getPackSiblingDir(fs, packId, BACKUP_SUFFIX));

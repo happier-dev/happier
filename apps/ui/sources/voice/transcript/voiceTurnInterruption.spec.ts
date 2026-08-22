@@ -77,7 +77,7 @@ describe('markVoiceConversationAssistantTurnInterrupted', () => {
         expect(entries.find((entry) => entry.id === 'u1')).not.toHaveProperty('interrupted');
     });
 
-    it('resolves a projected local identity to the authoritative persisted row identity', () => {
+    it('records a persisted row under the identity the transcript projects it with', () => {
         const conversationSessionId = 'conv-interrupt-persisted-identity';
         const persisted = {
             ...assistantMessage('server-assistant-1', ASSISTANT_TEXT, 300),
@@ -98,14 +98,17 @@ describe('markVoiceConversationAssistantTurnInterrupted', () => {
             getState: () => state,
         });
 
-        expect(isVoiceTurnInterrupted(persisted.localId)).toBe(false);
-        expect(isVoiceTurnInterrupted(persisted.realID)).toBe(true);
+        // The canonical local id is what the transcript renders this row under,
+        // so the interruption mark must be keyed there rather than under the
+        // later-arriving server id, which no projected entry carries.
+        expect(isVoiceTurnInterrupted(persisted.realID)).toBe(false);
+        expect(isVoiceTurnInterrupted(persisted.localId)).toBe(true);
         expect(selectVoiceTranscriptEntriesForConversationSession(
             state,
             conversationSessionId,
         )).toEqual([
             expect.objectContaining({
-                id: persisted.realID,
+                id: persisted.localId,
                 interrupted: true,
             }),
         ]);

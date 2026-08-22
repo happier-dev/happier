@@ -235,7 +235,7 @@ const recipientContract = createVoiceProviderRecipientContractFromCredentialsV1(
 const recipientContractDigest = createRecipientContractDigestV1(recipientContract);
 
 async function activateCredentialProvider() {
-  const { createExternalVoiceProviderActivationScope } = await import('@/voice/registry/externalVoiceProviderActivation');
+  const { createExternalVoiceProviderActivationScope } = await import('@/voice/registry/externalVoiceProviderActivation.testkit');
   const { createBundledConversationRuntimeHostLease } = await import('@/voice/registry/bundledConversationRuntimeHost');
   const hostLease = createBundledConversationRuntimeHostLease();
   const scope = createExternalVoiceProviderActivationScope({

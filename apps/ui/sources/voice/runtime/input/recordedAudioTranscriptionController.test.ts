@@ -7,7 +7,7 @@ import {
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
 import {
-    activateProjectedExternalVoiceProviders,
+    createProjectedExternalVoiceProviderDerivedScopeFactory,
     withdrawProjectedExternalVoiceProviders,
 } from '@/voice/registry/projectedExternalVoiceProviderActivation';
 
@@ -132,17 +132,15 @@ describe('recordedAudioTranscriptionController', () => {
             },
         } as const;
 
-        await activateProjectedExternalVoiceProviders({
+        createProjectedExternalVoiceProviderDerivedScopeFactory({
             projection: createExternalSpeechProjection({ generation: 1, pluginId, title: 'Runtime A' }),
-            machineId: 'machine-1',
             hostPlatform: 'web',
             executableHost,
         });
         await expect(controller.transcribe(request)).resolves.toBe('Runtime A');
 
-        await activateProjectedExternalVoiceProviders({
+        createProjectedExternalVoiceProviderDerivedScopeFactory({
             projection: createExternalSpeechProjection({ generation: 2, pluginId, title: 'Runtime B' }),
-            machineId: 'machine-1',
             hostPlatform: 'web',
             executableHost,
         });

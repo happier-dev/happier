@@ -43,6 +43,16 @@ export type InstallerFs = {
 export type InstallerOverrides = {
   fs?: InstallerFs;
   fetch?: typeof fetch;
+  /**
+   * Invalidate runtime state derived from the live pack directory, awaited
+   * before the bytes at that directory are replaced or deleted. Native voice
+   * engines and the derived speaker count are keyed by that stable path, so a
+   * replacement would otherwise keep serving the superseded pack.
+   */
+  invalidatePackRuntime?: InvalidatePackRuntime;
 };
+
+/** Called with the live pack directory uri whose bytes are about to change. */
+export type InvalidatePackRuntime = (packDirUri: string) => Promise<void>;
 
 export type Progress = { loaded: number; total: number };

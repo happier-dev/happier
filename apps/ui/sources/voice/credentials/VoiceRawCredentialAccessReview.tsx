@@ -14,7 +14,12 @@ import {
   type PluginPermissionGrantActions,
 } from '@/sync/domains/plugins/permissions/actions';
 import { createPluginPermissionGrantHttpActionExecutor } from '@/sync/domains/plugins/permissions/api';
+import {
+  selectPluginPermissionGrants,
+  selectPluginPermissionPendingRequests,
+} from '@/sync/domains/plugins/permissions/store';
 import { usePluginPermissionGrants } from '@/sync/domains/plugins/permissions/usePluginPermissionGrants';
+import { useSettingsVersion } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -142,6 +147,7 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
     execute: createPluginPermissionGrantHttpActionExecutor(),
   }), []);
   const actions = props.actions ?? defaultActions;
+  const settingsVersion = useSettingsVersion();
   const [inspection, setInspection] = React.useState<AuthorizationInspection | null>(null);
   const [unavailable, setUnavailable] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
@@ -164,11 +170,14 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
     }
   }, [client, props.contribution]);
 
+  // The authorization subject is derived from account settings, so a settings
+  // change invalidates the current inspection and the pending request rendered
+  // for it. Re-derive rather than keeping a surface bound to the old account.
   React.useEffect(() => {
     const controller = new AbortController();
     void inspect(controller.signal);
     return () => controller.abort();
-  }, [inspect]);
+  }, [inspect, settingsVersion]);
 
   const listInput = React.useMemo(() => inspection ? ({
     pluginId: inspection.authorization.pluginId,
@@ -184,14 +193,29 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
     enabled: inspection !== null,
     listInput,
   });
-  const activeGrantId = permissionGrants.state.grantIds[0] ?? null;
-  const pendingRequest = permissionGrants.pendingRequests[0] ?? null;
-  const isGranted = inspection !== null && permissionGrants.hasGrant({
+  /**
+   * Grants and requests are listed Account-wide so the management surfaces can
+   * show every device's approval. This surface is not one of those: it acts for
+   * the one selected daemon, so it must read, decide and revoke only the row
+   * that daemon's own installation approved. Taking the first Account-wide
+   * match would let one machine's approval read as this machine's, and would
+   * revoke another device's grant.
+   */
+  const authorityIdentity = React.useMemo(() => inspection ? ({
     pluginId: inspection.authorization.pluginId,
     capability: inspection.authorization.capability,
     targetScope: inspection.authorization.targetScope,
     subject: inspection.authorization.subject,
-  });
+    authoritySource: inspection.authorization.authoritySource,
+  } as const) : null, [inspection]);
+  const activeGrant = React.useMemo(() => authorityIdentity
+    ? selectPluginPermissionGrants(permissionGrants.state, authorityIdentity)[0] ?? null
+    : null, [authorityIdentity, permissionGrants.state]);
+  const pendingRequest = React.useMemo(() => authorityIdentity
+    ? selectPluginPermissionPendingRequests(permissionGrants.state, authorityIdentity)[0] ?? null
+    : null, [authorityIdentity, permissionGrants.state]);
+  const activeGrantId = activeGrant?.id ?? null;
+  const isGranted = activeGrant !== null;
   const grantStateReady = permissionGrants.state.status === 'ready'
     || permissionGrants.state.status === 'refreshing';
 
@@ -240,6 +264,25 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
     props.contribution,
   ]);
 
+  /**
+   * A decision surface captures the exact authorization it was rendered for. An
+   * account or settings switch can land between that render and the person's
+   * tap, so every decision re-inspects first and is discarded when the
+   * host-derived authorization it was shown for is no longer the current one.
+   * Deciding a captured request would otherwise disclose raw credential access
+   * for a subject the person never reviewed.
+   */
+  const decideReviewedPendingRequest = React.useCallback(async (
+    decide: () => Promise<unknown> | unknown,
+  ): Promise<void> => {
+    const reviewed = inspection;
+    if (!reviewed) return;
+    const current = await inspect();
+    if (!current) return;
+    if (!sameAuthorization(current.authorization, reviewed.authorization)) return;
+    await decide();
+  }, [inspect, inspection]);
+
   const details = inspection ? createVoiceRawCredentialReviewDetailRows(inspection) : [];
   return (
     <View>
@@ -268,8 +311,18 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
             dismiss: t('common.cancel'),
           }}
           detailRows={details}
-          onGrant={(input) => { void permissionGrants.grant(input); }}
-          onDismiss={(input) => { void permissionGrants.dismissRequest(input); }}
+          onGrant={(input) => {
+            fireAndForget(
+              decideReviewedPendingRequest(() => permissionGrants.grant(input)),
+              { tag: `VoiceRawCredentialAccessReview.grant.${props.contribution.pluginId}.${props.contribution.localId}` },
+            );
+          }}
+          onDismiss={(input) => {
+            fireAndForget(
+              decideReviewedPendingRequest(() => permissionGrants.dismissRequest(input)),
+              { tag: `VoiceRawCredentialAccessReview.dismiss.${props.contribution.pluginId}.${props.contribution.localId}` },
+            );
+          }}
           disabled={busy}
           testID={props.testID ? `${props.testID}-sheet` : undefined}
         />

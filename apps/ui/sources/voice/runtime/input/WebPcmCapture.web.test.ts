@@ -93,6 +93,37 @@ describe('WebPcmCapture', () => {
     await capture.stop();
   });
 
+  it('settles stop and re-arms a fresh start when a mic acquisition never resolves', async () => {
+    const { context } = createContext({ worklet: true });
+    installWorklet();
+    const { mic } = createMic(context);
+    let acquisitions = 0;
+    mic.ensureActive = vi.fn(async () => {
+      acquisitions += 1;
+      // The first acquisition models an unanswered permission prompt: the
+      // browser never settles it and no teardown of this capture can.
+      if (acquisitions === 1) await new Promise<void>(() => {});
+    });
+    const capture = createWebPcmCapture({
+      mic, format: { sampleRate: 24_000, channels: 1, encoding: 'pcm16le' }, chunkMs: 20,
+      fallback: 'allow_script_processor', onChunk: vi.fn(async () => {}),
+    });
+
+    const start = capture.start();
+    void start.catch(() => undefined);
+    await vi.waitFor(() => expect(mic.ensureActive).toHaveBeenCalledTimes(1));
+
+    let stopped = false;
+    void capture.stop().then(() => { stopped = true; });
+    await vi.waitFor(() => expect(stopped).toBe(true));
+    expect(capture.isActive()).toBe(false);
+
+    await capture.start();
+    expect(mic.ensureActive).toHaveBeenCalledTimes(2);
+    expect(capture.isActive()).toBe(true);
+    await capture.stop();
+  });
+
   it('invokes AudioWorklet.addModule with its native receiver', async () => {
     let receiver: unknown = null;
     const addModule = vi.fn(async function (this: unknown) {

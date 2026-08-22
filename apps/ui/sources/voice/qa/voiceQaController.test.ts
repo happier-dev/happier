@@ -4,6 +4,7 @@ import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
 import { RPC_ERROR_CODES, VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { attachVoiceAgentActionEffectId } from '@/voice/agent/types';
 import { createVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
 
 import { resetVoiceQaStoreForTests, useVoiceQaStore } from './voiceQaStore';
@@ -975,6 +976,10 @@ describe('voiceQaController', () => {
   });
 
   it('surfaces failed local voice tool results in the QA transcript', async () => {
+    // Two readers reach this boundary: the controller through its injected deps
+    // (explicit deps mean the default `sync`-backed deps are not in play) and the
+    // pending-request tool handler through the `sync` singleton directly. Stub the
+    // singleton and forward the injected deps to it so both observe one boundary.
     const ensureSessionVisibleForMessageRoute = vi
       .spyOn(sync, 'ensureSessionVisibleForMessageRoute')
       .mockResolvedValue({ kind: 'available', sessionId: 's1' });
@@ -990,12 +995,18 @@ describe('voiceQaController', () => {
       return {
         assistantText: 'I will try that now.',
         actions: [
-          {
-            t: 'answerUserActionRequest',
-            args: {
-              answers: [{ question: 'What do you want me to work on in this repo?', values: ['Implement a feature'] }],
-            },
-          },
+          // The real turn producer stamps process-local effect identity on every
+          // action before tool custody runs; an unstamped effectful action is
+          // rejected as `tool_call_identity_required` and never executes.
+          attachVoiceAgentActionEffectId(
+            {
+              t: 'answerUserActionRequest',
+              args: {
+                answers: [{ question: 'What do you want me to work on in this repo?', values: ['Implement a feature'] }],
+              },
+            } as never,
+            'voice-qa-tool-results:client:1:0',
+          ),
         ],
       };
     });
@@ -1017,6 +1028,12 @@ describe('voiceQaController', () => {
       getVoiceTargetState: () => ({ primaryActionSessionId: 's1', lastFocusedSessionId: null }),
       ensureLocalBinding,
       ensureLocalRunningAndMaybeWelcome: vi.fn(async () => null),
+      ensureSessionVisibleForMessageRoute: (
+        ...args: Parameters<typeof sync.ensureSessionVisibleForMessageRoute>
+      ) => sync.ensureSessionVisibleForMessageRoute(...args),
+      refreshSessionMessages: (
+        ...args: Parameters<typeof sync.refreshSessionMessages>
+      ) => sync.refreshSessionMessages(...args),
       pendingPort: createAcceptedPendingPort(),
       sendLocalTurn,
       stopLocal: vi.fn(async () => {}),

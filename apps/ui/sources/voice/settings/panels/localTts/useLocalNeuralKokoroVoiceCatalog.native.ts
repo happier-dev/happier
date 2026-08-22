@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { uriToFilePath } from '@/platform/fileUri';
 import { getKokoroSherpaVoiceCatalogForSpeakerCount } from '@/voice/kokoro/voices/kokoroSherpaVoiceMapping';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -12,11 +13,6 @@ export type KokoroVoiceSummary = Readonly<{
 }>;
 
 type InstallSummary = Awaited<ReturnType<typeof getModelPackInstallSummary>>;
-
-function uriToFilePath(uri: string): string {
-  if (uri.startsWith('file://')) return uri.slice('file://'.length);
-  return uri;
-}
 
 function normalizeManifestVoiceRow(row: unknown): KokoroVoiceSummary | null {
   if (!row || typeof row !== 'object') return null;

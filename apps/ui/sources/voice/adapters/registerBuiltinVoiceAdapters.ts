@@ -12,6 +12,7 @@ import {
 import {
   createBundledConversationRuntimeHostLease,
 } from '@/voice/registry/bundledConversationRuntimeHost';
+import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
 
 export type BuiltinVoiceAdapterAssembly = Readonly<{
   adapters: ReadonlyArray<VoiceAdapterController>;
@@ -20,10 +21,13 @@ export type BuiltinVoiceAdapterAssembly = Readonly<{
 
 export function createBuiltinVoiceAdapterAssembly(input: Readonly<{
   bundledEntries?: readonly BundledConversationRuntimeEntry[];
+  currentUiContext?: VoiceCurrentUiToolPort;
 }> = {}): BuiltinVoiceAdapterAssembly {
   const bundledEntries =
     input.bundledEntries ?? BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES;
-  const hostLease = createBundledConversationRuntimeHostLease();
+  const hostLease = createBundledConversationRuntimeHostLease({
+    ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
+  });
   // Composition excludes an unhealthy leaf instead of failing the assembly, so
   // the shell that mounts this assembly keeps booting and every healthy
   // provider stays available.
@@ -37,7 +41,9 @@ export function createBuiltinVoiceAdapterAssembly(input: Readonly<{
     adapters: Object.freeze([
       ...bundled.map((runtime) => runtime.adapter),
       createLocalDirectVoiceAdapter(),
-      createLocalConversationVoiceAdapter(),
+      createLocalConversationVoiceAdapter({
+        ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
+      }),
     ]),
     dispose() {
       disposePromise ??= (async () => {

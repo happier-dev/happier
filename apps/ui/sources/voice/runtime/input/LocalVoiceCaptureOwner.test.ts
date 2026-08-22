@@ -11,6 +11,8 @@ import type {
 import { createDaemonStreamingSttController } from '../daemonInference/DaemonStreamingSttController';
 import type { DaemonSpeechPcmCaptureOptions } from '../daemonInference/DaemonSpeechPcmCapture';
 import { createLocalVoiceCaptureOwner } from './LocalVoiceCaptureOwner';
+import type { CreateMicSessionOptions, MicSession } from '../mic/MicSession';
+import { createWebMicSession } from '../mic/WebMicSession.web';
 import { resolveNativeSileroVadBridge } from './NativeSileroVadBridge';
 import { createNativeVadController } from './NativeVadController';
 import type { TurnEndpointSignal } from './TurnEndpointController';
@@ -1839,5 +1841,127 @@ describe('createLocalVoiceCaptureOwner', () => {
         expect(pcm.nativeStop).toHaveBeenCalledTimes(1);
         expect(pcm.platformRestore).toHaveBeenCalledTimes(1);
         expect(liveMicSession.teardown).toHaveBeenCalledTimes(1);
+    });
+
+    it('settles stop and releases capture admission when browser microphone acquisition never settles', async () => {
+        let resolveStrandedAcquisition!: (stream: MediaStream) => void;
+        const strandedAcquisition = new Promise<MediaStream>((resolve) => {
+            resolveStrandedAcquisition = resolve;
+        });
+        const strandedTrack = {
+            enabled: true,
+            muted: false,
+            stop: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        };
+        const strandedStream = {
+            getAudioTracks: () => [strandedTrack],
+        } as unknown as MediaStream;
+        const restartTrack = {
+            enabled: true,
+            muted: false,
+            stop: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        };
+        const restartStream = {
+            getAudioTracks: () => [restartTrack],
+        } as unknown as MediaStream;
+        const getUserMedia = vi.fn()
+            .mockImplementationOnce(() => strandedAcquisition)
+            .mockResolvedValue(restartStream);
+        const mediaDevices = {
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        } as unknown as MediaDevices;
+        const documentLike = {
+            visibilityState: 'visible' as DocumentVisibilityState,
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        } as unknown as Document;
+        const liveMicSessions: MicSession[] = [];
+        // Mirrors DeviceSttController's setup-stage contract: the recognizer races mic
+        // activation against the attempt's abort signal, so the controller itself never
+        // pins a stalled acquisition. Stop must still settle behind it.
+        const controllerStart = vi.fn(async ({ micSession, signal }: {
+            micSession: MicSession;
+            signal?: AbortSignal;
+        }) => {
+            await new Promise<void>((resolve) => {
+                void micSession.ensureActive().then(() => resolve(), () => resolve());
+                if (signal?.aborted) {
+                    resolve();
+                    return;
+                }
+                signal?.addEventListener('abort', () => resolve(), { once: true });
+            });
+        });
+        const controllerStop = vi.fn(async () => ({ finalText: '' }));
+        const admission = createVoiceCaptureAdmissionController();
+        const rawCaptureOwner = createLocalVoiceCaptureOwner(
+            {
+                getSettings: () => ({}),
+                onCaptureStarted: vi.fn(),
+                onCaptureError: vi.fn(),
+            },
+            {
+                createDeviceSttController: () => ({
+                    start: controllerStart,
+                    stop: controllerStop,
+                }) as never,
+                createLiveMicSession: ((micOptions?: CreateMicSessionOptions) => {
+                    const session = createWebMicSession({
+                        ...(micOptions ?? {}),
+                        getUserMedia,
+                        mediaDevices,
+                        document: documentLike,
+                        createAudioContext: () => null,
+                    });
+                    liveMicSessions.push(session);
+                    return session;
+                }) as never,
+            },
+        );
+        const captureOwner = createVoiceCaptureAdmissionBinding({
+            admission,
+            captureOwner: rawCaptureOwner,
+            productOwner: 'dictation',
+        });
+
+        const startPromise = captureOwner.startCapture({
+            handsFree: false,
+            provider: 'device',
+            sessionId: 'dictation-session',
+        });
+        await vi.waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+
+        let stopSettled = false;
+        const stopPromise = captureOwner.stopSession('dictation-session').then(() => {
+            stopSettled = true;
+        });
+        await vi.waitFor(() => expect(stopSettled).toBe(true));
+        await Promise.all([startPromise, stopPromise]);
+
+        const releasedAdmission = admission.acquire('conversation');
+        expect(releasedAdmission.status).toBe('acquired');
+        if (releasedAdmission.status === 'acquired') releasedAdmission.lease.release();
+
+        // An immediate restart acquires a fresh stream instead of joining the
+        // abandoned acquisition.
+        await captureOwner.startCapture({
+            handsFree: false,
+            provider: 'device',
+            sessionId: 'dictation-session-2',
+        });
+        expect(getUserMedia).toHaveBeenCalledTimes(2);
+        expect(liveMicSessions.at(-1)?.getStream()).toBe(restartStream);
+
+        resolveStrandedAcquisition(strandedStream);
+        await vi.waitFor(() => expect(strandedTrack.stop).toHaveBeenCalledTimes(1));
+        expect(restartTrack.stop).not.toHaveBeenCalled();
+        expect(liveMicSessions.at(-1)?.getStream()).toBe(restartStream);
+
+        await captureOwner.stopSession('dictation-session-2');
     });
 });

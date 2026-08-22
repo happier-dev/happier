@@ -439,4 +439,80 @@ describe('VoiceHistoryScreen', () => {
     expect(screen.findByTestId('voice-history-upgrade-required-retry')).toBeNull();
     expect(screen.findByTestId('voice-history-error')).toBeNull();
   });
+
+  it('drops the previous Account rows as soon as the server-account scope changes, before the new Account read resolves', async () => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    const previousScope = storage.getState().profileScope ?? null;
+    const readScopeKey = () => {
+      const scope = storage.getState().profileScope ?? null;
+      return scope ? `${scope.serverId}/${scope.accountId}` : null;
+    };
+    const accountBDiscovery = createDeferred<string | null>();
+    let discoveries = 0;
+    const consumer = createVoiceHistoryConsumer(createDeps(
+      [voiceMessage({
+        id: 'account-a',
+        role: 'assistant',
+        text: 'Account A private answer',
+        createdAt: 100,
+        source: OPENAI_SOURCE,
+      })],
+      {
+        readScopeKey,
+        captureScope: vi.fn(async () => {
+          const key = readScopeKey();
+          return key ? { key } : null;
+        }),
+        discoverHistorySession: vi.fn(async () => {
+          discoveries += 1;
+          // Account B's read is deliberately still in flight while the
+          // assertions below run: nothing may keep Account A on screen
+          // while the switch is only partially applied.
+          return discoveries === 1
+            ? 'voice-history-session-a'
+            : await accountBDiscovery.promise;
+        }),
+      },
+    ));
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+
+    try {
+      await act(async () => {
+        storage.setState((state) => ({
+          ...state,
+          profileScope: { serverId: 'server-1', accountId: 'account-a' },
+        }) as never);
+      });
+      const screen = await renderScreen(
+        <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
+      );
+      await flushAsyncState();
+      expect(screen.getTextContent()).toContain('Account A private answer');
+      expect(screen.findByTestId('voice-history-row-account-a')).not.toBeNull();
+
+      // Same server, different Account.
+      await act(async () => {
+        storage.setState((state) => ({
+          ...state,
+          profileScope: { serverId: 'server-1', accountId: 'account-b' },
+        }) as never);
+      });
+
+      expect(screen.findByTestId('voice-history-row-account-a')).toBeNull();
+      expect(screen.getTextContent()).not.toContain('Account A private answer');
+      expect(screen.findByTestId('voice-history-loading')).not.toBeNull();
+      await vi.waitFor(() => expect(discoveries).toBe(2));
+
+      await act(async () => {
+        accountBDiscovery.resolve(null);
+        await accountBDiscovery.promise;
+      });
+      await flushAsyncState();
+      expect(screen.findByTestId('voice-history-empty')).not.toBeNull();
+      expect(screen.getTextContent()).not.toContain('Account A private answer');
+    } finally {
+      accountBDiscovery.resolve(null);
+      storage.setState((state) => ({ ...state, profileScope: previousScope }) as never);
+    }
+  });
 });

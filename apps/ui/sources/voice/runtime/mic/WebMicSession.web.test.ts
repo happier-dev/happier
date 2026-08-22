@@ -424,4 +424,73 @@ describe('WebMicSession', () => {
         pending[0]?.();
         expect(onFailure).toHaveBeenCalledWith({ kind: 'audio_context_suspended', reason: 'web_mic_track_muted' });
     });
+
+    it('settles teardown and admits a fresh acquisition while the first getUserMedia never settles', async () => {
+        // A `getUserMedia` the browser never settles must not make Stop unstoppable:
+        // teardown owns the lifecycle, so it invalidates the outstanding attempt and
+        // returns instead of joining it.
+        const strandedAcquisition = createDeferred<MediaStream>();
+        const strandedTrack = {
+            enabled: true,
+            muted: false,
+            stop: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        };
+        const strandedStream = {
+            getAudioTracks: () => [strandedTrack],
+        } as unknown as MediaStream;
+        const restartTrack = {
+            enabled: true,
+            muted: false,
+            stop: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        };
+        const restartStream = {
+            getAudioTracks: () => [restartTrack],
+        } as unknown as MediaStream;
+        const stallingGetUserMedia = vi.fn()
+            .mockImplementationOnce(() => strandedAcquisition.promise)
+            .mockResolvedValueOnce(restartStream);
+        const session = createWebMicSession({
+            getUserMedia: stallingGetUserMedia,
+            mediaDevices: mediaDevices as unknown as MediaDevices,
+            document: documentLike as unknown as Document,
+            createAudioContext: () => null,
+        });
+
+        const flush = async () => {
+            for (let tick = 0; tick < 20; tick += 1) {
+                await Promise.resolve();
+            }
+        };
+
+        const stranded = session.ensureActive();
+        const strandedSettled = vi.fn();
+        void stranded.then(strandedSettled, strandedSettled);
+        await flush();
+
+        const teardownSettled = vi.fn();
+        const tearingDown = session.teardown().then(teardownSettled, teardownSettled);
+        await flush();
+        expect(teardownSettled).toHaveBeenCalledTimes(1);
+        // The caller blocked on the abandoned acquisition is released too.
+        expect(strandedSettled).toHaveBeenCalledTimes(1);
+
+        const restarting = session.ensureActive();
+        await flush();
+        expect(stallingGetUserMedia).toHaveBeenCalledTimes(2);
+        expect(session.getStream()).toBe(restartStream);
+
+        // The abandoned acquisition finally arrives: it releases its own stream and
+        // leaves the live one alone.
+        strandedAcquisition.resolve(strandedStream);
+        await flush();
+        await Promise.all([tearingDown, restarting, stranded]);
+
+        expect(strandedTrack.stop).toHaveBeenCalledTimes(1);
+        expect(restartTrack.stop).not.toHaveBeenCalled();
+        expect(session.getStream()).toBe(restartStream);
+    });
 });

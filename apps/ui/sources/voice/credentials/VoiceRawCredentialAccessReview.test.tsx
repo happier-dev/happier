@@ -45,19 +45,40 @@ const subject = Object.freeze({
   installedGenerationId: 'generation-1' as never,
   installReviewPrincipalDigest: PluginInstallReviewPrincipalDigestSchema.parse('a'.repeat(64)),
 });
+// The daemon only ever authorizes as an exact machine installation; a grant
+// approved by another machine, or by an installation this one replaced, is a
+// different person's approval on a different device.
+const thisInstallation = Object.freeze({
+  kind: 'machine_installation' as const,
+  machineId: 'machine-a',
+  installationId: 'installation-1',
+});
+const otherMachine = Object.freeze({
+  kind: 'machine_installation' as const,
+  machineId: 'machine-b',
+  installationId: 'installation-1',
+});
+const replacedInstallation = Object.freeze({
+  kind: 'machine_installation' as const,
+  machineId: 'machine-a',
+  installationId: 'installation-2',
+});
 const authorization = Object.freeze({
   pluginId: contribution.pluginId,
   capability: 'credentials.materialize.raw' as const,
   targetScope: Object.freeze({ kind: 'account' as const }),
   subject,
-  disclosures: Object.freeze([{
+  authoritySource: thisInstallation,
+  // Mutable to match the protocol's `z.array(...)` output; freezing the array
+  // is what previously forced the fixture behind an `as never` cast.
+  disclosures: [{
     sourceClass: Object.freeze({ kind: 'savedSecret' as const, secretKinds: ['apiKey' as const] }),
     realm: 'web' as const,
     phase: 'connection' as const,
     materialization: 'httpHeaders' as const,
     origin: 'https://voice.example.test',
     destination: 'authorization',
-  }]),
+  }],
 });
 const review = Object.freeze({
   plugin: Object.freeze({ id: contribution.pluginId, name: 'Acme Voice', version: '2.0.0' }),
@@ -85,7 +106,7 @@ const pendingRequest = Object.freeze({
   capability: authorization.capability,
   targetScope: authorization.targetScope,
   subject,
-  authoritySource: Object.freeze({ kind: 'bundled' as const }),
+  authoritySource: thisInstallation,
   requester: Object.freeze({ kind: 'plugin' as const, pluginId: contribution.pluginId }),
   reason: 'Voice provider raw credential access review',
   status: 'pending' as const,
@@ -114,6 +135,23 @@ const pendingRequestB = Object.freeze({
   subject: subjectB,
 });
 
+const grant = Object.freeze({
+  v: 1 as const,
+  id: 'grant-1',
+  accountId: 'account-1',
+  pluginId: contribution.pluginId,
+  capability: authorization.capability,
+  targetScope: authorization.targetScope,
+  subject,
+  authoritySource: thisInstallation,
+  status: 'active' as const,
+  requestId: pendingRequest.id,
+  grantedByUserId: 'user-1',
+  grantedAt: 2,
+  createdAt: 2,
+  updatedAt: 2,
+});
+
 describe('VoiceRawCredentialAccessReview', () => {
   beforeEach(() => {
     boundary.settingsVersion = 1;
@@ -124,22 +162,6 @@ describe('VoiceRawCredentialAccessReview', () => {
       inspect: vi.fn(async () => ({ ok: true as const, authorization, review })),
       request: vi.fn(async () => ({ ok: true as const, authorization, review, pendingRequest })),
     };
-    const grant = Object.freeze({
-      v: 1 as const,
-      id: 'grant-1',
-      accountId: 'account-1',
-      pluginId: contribution.pluginId,
-      capability: authorization.capability,
-      targetScope: authorization.targetScope,
-      subject,
-      authoritySource: Object.freeze({ kind: 'bundled' as const }),
-      status: 'active' as const,
-      requestId: pendingRequest.id,
-      grantedByUserId: 'user-1',
-      grantedAt: 2,
-      createdAt: 2,
-      updatedAt: 2,
-    });
     const actions = {
       list: vi.fn(async () => ({ grants: [], pendingRequests: [] })),
       request: vi.fn(),
@@ -156,7 +178,7 @@ describe('VoiceRawCredentialAccessReview', () => {
     const screen = await renderScreen(
       <VoiceRawCredentialAccessReview
         contribution={contribution}
-        client={client as never}
+        client={client}
         actions={actions}
         testID="raw-access"
       />,
@@ -209,6 +231,90 @@ describe('VoiceRawCredentialAccessReview', () => {
     expect(actions.request).not.toHaveBeenCalled();
   });
 
+  it('never reads another machine installation approval as this machine being granted', async () => {
+    const client = {
+      inspect: vi.fn(async () => ({ ok: true as const, authorization, review })),
+      request: vi.fn(async () => ({ ok: true as const, authorization, review, pendingRequest })),
+    };
+    const actions = {
+      list: vi.fn(async () => ({
+        grants: [
+          { ...grant, id: 'grant-other-machine', authoritySource: otherMachine },
+          { ...grant, id: 'grant-replaced-installation', authoritySource: replacedInstallation },
+        ],
+        pendingRequests: [
+          { ...pendingRequest, id: 'request-other-machine', authoritySource: otherMachine },
+        ],
+      })),
+      request: vi.fn(),
+      grant: vi.fn(),
+      revoke: vi.fn(),
+      dismissRequest: vi.fn(),
+    };
+    const { VoiceRawCredentialAccessReview } = await import('./VoiceRawCredentialAccessReview');
+    const screen = await renderScreen(
+      <VoiceRawCredentialAccessReview
+        contribution={contribution}
+        client={client}
+        actions={actions as never}
+        testID="raw-access"
+      />,
+    );
+
+    await vi.waitFor(() => expect(actions.list).toHaveBeenCalled());
+    await vi.waitFor(() => expect(screen.tree.findByTestId('raw-access')?.props.loading).toBe(false));
+    expect(screen.tree.findByTestId('raw-access')?.props.destructive).toBe(false);
+    expect(screen.tree.findByTestId('raw-access')?.props.detail)
+      .toBe('settingsVoice.externalCredentials.reviewRequired');
+    // Another installation's pending request must never be presented here as
+    // this installation's decision.
+    expect(screen.tree.findByTestId('raw-access-sheet')).toBeNull();
+
+    await act(async () => {
+      screen.tree.findByTestId('raw-access')?.props.onPress();
+    });
+    await vi.waitFor(() => expect(client.request).toHaveBeenCalledWith(contribution));
+    expect(actions.revoke).not.toHaveBeenCalled();
+  });
+
+  it('revokes this installation grant rather than the first account-wide match', async () => {
+    const client = {
+      inspect: vi.fn(async () => ({ ok: true as const, authorization, review })),
+      request: vi.fn(async () => ({ ok: true as const, authorization, review, pendingRequest })),
+    };
+    const actions = {
+      // The other machine's grant is listed first on purpose: taking the first
+      // account-wide match would revoke a different device's approval.
+      list: vi.fn(async () => ({
+        grants: [
+          { ...grant, id: 'grant-other-machine', authoritySource: otherMachine },
+          grant,
+        ],
+        pendingRequests: [],
+      })),
+      request: vi.fn(),
+      grant: vi.fn(),
+      revoke: vi.fn(async () => ({ grant: { ...grant, status: 'revoked' as const, revokedAt: 3 } })),
+      dismissRequest: vi.fn(),
+    };
+    const { VoiceRawCredentialAccessReview } = await import('./VoiceRawCredentialAccessReview');
+    const screen = await renderScreen(
+      <VoiceRawCredentialAccessReview
+        contribution={contribution}
+        client={client}
+        actions={actions as never}
+        testID="raw-access"
+      />,
+    );
+
+    await vi.waitFor(() => expect(screen.tree.findByTestId('raw-access')?.props.destructive).toBe(true));
+    await act(async () => {
+      screen.tree.findByTestId('raw-access')?.props.onPress();
+    });
+    await vi.waitFor(() => expect(actions.revoke).toHaveBeenCalledWith({ grantId: grant.id }));
+    expect(actions.revoke).not.toHaveBeenCalledWith({ grantId: 'grant-other-machine' });
+  });
+
   it('re-inspects before deciding a captured request when account settings switch', async () => {
     let selectedAccount: 'A' | 'B' = 'A';
     const inspectionForSelectedAccount = () => selectedAccount === 'A'
@@ -234,7 +340,7 @@ describe('VoiceRawCredentialAccessReview', () => {
     const renderReview = () => (
       <VoiceRawCredentialAccessReview
         contribution={contribution}
-        client={client as never}
+        client={client}
         actions={actions as never}
         testID="raw-access"
       />
@@ -266,10 +372,15 @@ describe('VoiceRawCredentialAccessReview', () => {
     await act(async () => {
       staleDismiss?.({ requestId: pendingRequest.id });
     });
-    await vi.waitFor(() => expect(client.inspect).toHaveBeenCalledTimes(4));
+    // Five inspections so far: mount, the explicit request, the settings-version
+    // refresh committed with account B, and one per captured decision.
+    await vi.waitFor(() => expect(client.inspect).toHaveBeenCalledTimes(5));
     expect(actions.dismissRequest).not.toHaveBeenCalled();
 
+    // A further settings switch must re-derive the authorization on its own,
+    // without any decision driving it.
     const inspectionsBeforeSettingsRefresh = client.inspect.mock.calls.length;
+    boundary.settingsVersion = 3;
     await act(async () => {
       screen.tree.update(renderReview());
     });

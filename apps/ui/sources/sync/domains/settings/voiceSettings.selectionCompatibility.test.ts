@@ -466,6 +466,38 @@ describe('Voice provider selection persistence compatibility', () => {
         expect((finalWrite.voice as Record<string, unknown>).providerId).toBe('off');
     });
 
+    it.each(['off', 'on_demand', 'automatic'] as const)(
+        'omits the current UI context mode %s from the predecessor sidecar and preserves it across a markerless predecessor write',
+        (currentUiContextMode) => {
+        const persisted = normalizeVoiceSettingsServerDelta(settingsParse({
+            voiceSettingsV1: {
+                privacy: { currentUiContextMode },
+            },
+        })) as Record<string, unknown>;
+        const predecessorPrivacy = readRequiredRecord(
+            readPredecessorVoiceProjection(persisted).privacy,
+            'predecessor Voice privacy projection',
+        );
+
+        expect(readCanonicalVoiceSettings(persisted).privacy).toMatchObject({
+            currentUiContextMode,
+        });
+        expect(predecessorPrivacy).not.toHaveProperty('currentUiContextMode');
+
+        const restored = settingsParse(predecessorVoiceWrite(persisted, {
+            privacy: {
+                ...predecessorPrivacy,
+                shareSessionSummary: false,
+            },
+        }));
+
+        expect(restored.voice.privacy).toMatchObject({
+            currentUiContextMode,
+            shareSessionSummary: false,
+        });
+        },
+    );
+
     it('preserves the current-only Codex global binding when the predecessor writes Voice as off', () => {
         const current = settingsParse({
             voice: {

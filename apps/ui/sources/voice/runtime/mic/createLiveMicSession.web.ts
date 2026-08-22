@@ -15,6 +15,7 @@ export function createLiveMicSession(options: CreateMicSessionOptions = {}) {
     }
 
     return createNativeMicSession({
+        ...(options.onFailure ? { onFailure: options.onFailure } : {}),
         ensureActive: async () => {
             const permission = await requestMicrophonePermission();
             if (!permission.granted) {

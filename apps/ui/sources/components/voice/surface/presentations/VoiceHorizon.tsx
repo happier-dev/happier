@@ -91,9 +91,9 @@ function formatEntryClockTime(createdAt: number): string {
  *    Orb is also mounted.
  *  - **No start-vs-stop derivation.** `attemptControl.onPrimaryAction` is selected by the
  *    placement-neutral attempt projection and owns the haptic (§5.5).
- *  - **No recovery-replaces-transport.** §12.2 defect 2: the shipped controls
- *    early-return on `canRecover`, so during a *recoverable* error on a *live*
- *    session the user cannot stop it. Here recovery is an addition.
+ *  - **No recovery-replaces-transport.** §12.2 defect 2: recovery is an
+ *    addition, never a replacement. A recoverable error on a *live* session
+ *    still renders the transport, so the user can always stop it.
  */
 export const VoiceHorizon = React.memo(function VoiceHorizon(props: Readonly<{
     model: VoiceSurfaceViewModel;
@@ -152,11 +152,11 @@ export const VoiceHorizon = React.memo(function VoiceHorizon(props: Readonly<{
      * than re-derived: a hard, non-retryable error offers recovery, not a Start
      * that cannot succeed.
      *
-     * Composed with `live` on purpose — that composition **is** §12.2 defect 2.
-     * The shipped controls early-return on `canRecover` and remove the transport
-     * wholesale, so during a *recoverable* error on a *live* session the user
-     * cannot stop it. Here the transport survives whenever a session is running,
-     * and recovery is rendered beside it.
+     * Composed with `live` on purpose — that composition **is** the fix for
+     * §12.2 defect 2. Removing the transport wholesale on `canRecover` would
+     * strand a user in a *recoverable* error on a *live* session with no way to
+     * stop it. Here the transport survives whenever a session is running, and
+     * recovery is rendered beside it.
      */
     const showTransport = attemptControl.surfaceState !== 'error' || live;
 
@@ -630,7 +630,7 @@ export const VoiceHorizon = React.memo(function VoiceHorizon(props: Readonly<{
 });
 
 /**
- * §5.4 — the recovery focus latch, ported from `VoiceSurfaceControls.tsx:51-74`.
+ * §5.4 — the recovery focus latch.
  *
  * A start that fails must land focus on the recovery action when it appears, so
  * a keyboard or screen-reader user is not left on a control that did nothing.

@@ -48,9 +48,7 @@ import {
   createBundledConversationRuntimeHostLease,
   getCurrentBundledConversationRuntimeHost,
 } from './bundledConversationRuntimeHost';
-import {
-  createExternalVoiceProviderActivationScope,
-} from './externalVoiceProviderActivation';
+import { createExternalVoiceProviderActivationScope } from './externalVoiceProviderActivation.testkit';
 import { getExternalVoiceProviderRegistration } from './externalVoiceProviderRegistrations';
 import {
   BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES,

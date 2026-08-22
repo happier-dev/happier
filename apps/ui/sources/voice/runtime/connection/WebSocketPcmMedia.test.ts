@@ -71,6 +71,60 @@ describe('WebSocketPcmMedia', () => {
     expect(onOutputLevel).toHaveBeenLastCalledWith(0);
   });
 
+  it.each([
+    {
+      label: 'rejects',
+      stopCapture: () => Promise.reject(new Error('capture_stop_failed')),
+      expectStop: async (stop: Promise<void>) => {
+        await expect(stop).rejects.toThrow('capture_stop_failed');
+      },
+    },
+    {
+      label: 'never settles',
+      stopCapture: () => new Promise<void>(() => {}),
+      expectStop: async (stop: Promise<void>) => {
+        void stop.catch(() => {});
+      },
+    },
+  ])('stops playback and clears the output meter when capture shutdown $label', async ({
+    stopCapture,
+    expectStop,
+  }) => {
+    const stopPlayback = vi.fn();
+    const onOutputLevel = vi.fn();
+    const media = createWebSocketPcmMedia({
+      mic: { getStream: () => ({} as MediaStream), getAudioContext: () => ({ currentTime: 0 } as AudioContext) },
+      input: { sampleRate: 24_000, chunkMs: 20 },
+      output: { sampleRate: 24_000, maxBufferedMs: 1_000 },
+      onInputChunk: vi.fn(),
+      onOutputLevel,
+      createCapture: vi.fn(() => {
+        let active = false;
+        return {
+          start: vi.fn(async () => { active = true; }),
+          stop: vi.fn(() => stopCapture()),
+          waitForDrain: vi.fn(async () => {}),
+          isActive: () => active,
+          level: () => 0,
+        };
+      }),
+      createOutputScheduler: vi.fn(() => ({
+        enqueue: vi.fn(() => true), clear: vi.fn(), stop: stopPlayback,
+        beginCandidate: vi.fn(() => 'ducked' as const), resolveCandidate: vi.fn(),
+        waitForDrain: vi.fn(async () => {}), playbackCursorMs: () => 0, outputLevel: () => 0.5,
+      })),
+    });
+
+    await media.pcm.start(new AbortController().signal);
+    // A capture shutdown that fails or hangs must not leave the assistant still
+    // audible: playback release is not sequenced behind it.
+    await expectStop(media.pcm.stop());
+    for (let tick = 0; tick < 10; tick += 1) await Promise.resolve();
+
+    expect(stopPlayback).toHaveBeenCalledTimes(1);
+    expect(onOutputLevel).toHaveBeenLastCalledWith(0);
+  });
+
   it('bounds output queued before playback startup', () => {
     const media = createWebSocketPcmMedia({
       mic: { getStream: () => null, getAudioContext: () => null },

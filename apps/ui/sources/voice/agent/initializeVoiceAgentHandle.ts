@@ -167,7 +167,7 @@ export async function initializeVoiceAgentHandle({
     const agentSource = providerChat
         ? 'agent' as const
         : (agentCfg?.agentSource ?? 'session') as 'session' | 'agent';
-    const agentId = agentSource === 'agent' ? (agentCfg?.agentId ?? 'claude') : null;
+    const agentId = agentSource === 'agent' ? (agentCfg?.agentId ?? DEFAULT_AGENT_ID) : null;
     if (providerChat) {
         const selectedAgentId = String(agentId ?? '').trim();
         const expectedTargetKey = selectedAgentId
@@ -227,6 +227,16 @@ export async function initializeVoiceAgentHandle({
         await Promise.resolve(sync.refreshSessionMessages(normalizedSessionId)).catch(() => {});
     };
 
+    // The configured voice models are the one model fact that does not depend on
+    // reading the target Session's Agent. They answer both cases where no Session
+    // Agent fact exists: no Session in state, and a Session whose Agent identity
+    // is unreadable.
+    const resolveConfiguredModelIds = () => {
+        const chatModelId = String(agentCfg?.chatModelId ?? 'default');
+        const commitModelId = String(agentCfg?.commitModelId ?? chatModelId);
+        return { chatModelId, commitModelId };
+    };
+
     const resolveModelIds = (backend: 'daemon', daemonSessionId: string) => {
         if (providerChat) {
             return {
@@ -236,16 +246,12 @@ export async function initializeVoiceAgentHandle({
         }
 
         const session = resolveDaemonSessionFromState(daemonSessionId);
-        if (!session) {
-            const chatModelId = String(agentCfg?.chatModelId ?? 'default');
-            const commitModelId = String(agentCfg?.commitModelId ?? chatModelId);
-            return { chatModelId, commitModelId };
-        }
+        if (!session) return resolveConfiguredModelIds();
 
         return resolveDaemonVoiceAgentModelIds({
             session: session as any,
             agent: agentCfg ?? {},
-        });
+        }) ?? resolveConfiguredModelIds();
     };
 
     const boundTargetSessionId = resolveBoundTargetSessionId(sessionId);
@@ -350,19 +356,26 @@ export async function initializeVoiceAgentHandle({
             ? (isGlobalVoiceAgent ? (daemonConversationSessionId ?? sessionId) : sessionId)
             : sessionId;
 
-    const resolveDaemonAgentId = (daemonSessionId: string): string => {
+    /**
+     * The Agent this voice run targets, or `null` when no Agent fact exists.
+     *
+     * A configured voice Agent is a settings default; an unreadable Session Agent
+     * identity is not. Substituting the default Agent there would start the run on
+     * a different Agent than the Session actually runs, so the unknown case stays
+     * unknown and the callers below skip Agent-keyed work instead.
+     */
+    const resolveDaemonAgentId = (daemonSessionId: string): string | null => {
         if (agentSource === 'agent') {
-            const explicit = String(agentId ?? '').trim();
-            return explicit.length > 0 ? explicit : DEFAULT_AGENT_ID;
+            return String(agentId ?? '').trim() || DEFAULT_AGENT_ID;
         }
         const session = resolveDaemonSessionFromState(daemonSessionId);
         return resolveAgentIdFromSessionMetadata(
             session ? readSessionOwnerMetadataView(session) : null,
-        ) ?? DEFAULT_AGENT_ID;
+        );
     };
     let chatModelId = '';
     let commitModelId = '';
-    let resolvedAgentId = '';
+    let resolvedAgentId: string | null = null;
     let resolvedBackendTarget: BackendTargetRefV1 | null = null;
     let runMetadataSessionId: string | null = null;
     let persistedRuntimePublication: ReturnType<typeof readPersistedVoiceConversationRuntimePublication> = null;
@@ -417,7 +430,7 @@ export async function initializeVoiceAgentHandle({
         rpcSessionId = nextRpcSessionId;
         ({ chatModelId, commitModelId } = resolveModelIds(nextBackend, nextRpcSessionId));
         if (nextBackend !== 'daemon') {
-            resolvedAgentId = String(agentId ?? '').trim();
+            resolvedAgentId = String(agentId ?? '').trim() || null;
             runMetadataSessionId = null;
             persistedRuntimePublication = null;
             persistedRunMeta = null;
@@ -427,7 +440,7 @@ export async function initializeVoiceAgentHandle({
         }
 
         resolvedAgentId = resolveDaemonAgentId(nextRpcSessionId);
-        resolvedBackendTarget = { kind: 'builtInAgent', agentId: resolvedAgentId };
+        resolvedBackendTarget = resolvedAgentId ? { kind: 'builtInAgent', agentId: resolvedAgentId } : null;
         runMetadataSessionId =
             resolveVoiceRunMetadataSessionId(sessionId, nextBackend, daemonConversationSessionId);
         refreshPersistedRunState(runMetadataSessionId);
@@ -534,11 +547,13 @@ export async function initializeVoiceAgentHandle({
             existingRunId = adoptedRun.runId;
             const adoptedResumeHandle = adoptedRunGet?.run?.resumeHandle ?? adoptedRun.resumeHandle ?? null;
             startResumeHandle = shouldUseProviderResume() ? adoptedResumeHandle : null;
-            await persistVoiceAgentRunMetadata(runMetadataSessionId, {
-                runId: adoptedRun.runId,
-                backendTarget: resolvedBackendTarget ?? { kind: 'builtInAgent', agentId: resolvedAgentId },
-                resumeHandle: adoptedResumeHandle,
-            });
+            if (resolvedBackendTarget) {
+                await persistVoiceAgentRunMetadata(runMetadataSessionId, {
+                    runId: adoptedRun.runId,
+                    backendTarget: resolvedBackendTarget,
+                    resumeHandle: adoptedResumeHandle,
+                });
+            }
 
             const duplicateRuns = matchingRuns.slice(1);
             for (const duplicateRun of duplicateRuns) {
@@ -648,13 +663,13 @@ export async function initializeVoiceAgentHandle({
         }
     })();
 
-    if (runMetadataSessionId) {
+    if (runMetadataSessionId && resolvedBackendTarget) {
         try {
             const getRes: any = await sessionExecutionRunGet(rpcSessionId, { runId: started.voiceAgentId, includeStructured: false });
             const resumeHandle = getRes?.run?.resumeHandle ?? null;
             await persistVoiceAgentRunMetadata(runMetadataSessionId, {
                 runId: started.voiceAgentId,
-                backendTarget: resolvedBackendTarget ?? { kind: 'builtInAgent', agentId: resolvedAgentId },
+                backendTarget: resolvedBackendTarget,
                 resumeHandle,
             });
         } catch {

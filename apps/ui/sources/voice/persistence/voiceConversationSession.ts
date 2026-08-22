@@ -18,14 +18,12 @@ import {
     buildGlobalVoiceAgentStartupInstructionsPlanV1,
     GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID,
     GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION,
-    type AgentId,
     type PermissionIntent,
 } from '@happier-dev/agents';
 
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
-import { isAgentId } from '@/agents/registry/registryCore';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -311,8 +309,12 @@ async function resolveVoiceConversationBackendTarget(state: any, machineId: stri
     const agentSource = normalizeNonEmptyString(agentCfg?.agentSource) ?? 'session';
     const requestedAgentId = normalizeNonEmptyString(agentCfg?.agentId);
 
-    if (agentSource === 'agent' && isAgentId(requestedAgentId)) {
-        return { kind: 'backend', backendId: requestedAgentId as AgentId };
+    // An explicitly configured voice Agent is the user's selection, bundled or
+    // externally installed. Narrowing to the bundled ids here silently ran the
+    // conversation on the projection's preferred backend instead of the Agent
+    // the user picked.
+    if (agentSource === 'agent' && requestedAgentId) {
+        return { kind: 'backend', backendId: requestedAgentId };
     }
 
     const daemonMergedProjectionInputs = await loadDaemonMergedProjectionInputs({

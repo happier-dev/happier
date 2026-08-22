@@ -947,6 +947,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
         voice: {
           privacy: {
             shareDeviceInventory: false,
+            currentUiContextMode: 'off',
           },
           providerId: 'local_conversation',
           providers: {
@@ -983,6 +984,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
           'paths.list_recent',
           'machines.list',
           'servers.list',
+          'ui.current_context.read',
+          'ui.current_context.command.invoke',
         ]),
       }),
     );

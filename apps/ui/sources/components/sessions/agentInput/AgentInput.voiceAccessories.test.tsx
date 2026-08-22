@@ -394,6 +394,43 @@ describe('AgentInput voice accessory slots', () => {
         await screen.unmount();
     });
 
+    it('leaves the microphone alone when an Agent switch is armed but nothing is typed', async () => {
+        // The armed label follows the arm onto the SEND, not onto whatever this
+        // button happens to be. Here the host owns the field corner, so the
+        // microphone owns the submit button — and "Continue with Codex" on it
+        // would name a switch that press starts dictating into instead of taking.
+        const screen = await renderComposer({
+            fieldAccessory: <FieldAccessoryFixture />,
+            armedContinuationTarget: { agentId: 'codex', label: 'Codex' },
+        });
+
+        const send = screen.findByTestId(SEND_TEST_ID);
+        if (!send) throw new Error(`${SEND_TEST_ID} not found`);
+        expect(send.props.accessibilityLabel).toBe('voiceAssistant.startDictation');
+        expect(send.findAllByType('Image' as any)).toHaveLength(1);
+
+        await screen.unmount();
+    });
+
+    it('names the armed switch on the submit button once the host stops taking it', async () => {
+        // The counterpart: with dictation moved off this control there is nothing
+        // else holding it, so the empty composer's inert send says what pressing it
+        // would do. Without this pair the narrowing above could be "never show the
+        // arm on an empty composer" and both tests would still pass.
+        const screen = await renderComposer({
+            submitDictation: false,
+            armedContinuationTarget: { agentId: 'codex', label: 'Codex' },
+        });
+
+        const send = screen.findByTestId(SEND_TEST_ID);
+        if (!send) throw new Error(`${SEND_TEST_ID} not found`);
+        expect(send.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
+        expect(send.findAllByType('Image' as any)).toHaveLength(0);
+        expect(send.props.disabled).toBe(true);
+
+        await screen.unmount();
+    });
+
     it('lets the submit button stop the coding turn when the host owns dictation', async () => {
         const onAbort = vi.fn();
         const screen = await renderComposer({

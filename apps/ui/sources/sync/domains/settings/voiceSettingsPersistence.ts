@@ -124,6 +124,13 @@ function hasOwn(record: object, key: PropertyKey): boolean {
     return Object.prototype.hasOwnProperty.call(record, key);
 }
 
+function projectPredecessorVoicePrivacy(
+    privacy: VoiceSettings['privacy'],
+): Omit<VoiceSettings['privacy'], 'currentUiContextMode'> {
+    const { currentUiContextMode: _currentUiContextMode, ...predecessorPrivacy } = privacy;
+    return predecessorPrivacy;
+}
+
 function attachCurrentSecretBindingsRuntimeProjection<T extends object>(
     value: T,
 ): T & SecretBindingsRuntimeProjection {
@@ -329,7 +336,7 @@ export function parseCurrentWriterPredecessorVoiceProjection(
         providerId,
         assistantLanguage: parsed.assistantLanguage,
         ui: parsed.ui,
-        privacy: parsed.privacy,
+        privacy: projectPredecessorVoicePrivacy(parsed.privacy),
         adapters,
         [VOICE_SETTINGS_CURRENT_WRITER_MARKER]: true,
     };
@@ -609,7 +616,15 @@ function mergePredecessorVoiceWrite(
             ? predecessor.executionMachine
             : canonical.executionMachine,
         ui: hasOwn(rawPredecessor, 'ui') ? predecessor.ui : canonical.ui,
-        privacy: hasOwn(rawPredecessor, 'privacy') ? predecessor.privacy : canonical.privacy,
+        privacy: hasOwn(rawPredecessor, 'privacy')
+            ? {
+                ...predecessor.privacy,
+                // The released predecessor schema cannot represent this
+                // current-only setting, so a whole-object predecessor write
+                // must not reset its canonical value to the parser default.
+                currentUiContextMode: canonical.privacy.currentUiContextMode,
+            }
+            : canonical.privacy,
         providers: providersWithReleasedSpeech,
         credentialBindings: predecessorBindingsToMerge.length > 0
             ? mergePredecessorOwnedBindings(
@@ -1136,7 +1151,7 @@ function createPredecessorVoiceProjection(
         providerId: predecessorProviderId,
         assistantLanguage: voice.assistantLanguage,
         ui: voice.ui,
-        privacy: voice.privacy,
+        privacy: projectPredecessorVoicePrivacy(voice.privacy),
         adapters,
         [VOICE_SETTINGS_CURRENT_WRITER_MARKER]: true,
     };

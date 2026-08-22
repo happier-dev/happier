@@ -10,6 +10,7 @@ import {
 describe('voice settings route focus', () => {
   it('keeps provider disclosure and context-sharing focus as separate destinations', () => {
     expect(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET).toMatchObject({
+      pathname: '/settings/voice/conversations',
       params: { focus: 'provider' },
     });
     expect(VOICE_SETTINGS_PRIVACY_FOCUS_TARGET).toMatchObject({

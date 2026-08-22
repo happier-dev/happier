@@ -10,6 +10,7 @@ import {
   type PluginProjectionV2,
   type VoiceProviderContribution,
 } from '@happier-dev/protocol';
+import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import { PluginReleaseFactsV1Schema } from '@happier-dev/protocol/plugins/availability';
 import {
   PluginUiArtifactsManifestV1Schema,
@@ -20,6 +21,11 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 import { createPluginUiExecutableModuleHost } from '@/components/plugins/reactNative/executableModuleHost';
+import { getPluginUiClientExecutableComposition } from '@/components/plugins/reactNative/clientExecutableContributions';
+import {
+  reconcileAppShellProjectedClientExecutables,
+  unloadAppShellProjectedClientExecutables,
+} from '@/components/appShell/plugins/appShellClientExecutableActivation';
 import type { PluginReactNativeLoaderBackend } from '@/components/plugins/reactNative/loader';
 import { createReactNativeWebLoaderBackend } from '@/components/plugins/reactNative/webLoaderBackend.web';
 import { encodeBase64 } from '@/encryption/base64';
@@ -33,6 +39,7 @@ import {
   resolvePluginUiProjectionState,
   type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
+import { unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
 import { getVoiceAdapterRegistry, resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
 import { listLocalSttProviderSpecs } from '@/voice/settings/panels/localStt/providers/registry';
 import { listLocalTtsProviderSpecs } from '@/voice/settings/panels/localTts/providers/registry';
@@ -44,12 +51,10 @@ import { createBundledConversationRuntimeHostLease } from './bundledConversation
 import { createDefaultVoiceProviderRegistry } from './defaultRegistry';
 import { listExternalVoiceProviderRegistrations } from './externalVoiceProviderRegistrations';
 import type {
-  ExternalVoiceProviderActivationApi,
   ExternalVoiceProviderRuntimeRegistration,
   VoiceConversationProviderContribution,
 } from './externalVoiceProviderActivation';
 import {
-  activateProjectedExternalVoiceProviders,
   withdrawProjectedExternalVoiceProviders,
 } from './projectedExternalVoiceProviderActivation';
 import { projectVoiceProviderSelectionRows, selectVoiceProviderOption } from './providerSelection';
@@ -228,6 +233,13 @@ function requireConversationDeclaration(
 }
 
 describe('projected external Voice provider activation', () => {
+  it('keeps complete-set reconciliation at the AppShell boundary', async () => {
+    expect(reconcileAppShellProjectedClientExecutables).toBeTypeOf('function');
+
+    const activationModule = await import('./projectedExternalVoiceProviderActivation');
+    expect(activationModule).not.toHaveProperty('activateProjectedExternalVoiceProviders');
+  });
+
   it('projects a current installed external speech declaration into the Voice registry and withdraws it with generation authority', async () => {
     const declaration = PluginContributesV2Schema.parse({ voiceProviders: [{
       id: 'speech',
@@ -327,7 +339,7 @@ describe('projected external Voice provider activation', () => {
     const projection = resolvePluginUiProjectionState(EMPTY_PLUGIN_UI_PROJECTION, rawProjection);
     const executableHost = createPluginUiExecutableModuleHost();
     onTestFinished(async () => {
-      await executableHost.unload();
+      await unloadAppShellProjectedClientExecutables(executableHost);
     });
 
     expect(projection.voiceProvidersById[contributionId]?.definition).toMatchObject({
@@ -335,10 +347,14 @@ describe('projected external Voice provider activation', () => {
       roles: ['conversation_stt', 'conversation_tts'],
     });
 
-    await activateProjectedExternalVoiceProviders({
-      projection,
-      machineId: 'machine-1',
-      hostPlatform: 'web',
+    const initialAttempts = await reconcileAppShellProjectedClientExecutables({
+      projection: null,
+      platform: 'web',
+      voice: Object.freeze({
+        projection,
+        machineId: 'machine-1',
+        serverId: null,
+      }),
       executableHost,
     });
 
@@ -445,10 +461,14 @@ describe('projected external Voice provider activation', () => {
       generation: 32,
       familiesById: {},
     });
-    await activateProjectedExternalVoiceProviders({
-      projection: removedProjection,
-      machineId: 'machine-1',
-      hostPlatform: 'web',
+    const removedAttempts = await reconcileAppShellProjectedClientExecutables({
+      projection: null,
+      platform: 'web',
+      voice: Object.freeze({
+        projection: removedProjection,
+        machineId: 'machine-1',
+        serverId: null,
+      }),
       executableHost,
     });
     const registrationsAfterRemoval = listExternalVoiceProviderRegistrations()
@@ -516,6 +536,10 @@ describe('projected external Voice provider activation', () => {
       },
       registrationsAfterRemoval: [],
     });
+
+    expect(initialAttempts).toEqual([]);
+    expect(removedAttempts).toEqual([]);
+
   });
 
   it('selects and dispatches the credential-less speech contributions from the packed external fixture', async () => {
@@ -553,10 +577,14 @@ describe('projected external Voice provider activation', () => {
     const host = createPluginUiExecutableModuleHost();
     onTestFinished(async () => withdrawProjectedExternalVoiceProviders(host));
 
-    await expect(activateProjectedExternalVoiceProviders({
-      projection,
-      machineId: 'machine-1',
-      hostPlatform: 'web',
+    await expect(reconcileAppShellProjectedClientExecutables({
+      projection: null,
+      platform: 'web',
+      voice: Object.freeze({
+        projection,
+        machineId: 'machine-1',
+        serverId: null,
+      }),
       executableHost: host,
     })).resolves.toEqual([]);
 
@@ -608,6 +636,129 @@ describe('projected external Voice provider activation', () => {
     expect(play).toHaveBeenCalledOnce();
   });
 
+  it('prepares a normalized web Voice target through the strict executable-platform seam', async () => {
+    const declaration = requireConversationDeclaration(PluginContributesV2Schema.parse({ voiceProviders: [{
+      id: 'conversation', title: 'Desktop-web Voice', kind: 'conversation',
+      roles: ['realtime_conversation'], platforms: ['web'],
+      capabilities: { turn: { cancelResponse: true, bargeIn: false } },
+      client: { artifactId: 'voice-runtime-web', modulePath: './voiceRuntime', exportName: 'activate' },
+    }] }).voiceProviders[0]!);
+    const pluginId = 'acme.desktop-web-voice';
+    const generation = 23;
+    const entryPath = 'react-native/voice-runtime-web/index.js';
+    const bytes = new TextEncoder().encode('// desktop web voice bundle');
+    const entryDigest = computePluginUiArtifactSha256DigestV1(bytes);
+    const digest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: entryPath, bytes }]);
+    const artifactGraph = PluginUiArtifactsManifestV1Schema.parse({ version: 1, entries: [{
+      contributionId: declaration.client.artifactId,
+      tier: 'reactNative', platform: 'web', entry: entryPath,
+      files: [{ relativePath: entryPath, digest: entryDigest, byteSize: bytes.byteLength }], digest,
+      builtWith: { bundler: 'vite', version: '7.0.0' },
+      hostUiApiVersion: '1.0.0', compat: { react: '19.0.0', reactNative: '0.83.4' },
+    }] }).entries[0]!;
+    if (!isVoiceReactNativeArtifactGraph(artifactGraph)) {
+      throw new Error('expected web React Native Artifact graph');
+    }
+    const identity = Object.freeze({
+      pluginId, contributionId: declaration.id, artifactDigest: digest,
+      hostAppVersion: '2.0.0', hostUiApiVersion: '1.0.0', reactVersion: '19.0.0', reactNativeVersion: '0.83.4',
+      platform: 'web' as const, channel: 'internal' as const,
+      nativeCapabilitiesDigest: `sha256:${'a'.repeat(64)}` as `sha256:${string}`,
+      projectionGeneration: generation,
+    });
+    const origin = Object.freeze({
+      serverIdentityId: 'srv_desktop_web_voice',
+      materializationRef: Object.freeze({
+        pluginId,
+        machineId: 'machine-1',
+        materializationId: 'desktop-web-voice-install',
+      }),
+    });
+    const providerId = `${pluginId}/${declaration.id}`;
+    const projection: PluginUiProjectionModel = Object.freeze({
+      ...EMPTY_PLUGIN_UI_PROJECTION,
+      generation,
+      voiceProvidersById: Object.freeze({
+        [providerId]: Object.freeze({
+          id: providerId, pluginId, generation, contributionKey: providerId, definition: declaration, ...origin,
+        }),
+      }),
+      reactNativeBundlesById: Object.freeze({
+        [`reactNativeBundle:${pluginId}:${declaration.id}`]: Object.freeze({
+          id: `reactNativeBundle:${pluginId}:${declaration.id}`,
+          pluginId,
+          contributionKind: 'reactNativeBundle' as const,
+          contributionId: declaration.id,
+          generatedOwnerKind: 'voiceProvider',
+          ...origin,
+          artifactGraph,
+          runtime: Object.freeze({
+            decision: Object.freeze({ state: 'load' }),
+            loadPolicy: Object.freeze({ source: 'installedArtifact' }),
+            cacheIdentity: identity,
+          }),
+        }),
+      }),
+    });
+    const { reader, lifetime } = createCurrentVoiceArtifactAdmission({
+      pluginId,
+      identity,
+      artifactGraph,
+      origin,
+    });
+    const executableHost = createPluginUiExecutableModuleHost();
+    const fetchArtifactBytes = vi.fn(async () => ({
+      ok: true as const,
+      artifactFamily: 'reactNative' as const,
+      artifactOwnerKind: 'voiceProvider' as const,
+      cacheIdentity: identity,
+      artifact: {
+        pluginId,
+        contributionId: declaration.id,
+        artifactKind: 'reactNativeBundle' as const,
+        digest,
+        format: 'plainJs' as const,
+        byteSize: bytes.byteLength,
+      },
+      bytesBase64: encodeBase64(bytes),
+      files: [{ relativePath: entryPath, digest: entryDigest, byteSize: bytes.byteLength, bytesBase64: encodeBase64(bytes) }],
+    }));
+    reactNativeArtifactDaemonTransport.fetch.mockImplementation(fetchArtifactBytes);
+    const hostLease = createBundledConversationRuntimeHostLease();
+    const loaderBackend: PluginReactNativeLoaderBackend = Object.freeze({
+      backendId: 'reactNativeWebModule',
+      available: true,
+      loadInstalledBundle: vi.fn(async () => (api: PluginClientApi) => {
+        api.voiceProviders.register(declaration.id, createProviderLeaf());
+      }),
+    });
+    const attempts = await reconcileAppShellProjectedClientExecutables({
+      projection: null,
+      platform: 'web',
+      voice: Object.freeze({
+        projection,
+        machineId: 'machine-1',
+        serverId: 'server-1',
+      }),
+      executableHost,
+      loaderBackend,
+      reader,
+      accountLifetime: lifetime,
+    });
+    onTestFinished(async () => {
+      await unloadAppShellProjectedClientExecutables(executableHost);
+      hostLease.revoke();
+    });
+
+    expect(fetchArtifactBytes).toHaveBeenCalledWith(expect.objectContaining({
+      artifactOwnerKind: 'voiceProvider',
+    }));
+    expect(attempts).toMatchObject([{
+      result: { ok: true },
+      activation: { target: { platform: 'web' } },
+    }]);
+  });
+
   it.each(['ios', 'android'] as const)('loads a generated %s Re.Pack artifact through public activate(api) and unloads it', async (platform) => {
     const declaration = requireConversationDeclaration(PluginContributesV2Schema.parse({ voiceProviders: [{
       id: 'conversation', title: `Synthetic ${platform}`, kind: 'conversation',
@@ -630,7 +781,7 @@ describe('projected external Voice provider activation', () => {
       },
       client: { artifactId: 'voice-runtime-native', modulePath: './voiceRuntime', exportName: 'activate' },
     }] }).voiceProviders[0]!);
-    const entryPath = `react-native/voice-runtime-native/${platform}.bundle.js`;
+    const entryPath = `react-native/voice-runtime-native/${platform}.bundle`;
     const bytes = new TextEncoder().encode(`// ${platform} repack bundle`);
     const entryDigest = computePluginUiArtifactSha256DigestV1(bytes);
     const digest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: entryPath, bytes }]);
@@ -679,6 +830,7 @@ describe('projected external Voice provider activation', () => {
         [`reactNativeBundle:${pluginId}:${declaration.id}`]: Object.freeze({
           id: `reactNativeBundle:${pluginId}:${declaration.id}`,
           pluginId, contributionKind: 'reactNativeBundle', contributionId: declaration.id,
+          generatedOwnerKind: 'voiceProvider',
           ...origin,
           artifactGraph,
           runtime: { decision: { state: 'load' }, loadPolicy: { source: 'installedArtifact' }, cacheIdentity: identity },
@@ -693,7 +845,7 @@ describe('projected external Voice provider activation', () => {
       artifactGraph,
       origin,
     });
-    const activate = vi.fn((api: ExternalVoiceProviderActivationApi) => {
+    const activate = vi.fn((api: PluginClientApi) => {
       api.voiceProviders.register(declaration.id, createProviderLeaf());
     });
     const loaderBackend: PluginReactNativeLoaderBackend = Object.freeze({
@@ -701,7 +853,7 @@ describe('projected external Voice provider activation', () => {
       loadInstalledBundle: vi.fn(async () => activate),
     });
     onTestFinished(async () => {
-      await executableHost.unload();
+      await unloadAppShellProjectedClientExecutables(executableHost);
       hostLease.revoke();
     });
 
@@ -712,23 +864,46 @@ describe('projected external Voice provider activation', () => {
       files: [{ relativePath: entryPath, digest: entryDigest, byteSize: bytes.byteLength, bytesBase64: encodeBase64(bytes) }],
     }));
     reactNativeArtifactDaemonTransport.fetch.mockImplementation(fetchArtifactBytes);
-    await expect(activateProjectedExternalVoiceProviders({
-      projection, machineId: 'machine-1', serverId: 'server-1', hostPlatform: platform,
-      executableHost, loaderBackend,
+    await expect(reconcileAppShellProjectedClientExecutables({
+      projection,
+      platform,
+      voice: {
+        projection,
+        machineId: 'machine-1',
+        serverId: 'server-1',
+      },
+      executableHost,
+      loaderBackend,
     })).resolves.toEqual([]);
     expect(fetchArtifactBytes).not.toHaveBeenCalled();
 
     const currentActivation = {
-      projection, machineId: 'machine-1', serverId: 'server-1', hostPlatform: platform,
-      executableHost, loaderBackend, reader, accountLifetime: lifetime,
+      projection,
+      platform,
+      voice: Object.freeze({
+        projection,
+        machineId: 'machine-1',
+        serverId: 'server-1',
+      }),
+      executableHost,
+      loaderBackend,
+      reader,
+      accountLifetime: lifetime,
     };
-    const attempts = await activateProjectedExternalVoiceProviders({
-      ...currentActivation,
-    });
+    const attempts = await reconcileAppShellProjectedClientExecutables(currentActivation);
     expect(fetchArtifactBytes).toHaveBeenCalledWith(expect.objectContaining({
       artifactOwnerKind: 'voiceProvider',
     }));
-    expect(attempts).toEqual([{ providerId, result: { ok: true } }]);
+    expect(attempts).toMatchObject([{
+      result: { ok: true },
+      reused: false,
+      activation: {
+        pluginId,
+        contributes: {
+          voiceProviders: [{ id: declaration.id }],
+        },
+      },
+    }]);
     expect(activate).toHaveBeenCalledTimes(1);
     expect(loaderBackend.loadInstalledBundle).toHaveBeenCalledWith(expect.objectContaining({
       moduleReference: artifactGraph.repack,
@@ -772,7 +947,7 @@ describe('projected external Voice provider activation', () => {
       },
     });
 
-    await executableHost.invalidatePlugin(pluginId);
+    await unloadAppShellProjectedClientExecutables(executableHost);
     expect(getVoiceAdapterRegistry().get(providerId)).toBeNull();
   });
 
@@ -819,7 +994,6 @@ describe('projected external Voice provider activation', () => {
     ])));
     const identity = identitiesByLocalId[declaration.id]!;
     const providerId = `${pluginId}/${declaration.id}`;
-    const providerIds = declarations.map((candidate) => `${pluginId}/${candidate.id}`).sort();
     const voiceProviderEntries = Object.fromEntries(declarations.map((candidate) => {
       const candidateProviderId = `${pluginId}/${candidate.id}`;
       const hostMediated = candidate.credentials?.hostMediated;
@@ -867,6 +1041,7 @@ describe('projected external Voice provider activation', () => {
           pluginId,
           contributionKind: 'reactNativeBundle' as const,
           contributionId: candidate.id,
+          generatedOwnerKind: 'voiceProvider',
           ...origin,
           artifactGraph,
         runtime: {
@@ -917,7 +1092,7 @@ describe('projected external Voice provider activation', () => {
     const hostLease = createBundledConversationRuntimeHostLease();
     const host = createPluginUiExecutableModuleHost();
     onTestFinished(async () => {
-      await host.unload();
+      await unloadAppShellProjectedClientExecutables(host);
       hostLease.revoke();
     });
 
@@ -932,17 +1107,28 @@ describe('projected external Voice provider activation', () => {
         bytesBase64: encodeBase64(bytes),
       }],
     }));
-    const activationInput: Parameters<typeof activateProjectedExternalVoiceProviders>[0] = {
-      projection, machineId: 'machine-1', serverId: 'server-1', hostPlatform: 'web',
-      executableHost: host, loaderBackend: backend,
+    const activationInput = {
+      projection,
+      platform: 'web' as const,
+      voice: Object.freeze({
+        projection,
+        machineId: 'machine-1',
+        serverId: 'server-1',
+      }),
+      executableHost: host,
+      loaderBackend: backend,
       reader,
       accountLifetime: lifetime,
     };
-    await expect(activateProjectedExternalVoiceProviders(activationInput))
-      .resolves.toEqual(providerIds.map((candidateProviderId) => ({
-        providerId: candidateProviderId,
-        result: { ok: true },
-      })));
+    const initialAttempts = await reconcileAppShellProjectedClientExecutables(activationInput);
+    expect(initialAttempts).toMatchObject([{
+      result: { ok: true },
+      reused: false,
+      activation: {
+        pluginId,
+        contributes: { voiceProviders: expect.any(Array) },
+      },
+    }]);
     expect(loads).toBe(1);
     expect(getVoiceAdapterRegistry().get(providerId)).not.toBeNull();
     const registry = createDefaultVoiceProviderRegistry();
@@ -1012,17 +1198,25 @@ describe('projected external Voice provider activation', () => {
         })]),
       )),
     });
-    await expect(activateProjectedExternalVoiceProviders({
+    const replacementAttempts = await reconcileAppShellProjectedClientExecutables({
       ...activationInput,
       projection: projectionB,
-      machineId: 'machine-2',
-      serverId: 'server-2',
+      voice: Object.freeze({
+        projection: projectionB,
+        machineId: 'machine-2',
+        serverId: 'server-2',
+      }),
       reader: replacementReader,
       accountLifetime: replacementLifetime,
-    })).resolves.toEqual(providerIds.map((candidateProviderId) => ({
-      providerId: candidateProviderId,
+    });
+    expect(replacementAttempts).toMatchObject([{
       result: { ok: true },
-    })));
+      reused: false,
+      activation: {
+        pluginId,
+        contributes: { voiceProviders: expect.any(Array) },
+      },
+    }]);
     expect(loads).toBe(2);
     expect(resolveVoiceAdapterSurfaceCapabilities(providerId, selected)).toEqual({
       allowsGlobalStart: true, controlSessionScope: 'global', requiresVoiceAgentFeature: false,
@@ -1036,19 +1230,23 @@ describe('projected external Voice provider activation', () => {
     const replacementHostLease = createBundledConversationRuntimeHostLease();
     onTestFinished(() => replacementHostLease.revoke());
     expect(getVoiceAdapterRegistry().get(providerId)).toBeNull();
-    await expect(activateProjectedExternalVoiceProviders(activationInput))
-      .resolves.toEqual(providerIds.map((candidateProviderId) => ({
-        providerId: candidateProviderId,
-        result: { ok: true },
-      })));
+    const reactivatedAttempts = await reconcileAppShellProjectedClientExecutables(activationInput);
+    expect(reactivatedAttempts).toMatchObject([{
+      result: { ok: true },
+      reused: false,
+      activation: {
+        pluginId,
+        contributes: { voiceProviders: expect.any(Array) },
+      },
+    }]);
     expect(getVoiceAdapterRegistry().get(providerId)).not.toBeNull();
 
-    await host.unload();
+    await unloadAppShellProjectedClientExecutables(host);
     expect(getVoiceAdapterRegistry().get(providerId)).toBeNull();
     expect(createDefaultVoiceProviderRegistry().get(providerId)).toBeNull();
   });
 
-  it('activates one shared executable artifact once for every declared Voice provider it owns', async () => {
+  it('uses one generic Artifact lease while preserving Voice runtime identities in one shared activation', async () => {
     const rawRequest = Object.freeze({
       kind: 'httpHeaders' as const,
       origin: 'https://voice.example.test',
@@ -1106,15 +1304,52 @@ describe('projected external Voice provider activation', () => {
         pluginId,
       }),
     });
+    const action: PluginUiProjectionModel['actionsById'][string] = {
+      id: 'open-voice-settings',
+      pluginId,
+      title: 'Open voice settings',
+      scopes: ['session'],
+      surfaces: ['ui'],
+      placementBindings: ['detailsPanel'],
+      priority: 0,
+      dangerLevel: 'safe',
+      available: true,
+      execution: {
+        target: 'client',
+        client: {
+          artifactId: 'voice-runtime-web',
+          modulePath: './voiceRuntime',
+          exportName: 'activate',
+        },
+        platforms: ['web'],
+      },
+      ...origin,
+    };
     const identities = Object.fromEntries(declarations.map((declaration) => [declaration.id, Object.freeze({
       pluginId, contributionId: declaration.id, artifactDigest: digest,
       hostAppVersion: '2.0.0', hostUiApiVersion: '1.0.0', reactVersion: '19.0.0', reactNativeVersion: '0.83.4',
       platform: 'web' as const, channel: 'internal', nativeCapabilitiesDigest: `sha256:${'d'.repeat(64)}`,
       projectionGeneration: generation,
     })]));
-    const projection: PluginUiProjectionModel = Object.freeze({
+    const actionIdentity = Object.freeze({
+      pluginId,
+      contributionId: action.id,
+      artifactDigest: digest,
+      hostAppVersion: '2.0.0',
+      hostUiApiVersion: '1.0.0',
+      reactVersion: '19.0.0',
+      reactNativeVersion: '0.83.4',
+      platform: 'web' as const,
+      channel: 'internal',
+      nativeCapabilitiesDigest: `sha256:${'d'.repeat(64)}`,
+      projectionGeneration: generation,
+    });
+    const machineProjection: PluginUiProjectionModel = Object.freeze({
       ...EMPTY_PLUGIN_UI_PROJECTION,
       generation,
+      actionsById: Object.freeze({
+        [`${pluginId}/open-voice-settings`]: Object.freeze(action),
+      }),
       voiceProvidersById: Object.freeze(Object.fromEntries(declarations.map((declaration) => {
         const providerId = `${pluginId}/${declaration.id}`;
         return [providerId, Object.freeze({
@@ -1122,17 +1357,42 @@ describe('projected external Voice provider activation', () => {
           ...origin,
         })];
       }))),
-      reactNativeBundlesById: Object.freeze(Object.fromEntries(declarations.map((declaration) => {
-        const identity = identities[declaration.id]!;
-        const id = `reactNativeBundle:${pluginId}:${declaration.id}`;
-        return [id, Object.freeze({
-          id, pluginId, contributionKind: 'reactNativeBundle', contributionId: declaration.id,
+      reactNativeBundlesById: Object.freeze({
+        [`reactNativeBundle:${pluginId}:${action.id}`]: Object.freeze({
+          id: `reactNativeBundle:${pluginId}:${action.id}`,
+          pluginId,
+          contributionKind: 'reactNativeBundle',
+          contributionId: action.id,
+          generatedOwnerKind: 'clientContribution',
           ...origin,
           artifactGraph,
-          runtime: { decision: { state: 'load' }, loadPolicy: { source: 'installedArtifact' }, cacheIdentity: identity },
-        })];
-      }))),
+          runtime: {
+            decision: { state: 'load' },
+            loadPolicy: { source: 'installedArtifact' },
+            cacheIdentity: actionIdentity,
+          },
+        }),
+        ...Object.fromEntries(declarations.map((declaration) => {
+          const identity = identities[declaration.id]!;
+          const id = `reactNativeBundle:${pluginId}:${declaration.id}`;
+          return [id, Object.freeze({
+            id, pluginId, contributionKind: 'reactNativeBundle', contributionId: declaration.id,
+            generatedOwnerKind: 'voiceProvider',
+            ...origin,
+            artifactGraph,
+            runtime: { decision: { state: 'load' }, loadPolicy: { source: 'installedArtifact' }, cacheIdentity: identity },
+          })];
+        })),
+      }),
     });
+    const projection = unionPluginUiProjections([{
+      machineId: 'machine-1',
+      serverId: 'server-1',
+      projection: machineProjection,
+      phase: 'current',
+      interactionEnabled: true,
+    }], new Map([[pluginId, origin]])).pluginUiProjection;
+    if (!projection) throw new Error('expected selected app projection');
     const { reader, lifetime } = createCurrentVoiceArtifactAdmission({
       pluginId,
       identity: identities[declarations[0]!.id]!,
@@ -1144,7 +1404,8 @@ describe('projected external Voice provider activation', () => {
       backendId: 'reactNativeWebModule', available: true,
       async loadInstalledBundle() {
         loads += 1;
-        return (api: ExternalVoiceProviderActivationApi) => {
+        return (api: PluginClientApi) => {
+          api.actions.register('open-voice-settings', async () => null);
           for (const localId of ['conversation-a', 'conversation-b'] as const) {
             api.voiceProviders.register(localId, {
               ...createProviderLeaf(),
@@ -1174,35 +1435,76 @@ describe('projected external Voice provider activation', () => {
       };
     });
     onTestFinished(async () => {
-      await host.unload();
+      await unloadAppShellProjectedClientExecutables(host);
       hostLease.revoke();
     });
 
-    reactNativeArtifactDaemonTransport.fetch.mockImplementation(async ({ identity }) => {
+    reactNativeArtifactDaemonTransport.fetch.mockImplementation(async (input) => {
+      const artifactOwner = input.artifactOwnerKind === 'clientContribution'
+        ? {
+          artifactOwnerKind: 'clientContribution' as const,
+          clientContribution: input.clientContribution,
+        }
+        : {
+          artifactOwnerKind: 'voiceProvider' as const,
+        };
+      const { identity } = input;
       fetches.push(identity.contributionId);
       return {
-        ok: true, artifactFamily: 'reactNative', artifactOwnerKind: 'voiceProvider', cacheIdentity: identity,
+        ok: true, artifactFamily: 'reactNative', ...artifactOwner, cacheIdentity: identity,
         artifact: { pluginId, contributionId: identity.contributionId, artifactKind: 'reactNativeBundle', digest, format: 'plainJs', byteSize: bytes.byteLength },
         bytesBase64: encodeBase64(bytes),
         files: [{ relativePath: entryPath, digest: entryDigest, byteSize: bytes.byteLength, bytesBase64: encodeBase64(bytes) }],
       };
     });
-    const attempts = await activateProjectedExternalVoiceProviders({
-      projection, machineId: 'machine-1', serverId: 'server-1', hostPlatform: 'web', executableHost: host,
+    const attempts = await reconcileAppShellProjectedClientExecutables({
+      projection,
+      platform: 'web',
+      voice: Object.freeze({
+        projection,
+        machineId: 'machine-1',
+        serverId: 'server-1',
+      }),
+      executableHost: host,
       loaderBackend: backend,
-      reader, accountLifetime: lifetime,
+      reader,
+      accountLifetime: lifetime,
     });
 
     expect(Object.values(identities).map((identity) => DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(identity)))
       .toEqual([expect.objectContaining({ success: true }), expect.objectContaining({ success: true })]);
-    expect(fetches).toEqual(['conversation-a']);
+    // The generic target owns one lease/load anchor. Voice retains its own
+    // runtime identities only for credential and recipient contracts.
+    expect(fetches).toEqual(['open-voice-settings']);
     expect(loads).toBe(1);
-    expect(attempts).toEqual([
-      { providerId: `${pluginId}/conversation-a`, result: { ok: true } },
-      { providerId: `${pluginId}/conversation-b`, result: { ok: true } },
-    ]);
+    expect(attempts).toMatchObject([{
+      result: { ok: true },
+      reused: false,
+      activation: {
+        pluginId,
+        contributes: {
+          voiceProviders: [{ id: 'conversation-a' }, { id: 'conversation-b' }],
+          actions: [{ id: 'open-voice-settings' }],
+        },
+      },
+    }]);
     expect(getVoiceAdapterRegistry().get(`${pluginId}/conversation-a`)).not.toBeNull();
     expect(getVoiceAdapterRegistry().get(`${pluginId}/conversation-b`)).not.toBeNull();
+    expect(getPluginUiClientExecutableComposition(host).read({
+      family: 'actions',
+      pluginId,
+      localId: 'open-voice-settings',
+      target: {
+        artifactId: 'voice-runtime-web',
+        modulePath: './voiceRuntime',
+        exportName: 'activate',
+        platform: 'web',
+      },
+      executionOrigin: origin,
+      projectionGeneration: generation,
+    })).toMatchObject({
+      registration: { family: 'actions', localId: 'open-voice-settings' },
+    });
     for (const localId of ['conversation-a', 'conversation-b'] as const) {
       const registration = listExternalVoiceProviderRegistrations().find((entry) => (
         entry.providerId === `${pluginId}/${localId}`

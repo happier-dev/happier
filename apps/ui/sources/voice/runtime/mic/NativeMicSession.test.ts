@@ -73,6 +73,79 @@ describe('NativeMicSession', () => {
         expect(releaseSecond).toHaveBeenCalledTimes(1);
     });
 
+    it('reports a lost native capture track through the lifecycle failure callback', async () => {
+        const listeners = new Map<string, Set<() => void>>();
+        const track = {
+            enabled: true,
+            addEventListener: (type: string, listener: () => void) => {
+                const set = listeners.get(type) ?? new Set<() => void>();
+                set.add(listener);
+                listeners.set(type, set);
+            },
+            removeEventListener: (type: string, listener: () => void) => {
+                listeners.get(type)?.delete(listener);
+            },
+        };
+        const stream = {
+            getAudioTracks: () => [track],
+            getTracks: () => [track],
+        } as unknown as MediaStream;
+        const onFailure = vi.fn();
+        const session = createNativeMicSession({
+            onFailure,
+            acquireStream: async () => stream,
+            releaseStream: () => {},
+        });
+
+        await session.ensureActive();
+        expect(listeners.get('ended')?.size).toBe(1);
+
+        for (const listener of [...(listeners.get('ended') ?? [])]) listener();
+
+        expect(onFailure).toHaveBeenCalledWith({
+            kind: 'mic_ended',
+            reason: 'native_mic_track_ended',
+        });
+        // The lost track is no longer the live capture, so the next attempt
+        // re-acquires instead of handing back a dead stream.
+        expect(session.getStream()).toBeNull();
+    });
+
+    it('does not report a failure for its own teardown, and ignores a retired track that ends later', async () => {
+        const listeners = new Map<string, Set<() => void>>();
+        const track = {
+            enabled: true,
+            addEventListener: (type: string, listener: () => void) => {
+                const set = listeners.get(type) ?? new Set<() => void>();
+                set.add(listener);
+                listeners.set(type, set);
+            },
+            removeEventListener: (type: string, listener: () => void) => {
+                listeners.get(type)?.delete(listener);
+            },
+        };
+        const stream = {
+            getAudioTracks: () => [track],
+            getTracks: () => [track],
+        } as unknown as MediaStream;
+        const onFailure = vi.fn();
+        const session = createNativeMicSession({
+            onFailure,
+            acquireStream: async () => stream,
+            releaseStream: () => {},
+        });
+
+        await session.ensureActive();
+        const endedListeners = [...(listeners.get('ended') ?? [])];
+        await session.teardown();
+
+        // Intentional teardown detaches first, so the platform's own `ended`
+        // for the track we just stopped cannot be read as a capture fault.
+        expect(listeners.get('ended')?.size ?? 0).toBe(0);
+        for (const listener of endedListeners) listener();
+        expect(onFailure).not.toHaveBeenCalled();
+    });
+
     it('checks native PCM permission without allocating a WebRTC microphone stream', async () => {
         const ensurePermission = vi.fn(async () => undefined);
         const acquireStream = vi.fn(async () => ({

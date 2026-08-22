@@ -39,14 +39,39 @@ function resolveDefaultAudioContext(): AudioContext | null {
     }
 }
 
+/**
+ * One `getUserMedia` attempt, joined through an outcome that never rejects.
+ *
+ * Teardown can release every caller waiting on an attempt before the browser
+ * settles it, so the attempt's own rejection is observed here rather than left
+ * for whichever caller happened to still be awaiting it.
+ */
+type AcquisitionAttempt = Readonly<{
+    outcome: Promise<Readonly<{ error: unknown }> | null>;
+}>;
+
+type LifecycleInvalidation = Readonly<{
+    invalidated: Promise<void>;
+    invalidate: () => void;
+}>;
+
+function createLifecycleInvalidation(): LifecycleInvalidation {
+    let invalidate!: () => void;
+    const invalidated = new Promise<void>((resolve) => {
+        invalidate = resolve;
+    });
+    return { invalidated, invalidate };
+}
+
 export function createWebMicSession(options: CreateWebMicSessionOptions = {}): MicSession {
     let stream: MediaStream | null = null;
     let audioContext: AudioContext | null = null;
     let muted = false;
     let activeTrack: MediaStreamTrack | null = null;
-    let ensureActiveInFlight: Promise<void> | null = null;
+    let ensureActiveInFlight: AcquisitionAttempt | null = null;
     let teardownInFlight: Promise<void> | null = null;
     let lifecycleVersion = 0;
+    let lifecycleInvalidated = createLifecycleInvalidation();
     let trackEndedListener: EventListener | null = null;
     let trackMuteListener: EventListener | null = null;
     let trackUnmuteListener: EventListener | null = null;
@@ -327,6 +352,27 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
         }
     };
 
+    /**
+     * Waits for an acquisition attempt, but never past the lifecycle that owns it:
+     * a `getUserMedia` the browser never settles must not pin the caller (and, one
+     * frame up, Stop) forever. Returns `false` when teardown claimed the lifecycle
+     * first, in which case the late attempt releases its own stream.
+     */
+    const joinAcquisition = async (attempt: AcquisitionAttempt): Promise<boolean> => {
+        const { invalidated } = lifecycleInvalidated;
+        const outcome = await Promise.race([
+            attempt.outcome.then((failure) => ({ invalidated: false as const, failure })),
+            invalidated.then(() => ({ invalidated: true as const })),
+        ]);
+        if (outcome.invalidated) {
+            return false;
+        }
+        if (outcome.failure) {
+            throw outcome.failure.error;
+        }
+        return true;
+    };
+
     const ensureActive = async (): Promise<void> => {
             const pendingTeardown = teardownInFlight;
             if (pendingTeardown) {
@@ -339,7 +385,9 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
                 return;
             }
             if (ensureActiveInFlight) {
-                await ensureActiveInFlight;
+                if (!await joinAcquisition(ensureActiveInFlight)) {
+                    return;
+                }
                 if (!stream) {
                     await ensureActive();
                     return;
@@ -380,11 +428,16 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
                 }
             })();
 
-            ensureActiveInFlight = acquire;
+            const attempt: AcquisitionAttempt = {
+                outcome: acquire.then(() => null, (error: unknown) => ({ error })),
+            };
+            ensureActiveInFlight = attempt;
             try {
-                await acquire;
+                if (!await joinAcquisition(attempt)) {
+                    return;
+                }
             } finally {
-                if (ensureActiveInFlight === acquire) {
+                if (ensureActiveInFlight === attempt) {
                     ensureActiveInFlight = null;
                 }
             }
@@ -405,9 +458,13 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
             }
 
             lifecycleVersion += 1;
-            const pendingAcquisition = ensureActiveInFlight;
+            // Ownership moves here, so an outstanding acquisition is abandoned rather
+            // than joined: the version bump makes a late `getUserMedia` stop its own
+            // tracks, and its rejection is already consumed by the attempt outcome.
+            ensureActiveInFlight = null;
+            lifecycleInvalidated.invalidate();
+            lifecycleInvalidated = createLifecycleInvalidation();
             const teardown = (async () => {
-                await pendingAcquisition?.catch(() => {});
                 const activeContext = audioContext;
                 retireActiveStream();
                 detachEnvironmentListeners();

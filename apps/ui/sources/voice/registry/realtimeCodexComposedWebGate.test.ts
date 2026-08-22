@@ -81,9 +81,7 @@ import {
   getCurrentBundledConversationRuntimeHost,
 } from './bundledConversationRuntimeHost';
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
-import {
-  createExternalVoiceProviderActivationScope,
-} from './externalVoiceProviderActivation';
+import { createExternalVoiceProviderActivationScope } from './externalVoiceProviderActivation.testkit';
 import { getExternalVoiceProviderRegistration } from './externalVoiceProviderRegistrations';
 import {
   BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES,
@@ -805,7 +803,7 @@ describe('realtime_codex normal web composed gate', () => {
             id: 'codex',
             identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
             isBuiltIn: true,
-            capabilities: { sessions: { startupInstructions: { versions: [1] } } },
+            capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true, startupInstructions: { versions: [1] } } },
           },
         },
         backendsById: {
@@ -1176,7 +1174,7 @@ describe('realtime_codex normal web composed gate', () => {
               id: 'codex',
               identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
               isBuiltIn: true,
-              capabilities: { sessions: { startupInstructions: { versions: [1] } } },
+              capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true, startupInstructions: { versions: [1] } } },
             },
             'acme.codex': {
               id: 'acme.codex',

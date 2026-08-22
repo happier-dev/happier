@@ -3,14 +3,23 @@ import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import type {
+    getMachineContributionRegistryProjectionRevision as getMachineContributionRegistryProjectionRevisionFn,
     machineContributionRegistryProjectionDescribe as machineContributionRegistryProjectionDescribeFn,
     machinePluginSettingsGet as machinePluginSettingsGetFn,
     machinePluginSettingsSet as machinePluginSettingsSetFn,
 } from '@/sync/ops/machineContributionRegistryProjection';
 import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/voice/adapters/local/settings';
 import { createTransferRecipientKeyPair } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption';
+import {
+    createLiveStorageStoreMock,
+    createStableStorageReader,
+    createStorageModuleStub,
+} from '@/dev/testkit/mocks/storage';
+
+const platformOsState = vi.hoisted(() => ({ value: 'ios' as 'ios' | 'web' }));
 
 type MachineContributionRegistryProjectionDescribeFn = typeof machineContributionRegistryProjectionDescribeFn;
+type GetMachineContributionRegistryProjectionRevisionFn = typeof getMachineContributionRegistryProjectionRevisionFn;
 type MachinePluginSettingsGetFn = typeof machinePluginSettingsGetFn;
 type MachinePluginSettingsSetFn = typeof machinePluginSettingsSetFn;
 
@@ -53,12 +62,14 @@ export const expoSpeechStop = vi.fn();
 export const patchSessionMetadataWithRetry = vi.fn(async (_sessionId: string, _patch: (metadata: any) => any) => {});
 export const onSessionVisible = vi.fn((_sessionId: string) => {});
 export const refreshSessions = vi.fn(async () => {});
+export const applySettings = vi.fn();
 export const speechRecStart = vi.fn();
 export const speechRecStop = vi.fn();
 export const speechRecAbort = vi.fn();
 export const speechRecRequestPermissionsAsync = vi.fn(async () => ({ granted: true }));
 export const audioStreamStart = vi.fn<(...args: any[]) => Promise<{ streamId: string }>>().mockResolvedValue({ streamId: 'audio-stream-1' });
 export const audioStreamStop = vi.fn(async () => {});
+export const audioSessionRelease = vi.fn(async () => {});
 export const sherpaStreamingCreate = vi.fn(async () => {});
 export const sherpaStreamingPushFrame = vi.fn<(...args: any[]) => Promise<{ text: string; isEndpoint: boolean }>>().mockResolvedValue({
   text: '',
@@ -100,6 +111,9 @@ export const machineContributionRegistryProjectionDescribe = vi.fn<MachineContri
         reason: 'not-supported',
     }),
 );
+export const getMachineContributionRegistryProjectionRevision = vi.fn<GetMachineContributionRegistryProjectionRevisionFn>(
+    () => 0,
+);
 export const machinePluginSettingsGet = vi.fn<MachinePluginSettingsGetFn>(
     async () => ({ supported: false, reason: 'not-supported' }),
 );
@@ -107,7 +121,6 @@ export const machinePluginSettingsSet = vi.fn<MachinePluginSettingsSetFn>(
     async () => ({ supported: false, reason: 'not-supported' }),
 );
 
-let platformOs: 'ios' | 'web' = 'ios';
 let nextRecorderPrepareError: Error | null = null;
 let recorderUri: string | null = 'file:///tmp/rec.m4a';
 let speechRecRecognitionAvailable = true;
@@ -284,7 +297,7 @@ export const BASE_SETTINGS = {
 } as const;
 
 export function setPlatformOs(next: 'ios' | 'web') {
-    platformOs = next;
+    platformOsState.value = next;
 }
 
 export function setNextRecorderPrepareError(next: Error | null) {
@@ -351,6 +364,7 @@ vi.mock('@/sync/sync', () => ({
         ensureSessionVisibleForMessageRoute: vi.fn(async () => {}),
         refreshSessionMessages: vi.fn(async () => {}),
         refreshSessions: (...args: any[]) => (refreshSessions as any)(...args),
+        applySettings: (...args: any[]) => (applySettings as any)(...args),
         patchSessionMetadataWithRetry: async (sessionId: string, patch: (metadata: any) => any) => {
             (patchSessionMetadataWithRetry as any)(sessionId, patch);
             const { storage } = await import('@/sync/domains/state/storage');
@@ -384,6 +398,14 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
+// The lazy sync accessor is a bundler-only `require`, so it never sees the `@/sync/sync`
+// mock above and would load a second, unaliased copy of the real sync module under Node.
+// Route it to the same mocked surface so both accessors return one object.
+vi.mock('@/sync/runtime/getSyncSingleton', async () => {
+    const { sync } = await import('@/sync/sync');
+    return { getSyncSingleton: () => sync };
+});
+
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStart: (sessionId: string, request: any) => sessionExecutionRunStart(sessionId, request),
     sessionExecutionRunAction: (sessionId: string, request: any) => sessionExecutionRunAction(sessionId, request),
@@ -416,9 +438,13 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 vi.mock('@/sync/ops/machines', () => ({
     machineSpawnNewSession: (...args: any[]) => machineSpawnNewSession(...args),
+    completePendingMachineSpawnAttemptCustodyForSession: async () => null,
 }));
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+    getMachineContributionRegistryProjectionRevision: (
+        scope: Parameters<GetMachineContributionRegistryProjectionRevisionFn>[0],
+    ) => getMachineContributionRegistryProjectionRevision(scope),
     machineContributionRegistryProjectionDescribe: (
         machineId: Parameters<MachineContributionRegistryProjectionDescribeFn>[0],
         opts?: Parameters<MachineContributionRegistryProjectionDescribeFn>[1],
@@ -427,6 +453,12 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
         machinePluginSettingsGet(...args),
     machinePluginSettingsSet: (...args: Parameters<MachinePluginSettingsSetFn>) =>
         machinePluginSettingsSet(...args),
+    // This harness does not exercise plugin-secret custody, but the current
+    // Settings runtime imports the three boundary functions at module load.
+    // Keep the untouched external boundary fail-closed.
+    machinePluginSecretStatus: async () => ({ supported: false as const, reason: 'not-supported' as const }),
+    machinePluginSecretSet: async () => ({ supported: false as const, reason: 'not-supported' as const }),
+    machinePluginSecretDelete: async () => ({ supported: false as const, reason: 'not-supported' as const }),
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -505,7 +537,7 @@ vi.mock('react-native', async () => {
                     },
                     Platform: {
                         get OS() {
-                                    return platformOs;
+                                    return platformOsState.value;
                                 },
                         select: (spec: any) => (spec && (spec.ios ?? spec.default)) ?? undefined,
                     },
@@ -619,7 +651,7 @@ vi.mock(
                 acquire: async () => ({
                     id: 'test-audio-session-lease',
                     capabilities: { aecAvailable: false, aecActive: false, route: 'test' },
-                    release: async () => {},
+                    release: () => audioSessionRelease(),
                 }),
                 subscribe: () => ({ remove: () => {} }),
                 getSnapshot: () => ({ generation: 0, leaseCount: 0, configuration: null, capabilities: null }),
@@ -651,14 +683,16 @@ vi.mock('@/sync/domains/state/storage', () => {
         sessionMessages: {},
     };
 
-    const storage = {
+    const liveStorage = createLiveStorageStoreMock(() => state);
+    const readLiveStorageState = liveStorage.getState;
+    const storage = Object.assign(liveStorage, {
         getState: () => {
             if (throwNextGetState) {
                 const error = throwNextGetState;
                 throwNextGetState = null;
                 throw error;
             }
-            return state;
+            return readLiveStorageState();
         },
         subscribe: (fn: () => void) => {
             subscribers.add(fn);
@@ -702,9 +736,14 @@ vi.mock('@/sync/domains/state/storage', () => {
         __throwGetStateOnce: (err: unknown) => {
             throwNextGetState = err;
         },
-    };
+    });
 
-    return { storage };
+    return createStorageModuleStub({
+        storage,
+        useSetting: createStableStorageReader((key: string) => state.settings?.[key] ?? null),
+        useProfile: createStableStorageReader(() => state.profile ?? null),
+        useActiveServerAccountScope: createStableStorageReader(() => state.profileScope ?? null),
+    });
 });
 
 export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
@@ -743,7 +782,7 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
         sendSessionMessageWithServerScope.mockReset();
         sessionRpcWithServerScope.mockReset();
         machineRpcWithServerScope.mockReset();
-        platformOs = 'ios';
+        platformOsState.value = 'ios';
         createdAudioPlayers.length = 0;
         nextRecorderPrepareError = null;
         recorderUri = 'file:///tmp/rec.m4a';
@@ -756,6 +795,7 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
         speechRecRequestPermissionsAsync.mockReset();
         audioStreamStart.mockReset();
         audioStreamStop.mockReset();
+        audioSessionRelease.mockReset();
         sherpaStreamingCreate.mockReset();
         sherpaStreamingPushFrame.mockReset();
         sherpaStreamingFinish.mockReset();
@@ -764,6 +804,7 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
         resolveModelPackManifestUrl.mockReset();
         audioStreamStart.mockResolvedValue({ streamId: 'audio-stream-1' });
         audioStreamStop.mockResolvedValue(undefined);
+        audioSessionRelease.mockResolvedValue(undefined);
         sherpaStreamingPushFrame.mockResolvedValue({ text: '', isEndpoint: false });
         sherpaStreamingFinish.mockResolvedValue({ text: '' });
         sherpaStreamingCreate.mockResolvedValue(undefined);
@@ -886,6 +927,8 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
         sessionExecutionRunStop.mockResolvedValue({ ok: true });
         machineContributionRegistryProjectionDescribe.mockReset();
         machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });
+        getMachineContributionRegistryProjectionRevision.mockReset();
+        getMachineContributionRegistryProjectionRevision.mockReturnValue(0);
         machinePluginSettingsGet.mockReset();
         machinePluginSettingsGet.mockResolvedValue({ supported: false, reason: 'not-supported' });
         machinePluginSettingsSet.mockReset();

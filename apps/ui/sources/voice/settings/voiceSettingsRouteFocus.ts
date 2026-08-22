@@ -11,7 +11,7 @@ export const VOICE_SETTINGS_PRIVACY_FOCUS_TARGET = {
 } as const satisfies Href;
 
 export const VOICE_SETTINGS_PROVIDER_FOCUS_TARGET = {
-  pathname: SETTINGS_ROUTES.voice,
+  pathname: SETTINGS_ROUTES.voiceConversations,
   params: { focus: 'provider' },
 } as const satisfies Href;
 

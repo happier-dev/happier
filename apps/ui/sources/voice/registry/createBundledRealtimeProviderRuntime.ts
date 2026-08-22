@@ -18,6 +18,7 @@ import {
   createVoiceTextTurnRejectedBeforeEffectError,
   type BundledVoiceRuntimeContribution,
   type VoiceAdapterController,
+  type VoiceHostAuthoredContextScope,
 } from '@/voice/session/types';
 import type { VoiceConnectionCloseReason } from '@/voice/runtime/connection/VoiceRealtimeConnection';
 import type { VoiceRealtimeProtocolAdapter } from '@/voice/runtime/protocol/VoiceRealtimeProtocolAdapter';
@@ -147,19 +148,6 @@ export function createBundledRealtimeProviderRuntime(
   const usesHostPcmCapture = config.microphoneMode === 'host_pcm';
   const usesProviderManagedMic = config.microphoneMode === 'provider_managed';
   let runtime: ReturnType<BundledRealtimeProviderRuntimeHost['createConversationController']> | null = null;
-  const inboundWatchdog = host.createInboundWatchdog?.({
-    onStall() {
-      inboundWatchdog?.stop();
-      host.runCurrentGenerationEffect(() => {
-        const activeRuntime = runtime;
-        if (!activeRuntime) return;
-        fireAndForget((async () => {
-          const reconnected = await activeRuntime.requestReconnect();
-          if (!reconnected) await activeRuntime.fail('realtime_inbound_stall');
-        })(), { tag: 'BundledRealtimeProviderRuntime.inboundStall' });
-      });
-    },
-  }) ?? null;
   type ResourceAttempt = {
     audioModeLease: Readonly<{ release(): Promise<void> }> | null;
     directMediaConversation: Readonly<{
@@ -396,6 +384,14 @@ export function createBundledRealtimeProviderRuntime(
     });
   };
 
+  /**
+   * Whether an attempt acquires the shared host mic session (rather than only
+   * its permission). Web PCM capture reads the mic-owned `AudioContext`, so it
+   * acquires too; native PCM capture leaves acquisition to its stream owner.
+   */
+  const acquiresHostMicSession = (): boolean => (
+    usesHostWebRtcMic || (usesHostPcmCapture && host.getPlatform() === 'web')
+  );
   const resources = Object.freeze({
     async preflight(input: Readonly<{
       controlSessionId: string; attemptId: number; request: VoiceRealtimeJsonValue; signal: AbortSignal;
@@ -443,6 +439,11 @@ export function createBundledRealtimeProviderRuntime(
         releasePromise: null,
       };
       resourceAttempts.set(input.attemptId, attempt);
+      // Mic ownership is claimed synchronously, before preparation's first
+      // await. Release must be able to invalidate this attempt's acquisition
+      // without first joining a preparation that the invalidation is what
+      // settles, so the claim cannot be written from inside that preparation.
+      if (acquiresHostMicSession()) attempt.micRequested = true;
       const prepare = (async () => {
         if (config.execution.kind === 'direct_media') {
           const request = readRequest(input.request);
@@ -470,7 +471,6 @@ export function createBundledRealtimeProviderRuntime(
           // disabled capture track from the provider attempt it replaces.
           mic.setMuted(false);
           host.machine.transitionToAcquiringMic(input.controlSessionId, providerId, input.attemptId);
-          attempt.micRequested = true;
           try {
             await mic.ensureActive();
           } catch (error) {
@@ -481,15 +481,27 @@ export function createBundledRealtimeProviderRuntime(
           }
           abortIfRequested(input.signal);
         }
-        if (usesHostPcmCapture && host.getPlatform() !== 'web') {
-          host.machine.transitionToAcquiringMic(input.controlSessionId, providerId, input.attemptId);
+        if (usesHostPcmCapture) {
+          // Web PCM capture starts inside the connection's media rather than in
+          // a separate acquisition phase, so the machine stays on
+          // connecting -> connected there. Native keeps its own mic phase.
+          if (host.getPlatform() !== 'web') {
+            host.machine.transitionToAcquiringMic(input.controlSessionId, providerId, input.attemptId);
+          }
           try {
-            if (!mic.ensurePermission) {
-              throw Object.assign(new Error('voice_pcm_capture_permission_unavailable'), {
-                code: 'voice_pcm_capture_permission_unavailable',
-              });
+            if (host.getPlatform() === 'web') {
+              // Web PCM capture reads the mic-owned AudioContext, which only
+              // exists once the mic session has been acquired. Permission alone
+              // would leave `getAudioContext()` null and fail media start.
+              await mic.ensureActive();
+            } else {
+              if (!mic.ensurePermission) {
+                throw Object.assign(new Error('voice_pcm_capture_permission_unavailable'), {
+                  code: 'voice_pcm_capture_permission_unavailable',
+                });
+              }
+              await mic.ensurePermission();
             }
-            await mic.ensurePermission();
           } catch (error) {
             if (isPermissionDeniedMicrophoneError(error)) {
               return { kind: 'declined' as const, code: 'mic_permission_denied' };
@@ -516,20 +528,25 @@ export function createBundledRealtimeProviderRuntime(
         await attempt.releasePromise;
         return;
       }
-      const release = (async () => {
-        await attempt.preparePromise?.catch(() => {});
-        await attempt.transcriptCarrierRebindPromise?.catch(() => {});
-        const hasNewerMicOwner = attempt.micRequested && [...resourceAttempts].some(
+      const releaseAttemptMic = async (): Promise<void> => {
+        const hasNewerMicOwner = [...resourceAttempts].some(
           ([attemptId, candidate]) => attemptId > input.attemptId && candidate.micRequested,
         );
-        if (attempt.micRequested && !hasNewerMicOwner) {
-          // A terminal attempt releases its physical mute together with the
-          // capture resource. Do not reset a newer attempt sharing this
-          // host-owned mic session: its prepare path already established the
-          // new attempt's unmuted baseline and may have received a new mute.
-          mic.setMuted(false);
-          await mic.teardown().catch(() => {});
-        }
+        if (!attempt.micRequested || hasNewerMicOwner) return;
+        // A terminal attempt releases its physical mute together with the
+        // capture resource. Do not reset a newer attempt sharing this
+        // host-owned mic session: its prepare path already established the
+        // new attempt's unmuted baseline and may have received a new mute.
+        mic.setMuted(false);
+        await mic.teardown().catch(() => {});
+      };
+      const release = (async () => {
+        // Teardown precedes the preparation join. Teardown is what invalidates
+        // an unsettled acquisition, so joining first makes Stop wait for a
+        // `getUserMedia` that only this teardown can release.
+        await releaseAttemptMic();
+        await attempt.preparePromise?.catch(() => {});
+        await attempt.transcriptCarrierRebindPromise?.catch(() => {});
         const audioModeLease = attempt.audioModeLease;
         attempt.audioModeLease = null;
         const directMediaConversation = attempt.directMediaConversation;
@@ -606,12 +623,10 @@ export function createBundledRealtimeProviderRuntime(
       }>) => {
         if (active) {
           bargeInCoordinator?.reset();
-          inboundWatchdog?.stop();
         }
         host.machine.setReconnecting(controlSessionId, providerId, active, attemptId);
       },
       connected: ({ controlSessionId, attemptId }: Readonly<{ controlSessionId: string; attemptId: number }>) => {
-        inboundWatchdog?.start();
         host.machine.transitionToConnected(controlSessionId, providerId, attemptId);
         scheduleHostedLeaseNotices(controlSessionId);
       },
@@ -620,7 +635,6 @@ export function createBundledRealtimeProviderRuntime(
       disconnected: ({ controlSessionId, attemptId, code }: Readonly<{
         controlSessionId: string; attemptId: number; code?: string;
       }>) => {
-        inboundWatchdog?.stop();
         clearHostedLeaseNotices();
         activeHostedLease = null;
         bargeInCoordinator?.reset();
@@ -639,7 +653,6 @@ export function createBundledRealtimeProviderRuntime(
         code: string;
         diagnosticReason?: VoiceRuntimeFailureDiagnosticReason;
       }>) => {
-        inboundWatchdog?.stop();
         clearHostedLeaseNotices();
         activeHostedLease = null;
         bargeInCoordinator?.reset();
@@ -838,9 +851,6 @@ export function createBundledRealtimeProviderRuntime(
           'voice_transcript_attempt_ownership_mismatch',
         );
         return;
-      }
-      if (event.role === 'user' && event.type === 'voice.transcript.final') {
-        inboundWatchdog?.markAwaitingResponse(true);
       }
       const transcriptAttempt = activeTranscriptAttempt;
       if (
@@ -1209,27 +1219,19 @@ export function createBundledRealtimeProviderRuntime(
         projectNormalizedEvent();
       }
     },
-    onInboundControlEvent: () => {
-      if (!disposed && isCurrentGeneration()) inboundWatchdog?.noteInboundEvent();
-    },
     onCanonicalEvent: async (event) => {
       if (disposed || !isCurrentGeneration()) return;
       if (event.type === 'assistant_output_started') {
-        inboundWatchdog?.markTurnActive(true);
         bargeInCoordinator?.onAssistantOutputStarted({ itemId: event.itemId });
       }
       if (event.type === 'assistant_output_stopped') {
-        inboundWatchdog?.markTurnActive(false);
-        inboundWatchdog?.markAwaitingResponse(false);
         bargeInCoordinator?.onAssistantOutputStopped();
         outputLevelWriter?.reset();
       }
       if (event.type === 'input_speech_started') {
-        inboundWatchdog?.markAwaitingResponse(false);
         bargeInCoordinator?.onInputSpeechStarted();
       }
       if (event.type === 'input_speech_stopped') {
-        inboundWatchdog?.markAwaitingResponse(true);
         bargeInCoordinator?.onInputSpeechStopped();
       }
     },
@@ -1246,6 +1248,7 @@ export function createBundledRealtimeProviderRuntime(
       }
     },
     createToolBarrier: () => host.createToolBarrier({
+      effectCalls: config.protocol.toolEffectCalls ?? 'none',
       resolveSessionId: (explicitSessionId) => explicitSessionId ?? (
         runtime?.getOwnedControlSessionId()
           ? host.resolveConversationSessionId(runtime.getOwnedControlSessionId()!, providerId)
@@ -1334,6 +1337,17 @@ export function createBundledRealtimeProviderRuntime(
     },
   });
 
+  /**
+   * Normalized execution-owned context authority. An Agent-session realtime
+   * attachment runs against an Agent runtime that already owns the
+   * authoritative realtime prompt and startup context, so Happier contributes
+   * no bootstrap or stored-session item there.
+   */
+  const hostAuthoredContext: VoiceHostAuthoredContextScope =
+    config.execution.kind === 'experimental_agent_session_realtime'
+      ? 'current_ui_only'
+      : 'session_context';
+
   const start = async (input: Readonly<{ sessionId: string; initialContext?: string; textOnly?: boolean }>) => {
     const startAttempt = {};
     activeStartAttempt = startAttempt;
@@ -1367,7 +1381,8 @@ export function createBundledRealtimeProviderRuntime(
       }
       if (!isStartAttemptCurrent()) return;
     }
-    const initialContext = input.initialContext ?? host.voiceHooks.onStarted(input.sessionId);
+    const initialContext = input.initialContext
+      ?? host.voiceHooks.onStarted(input.sessionId, hostAuthoredContext);
     host.clearAttemptStatus(controlSessionId);
     const transcriptAttempt: ActiveTranscriptAttempt = {
       controlSessionId,
@@ -1407,8 +1422,11 @@ export function createBundledRealtimeProviderRuntime(
     }
     if (!isStartAttemptCurrent()) return;
     activeStartAttempt = null;
-    if (result.status === 'connected' && usesProviderManagedMic) {
-      inputLevelWriter = host.openLevelWriter({ channel: 'input', sourceId: levelSourceId });
+    if (result.status === 'connected') {
+      host.voiceHooks.onConnected?.(controlSessionId);
+      if (usesProviderManagedMic) {
+        inputLevelWriter = host.openLevelWriter({ channel: 'input', sourceId: levelSourceId });
+      }
     }
     if (result.status !== 'connected') {
       if (activeTranscriptAttempt === transcriptAttempt) activeTranscriptAttempt = null;
@@ -1436,7 +1454,6 @@ export function createBundledRealtimeProviderRuntime(
   };
 
   const stop = (): Promise<void> => {
-    inboundWatchdog?.stop();
     const transcriptAttempt = activeTranscriptAttempt;
     if (transcriptAttempt?.stopPromise) return transcriptAttempt.stopPromise;
     const completeStop = async (): Promise<void> => {
@@ -1663,6 +1680,7 @@ export function createBundledRealtimeProviderRuntime(
     resolveContextChannel(settings) {
       if (!runtime!.getActiveControlSessionId() || !config.resolveSurfaceCapabilities(settings)) return null;
       return {
+        hostAuthoredContext,
         sendContextualUpdate: (update) => { sendContextEvents(config.encodeContextUpdate(update)); },
         sendTextMessage: (text) => { sendContextEvents(config.encodeTextTurn(text)); },
       };

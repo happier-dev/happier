@@ -25,6 +25,7 @@ export type VoiceSessionLifecycleController = Readonly<{
     }>) => void;
     sendContextUpdate: (sessionId: string, update: string) => void;
     setConfiguredProviderId: (providerId: VoiceAdapterId | 'off' | null) => void;
+    setCurrentUiContextToolSetEnabled: (enabled: boolean) => void;
     setMuted: (sessionId: string, muted: boolean) => Promise<void>;
     stop: (sessionId: string) => Promise<void>;
     subscribe: (listener: () => void) => () => void;
@@ -37,6 +38,8 @@ type PendingAdapterSwitch = Readonly<{
     targetAdapterId: string | null;
     startRequested: boolean;
     sourceDisconnectObserved: boolean;
+    restartForCurrentUiContextTools: boolean;
+    startedCurrentUiContextToolSetEnabled: boolean | null;
 }>;
 
 type StartingAdapter = {
@@ -84,6 +87,19 @@ function isAbortError(error: unknown): boolean {
         && (error as Readonly<{ name?: unknown }>).name === 'AbortError';
 }
 
+function requiresCurrentUiContextToolSetReplacement(
+    adapter: VoiceAdapterController,
+    enabled: boolean,
+): boolean {
+    // Realtime tool definitions are frozen for a connection. Local Agent Voice
+    // seeds its model session once, so only the restrictive off transition
+    // needs to replace it; restoring disclosure applies on a later attempt.
+    // Local direct lacks the Agent text-turn capability, hence no model-session
+    // tool catalog to retire.
+    return adapter.engineKind === 'realtime'
+        || (enabled === false && typeof adapter.sendTextTurn === 'function');
+}
+
 export function createVoiceSessionLifecycleController(deps?: Readonly<{
     captureAdmission?: VoiceCaptureAdmissionController;
     getRegistry?: () => ReturnType<typeof getVoiceAdapterRegistry>;
@@ -92,15 +108,18 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
     const captureAdmissionOwner =
         deps?.captureAdmission ?? voiceCaptureAdmissionController;
     let configuredProviderId: VoiceAdapterId | 'off' | null = null;
+    let currentUiContextToolSetEnabled: boolean | null = null;
     let publishedSnapshot = getVoiceSessionSnapshot();
     let pendingAdapterSwitch: PendingAdapterSwitch | null = null;
     let suppressedProviderAuthFailureAdapterId: string | null = null;
     let startingAdapter: StartingAdapter | null = null;
     let realtimeCaptureAdmission: Readonly<{
+        adapter: VoiceAdapterController;
         adapterId: string;
         sessionId: string;
         lease: VoiceCaptureAdmissionLease;
     }> | null = null;
+    let retiredAttemptStopStarted = false;
     let disposed = false;
     let disposePromise: Promise<void> | null = null;
     const listeners = new Set<() => void>();
@@ -116,7 +135,30 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         if (match?.adapterId && match.adapterId !== admission.adapterId) return;
         if (match?.sessionId && match.sessionId !== admission.sessionId) return;
         realtimeCaptureAdmission = null;
+        retiredAttemptStopStarted = false;
         admission.lease.release();
+    };
+
+    /*
+     * Withdrawing a provider's registration removes it from SELECTION; it does
+     * not terminalize the media the retired adapter is still running, and it
+     * does not move Stop authority. The admitted attempt is therefore resolved
+     * from the exact adapter this owner started, not from current registry
+     * membership — otherwise a withdrawal publishes idle and hands global
+     * capture admission to another product while the old microphone is live.
+     */
+    const resolveAttemptAdapter = (adapterId: string): VoiceAdapterController | null => {
+        const admitted = realtimeCaptureAdmission?.adapter ?? null;
+        if (admitted && admitted.id === adapterId) return admitted;
+        return getRegistry().get(adapterId);
+    };
+
+    /** Registered adapters plus the admitted attempt owner they may no longer list. */
+    const listAttemptAdapters = (): ReadonlyArray<VoiceAdapterController> => {
+        const adapters = getRegistry().list();
+        const admitted = realtimeCaptureAdmission?.adapter ?? null;
+        if (!admitted || adapters.includes(admitted)) return adapters;
+        return [...adapters, admitted];
     };
 
     const createStartingAdapter = (
@@ -162,10 +204,12 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             throw busy;
         }
         realtimeCaptureAdmission = {
+            adapter,
             adapterId: adapter.id,
             sessionId,
             lease: admission.lease,
         };
+        retiredAttemptStopStarted = false;
         startingAdapter = startAttempt;
         try {
             await adapter.start({ sessionId });
@@ -249,7 +293,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             return null;
         }
 
-        const adapter = getRegistry().get(snapshot.adapterId);
+        const adapter = resolveAttemptAdapter(snapshot.adapterId);
         if (!adapter) {
             return null;
         }
@@ -264,8 +308,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         if (disposed) {
             return publishedSnapshot;
         }
-        const registry = getRegistry();
-        const adapters = registry.list();
+        const adapters = listAttemptAdapters();
         const snapshots = adapters.map((adapter) => adapter.getSnapshot());
         const pending = pendingAdapterSwitch;
         if (pending) {
@@ -335,7 +378,32 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 && publishedSnapshot.adapterId === pending.targetAdapterId
                 && publishedSnapshot.status !== 'disconnected'
             ) {
-                pendingAdapterSwitch = null;
+                const targetAdapter = resolveAttemptAdapter(pending.targetAdapterId);
+                if (!targetAdapter) {
+                    pendingAdapterSwitch = null;
+                    return;
+                }
+                const toolSetChangedDuringRestart = pending.restartForCurrentUiContextTools
+                    && pending.startedCurrentUiContextToolSetEnabled !== null
+                    && currentUiContextToolSetEnabled !== null
+                    && pending.startedCurrentUiContextToolSetEnabled !== currentUiContextToolSetEnabled
+                    && requiresCurrentUiContextToolSetReplacement(targetAdapter, currentUiContextToolSetEnabled);
+                if (!toolSetChangedDuringRestart) {
+                    pendingAdapterSwitch = null;
+                    return;
+                }
+                pendingAdapterSwitch = {
+                    sourceAdapterId: targetAdapter.id,
+                    sessionId: pending.sessionId,
+                    targetAdapterId: targetAdapter.id,
+                    startRequested: false,
+                    sourceDisconnectObserved: false,
+                    restartForCurrentUiContextTools: true,
+                    startedCurrentUiContextToolSetEnabled: null,
+                };
+                void stopAdapter(targetAdapter, pending.sessionId).finally(() => {
+                    publishSnapshot();
+                });
                 return;
             }
 
@@ -350,7 +418,13 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             }
 
             const targetAdapterId = configuredProviderId === 'off' ? null : configuredProviderId;
-            if (!targetAdapterId || targetAdapterId === pending.sourceAdapterId) {
+            if (
+                !targetAdapterId
+                || (
+                    targetAdapterId === pending.sourceAdapterId
+                    && !pending.restartForCurrentUiContextTools
+                )
+            ) {
                 pendingAdapterSwitch = null;
                 return;
             }
@@ -365,6 +439,10 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 ...pending,
                 targetAdapterId,
                 startRequested: true,
+                startedCurrentUiContextToolSetEnabled:
+                    pending.restartForCurrentUiContextTools
+                        ? currentUiContextToolSetEnabled
+                        : null,
             };
             pendingAdapterSwitch = startedSwitch;
             void startAdapter(targetAdapter, pending.sessionId)
@@ -400,7 +478,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             return;
         }
 
-        const sourceAdapter = getRegistry().get(publishedSnapshot.adapterId);
+        const sourceAdapter = resolveAttemptAdapter(publishedSnapshot.adapterId);
         if (!sourceAdapter) {
             return;
         }
@@ -411,6 +489,8 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             targetAdapterId: null,
             startRequested: false,
             sourceDisconnectObserved: false,
+            restartForCurrentUiContextTools: false,
+            startedCurrentUiContextToolSetEnabled: null,
         };
 
         void stopAdapter(sourceAdapter, publishedSnapshot.sessionId).finally(() => {
@@ -434,12 +514,26 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         }
         const admission = realtimeCaptureAdmission;
         if (admission) {
-            const adapter = getRegistry().get(admission.adapterId);
-            const snapshot = adapter?.getSnapshot();
-            if (!adapter || snapshot?.status === 'disconnected' || snapshot?.canStop !== true) {
+            const snapshot = admission.adapter.getSnapshot();
+            if (snapshot.status === 'disconnected' || snapshot.canStop !== true) {
                 releaseRealtimeCaptureAdmission({
                     adapterId: admission.adapterId,
                     sessionId: admission.sessionId,
+                });
+            } else if (
+                !retiredAttemptStopStarted
+                && getRegistry().get(admission.adapterId) !== admission.adapter
+            ) {
+                /*
+                 * The projection that owned this adapter has withdrawn it, so
+                 * nothing will ask it to stop through selection any more. Retire
+                 * the attempt through the same coalesced Stop the surface uses:
+                 * its settlement — not registry absence — is what releases
+                 * capture admission and lets this owner publish idle.
+                 */
+                retiredAttemptStopStarted = true;
+                void stopAdapter(admission.adapter, admission.sessionId).finally(() => {
+                    publishSnapshot();
                 });
             }
         }
@@ -449,7 +543,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
     };
 
     const refreshAdapterSubscriptions = () => {
-        const adapters = getRegistry().list();
+        const adapters = listAttemptAdapters();
         const currentIds = new Set(adapters.map((adapter) => adapter.id));
         for (const [adapterId, unsubscribe] of adapterUnsubs) {
             if (currentIds.has(adapterId)) continue;
@@ -461,6 +555,47 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             const unsubscribe = adapter.subscribe?.(() => publishSnapshot());
             if (typeof unsubscribe === 'function') adapterUnsubs.set(adapter.id, unsubscribe);
         }
+    };
+
+    const stopForCurrentUiContextToolSetRestart = (
+        adapter: VoiceAdapterController,
+        sessionId: string,
+    ): void => {
+        void (async () => {
+            await stopAdapter(adapter, sessionId);
+            const pending = pendingAdapterSwitch;
+            if (
+                pending?.restartForCurrentUiContextTools
+                && pending.sourceAdapterId === adapter.id
+                && pending.sessionId === sessionId
+                && !pending.startRequested
+                && adapter.getSnapshot().status !== 'disconnected'
+            ) {
+                // A prior stop may have been coalesced while its replacement
+                // reached connected. Retire that now-current attachment rather
+                // than leaving this newer disclosure transition stranded.
+                await stopAdapter(adapter, sessionId);
+            }
+        })().finally(() => {
+            publishSnapshot();
+        });
+    };
+
+    const cancelPendingCurrentUiContextToolSetRestart = (): StartingAdapter | null => {
+        const pending = pendingAdapterSwitch;
+        if (!pending?.restartForCurrentUiContextTools) {
+            return null;
+        }
+        pendingAdapterSwitch = null;
+        const startAttempt = startingAdapter;
+        if (
+            startAttempt
+            && startAttempt.adapter.id === pending.targetAdapterId
+            && startAttempt.sessionId === pending.sessionId
+        ) {
+            return startAttempt;
+        }
+        return null;
     };
     refreshAdapterSubscriptions();
     const unsubscribeRegistry = getRegistry().subscribe?.(() => {
@@ -497,13 +632,10 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             }
             const admission = realtimeCaptureAdmission;
             if (admission) {
-                const adapter = getRegistry().get(admission.adapterId);
-                if (adapter) {
-                    disposalTargets.set(`${adapter.id}\u0000${admission.sessionId}`, {
-                        adapter,
-                        sessionId: admission.sessionId,
-                    });
-                }
+                disposalTargets.set(`${admission.adapter.id}\u0000${admission.sessionId}`, {
+                    adapter: admission.adapter,
+                    sessionId: admission.sessionId,
+                });
             }
             disposed = true;
             pendingAdapterSwitch = null;
@@ -542,16 +674,24 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         },
         rearmAfterCredentialAuthorityChange: (options) => {
             if (disposed) return;
+            if (options?.exactSessionAccountScopeChanged === true) {
+                // A queued provider/tool-set transition belongs to the Account
+                // authority that admitted it. Retire that intent before an
+                // in-flight source stop can settle and reconcile the target.
+                pendingAdapterSwitch = null;
+            }
             const owned = resolveOwnedAdapter();
             const stopTargets = new Map<string, Readonly<{
                 adapter: VoiceAdapterController;
                 sessionId: string;
             }>>();
-            // Broad account/settings observations only rearm a terminal auth
-            // presentation for a later explicit Start. The runtime reports
-            // exact-session Account changes and global-binding changes, but
-            // this owner classifies the live target from its start/attachment
-            // session id. Ordinary providers retain their admitted attempt.
+            // Credential/settings revisions only rearm a terminal auth
+            // presentation for a later explicit Start, so an ordinary provider
+            // keeps its admitted attempt. A server-Account scope change is not
+            // credential currentness: it retires every starting or attached
+            // attempt, whatever provider owns it. Global-binding changes stay
+            // specific to the global Agent session, which this owner
+            // classifies from its start/attachment session id.
             const fencesSession = (sessionId: string): boolean => (
                 options?.exactSessionAccountScopeChanged === true
                 || (
@@ -608,6 +748,72 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             configuredProviderId = providerId;
             publishSnapshot();
         },
+        setCurrentUiContextToolSetEnabled: (enabled) => {
+            if (disposed || currentUiContextToolSetEnabled === enabled) return;
+            const previous = currentUiContextToolSetEnabled;
+            currentUiContextToolSetEnabled = enabled;
+            if (previous === null) return;
+
+            const pending = pendingAdapterSwitch;
+            if (pending) {
+                if (pending.restartForCurrentUiContextTools) {
+                    // Keep this serialized transition current. Realtime will
+                    // retire a started stale schema; Local Agent only retires
+                    // on the restrictive boundary and otherwise waits for its
+                    // next explicit attempt.
+                    publishSnapshot();
+                }
+                if (!pending.restartForCurrentUiContextTools) {
+                    const pendingTargetAdapterId = pending.targetAdapterId
+                        ?? (configuredProviderId === 'off' ? null : configuredProviderId);
+                    const pendingTargetAdapter = pendingTargetAdapterId
+                        ? getRegistry().get(pendingTargetAdapterId)
+                        : null;
+                    if (
+                        pendingTargetAdapter
+                        && requiresCurrentUiContextToolSetReplacement(pendingTargetAdapter, enabled)
+                    ) {
+                        // A normal provider hand-off has already chosen its
+                        // target, but it may have captured the old tool-set
+                        // boundary before disclosure became restrictive. Fold
+                        // that replacement into this serialized hand-off.
+                        pendingAdapterSwitch = {
+                            ...pending,
+                            restartForCurrentUiContextTools: true,
+                            startedCurrentUiContextToolSetEnabled:
+                                pending.startRequested ? previous : null,
+                        };
+                        publishSnapshot();
+                    }
+                }
+                return;
+            }
+
+            const owned = resolveOwnedAdapter();
+            if (
+                !owned
+                || !owned.snapshot.sessionId
+                || !requiresCurrentUiContextToolSetReplacement(owned.adapter, enabled)
+            ) {
+                return;
+            }
+
+            /*
+             * Reuse this owner's serialized switch path so a disclosure change
+             * that freezes into an active provider/model session retires the
+             * exact attempt before constructing its replacement.
+             */
+            pendingAdapterSwitch = {
+                sourceAdapterId: owned.adapter.id,
+                sessionId: owned.snapshot.sessionId,
+                targetAdapterId: owned.adapter.id,
+                startRequested: false,
+                sourceDisconnectObserved: false,
+                restartForCurrentUiContextTools: true,
+                startedCurrentUiContextToolSetEnabled: null,
+            };
+            stopForCurrentUiContextToolSetRestart(owned.adapter, owned.snapshot.sessionId);
+        },
         setMuted: async (sessionId, muted) => {
             if (disposed) return;
             const owned = resolveOwnedAdapter();
@@ -616,8 +822,14 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         },
         stop: async (sessionId) => {
             if (disposed) return;
+            const cancelledRestartStart = cancelPendingCurrentUiContextToolSetRestart();
             const owned = resolveOwnedAdapter();
-            if (!owned) return;
+            if (!owned) {
+                if (cancelledRestartStart) {
+                    await stopAdapter(cancelledRestartStart.adapter, cancelledRestartStart.sessionId);
+                }
+                return;
+            }
             const ownedSessionId = owned.snapshot.sessionId ?? sessionId;
             await stopAdapter(owned.adapter, ownedSessionId);
         },
@@ -629,12 +841,17 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         },
         toggle: async (sessionId) => {
             if (disposed) return;
+            const cancelledRestartStart = cancelPendingCurrentUiContextToolSetRestart();
             const owned = resolveOwnedAdapter();
             if (owned) {
                 await stopAdapter(
                     owned.adapter,
                     owned.snapshot.sessionId ?? sessionId,
                 );
+                return;
+            }
+            if (cancelledRestartStart) {
+                await stopAdapter(cancelledRestartStart.adapter, cancelledRestartStart.sessionId);
                 return;
             }
 

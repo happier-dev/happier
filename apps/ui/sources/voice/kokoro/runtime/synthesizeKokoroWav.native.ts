@@ -1,4 +1,9 @@
+import { filePathToUri, uriToFilePath } from '@/platform/fileUri';
 import { randomUUID } from '@/platform/randomUUID';
+import {
+  cacheSpeakerCountForAssetsDir,
+  readCachedSpeakerCountForAssetsDir,
+} from '@/voice/kokoro/runtime/kokoroSpeakerCountCache';
 import { createSentenceStream } from '@/voice/kokoro/runtime/streamKokoroWavSentences';
 import { resolveKokoroSherpaSidForVoiceIdWithSpeakerCount } from '@/voice/kokoro/voices/kokoroSherpaVoiceMapping';
 import { ensureModelPackInstalled } from '@/voice/modelPacks/installer.native';
@@ -69,19 +74,6 @@ function createTimeoutPromise(timeoutMs: number): Promise<never> {
   });
 }
 
-function uriToFilePath(uri: string): string {
-  if (uri.startsWith('file://')) return uri.slice('file://'.length);
-  return uri;
-}
-
-function filePathToUri(pathOrUri: string): string {
-  if (pathOrUri.startsWith('file://')) return pathOrUri;
-  if (pathOrUri.startsWith('/')) return `file://${pathOrUri}`;
-  return pathOrUri;
-}
-
-const speakerCountByAssetsDirPath = new Map<string, number>();
-
 async function getSpeakerCountForAssetsDir(opts: {
   native: KokoroNativeModuleLike;
   assetsDirPath: string;
@@ -89,7 +81,7 @@ async function getSpeakerCountForAssetsDir(opts: {
   signal: AbortSignal;
 }): Promise<number | null> {
   const key = opts.assetsDirPath;
-  const cached = speakerCountByAssetsDirPath.get(key);
+  const cached = readCachedSpeakerCountForAssetsDir(key);
   if (cached !== undefined) return cached;
 
   try {
@@ -104,7 +96,7 @@ async function getSpeakerCountForAssetsDir(opts: {
     // poisoned `null` would otherwise pin the wrong speaker count for this
     // assets dir for the process lifetime and degrade every later synth.
     if (count !== null) {
-      speakerCountByAssetsDirPath.set(key, count);
+      cacheSpeakerCountForAssetsDir(key, count);
     }
     return count;
   } catch {
@@ -213,8 +205,17 @@ async function prepareKokoroSynthContext(
 
   const synthesizeText = async (text: string): Promise<ArrayBuffer> => {
     const jobId = randomUUID();
-    const onAbort = () => {
+    let cancelRequested = false;
+    // One owner for terminating this exact native job, whether the caller
+    // aborted or the deadline fired. Cancelling twice would ask the native
+    // module to retire a job it has already retired.
+    const cancelNativeJob = () => {
+      if (cancelRequested) return;
+      cancelRequested = true;
       void native.cancel({ jobId }).catch(() => {});
+    };
+    const onAbort = () => {
+      cancelNativeJob();
     };
     if (opts.signal.aborted) {
       // Already interrupted before this job started: cancel and bail.
@@ -224,17 +225,22 @@ async function prepareKokoroSynthContext(
     opts.signal.addEventListener('abort', onAbort);
     const outWavUri = resolveOutWavPathUri(jobId, fs, overrides);
     let wavUriToDelete: string | null = outWavUri;
+    let nativeSynthesisSettled: Promise<void> | null = null;
     try {
+      const nativeSynthesis = native.synthesizeToWavFile({
+        jobId,
+        assetsDir: assetsDirPath,
+        text,
+        voiceId: opts.voiceId,
+        sid,
+        speed: opts.speed,
+        outWavPath: uriToFilePath(outWavUri),
+      });
+      // The native job outlives a lost race. Track its settlement so cleanup
+      // never deletes a staged WAV the job is still writing.
+      nativeSynthesisSettled = nativeSynthesis.then(() => undefined, () => undefined);
       const res = await Promise.race([
-        native.synthesizeToWavFile({
-          jobId,
-          assetsDir: assetsDirPath,
-          text,
-          voiceId: opts.voiceId,
-          sid,
-          speed: opts.speed,
-          outWavPath: uriToFilePath(outWavUri),
-        }),
+        nativeSynthesis,
         createAbortPromise(opts.signal),
         createTimeoutPromise(opts.timeoutMs),
       ]);
@@ -251,6 +257,12 @@ async function prepareKokoroSynthContext(
       await deleteFileBestEffort(fs, wavUri);
       wavUriToDelete = null;
       return bytes;
+    } catch (error) {
+      // Abort and deadline both leave the native job running. Terminate it and
+      // wait for it to settle before the cleanup below touches its output.
+      cancelNativeJob();
+      if (nativeSynthesisSettled) await nativeSynthesisSettled;
+      throw error;
     } finally {
       opts.signal.removeEventListener('abort', onAbort);
       // Always clean up the staged out-WAV, including on abort/timeout where the

@@ -1,6 +1,10 @@
 import { storage } from '@/sync/domains/state/storage';
 import type { VoiceAssistantAction } from '@happier-dev/protocol';
-import type { VoiceAgentHandle, VoiceAgentSendTurnOptions } from '@/voice/agent/types';
+import {
+    attachVoiceAgentActionEffectId,
+    type VoiceAgentHandle,
+    type VoiceAgentSendTurnOptions,
+} from '@/voice/agent/types';
 import {
     captureAssistantTextMessageBaseline,
     collectAssistantTextMessagesSinceBaseline,
@@ -37,6 +41,27 @@ export function createVoiceTurnStreaming(args: Readonly<{
 }> {
     const readDaemonRuntimePublication = (managedSessionId: string) =>
         readPersistedVoiceConversationRuntimePublication({ managedSessionId });
+
+    /**
+     * The eager stream carries a per-effect call identity, and the local tool runner refuses to
+     * execute a non-read-only effect without one. The non-eager client turn has no stream, so this
+     * seam - the one producer of both turn shapes - stamps the same process-local identity from the
+     * RPC session plus a monotonic turn ordinal. Identity is stable for every action of one turn
+     * response and distinct across turns, exactly matching the streamed guarantee.
+     */
+    let clientTurnOrdinal = 0;
+    const withClientTurnEffectIdentity = (
+        handle: VoiceAgentHandle,
+        actions: readonly VoiceAssistantAction[],
+    ): VoiceAssistantAction[] => {
+        if (actions.length === 0) return [];
+        clientTurnOrdinal += 1;
+        const turnOrdinal = clientTurnOrdinal;
+        return actions.map((action, index) => attachVoiceAgentActionEffectId(
+            action,
+            `${handle.rpcSessionId}:client:${turnOrdinal}:${index}`,
+        ));
+    };
 
     const sendTurnImpl = async (
         sessionId: string,
@@ -102,7 +127,9 @@ export function createVoiceTurnStreaming(args: Readonly<{
                 });
             const normalizedResponse = {
                 assistantText: response.assistantText,
-                actions: response.actions ?? [],
+                actions: streamingEnabled
+                    ? response.actions ?? []
+                    : withClientTurnEffectIdentity(handle, response.actions ?? []),
             };
             if (
                 normalizedResponse.assistantText.trim().length === 0

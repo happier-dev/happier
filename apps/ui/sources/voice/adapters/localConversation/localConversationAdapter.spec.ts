@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 
-const toggleLocalVoiceTurn = vi.fn<(sessionId: string) => Promise<void>>(async (_sessionId: string) => {});
+const toggleLocalVoiceTurn = vi.fn<(sessionId: string, currentUiContext?: unknown) => Promise<void>>(async () => {});
 const stopLocalVoiceSession = vi.fn(async () => {});
 const abortLocalVoiceTurn = vi.fn<(sessionId: string) => Promise<void>>(async (_sessionId: string) => {});
 const appendLocalVoiceAgentContextUpdate = vi.fn();
@@ -41,7 +41,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
 
 vi.mock('@/voice/local/localVoiceRuntimeController', () => ({
   localVoiceRuntimeController: {
-    toggleTurn: (sessionId: string) => toggleLocalVoiceTurn(sessionId),
+    toggleTurn: (sessionId: string, currentUiContext?: unknown) => toggleLocalVoiceTurn(sessionId, currentUiContext),
     stopSession: () => stopLocalVoiceSession(),
     abortTurn: (sessionId: string) => abortLocalVoiceTurn(sessionId),
     appendAgentContextUpdate: (sessionId: string, update: string) => appendLocalVoiceAgentContextUpdate(sessionId, update),
@@ -72,7 +72,24 @@ describe('local conversation voice adapter', () => {
     const adapter = createLocalConversationVoiceAdapter();
 
     await adapter.toggle({ sessionId: 's1' });
-    expect(toggleLocalVoiceTurn).toHaveBeenCalledWith('s1');
+    expect(toggleLocalVoiceTurn).toHaveBeenCalledWith('s1', undefined);
+  });
+
+  it('carries the provider-owned current UI port into the local attempt without a global reader', async () => {
+    const currentUiContext = {
+      readCurrentUiContext: () => ({
+        navigation: { area: 'app', screen: 'home' },
+        commands: [],
+      }),
+      resolveCurrentUiCommand: () => null,
+      subscribe: () => () => {},
+    };
+    const { createLocalConversationVoiceAdapter } = await import('./localConversationAdapter');
+    const adapter = createLocalConversationVoiceAdapter({ currentUiContext });
+
+    await adapter.toggle({ sessionId: 's1' });
+
+    expect(toggleLocalVoiceTurn).toHaveBeenCalledWith('s1', currentUiContext);
   });
 
   it('owns global surface semantics for configured agent mode and fails closed when unselected', async () => {
@@ -102,7 +119,7 @@ describe('local conversation voice adapter', () => {
     await adapter.toggle({ sessionId: 's1' });
 
     expect(stopLocalVoiceSession).not.toHaveBeenCalled();
-    expect(toggleLocalVoiceTurn).toHaveBeenCalledWith('s1');
+    expect(toggleLocalVoiceTurn).toHaveBeenCalledWith('s1', undefined);
   });
 
   it('sends context updates to the local agent buffer', async () => {

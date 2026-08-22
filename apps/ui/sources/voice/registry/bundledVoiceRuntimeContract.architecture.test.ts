@@ -9,6 +9,25 @@ function source(path: string): string {
   return readFileSync(resolve(repoRoot, path), 'utf8');
 }
 
+/**
+ * The single canonical producer of the generated bundled-plugin projections.
+ *
+ * `scripts/migrations/extensions/generateBundledPluginEntries.ts` is only a thin CLI
+ * entrypoint that re-exports `main` from here, so scanning that path would silently
+ * reduce every generator assertion below to a vacuous pass.
+ */
+const CANONICAL_BUNDLED_PLUGIN_GENERATOR =
+  'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts';
+
+function bundledPluginGeneratorSource(): string {
+  const generator = source(CANONICAL_BUNDLED_PLUGIN_GENERATOR);
+  // Anchor the scan to the real producer: if the generator is ever relocated again
+  // behind a re-export shim, this fails loudly instead of letting the `not.toContain`
+  // assertions below pass against a file that emits nothing.
+  expect(generator).toContain('generatedBundledVoiceEntries');
+  return generator;
+}
+
 function sourceFilesUnder(path: string): readonly string[] {
   return readdirSync(resolve(repoRoot, path), { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith('.ts'))
@@ -151,7 +170,7 @@ describe('bundled voice runtime contract ownership', () => {
     const publicActivationScope = source(
       'apps/ui/sources/voice/registry/externalVoiceProviderActivation.ts',
     );
-    const generator = source('scripts/migrations/extensions/generateBundledPluginEntries.ts');
+    const generator = bundledPluginGeneratorSource();
 
     for (const providerLeaf of [openAiVoice, elevenLabsVoice, xaiVoice, codexVoice]) {
       expect(providerLeaf).toMatch(/export\s*\{\s*activate/);
@@ -176,7 +195,10 @@ describe('bundled voice runtime contract ownership', () => {
     expect(composition).not.toContain('hostedConversationAuthorized');
     expect(generator).not.toContain('usesPublicVoiceProviderActivation');
     expect(installedActivation).toContain('createExternalVoiceProviderActivationScope');
-    expect(installedActivation).toContain('executableHost.activate');
+    expect(installedActivation).toContain('createProjectedExternalVoiceProviderDerivedScopeFactory');
+    expect(installedActivation).not.toContain('prepareProjectedExternalVoiceProviders');
+    expect(installedActivation).not.toContain('projectedSpeechAuthorityTokens');
+    expect(installedActivation).not.toContain('acquirePluginReactNativeArtifactAvailability');
     expect(runtimeHost).not.toContain('createRealtimeProviderRuntime');
   });
 
@@ -302,7 +324,7 @@ describe('bundled voice runtime contract ownership', () => {
     expect(codexVoice).not.toContain('BUNDLED_VOICE_PROVIDER_ACTIVATION_ENTRIES');
     expect(codexVoice).toContain('VOICE_PROVIDER_PRESENTATIONS');
     expect(codexVoice).not.toContain('declaration:');
-    expect(generatedEntries).toContain('projectBundledVoiceManifestContributions(CODEX_PLUGIN_MANIFEST)');
+    expect(generatedEntries).toContain('projectBundledVoiceManifestContributions(CODEX_BUNDLED_PLUGIN_MANIFEST)');
     expect(codexVoice).not.toContain('providerSettings');
     expect(codexVoice).not.toContain('projectSettings');
     expect(codexVoice).not.toContain(
@@ -322,7 +344,7 @@ describe('bundled voice runtime contract ownership', () => {
   });
 
   it('projects manifest semantics separately from qualified presentation without a private aggregate', () => {
-    const generator = source('scripts/migrations/extensions/generateBundledPluginEntries.ts');
+    const generator = bundledPluginGeneratorSource();
     const generatedEntries = source('apps/ui/sources/voice/registry/generatedBundledVoiceEntries.ts');
     const internalContributions = source('apps/ui/sources/voice/registry/internalContributions.ts');
     const conversationClient = source('apps/ui/sources/voice/credentials/bundledConversationClient.ts');

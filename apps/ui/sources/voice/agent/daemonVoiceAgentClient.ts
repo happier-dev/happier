@@ -2,6 +2,7 @@ import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { storage } from '@/sync/domains/state/storage';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
+import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   ExecutionRunActionResponseSchema,
@@ -68,7 +69,9 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
   }
 
   async start(params: VoiceAgentStartParams): Promise<VoiceAgentStartResult> {
-    const backendId = String(params.agentId ?? '').trim() || 'claude';
+    // Last-resort default only: callers resolve the Agent. Spelled through the canonical constant
+    // so the product default has one owner instead of a literal that drifts from it.
+    const backendId = String(params.agentId ?? '').trim() || DEFAULT_AGENT_ID;
     const chatModelId = normalizeVoiceAgentModelId(params.chatModelId);
     const commitModelId = normalizeVoiceAgentModelId(params.commitModelId);
     const profileId = normalizeVoiceAgentProfileId(params.profileId);

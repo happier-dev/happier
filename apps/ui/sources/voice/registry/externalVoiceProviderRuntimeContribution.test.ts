@@ -3,17 +3,23 @@ import { readFile } from 'node:fs/promises';
 import type {
   BundledRealtimeProviderRuntimeHost,
 } from '@/voice/registry/bundledConversationRuntimeContract';
-import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type { PluginApi, PluginClientApi } from '@happier-dev/plugin-sdk';
+import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { VoiceCredentialAccess } from '@happier-dev/plugin-sdk/voice';
 import type {
+  PluginVoiceAgentSessionRealtimeService,
   RealtimeVoiceProviderRuntime,
   VoiceRealtimeConnection,
 } from '@happier-dev/plugin-sdk/voice/client';
 import {
   createVoiceProviderRecipientContractFromCredentialsV1,
   PluginContributesV2Schema,
+  PluginProjectedActionV2Schema,
   VoiceRealtimeJsonValueSchema,
+  type PluginContributionIdentityV1,
+  type PluginMachineExecutionOriginV1,
   type VoiceRealtimeJsonValue,
+  type PluginProjectedActionV2,
 } from '@happier-dev/protocol';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -21,10 +27,18 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
 import {
+  getInstalledPluginUiClientExecutableComposition,
+  resolvePluginUiClientActionRegistration,
+} from '@/components/plugins/reactNative/clientExecutableContributions';
+import {
   createAppShellPluginUiInvocationHost,
   type AppShellPluginUiActionExecute,
 } from '@/components/appShell/plugins/pluginUiInvocationHost';
-import { loadPluginReactNativeBundleExport } from '@/components/plugins/reactNative/loader';
+import {
+  loadPluginReactNativeBundleExport,
+  type PluginReactNativeExecutableExport,
+  type PluginReactNativeLoaderBackend,
+} from '@/components/plugins/reactNative/loader';
 import { createReactNativeWebLoaderBackend } from '@/components/plugins/reactNative/webLoaderBackend.web';
 import { createVoiceConversationController } from '@/voice/runtime/controller/VoiceConversationController';
 import {
@@ -35,15 +49,16 @@ import {
 import { createRealtimeToolBarrierForVoiceHandlers } from '@/voice/tools/defaultRealtimeToolBarrier';
 import type { VoiceSessionSnapshot } from '@/voice/session/types';
 import { storage } from '@/sync/domains/state/storage';
+import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import { createVoiceClientRawCredentialAccess } from '@/voice/credentials/rawCredentialClient';
 
 import {
   bindVoiceProviderSettingsActions,
   bindVoiceProviderSettingsOperations,
   createExternalProtocol,
-  createExternalVoiceProviderActivationScope,
   createExternalVoiceProviderRuntimeContribution,
 } from './externalVoiceProviderActivation';
+import { createExternalVoiceProviderActivationScope } from './externalVoiceProviderActivation.testkit';
 import { getExternalVoiceProviderRegistration } from './externalVoiceProviderRegistrations';
 import {
   createExternalVoiceProviderSettingsDescriptor,
@@ -112,6 +127,124 @@ const parsedDeclaration = PluginContributesV2Schema.parse({ voiceProviders: [{
 if (parsedDeclaration.kind !== 'conversation') throw new Error('expected conversation declaration');
 const declaration = parsedDeclaration;
 
+const CLIENT_ACTION_LOCAL_ID = 'open-client-destination';
+const CLIENT_ACTION_GENERATION = 12;
+const CLIENT_ACTION_TARGET = Object.freeze({
+  artifactId: 'voice-client-action-bundle',
+  modulePath: './clientActionRuntime',
+  exportName: 'activate',
+  platform: 'web' as const,
+});
+const CLIENT_ACTION_ORIGIN: PluginMachineExecutionOriginV1 = Object.freeze({
+  serverIdentityId: 'srv_external_voice_client_action',
+  materializationRef: Object.freeze({
+    pluginId: 'acme.synthetic-voice',
+    machineId: 'machine-1',
+    materializationId: 'materialization-client-action',
+  }),
+});
+
+function createClientActionFixture(handler: PluginClientActionHandler) {
+  const declaration = {
+    id: CLIENT_ACTION_LOCAL_ID,
+    title: 'Open client destination',
+    scopes: ['global'],
+    surfaces: ['ui', 'voice'],
+    placementBindings: ['detailsPanel'],
+    execution: {
+      target: 'client' as const,
+      client: {
+        artifactId: CLIENT_ACTION_TARGET.artifactId,
+        modulePath: CLIENT_ACTION_TARGET.modulePath,
+        exportName: CLIENT_ACTION_TARGET.exportName,
+      },
+      platforms: [CLIENT_ACTION_TARGET.platform],
+    },
+    dangerLevel: 'safe' as const,
+  };
+  const action = PluginProjectedActionV2Schema.parse({
+    ...declaration,
+    pluginId: CLIENT_ACTION_ORIGIN.materializationRef.pluginId,
+    serverIdentityId: CLIENT_ACTION_ORIGIN.serverIdentityId,
+    materializationRef: CLIENT_ACTION_ORIGIN.materializationRef,
+    available: true,
+    authorization: {
+      packageTrust: {
+        packageIdentity: `acme.synthetic-voice/actions/${CLIENT_ACTION_LOCAL_ID}`,
+        reviewedPackageIdentity: `acme.synthetic-voice/actions/${CLIENT_ACTION_LOCAL_ID}`,
+      },
+      generation: {
+        targetGeneration: String(CLIENT_ACTION_GENERATION),
+        desiredGeneration: String(CLIENT_ACTION_GENERATION),
+        appliedGeneration: String(CLIENT_ACTION_GENERATION),
+      },
+      resourceSelections: [],
+      scopedGrants: [],
+      serviceAvailability: [],
+      operatingSystemAuthorization: [],
+    },
+  });
+  const identity: PluginReactNativeBundleCacheIdentity = Object.freeze({
+    pluginId: CLIENT_ACTION_ORIGIN.materializationRef.pluginId,
+    contributionId: CLIENT_ACTION_LOCAL_ID,
+    artifactDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+    hostAppVersion: '2.0.0',
+    hostUiApiVersion: '1.0.0',
+    reactVersion: '19.0.0',
+    reactNativeVersion: '0.83.4',
+    platform: CLIENT_ACTION_TARGET.platform,
+    channel: 'internal',
+    nativeCapabilitiesDigest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+    projectionGeneration: CLIENT_ACTION_GENERATION,
+  });
+  const cache = createPluginReactNativeBundleCache();
+  cache.putInstalledArtifact({
+    identity,
+    bytes: new Uint8Array([47, 47, 32, 99, 108, 105, 101, 110, 116]),
+    format: 'plainJs',
+  });
+  const activate = vi.fn((api: PluginClientApi) => {
+    api.actions.register(CLIENT_ACTION_LOCAL_ID, handler);
+  });
+  const backend: PluginReactNativeLoaderBackend = Object.freeze({
+    backendId: 'reactNativeWebModule',
+    available: true,
+    loadInstalledBundle: vi.fn(async () => activate as PluginReactNativeExecutableExport),
+  });
+  return Object.freeze({
+    action,
+    activate,
+    activation: Object.freeze({
+      pluginId: CLIENT_ACTION_ORIGIN.materializationRef.pluginId,
+      pluginVersion: '1.2.3',
+      contributes: PluginContributesV2Schema.parse({ actions: [declaration] }),
+      target: CLIENT_ACTION_TARGET,
+      executionOrigin: CLIENT_ACTION_ORIGIN,
+      projectionGeneration: CLIENT_ACTION_GENERATION,
+      cache,
+      identity,
+      moduleReference: {
+        containerName: 'voice-client-action-runtime',
+        modulePath: CLIENT_ACTION_TARGET.modulePath,
+        exportName: CLIENT_ACTION_TARGET.exportName,
+      },
+      backend,
+      authority: {
+        serverId: 'server-1',
+        machineId: 'machine-1',
+        projectionGeneration: CLIENT_ACTION_GENERATION,
+      },
+      isCurrent: () => true,
+    }),
+    composition: getInstalledPluginUiClientExecutableComposition(),
+    resolve(identityToResolve: PluginContributionIdentityV1): PluginProjectedActionV2 | null {
+      return identityToResolve.pluginId === action.pluginId && identityToResolve.localId === action.id
+        ? action
+        : null;
+    },
+  });
+}
+
 function createHostFixture(input: Readonly<{
   transcriptEvents: unknown[];
   lifecycleEvents: string[];
@@ -119,6 +252,7 @@ function createHostFixture(input: Readonly<{
   createWebSocketPcmMedia?: BundledRealtimeProviderRuntimeHost['createWebSocketPcmMedia'];
   createSdkHandleConnection?: BundledRealtimeProviderRuntimeHost['createSdkHandleConnection'];
   getRealtimeClientToolDefinitions?: BundledRealtimeProviderRuntimeHost['getRealtimeClientToolDefinitions'];
+  voiceHooks?: BundledRealtimeProviderRuntimeHost['voiceHooks'];
   readProviderConfig?: () => unknown;
   readProviderConversationState?: BundledRealtimeProviderRuntimeHost['readProviderConversationState'];
   writeProviderConversationState?: BundledRealtimeProviderRuntimeHost['writeProviderConversationState'];
@@ -186,12 +320,36 @@ function createHostFixture(input: Readonly<{
       getStream: () => null,
     }),
     createWebRtcConnection,
+    // The packed fixture declares `experimental_agent_session_realtime`
+    // execution, so the host must be able to hand its leaf an Agent realtime
+    // execution authority. The service itself is a session-RPC boundary.
+    createAgentSessionRealtimeService: async (): Promise<PluginVoiceAgentSessionRealtimeService> => Object.freeze({
+      inspect: async () => Object.freeze({
+        status: 'available' as const,
+        transport: 'webrtc' as const,
+      }),
+      start: async () => Object.freeze({
+        status: 'started' as const,
+        transport: Object.freeze({ kind: 'webrtc' as const, answerSdp: 'v=0\r\na=answer\r\n' }),
+        handle: {
+          stop: async () => ({ status: 'stopped' as const }),
+          watch: () => ({ dispose: () => {}, [Symbol.dispose]: () => {} }),
+          dispose: () => {},
+          [Symbol.dispose]: () => {},
+        },
+      }),
+    }),
     createSdkHandleConnection: input.createSdkHandleConnection ?? createSdkHandleConnection,
     createWebSocketPcmConnection,
     createWebSocketPcmMedia: input.createWebSocketPcmMedia ?? (() => {
       throw new Error('unexpected_pcm_media_creation');
     }),
     ensureBound: async () => {},
+    resolveAgentRealtimeVoiceConversationBinding: async ({ controlSessionId, requestedTargetSessionId }) => ({
+      conversationSessionId: controlSessionId,
+      transcriptMode: 'native_session' as const,
+      targetSessionId: requestedTargetSessionId,
+    }),
     resolveConversationSessionId: () => 'conversation-session-1',
     canPersistProviderConversationState: input.canPersistProviderConversationState ?? (() => true),
     readProviderConversationState: input.readProviderConversationState ?? (async () => null),
@@ -237,7 +395,7 @@ function createHostFixture(input: Readonly<{
       submitResults: barrierInput.submitResults,
       continueResponse: barrierInput.continueResponse,
     }),
-    voiceHooks: { onStarted: () => '', onStopped: () => {} },
+    voiceHooks: input.voiceHooks ?? { onStarted: () => '', onStopped: () => {} },
     createMachineError: ({ kind, reason }) => ({
       kind,
       reason,
@@ -593,6 +751,40 @@ describe('external Voice provider host composition', () => {
     await protocol.prepare(prepareInput);
     expect(prepareConfigs.at(-1)).toEqual({ mode: 'default', voice: 'after-throw' });
   });
+
+  it.each(['web', 'ios', 'android'] as const)(
+    'projects declaration-held effect-call custody into the provider-neutral %s protocol',
+    (platform) => {
+    const leaf: RealtimeVoiceProviderRuntime['protocol'] = {
+      async prepare() {
+        return { kind: 'prepared' as const, session: { config: {}, safeMetadata: null } };
+      },
+      decodeControl: () => [],
+      encodeTurnControl: () => null,
+    };
+    const stableDeclaration = PluginContributesV2Schema.parse({
+      voiceProviders: [{
+        ...declaration,
+        platforms: ['web', 'ios', 'android'],
+        capabilities: {
+          ...declaration.capabilities,
+          tools: { effectCalls: 'stable_ids' },
+        },
+      }],
+    }).voiceProviders[0]!;
+    if (stableDeclaration.kind !== 'conversation') {
+      throw new Error('expected stable tool-capable conversation declaration');
+    }
+    const host = createHostFixture({ transcriptEvents: [], lifecycleEvents: [] });
+
+    expect(createExternalProtocol(host, providerId, platform, declaration, leaf)).toMatchObject({
+      toolEffectCalls: 'none',
+    });
+    expect(createExternalProtocol(host, providerId, platform, stableDeclaration, leaf)).toMatchObject({
+      toolEffectCalls: 'stable_ids',
+    });
+    },
+  );
 
   it('binds account operations to protocol preparation without routing through the selected daemon', async () => {
     type PrepareInput = Parameters<RealtimeVoiceProviderRuntime['protocol']['prepare']>[0];
@@ -1149,17 +1341,24 @@ describe('external Voice provider host composition', () => {
       supported: true as const,
       result: { ok: true as const, result: { token: 'short-lived' } },
     }));
-    const executionOrigin = Object.freeze({
-      serverIdentityId: 'server-1',
-      materializationRef: Object.freeze({
-        pluginId: 'acme.synthetic-voice',
-        machineId: 'machine-1',
-        materializationId: 'materialization-voice-current',
-      }),
-    });
+    const action: PluginProjectedActionV2 = {
+      id: 'mint-session',
+      pluginId: 'acme.synthetic-voice',
+      title: 'Mint session',
+      scopes: ['session'],
+      surfaces: ['voice'],
+      execution: { target: 'daemon' },
+      placementBindings: ['detailsPanel'],
+      priority: 0,
+      dangerLevel: 'safe',
+      available: true,
+    };
     const createInvocationUi = vi.fn((signal: AbortSignal) => createAppShellPluginUiInvocationHost({
       pluginId: 'acme.synthetic-voice', contributionId: 'conversation', generation: '12',
-      machineId: 'machine-1', executionOrigin, signal, isCurrent: () => true, execute,
+      machineId: 'machine-1', signal, isCurrent: () => true, execute,
+      resolveContributedAction: (identity) => (
+        identity.pluginId === action.pluginId && identity.localId === action.id ? action : null
+      ),
     }));
     const createConnection = vi.fn(async (input: Parameters<RealtimeVoiceProviderRuntime['createConnection']>[0]) => {
       expect(input.signal).toBeInstanceOf(AbortSignal);
@@ -1196,10 +1395,155 @@ describe('external Voice provider host composition', () => {
     expect(createConnection).toHaveBeenCalledTimes(1);
     expect(execute).toHaveBeenCalledWith('machine-1', expect.objectContaining({
       qualifiedActionId: 'acme.synthetic-voice/mint-session',
-      executionSurface: 'ui',
+      executionSurface: 'voice',
       input: { mode: 'realtime' },
     }));
     expect(lifecycleEvents).toContain('connected');
+    await runtime.dispose();
+  });
+
+  it('routes a client Action from external Voice through the invoking AppShell navigation binding', async () => {
+    const lifecycleEvents: string[] = [];
+    const openSurface = vi.fn(async () => ({ ok: true as const }));
+    const handler = vi.fn();
+    const clientHandler: PluginClientActionHandler = async (_input, context) => {
+      handler();
+      await context.ui.openSurface({
+        pluginId: 'acme.destination',
+        localId: 'issue-details',
+      }, { issue: 'UCX-EXTERNAL-VOICE' });
+      return { navigated: true };
+    };
+    const fixture = createClientActionFixture(clientHandler);
+    const createInvocationUi = vi.fn((signal: AbortSignal) => createAppShellPluginUiInvocationHost({
+      pluginId: 'acme.synthetic-voice',
+      contributionId: 'conversation',
+      generation: String(CLIENT_ACTION_GENERATION),
+      machineId: 'machine-1',
+      serverId: 'server-1',
+      signal,
+      isCurrent: () => true,
+      resolveContributedAction: fixture.resolve,
+      readNavigationBinding: () => ({
+        openSurface,
+        registerOwner: () => () => {},
+      }),
+    }));
+    const createConnection = vi.fn(async (input: Parameters<RealtimeVoiceProviderRuntime['createConnection']>[0]) => {
+      await expect(input.ui.executeAction(CLIENT_ACTION_LOCAL_ID, { source: 'external-voice' }))
+        .resolves.toEqual({ navigated: true });
+      return {
+        kind: 'sdk_handle' as const, async connect() {}, async sendControl() {},
+        controlEvents: () => ({ async *[Symbol.asyncIterator]() {} }),
+        transportEvents: () => ({ async *[Symbol.asyncIterator]() {} }), async close() {},
+        state: () => 'closed' as const, currentProviderSessionId: () => null, playbackCursorMs: () => null,
+        beginOutputInterruptionCandidate: () => 'unsupported' as const, resolveOutputInterruptionCandidate() {},
+      };
+    });
+    const runtime = createExternalVoiceProviderRuntimeContribution({
+      host: createHostFixture({ transcriptEvents: [], lifecycleEvents }),
+      platform: 'web',
+      providerId,
+      declaration,
+      createInvocationUi,
+      runtime: {
+        kind: 'conversation',
+        protocol: {
+          async prepare() { return { kind: 'prepared', session: { config: {}, safeMetadata: null } }; },
+          decodeControl: () => [], encodeTurnControl: () => null,
+        },
+        createConnection,
+        encodeToolResults: () => [], encodeToolContinuation: () => null,
+        encodeContextUpdate: () => [], encodeTextTurn: () => [], microphoneMode: 'provider_managed',
+      },
+    });
+
+    await fixture.composition.unload();
+    try {
+      await fixture.composition.reconcile([fixture.activation]);
+      await runtime.adapter.start({ sessionId: 'operation-context' });
+
+      expect(createInvocationUi).toHaveBeenCalledTimes(1);
+      expect(createConnection).toHaveBeenCalledTimes(1);
+      expect(fixture.activate).toHaveBeenCalledTimes(1);
+      expect(resolvePluginUiClientActionRegistration({
+        action: fixture.action,
+        projectionGeneration: CLIENT_ACTION_GENERATION,
+        platform: CLIENT_ACTION_TARGET.platform,
+        reader: fixture.composition,
+      })).not.toBeNull();
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(openSurface).toHaveBeenCalledWith({
+        destination: {
+          pluginId: 'acme.destination',
+          localId: 'issue-details',
+        },
+        input: { issue: 'UCX-EXTERNAL-VOICE' },
+      });
+      expect(lifecycleEvents).toContain('connected');
+    } finally {
+      await runtime.dispose();
+      await fixture.composition.unload();
+    }
+  });
+
+  it('passes declared stable effect-call custody from the shared protocol into the current attempt tools', async () => {
+    const stableDeclaration = PluginContributesV2Schema.parse({
+      voiceProviders: [{
+        ...declaration,
+        capabilities: {
+          ...declaration.capabilities,
+          tools: { effectCalls: 'stable_ids' },
+        },
+      }],
+    }).voiceProviders[0]!;
+    if (stableDeclaration.kind !== 'conversation') {
+      throw new Error('expected stable tool-capable conversation declaration');
+    }
+    const getAttemptTools = vi.fn(() => []);
+    const createConnection = vi.fn(async (
+      _input: Parameters<RealtimeVoiceProviderRuntime['createConnection']>[0],
+    ) => {
+      let open = false;
+      return {
+        kind: 'sdk_handle' as const,
+        async connect() { open = true; },
+        async sendControl() {},
+        controlEvents: () => ({ async *[Symbol.asyncIterator]() {} }),
+        transportEvents: () => ({ async *[Symbol.asyncIterator]() {} }),
+        async close() { open = false; },
+        state: () => open ? 'open' as const : 'closed' as const,
+        currentProviderSessionId: () => null,
+        playbackCursorMs: () => null,
+        beginOutputInterruptionCandidate: () => 'unsupported' as const,
+        resolveOutputInterruptionCandidate() {},
+      };
+    });
+    const runtime = createExternalVoiceProviderRuntimeContribution({
+      host: createHostFixture({
+        transcriptEvents: [],
+        lifecycleEvents: [],
+        getRealtimeClientToolDefinitions: getAttemptTools,
+      }),
+      platform: 'web',
+      providerId,
+      declaration: stableDeclaration,
+      runtime: {
+        kind: 'conversation',
+        protocol: {
+          async prepare() { return { kind: 'prepared' as const, session: { config: {}, safeMetadata: null } }; },
+          decodeControl: () => [], encodeTurnControl: () => null,
+        },
+        createConnection,
+        encodeToolResults: () => [], encodeToolContinuation: () => null,
+        encodeContextUpdate: () => [], encodeTextTurn: () => [], microphoneMode: 'provider_managed',
+      },
+    });
+
+    await runtime.adapter.start({ sessionId: 'stable-tool-attempt' });
+
+    expect(createConnection).toHaveBeenCalledTimes(1);
+    expect(getAttemptTools).toHaveBeenCalledWith({ effectCalls: 'stable_ids', exposure: 'voice_assistant' });
     await runtime.dispose();
   });
 
@@ -1533,26 +1877,28 @@ describe('external Voice provider host composition', () => {
       throw new Error(`unexpected_voice_ui_action:${request.qualifiedActionId}`);
     };
     const execute = vi.fn(executeImpl);
+    const getAttemptTools = vi.fn(() => [Object.freeze({
+      name: 'listMachines',
+      description: 'List available machines',
+      parameters: Object.freeze({
+        type: 'object',
+        properties: Object.freeze({
+          limit: Object.freeze({ type: 'number' }),
+        }),
+      }),
+      execute: attemptToolExecute,
+    })]);
     const runtime = createExternalVoiceProviderRuntimeContribution({
       host: createHostFixture({
         transcriptEvents,
         lifecycleEvents,
         createSdkHandleConnection: hostCreateSdkHandleConnection,
-        getRealtimeClientToolDefinitions: () => [Object.freeze({
-          name: 'listMachines',
-          description: 'List available machines',
-          parameters: Object.freeze({
-            type: 'object',
-            properties: Object.freeze({
-              limit: Object.freeze({ type: 'number' }),
-            }),
-          }),
-          execute: attemptToolExecute,
-        })],
+        getRealtimeClientToolDefinitions: getAttemptTools,
         readProviderConfig: () => packedProviderSettings.defaultConfig,
       }),
       platform: 'web',
       providerId,
+      providerRef: Object.freeze({ pluginId: 'acme.packed-voice', localId: packedDeclaration.id }),
       declaration: packedDeclaration,
       providerSettings: packedProviderSettings,
       createInvocationAccountOperations,
@@ -1594,6 +1940,7 @@ describe('external Voice provider host composition', () => {
     ]);
     expect(execute).not.toHaveBeenCalled();
     expect(hostCreateSdkHandleConnection).toHaveBeenCalledTimes(1);
+    expect(getAttemptTools).toHaveBeenCalledWith({ effectCalls: 'none', exposure: 'voice_assistant' });
     expect(attemptToolExecute).toHaveBeenCalledWith({ limit: 10 });
     expect(fixtureEvents).toContainEqual({
       kind: 'catalog',
@@ -1664,5 +2011,154 @@ describe('external Voice provider host composition', () => {
     expect(lifecycleEvents).toContain('error');
     expect(lifecycleEvents).not.toContain('connected');
     await runtime.dispose();
+  });
+});
+
+describe('Agent-session realtime host-authored context and tool scoping', () => {
+  const agentRealtimeProviderRef = Object.freeze({
+    pluginId: 'acme.synthetic-voice',
+    localId: 'agent-realtime',
+  });
+  const agentRealtimeDeclaration = (() => {
+    const parsed = PluginContributesV2Schema.parse({
+      voiceProviders: [{
+        ...declaration,
+        id: agentRealtimeProviderRef.localId,
+        execution: {
+          kind: 'experimental_agent_session_realtime',
+          agent: 'synthetic-agent',
+          supportedRuntimeVersions: ['1.2.3'],
+        },
+      }],
+    }).voiceProviders[0]!;
+    if (parsed.kind !== 'conversation') throw new Error('expected conversation declaration');
+    return parsed;
+  })();
+
+  function createLeafCapturingTools(
+    captured: { tools: readonly Readonly<{ name: string }>[] | null },
+  ) {
+    return {
+      kind: 'conversation' as const,
+      protocol: {
+        async prepare() {
+          return { kind: 'prepared' as const, session: { config: {}, safeMetadata: null } };
+        },
+        decodeControl: () => [],
+        encodeTurnControl: () => null,
+      },
+      async createConnection(input: Readonly<{ tools: readonly Readonly<{ name: string }>[] }>) {
+        captured.tools = input.tools;
+        return {
+          kind: 'sdk_handle' as const,
+          async connect() {},
+          async sendControl() {},
+          controlEvents: () => ({ async *[Symbol.asyncIterator]() {} }),
+          transportEvents: () => ({ async *[Symbol.asyncIterator]() {} }),
+          async close() {},
+          state: () => 'closed' as const,
+          currentProviderSessionId: () => null,
+          playbackCursorMs: () => null,
+          beginOutputInterruptionCandidate: () => 'unsupported' as const,
+          resolveOutputInterruptionCandidate() {},
+        };
+      },
+      encodeToolResults: () => [],
+      encodeToolContinuation: () => null,
+      encodeContextUpdate: () => [],
+      encodeTextTurn: () => [],
+      microphoneMode: 'provider_managed' as const,
+    };
+  }
+
+  const CROSS_SESSION_TOOL = Object.freeze({
+    name: 'listMachines',
+    description: 'cross-device discovery',
+    parameters: {},
+    async execute() { return null; },
+  });
+  const CURRENT_UI_TOOL = Object.freeze({
+    name: 'readCurrentUiContext',
+    description: 'current UI',
+    parameters: {},
+    async execute() { return null; },
+  });
+
+  it('asks the canonical Action projection for only the current-UI tools and adds no host-authored startup item', async () => {
+    const captured: { tools: readonly Readonly<{ name: string }>[] | null } = { tools: null };
+    const exposures: string[] = [];
+    const startedScopes: string[] = [];
+    const lifecycleEvents: string[] = [];
+    const runtime = createExternalVoiceProviderRuntimeContribution({
+      host: createHostFixture({
+        transcriptEvents: [],
+        lifecycleEvents,
+        getRealtimeClientToolDefinitions: ({ exposure }) => {
+          exposures.push(exposure);
+          return exposure === 'current_ui_only' ? [CURRENT_UI_TOOL] : [CROSS_SESSION_TOOL, CURRENT_UI_TOOL];
+        },
+        voiceHooks: {
+          onStarted: (_sessionId, scope) => {
+            startedScopes.push(scope);
+            return scope === 'current_ui_only' ? '' : 'STORED SESSION CONTEXT';
+          },
+          onStopped: () => {},
+        },
+      }),
+      platform: 'web',
+      providerId,
+      providerRef: agentRealtimeProviderRef,
+      declaration: agentRealtimeDeclaration,
+      runtime: createLeafCapturingTools(captured),
+    });
+
+    try {
+      await runtime.adapter.start({ sessionId: 'agent-realtime-scope' });
+
+      expect(lifecycleEvents).toContain('connected');
+      expect(startedScopes).toEqual(['current_ui_only']);
+      expect(exposures).toEqual(['current_ui_only']);
+      expect(captured.tools?.map((tool) => tool.name)).toEqual(['readCurrentUiContext']);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('keeps the Voice-assistant tool inventory and host-authored startup context for direct-media execution', async () => {
+    const captured: { tools: readonly Readonly<{ name: string }>[] | null } = { tools: null };
+    const exposures: string[] = [];
+    const startedScopes: string[] = [];
+    const runtime = createExternalVoiceProviderRuntimeContribution({
+      host: createHostFixture({
+        transcriptEvents: [],
+        lifecycleEvents: [],
+        getRealtimeClientToolDefinitions: ({ exposure }) => {
+          exposures.push(exposure);
+          return exposure === 'current_ui_only' ? [CURRENT_UI_TOOL] : [CROSS_SESSION_TOOL, CURRENT_UI_TOOL];
+        },
+        voiceHooks: {
+          onStarted: (_sessionId, scope) => {
+            startedScopes.push(scope);
+            return scope === 'current_ui_only' ? '' : 'STORED SESSION CONTEXT';
+          },
+          onStopped: () => {},
+        },
+      }),
+      platform: 'web',
+      providerId,
+      declaration,
+      runtime: createLeafCapturingTools(captured),
+    });
+
+    try {
+      await runtime.adapter.start({ sessionId: 'direct-media-scope' });
+
+      expect(startedScopes).toEqual(['session_context']);
+      expect(exposures).toEqual(['voice_assistant']);
+      expect(captured.tools?.map((tool) => tool.name))
+        .toEqual(['listMachines', 'readCurrentUiContext']);
+    } finally {
+      await runtime.dispose();
+    }
   });
 });

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { getActionSpec } from '@happier-dev/protocol';
 
-import { redactVoiceToolResultValue } from './redactVoiceToolResult';
+import {
+  redactVoiceToolResultForProvider,
+  redactVoiceToolResultValue,
+} from './redactVoiceToolResult';
 
 const SHARE_ALL = { shareFilePaths: true, shareSessionSummary: true, sharePermissionRequests: true } as const;
 
@@ -150,5 +154,95 @@ describe('redactVoiceToolResultValue', () => {
     expect(serialized).not.toContain('req_deep_secret');
     expect(serialized).not.toContain('Deep secret session summary');
     expect(serialized).not.toContain('/Users/alice/private/deep-secret.txt');
+  });
+});
+
+describe('redactVoiceToolResultForProvider', () => {
+  it('keeps explicitly-authorized current UI labels independent from session-summary sharing', () => {
+    const result = redactVoiceToolResultForProvider(
+      'readCurrentUiContext',
+      {
+        navigation: { area: 'plugin', screen: 'detail', title: 'Triage issue' },
+        entity: { kind: 'github_issue', label: 'happier#123' },
+        commands: [{ id: 'open-124', title: 'Open issue #124' }],
+        detail: { path: '/Users/alice/private-repo/issue.md' },
+      },
+      {
+        ...SHARE_ALL,
+        shareFilePaths: false,
+        shareSessionSummary: false,
+      },
+    );
+
+    expect(result).toEqual({
+      navigation: { area: 'plugin', screen: 'detail', title: 'Triage issue' },
+      entity: { kind: 'github_issue', label: 'happier#123' },
+      commands: [{ id: 'open-124', title: 'Open issue #124' }],
+      detail: { path: '<path_redacted>' },
+    });
+  });
+
+  it('projects Action and current-UI command outcomes to a bounded public settlement', () => {
+    const invokeActionTool = getActionSpec('action.invoke').bindings?.voiceClientToolName;
+    const invokeCurrentUiCommandTool = getActionSpec('ui.current_context.command.invoke')
+      .bindings?.voiceClientToolName;
+    if (!invokeActionTool || !invokeCurrentUiCommandTool) {
+      throw new Error('Expected canonical Voice tool bindings');
+    }
+
+    const privateResult = {
+      ok: false,
+      errorCode: 'stale_surface',
+      errorMessage: 'raw provider failure: credential=private-token',
+      result: {
+        credential: { token: 'private-token' },
+        providerId: 'private-provider',
+        connectionId: 'private-connection',
+        originalInput: { body: 'private action body' },
+        error: { message: 'raw provider failure' },
+      },
+      action: { pluginId: 'acme.triage', localId: 'comment' },
+      commandId: 'current-ui-command:private-selection',
+    };
+
+    expect(redactVoiceToolResultForProvider(invokeActionTool, privateResult, SHARE_ALL)).toEqual({
+      ok: false,
+      errorCode: 'stale_surface',
+      errorMessage: 'stale_surface',
+    });
+    expect(redactVoiceToolResultForProvider(invokeCurrentUiCommandTool, {
+      ...privateResult,
+      ok: true,
+    }, SHARE_ALL)).toEqual({ ok: true });
+    expect(redactVoiceToolResultForProvider(invokeActionTool, {
+      ok: false,
+      errorCode: 'tool_cancelled',
+      errorMessage: 'raw cancellation diagnostics',
+    }, SHARE_ALL)).toEqual({
+      ok: false,
+      errorCode: 'tool_cancelled',
+      errorMessage: 'tool_cancelled',
+    });
+    expect(redactVoiceToolResultForProvider(invokeActionTool, {
+      ok: false,
+      errorCode: 'outcome_unknown',
+      errorMessage: 'private issued Action diagnostics',
+    }, SHARE_ALL)).toEqual({
+      ok: false,
+      errorCode: 'outcome_unknown',
+      errorMessage: 'outcome_unknown',
+    });
+
+    // Ordinary read-only tool results can legitimately carry identifiers; the
+    // Action projection must not turn into a global identifier scrubber.
+    expect(redactVoiceToolResultForProvider('getSessionSummary', {
+      ok: true,
+      providerId: 'visible-provider',
+      connectionId: 'visible-connection',
+    }, SHARE_ALL)).toEqual({
+      ok: true,
+      providerId: 'visible-provider',
+      connectionId: 'visible-connection',
+    });
   });
 });

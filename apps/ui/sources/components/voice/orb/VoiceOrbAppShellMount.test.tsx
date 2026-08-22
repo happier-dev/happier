@@ -92,8 +92,8 @@ vi.mock('@/components/pets/source/useSelectedPetPackage', () => ({
 
 const tauri = vi.hoisted(() => ({ desktop: false }));
 
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => tauri.desktop,
+vi.mock('@/utils/platform/desktopHost', () => ({
+    isDesktopHost: () => tauri.desktop,
 }));
 
 /** The two chrome bands the shell publishes, as the live frame measured them. */

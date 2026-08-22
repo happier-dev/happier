@@ -80,7 +80,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
   return {
     ...actual,
-    isAgentId: (v: any) => v === 'codex' || v === 'claude',
+    isBundledAgentId: (v: any) => v === 'codex' || v === 'claude',
     getAgentCore: (id: string) => ({
       displayNameKey: 'common.ok' as any,
       ui: { agentPickerIconName: 'sparkles-outline' },
@@ -491,6 +491,32 @@ describe('LocalConversationSection', () => {
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     const modelDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.chatModelId.title'));
     expect(modelDropdown?.props.selectedId).toBe('codex-dynamic-1');
+  });
+
+  it('preflights models against an externally installed Agent rather than the default Agent', async () => {
+    // A configured voice Agent may legitimately be an installed non-bundled Agent. Narrowing the
+    // selection to the bundled ids made the model preflight fall back to the default Agent, so the
+    // dropdown offered another Agent's model catalog for it.
+    const LocalConversationSection = await loadLocalConversationSection();
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        agentSource: 'agent',
+        agentId: 'acme-agent',
+        machineTargetMode: 'fixed',
+        machineTargetId: 'machine-1',
+        chatModelSource: 'custom',
+      },
+    });
+
+    await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+
+    expect(preflightModelsCallSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+      backendTarget: { kind: 'backend', backendId: 'acme-agent' },
+      // Without naming the Agent, the preflight resolves a non-bundled backend id to
+      // no Agent at all and probes nothing.
+      runtimeCarrierAgentId: 'acme-agent',
+    }));
   });
 
   it('uses the fixed voice agent machine id when preflighting models', async () => {

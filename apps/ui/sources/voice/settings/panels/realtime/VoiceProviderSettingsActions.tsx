@@ -17,6 +17,7 @@ import {
 } from '@/sync/domains/settings/voiceSettings';
 import { t, tLoose } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import {
   getExternalVoiceProviderRegistration,
   type ExternalVoiceProviderRegistration,
@@ -251,9 +252,9 @@ const settingsActionInvoker = createHostPluginSettingsActionInvoker<ActionContex
   },
   async snapshot({ signal, context }) {
     if (!context) throw actionError('voice_provider_settings_action_context_missing');
-    signal.throwIfAborted();
+    throwIfAborted(signal);
     const prepared = await getSyncSingleton().prepareAccountSettingsForDaemonSpawn();
-    signal.throwIfAborted();
+    throwIfAborted(signal);
     if (!isContextCurrent(context)) throw actionError('voice_provider_settings_action_retired');
     const version = prepared.accountSettingsVersionHint;
     if (typeof version !== 'number') throw actionError('voice_provider_settings_version_unavailable');
@@ -279,7 +280,7 @@ const settingsActionInvoker = createHostPluginSettingsActionInvoker<ActionContex
   },
   async applyPatch({ snapshot, patch, signal, context }) {
     if (!context) throw actionError('voice_provider_settings_action_context_missing');
-    signal.throwIfAborted();
+    throwIfAborted(signal);
     const expectedSettingsVersion = Number(snapshot.revision);
     if (!Number.isInteger(expectedSettingsVersion) || expectedSettingsVersion < 0) {
       throw actionError('voice_provider_settings_version_unavailable');
@@ -305,7 +306,7 @@ const settingsActionInvoker = createHostPluginSettingsActionInvoker<ActionContex
         });
       },
     });
-    signal.throwIfAborted();
+    throwIfAborted(signal);
     if (result.status === 'conflict') {
       throw actionError('voice_provider_settings_action_conflict');
     }

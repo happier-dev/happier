@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { useUnistyles } from 'react-native-unistyles';
 
-import { DEFAULT_AGENT_ID, getAgentCore, isAgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getAgentDropdownMenuItems } from '@/components/settings/pickers/agentDropdownItems';
 import { getModelDropdownMenuItems, REFRESH_MODELS_DROPDOWN_ITEM_ID } from '@/components/settings/pickers/modelDropdownItems';
@@ -92,7 +92,7 @@ export function LocalConversationSection(props: {
   const selectedAgentIdLabel = React.useMemo(() => {
     const raw = String(cfg.agent.agentId ?? '').trim();
     if (!raw) return t('settingsVoice.local.notSet');
-    if (isAgentId(raw as any)) return t(getAgentCore(raw as any).displayNameKey);
+    if (isBundledAgentId(raw as any)) return t(getAgentCore(raw as any).displayNameKey);
     return raw;
   }, [cfg.agent.agentId]);
 
@@ -114,11 +114,13 @@ export function LocalConversationSection(props: {
     ];
   }, [enabledAgentIds, theme.colors.text.secondary]);
 
+  // The configured voice Agent may be any installed Agent, bundled or plugin-contributed, so its
+  // id goes to the model preflight as-is. Narrowing to the bundled ids here would preflight the
+  // default Agent's catalog and offer models the selected Agent cannot run.
   const selectedAgentIdForModelOptions = React.useMemo(() => {
     if (cfg.agent.agentSource !== 'agent') return null;
     const raw = String(cfg.agent.agentId ?? '').trim();
-    if (!raw) return null;
-    return isAgentId(raw as any) ? (raw as any) : null;
+    return raw.length > 0 ? raw : null;
   }, [cfg.agent.agentId, cfg.agent.agentSource]);
   const effectiveAgentIdForModelOptions = selectedAgentIdForModelOptions ?? DEFAULT_AGENT_ID;
 
@@ -138,6 +140,9 @@ export function LocalConversationSection(props: {
     backendTarget: hasConfiguredProviderChat
       ? null
       : { kind: 'backend', backendId: effectiveAgentIdForModelOptions },
+    // This id is an Agent id, not a backend id, so name it as the runtime carrier:
+    // a non-bundled backend id alone leaves the preflight with no Agent to probe.
+    runtimeCarrierAgentId: effectiveAgentIdForModelOptions as AgentId,
     selectedMachineId: preflightMachineId,
     capabilityServerId: String(getActiveServerSnapshot().serverId ?? '').trim(),
   });

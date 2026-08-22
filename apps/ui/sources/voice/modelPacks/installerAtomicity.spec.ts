@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   checkModelPackUpdateAvailable,
   ensureModelPackInstalled,
+  getModelPackInstallSummary,
   removeModelPack,
 } from '@/voice/modelPacks/installer.native';
 import { createMemFs } from '@/voice/modelPacks/installerTestFs';
@@ -308,5 +309,118 @@ describe('modelPacks installer (native) atomicity', () => {
       (k) => k.includes('.staging-') || k.includes('.backup-'),
     );
     expect(leftovers).toEqual([]);
+  });
+  it('invalidates pack runtime state while the superseded bytes are still live, for both promotion and removal', async () => {
+    const { fs, files } = createMemFs();
+    const packId = 'runtime-invalidation';
+    const liveRoot = `file:///docs/happier/voice/modelPacks/${packId}`;
+    const v1 = new Uint8Array([1, 1, 1]);
+    const v2 = new Uint8Array([2, 2, 2, 2]);
+    const manifestFor = (version: string, bytes: Uint8Array) => ({
+      packId,
+      kind: 'tts_sherpa',
+      model: 'kokoro',
+      version,
+      files: [{ path: 'model.onnx', url: `https://example.com/${version}.onnx`, sha256: sha256Hex(bytes), sizeBytes: bytes.length }],
+    });
+    let servedManifest = manifestFor('v1', v1);
+    let servedBytes = v1;
+    const fetchImpl = async (url: string) => {
+      if (url.includes('manifest.json')) {
+        return { ok: true, status: 200, json: async () => servedManifest } as any;
+      }
+      let done = false;
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => String(servedBytes.length) },
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (done) return { done: true, value: undefined };
+              done = true;
+              return { done: false, value: servedBytes };
+            },
+          }),
+        },
+      } as any;
+    };
+
+    // The invalidation owner must observe the live directory it is invalidating,
+    // so record the bytes visible at the pack dir at the moment it runs. A
+    // post-mutation implementation would see the successor bytes (or nothing).
+    const observed: Array<{ packDirUri: string; liveBytes: string | null }> = [];
+    const invalidatePackRuntime = async (packDirUri: string) => {
+      const live = files.get(`${liveRoot}/model.onnx`);
+      observed.push({ packDirUri, liveBytes: live ? sha256Hex(live) : null });
+    };
+    const overrides = { fs, fetch: fetchImpl as any, invalidatePackRuntime };
+
+    await ensureModelPackInstalled({
+      packId,
+      mode: 'download_if_missing',
+      manifestUrl: 'https://example.com/manifest.json',
+      timeoutMs: 5000,
+      signal: new AbortController().signal,
+    }, overrides);
+    expect(sha256Hex(files.get(`${liveRoot}/model.onnx`)!)).toBe(sha256Hex(v1));
+    // Nothing was installed here before, so the pack dir held no bytes to supersede.
+    expect(observed).toEqual([{ packDirUri: liveRoot, liveBytes: null }]);
+
+    servedManifest = manifestFor('v2', v2);
+    servedBytes = v2;
+    await ensureModelPackInstalled({
+      packId,
+      mode: 'download_if_missing',
+      updatePolicy: 'manual_update_if_available',
+      manifestUrl: 'https://example.com/manifest.json',
+      timeoutMs: 5000,
+      signal: new AbortController().signal,
+    }, overrides);
+
+    expect(sha256Hex(files.get(`${liveRoot}/model.onnx`)!)).toBe(sha256Hex(v2));
+    // The promotion invalidated while v1 was still the live pack.
+    expect(observed.at(-1)).toEqual({ packDirUri: liveRoot, liveBytes: sha256Hex(v1) });
+
+    await removeModelPack({ packId }, overrides);
+
+    expect(files.has(`${liveRoot}/model.onnx`)).toBe(false);
+    expect(observed.at(-1)).toEqual({ packDirUri: liveRoot, liveBytes: sha256Hex(v2) });
+  });
+
+  it('invalidates pack runtime state before a recovered promotion rolls the live directory back', async () => {
+    const { fs, files } = createMemFs();
+    const packId = 'runtime-invalidation-recovery';
+    const root = 'file:///docs/happier/voice/modelPacks';
+    const liveRoot = `${root}/${packId}`;
+    const promoted = new Uint8Array([9, 9]);
+    const prior = new Uint8Array([7]);
+    // A promotion that crashed inside the swap window: the promoted bytes are
+    // live and the superseded pack is still parked in the backup directory.
+    files.set(`${liveRoot}/model.onnx`, promoted);
+    files.set(`${root}/.${packId}.backup/model.onnx`, prior);
+    files.set(`${root}/.${packId}.promote-intent`, new TextEncoder().encode(JSON.stringify({
+      schemaVersion: 1,
+      packId,
+      phase: 'swap_prepared',
+      startedAtMs: 1,
+      token: 'recovery',
+      priorInstall: { scopeKey: `filesystem:${liveRoot}`, identityKey: packId },
+      recovery: null,
+    })));
+
+    const observed: Array<string | null> = [];
+    const invalidatePackRuntime = async (packDirUri: string) => {
+      expect(packDirUri).toBe(liveRoot);
+      const live = files.get(`${liveRoot}/model.onnx`);
+      observed.push(live ? sha256Hex(live) : null);
+    };
+
+    await getModelPackInstallSummary({ packId }, { fs, invalidatePackRuntime });
+
+    // Recovery restored the prior pack at the same path, so the runtime derived
+    // from the promoted bytes had to be dropped while those bytes were live.
+    expect(sha256Hex(files.get(`${liveRoot}/model.onnx`)!)).toBe(sha256Hex(prior));
+    expect(observed).toEqual([sha256Hex(promoted)]);
   });
 });

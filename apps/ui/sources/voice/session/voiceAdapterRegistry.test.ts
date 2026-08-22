@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { VoiceAdapterController } from './types';
+import type { VoiceAdapterContextChannel, VoiceAdapterController } from './types';
 
 afterEach(async () => {
     const { resetVoiceSessionRuntimeStateForTests } = await import('./voiceSessionStore');
@@ -175,12 +175,48 @@ describe('voiceAdapterRegistry', () => {
       setMuted: async () => {},
       sendContextUpdate: () => {},
       getSnapshot: () => ({ adapterId: null, sessionId: null, status: 'disconnected' as const, mode: 'idle' as const, canStop: false }),
-      resolveContextChannel: () => ({ sendContextualUpdate, sendTextMessage }),
+      resolveContextChannel: () => ({
+        hostAuthoredContext: 'session_context' as const,
+        sendContextualUpdate,
+        sendTextMessage,
+      }),
     } satisfies VoiceAdapterController;
 
     registerVoiceAdapters([adapter]);
 
     expect(resolveVoiceAdapterContextChannel('second_context_provider', {})).toEqual({
+      hostAuthoredContext: 'session_context',
+      sendContextualUpdate,
+      sendTextMessage,
+    });
+  });
+
+  it('fails host-authored context scope closed when an adapter does not name its authority', async () => {
+    const {
+      registerVoiceAdapters,
+      resolveVoiceAdapterContextChannel,
+    } = await import('./voiceAdapterRegistry');
+    const sendTextMessage = async () => {};
+    const sendContextualUpdate = () => {};
+    // An unnamed authority arrives from an external contribution the host
+    // cannot type-check, so the projection must narrow it, never widen it.
+    const adapter = {
+      id: 'unscoped_context_provider',
+      engineKind: 'realtime',
+      start: async () => {},
+      stop: async () => {},
+      toggle: async () => {},
+      interrupt: async () => {},
+      setMuted: async () => {},
+      sendContextUpdate: () => {},
+      getSnapshot: () => ({ adapterId: null, sessionId: null, status: 'disconnected' as const, mode: 'idle' as const, canStop: false }),
+      resolveContextChannel: () => ({ sendContextualUpdate, sendTextMessage } as unknown as VoiceAdapterContextChannel),
+    } satisfies VoiceAdapterController;
+
+    registerVoiceAdapters([adapter]);
+
+    expect(resolveVoiceAdapterContextChannel('unscoped_context_provider', {})).toEqual({
+      hostAuthoredContext: 'current_ui_only',
       sendContextualUpdate,
       sendTextMessage,
     });

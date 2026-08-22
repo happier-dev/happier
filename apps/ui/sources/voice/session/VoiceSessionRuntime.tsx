@@ -6,7 +6,9 @@ import {
   normalizeConnectedServiceCredentialHealthStatus,
 } from '@happier-dev/protocol';
 
-import { useActiveServerAccountScope, useProfile, useSetting } from '@/sync/domains/state/storage';
+import { storage, useActiveServerAccountScope, useProfile, useSetting } from '@/sync/domains/state/storage';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
 import { resolveVoiceProviderIdForBindingScope } from '@/voice/settings/resolveVoiceProviderId';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
@@ -31,6 +33,9 @@ import {
   type VoiceCredentialRuntimeAuthoritySnapshot,
 } from './voiceCredentialAuthorityRefs';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
+import { useVoiceProviderRegistryRevision } from '@/voice/registry/useVoiceProviderRegistryRevision';
+import { useCurrentUiContextVoiceToolPort } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
+import { useForegroundVoiceTextTurnQaBridge } from '@/dev/testkit/harness/useForegroundVoiceTextTurnQaBridge';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
@@ -111,6 +116,8 @@ function readAgentConnectedServiceBindingAuthority(
 }
 
 export function VoiceSessionRuntime(): React.ReactElement | null {
+  const currentUiContext = useCurrentUiContextVoiceToolPort();
+  useForegroundVoiceTextTurnQaBridge();
   const voice = useSetting('voice') as any;
   const canonicalVoice = useSetting('voiceSettingsV1');
   const secrets = useSetting('secrets');
@@ -118,8 +125,18 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
   const accountScope = useActiveServerAccountScope();
   const connectedServices = profile?.connectedServicesV2 ?? null;
   const connectedServiceCredentialRevisions = profile?.connectedServiceCredentialRevisionsV1 ?? null;
+  const currentUiContextToolSetEnabled = storage(
+    (state) => readVoicePrivacySettings(state.settings).currentUiContextMode !== 'off',
+  );
   useVoiceDiagnosticsRuntimeSync(voice);
   const canonicalVoiceSettings = voiceSettingsParse(canonicalVoice);
+  /*
+   * Plugin activation registers external providers after this runtime's first render, so a
+   * persisted external selection resolves to `null` on a cold boot. Without observing the
+   * registry's own revision that first answer would stand forever and the selected provider
+   * would never become runnable — Start would stay a no-op with nothing to explain it.
+   */
+  useVoiceProviderRegistryRevision(voiceProviderRegistry);
   const providerId = resolveVoiceProviderIdForBindingScope(
     canonicalVoiceSettings,
     'session',
@@ -136,11 +153,21 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     credentialSlotId,
   );
   const controllerRef = React.useRef<ReturnType<typeof createVoiceSessionLifecycleController> | null>(null);
+  const accountLifetimeRetirementRef = React.useRef<Readonly<{ dispose(): void }> | null>(null);
+  const accountScopeAtLastLayoutCommitRef = React.useRef<typeof accountScope | undefined>(undefined);
   const credentialAuthorityRef = React.useRef<VoiceCredentialRuntimeAuthoritySnapshot | null>(null);
+  const currentUiContextToolSetEnabledRef = React.useRef(currentUiContextToolSetEnabled);
+  const currentUiContextToolSetSyncRef = React.useRef<Readonly<{
+    controller: ReturnType<typeof createVoiceSessionLifecycleController>;
+    enabled: boolean;
+  }> | null>(null);
+  currentUiContextToolSetEnabledRef.current = currentUiContextToolSetEnabled;
 
   // Ensure adapters are registered before the user can interact with voice controls.
   React.useLayoutEffect(() => {
-    const assembly = createBuiltinVoiceAdapterAssembly();
+    const assembly = createBuiltinVoiceAdapterAssembly({
+      ...(currentUiContext ? { currentUiContext } : {}),
+    });
     registerVoiceAdapters(assembly.adapters);
     const controller = createVoiceSessionLifecycleController();
     const audioSessionCoordinator = getSharedVoiceAudioSessionCoordinator();
@@ -153,8 +180,16 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     };
     const unsubscribe = controller.subscribe(syncPublishedSnapshot);
     setVoiceSessionLifecycleController(controller);
+    controller.setCurrentUiContextToolSetEnabled(currentUiContextToolSetEnabledRef.current);
+    currentUiContextToolSetSyncRef.current = {
+      controller,
+      enabled: currentUiContextToolSetEnabledRef.current,
+    };
     controller.setConfiguredProviderId(providerId);
     return () => {
+      if (currentUiContextToolSetSyncRef.current?.controller === controller) {
+        currentUiContextToolSetSyncRef.current = null;
+      }
       unsubscribe();
       nativeAudioLifecycleBridge?.dispose();
       const controllerDisposal = controller.dispose();
@@ -178,11 +213,56 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
         });
       })();
     };
+  }, [currentUiContext]);
+
+  React.useLayoutEffect(() => {
+    const previousAccountScope = accountScopeAtLastLayoutCommitRef.current;
+    accountScopeAtLastLayoutCommitRef.current = accountScope;
+    // Capture before releasing Account A's listener: a direct Account A → B
+    // capture retires A synchronously, and that exact live attempt must stop
+    // before B can publish through the shared AppShell port.
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    const previous = accountLifetimeRetirementRef.current;
+    accountLifetimeRetirementRef.current = null;
+    previous?.dispose();
+    // A no-Account attempt has no lifetime callback to retire. Crossing into
+    // an Account is still an exact session-scope boundary, so retire it during
+    // this layout commit before the shared AppShell port exposes the new scope.
+    if (previousAccountScope === null && accountScope !== null) {
+      controllerRef.current?.rearmAfterCredentialAuthorityChange({
+        exactSessionAccountScopeChanged: true,
+      });
+    }
+    if (!lifetime) return;
+
+    accountLifetimeRetirementRef.current = lifetime.onRetire(() => {
+      controllerRef.current?.rearmAfterCredentialAuthorityChange({
+        exactSessionAccountScopeChanged: true,
+      });
+    });
+  }, [accountScope]);
+
+  React.useLayoutEffect(() => () => {
+    const registration = accountLifetimeRetirementRef.current;
+    accountLifetimeRetirementRef.current = null;
+    registration?.dispose();
   }, []);
 
   React.useEffect(() => {
     controllerRef.current?.setConfiguredProviderId(providerId);
   }, [providerId]);
+
+  React.useEffect(() => {
+    const controller = controllerRef.current;
+    if (!controller) return;
+    const synced = currentUiContextToolSetSyncRef.current;
+    if (synced?.controller === controller && synced.enabled === currentUiContextToolSetEnabled) return;
+    controller.setCurrentUiContextToolSetEnabled(currentUiContextToolSetEnabled);
+    currentUiContextToolSetSyncRef.current = {
+      controller,
+      enabled: currentUiContextToolSetEnabled,
+    };
+  }, [currentUiContextToolSetEnabled]);
 
   React.useEffect(() => {
     const nextAuthority = createVoiceCredentialRuntimeAuthoritySnapshot({
@@ -203,20 +283,18 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     if (!previousAuthority) {
       return;
     }
-    if (hasVoiceCredentialRuntimeAuthorityChanged(previousAuthority, nextAuthority)) {
-      const accountScopeChanged =
-        previousAuthority.accountScopeAuthority !== nextAuthority.accountScopeAuthority;
-      const exactSessionAccountScopeChanged = exactSessionCredentialAuthority && accountScopeChanged;
+    const credentialAuthorityChanged =
+      previousAuthority.accountScopeAuthority === nextAuthority.accountScopeAuthority
+      && hasVoiceCredentialRuntimeAuthorityChanged(previousAuthority, nextAuthority);
+    if (credentialAuthorityChanged) {
       const globalBindingAuthorityChanged = exactSessionCredentialAuthority
         && previousAuthority.agentConnectedServiceBindingAuthority
           !== nextAuthority.agentConnectedServiceBindingAuthority;
-      // This aggregate snapshot decides only whether a terminal auth failure
-      // can be rearmed for a new Start. It is not ordinary-provider attempt
-      // currentness: the account operation service owns that exact pre-mint
-      // lease, and a minted OpenAI authority remains attempt-local. The
-      // lifecycle owner maps a global binding change to its live session id.
+      // Account scope transitions retire at the layout/lifetime boundary. This
+      // passive credential path only rearms terminal auth for a later Start;
+      // global binding changes remain specific to the global Agent attachment.
       controllerRef.current?.rearmAfterCredentialAuthorityChange({
-        exactSessionAccountScopeChanged,
+        exactSessionAccountScopeChanged: false,
         globalBindingAuthorityChanged,
       });
     }

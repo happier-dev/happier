@@ -22,6 +22,53 @@ describe('default realtime tool barrier integration', () => {
     expect(resolveVoiceToolEffectClass('unknownVoiceTool')).toBe('external');
   });
 
+  it('rejects an undeclared effectful call unless the provider declared stable call/result custody', async () => {
+    const handler = vi.fn(async () => JSON.stringify({ ok: true }));
+    const deps = {
+      handlers: { sendSessionMessage: handler },
+      readRedactionPrefs: () => ({
+        shareFilePaths: true,
+        shareSessionSummary: true,
+        sharePermissionRequests: true,
+        shareDeviceInventory: true,
+        shareRecentMessages: true,
+      }),
+      submitResults: async () => undefined,
+      continueResponse: async () => undefined,
+    };
+
+    const noCustody = createRealtimeToolBarrierForVoiceHandlers(deps);
+    await expect(noCustody.run({
+      responseId: 'response-no-custody',
+      calls: [call({
+        responseId: 'response-no-custody',
+        callId: 'call-no-custody',
+        toolName: 'sendSessionMessage',
+        arguments: { message: 'hello' },
+      })],
+    })).resolves.toMatchObject({
+      results: [expect.objectContaining({ status: 'denied', errorCode: 'voice_effect_call_custody_unavailable' })],
+    });
+    expect(handler).not.toHaveBeenCalled();
+
+    const stableCustody = createRealtimeToolBarrierForVoiceHandlers({
+      ...deps,
+      effectCalls: 'stable_ids',
+    });
+    await expect(stableCustody.run({
+      responseId: 'response-stable-custody',
+      calls: [call({
+        responseId: 'response-stable-custody',
+        callId: 'call-stable-custody',
+        toolName: 'sendSessionMessage',
+        arguments: { message: 'hello' },
+      })],
+    })).resolves.toMatchObject({
+      results: [expect.objectContaining({ status: 'success' })],
+    });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it('uses canonical handlers and redacts their parsed result before the provider boundary', async () => {
     const submitResults = vi.fn(async () => undefined);
     const handler = vi.fn(async () => JSON.stringify({

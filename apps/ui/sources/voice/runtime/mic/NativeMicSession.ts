@@ -6,7 +6,7 @@ import {
     showMicrophonePermissionDeniedAlert,
 } from '@/utils/platform/microphonePermissions';
 
-import type { MicSession } from './MicSession';
+import type { CreateMicSessionOptions, MicSession } from './MicSession';
 import {
     createExpoAudioRecorder,
     type ExpoAudioRecorderLike,
@@ -23,7 +23,7 @@ type CreateNativeMicSessionOptions = Readonly<{
     releaseStream?: (stream: MediaStream) => Promise<void> | void;
     setMuted?: (muted: boolean) => Promise<void> | void;
     teardown?: () => Promise<void>;
-}>;
+}> & Pick<CreateMicSessionOptions, 'onFailure'>;
 
 type RecordingPermissionResult = Readonly<{
     granted: boolean;
@@ -47,6 +47,40 @@ export function createNativeMicSession(options: CreateNativeMicSessionOptions = 
     let stream: MediaStream | null = null;
     let activation: Promise<void> | null = null;
     let lifecycleEpoch = 0;
+    let activeTrack: MediaStreamTrack | null = null;
+    let trackEndedListener: (() => void) | null = null;
+
+    /**
+     * Detach before any intentional retirement. The platform fires `ended` for a
+     * track we stopped ourselves, and reading that as a capture fault would fail
+     * every ordinary Stop.
+     */
+    const detachTrackListeners = (): void => {
+        const track = activeTrack;
+        const listener = trackEndedListener;
+        activeTrack = null;
+        trackEndedListener = null;
+        if (!track || !listener) return;
+        track.removeEventListener('ended', listener);
+    };
+
+    const attachTrackListeners = (activeStream: MediaStream): void => {
+        detachTrackListeners();
+        const [track] = activeStream.getAudioTracks();
+        if (!track || typeof track.addEventListener !== 'function') return;
+        const attachedEpoch = lifecycleEpoch;
+        const listener = (): void => {
+            // A track that ends after its lifecycle was retired belongs to a
+            // superseded attempt; only the current capture can fail the runtime.
+            if (attachedEpoch !== lifecycleEpoch || activeTrack !== track) return;
+            detachTrackListeners();
+            if (stream === activeStream) stream = null;
+            options.onFailure?.({ kind: 'mic_ended', reason: 'native_mic_track_ended' });
+        };
+        activeTrack = track;
+        trackEndedListener = listener;
+        track.addEventListener('ended', listener);
+    };
 
     const releaseStream = async (activeStream: MediaStream): Promise<void> => {
         if (options.releaseStream) {
@@ -79,6 +113,7 @@ export function createNativeMicSession(options: CreateNativeMicSessionOptions = 
                 }
                 applyMutedState(acquired);
                 stream = acquired;
+                attachTrackListeners(acquired);
             })();
             activation = nextActivation;
             try {
@@ -95,6 +130,7 @@ export function createNativeMicSession(options: CreateNativeMicSessionOptions = 
         isMuted: () => muted,
         teardown: async () => {
             lifecycleEpoch += 1;
+            detachTrackListeners();
             const activeStream = stream;
             stream = null;
             if (activeStream) await releaseStream(activeStream);

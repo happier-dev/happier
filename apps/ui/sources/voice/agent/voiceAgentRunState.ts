@@ -1,8 +1,7 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
-import { supportsEffectiveLocalControlForSession } from '@/sync/domains/session/control/effectiveRuntimeControlSurface';
+import { supportsAgentLifecycleCapability } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { storage } from '@/sync/domains/state/storage';
 import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
 import { resolveMachineForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
@@ -39,9 +38,12 @@ export function assertActiveDaemonTargetSession(sessionId: string): void {
     const session: any = resolvePreferredVoiceAgentSessionFromState(sessionId);
     if (!session) return;
     const metadata = readVoiceSessionOwnerMetadataFromState(state, sessionId);
-    const agentId = resolveAgentIdFromSessionMetadata(metadata) ?? DEFAULT_AGENT_ID;
-    if (!supportsEffectiveLocalControlForSession({
-        agentId,
+    // An unreadable Agent identity is not Claude. Local voice control needs the
+    // Session's real Agent to declare a terminal surface, so an unknown identity
+    // stays unsupported instead of borrowing the default Agent's facts.
+    if (!supportsAgentLifecycleCapability({
+        agentId: resolveAgentIdFromSessionMetadata(metadata),
+        capability: 'surface.terminal',
         metadata,
         accountSettings: state.settings,
     })) {

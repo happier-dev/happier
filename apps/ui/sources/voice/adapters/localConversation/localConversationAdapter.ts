@@ -5,6 +5,7 @@ import { readLocalConversationVoiceSettings, voiceSettingsParse } from '@/sync/d
 import { VoiceLocalConversationSchema } from './settings';
 import { resolveActiveLocalVoiceAgentBinding } from '@/voice/context/resolveActiveLocalVoiceAgentBinding';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
 
 function readConfig(voiceSettings: unknown) {
   const parsedVoice = voiceSettingsParse(voiceSettings);
@@ -21,7 +22,9 @@ function readSelectedConfig(voiceSettings: unknown) {
   return parsedVoice.providerId === 'local_conversation' ? readConfig(parsedVoice) : null;
 }
 
-export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
+export function createLocalConversationVoiceAdapter(input: Readonly<{
+  currentUiContext?: VoiceCurrentUiToolPort;
+}> = {}): VoiceAdapterController {
   return createLocalVoiceAdapter('local_conversation', {
     contextUpdates: true,
     textTurns: true,
@@ -46,6 +49,9 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
       const active = resolveActiveLocalVoiceAgentBinding();
       if (!active) return null;
       return {
+        // Local Voice is Happier's own assistant: it has no external prompt
+        // authority, so host-authored session context is its normal input.
+        hostAuthoredContext: 'session_context',
         sendContextualUpdate: active.sendContextualUpdate,
         sendTextMessage: (text) => fireAndForget(active.sendTextUpdate(text), {
           tag: 'local_voice_agent_text_update',
@@ -53,5 +59,6 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
         announceAssistantText: active.announceAssistantText,
       };
     },
+    ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
   });
 }

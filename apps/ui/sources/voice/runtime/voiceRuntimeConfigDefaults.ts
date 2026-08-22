@@ -39,25 +39,6 @@ export const VOICE_RUNTIME_CONFIG_DEFAULTS = {
             /** Reconnect attempts before the drop is surfaced as non-recoverable. */
             maxRetries: 5,
         },
-        /**
-         * Inbound stall watchdog — detects a STALLED-but-"open" connection where
-         * no inbound audio/events arrive while a turn is active. Mirrors the
-         * FluidVoice route watchdog: debounced, re-entrancy-guarded, reset on
-         * every inbound event, and quiescent during legitimate between-turn
-         * silence (only armed while a turn is active).
-         */
-        inboundWatchdog: {
-            /** No inbound event within this window (while a turn is active) is a stall. */
-            stallTimeoutMs: 6_000,
-            /**
-             * No inbound event within this (more generous) window during the
-             * AWAITING-RESPONSE / "thinking" gap — after the user's turn ends but
-             * before the agent emits its first audio — is a stall. Larger than
-             * `stallTimeoutMs` because response generation legitimately takes
-             * longer than an inter-chunk gap.
-             */
-            awaitingResponseTimeoutMs: 12_000,
-        },
     },
     /**
      * Conversational turn-taking thresholds — the single source of truth for the

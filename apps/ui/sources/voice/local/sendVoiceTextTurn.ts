@@ -29,6 +29,7 @@ import type {
   VoiceAgentAcceptedOutputV1,
   VoiceAgentSendTurnOptions,
 } from '@/voice/agent/types';
+import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
 
 type VoicePlaybackControllerLike = Readonly<{
   registerStopper: VoicePlaybackStopperRegistrar;
@@ -77,6 +78,8 @@ export async function sendVoiceTextTurn(params: {
     deliveryCommand: 'interrupt_and_send';
   }>;
   onUserTranscriptAccepted?: () => Promise<void>;
+  /** Provider-owned current UI port carried by this exact local voice attempt. */
+  currentUiContext?: VoiceCurrentUiToolPort;
 }): Promise<void> {
   const sessionId = normalizeNonEmptyString(params.sessionId);
   if (!sessionId) {
@@ -429,6 +432,7 @@ export async function sendVoiceTextTurn(params: {
         userText,
         durableLocalId: params.durableDispatch!.localId,
         currentToolSessionId,
+        ...(params.currentUiContext ? { currentUiContext: params.currentUiContext } : {}),
         voiceAgentSessions: params.voiceAgentSessions,
         signal: params.signal,
         onUserTranscriptAccepted: params.onUserTranscriptAccepted,

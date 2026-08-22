@@ -8,7 +8,10 @@ import type {
   VoiceRealtimePreparation,
   VoiceTurnControlAction,
 } from '@happier-dev/plugin-sdk/voice/client';
-import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol';
+import type {
+  VoiceConversationToolEffectCalls,
+  VoiceRealtimeJsonValue,
+} from '@happier-dev/protocol';
 import type { VoiceConnectionCloseReason } from '@/voice/runtime/connection/VoiceRealtimeConnection';
 import type { VoiceTurnControlCapabilities } from './VoiceTurnControlCapabilities';
 
@@ -20,6 +23,8 @@ export type VoiceRealtimePreparedSession = Extract<
 export type VoiceRealtimeProtocolAdapter = Readonly<{
   id: string;
   turnControls: VoiceTurnControlCapabilities;
+  /** Omission stays fail-closed for legacy/internal adapter fixtures. */
+  toolEffectCalls?: VoiceConversationToolEffectCalls;
   preflight?(input: Readonly<{
     controlSessionId: string;
     attemptId: number;

@@ -145,6 +145,33 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     expect(observedTurnIds).toEqual(['canonical-turn-0', 'canonical-turn-1']);
   });
 
+  it('rejects a non-streaming effect that has no stable call identity', async () => {
+    await prepareSession();
+    submitMessage.mockResolvedValue(undefined);
+    const sessions = createSessions([
+      {
+        assistantText: 'I will send it.',
+        actions: [{ t: 'sendSessionMessage', args: { message: 'Must not send' } }],
+      },
+      { assistantText: 'I could not safely execute it.', actions: [] },
+    ]);
+    const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
+
+    const result = await runVoiceAgentTurnWithTools({
+      sessionId: 'sys_voice',
+      userText: 'send it',
+      durableLocalId: 'test-durable-local-id',
+      currentToolSessionId: 's1',
+      voiceAgentSessions: sessions,
+    });
+
+    expect(submitMessage).not.toHaveBeenCalled();
+    expect(result.toolResultBatches[0]?.[0]).toMatchObject({
+      t: 'sendSessionMessage',
+      result: { ok: false, errorCode: 'tool_call_identity_required' },
+    });
+  });
+
   it('retains and reports a completed canonical effect when abort fires at the handler completion boundary', async () => {
     await prepareSession();
     const controller = new AbortController();

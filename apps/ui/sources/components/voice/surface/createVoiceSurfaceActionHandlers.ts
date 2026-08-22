@@ -4,34 +4,26 @@ import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
-import type { VoiceMachineRecoveryAction } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
-import { Linking, Platform } from 'react-native';
 import type { NavigationFocusReturnCapture } from '@/utils/navigation/useNavigationFocusReturn';
 
 import type { VoiceSurfaceVariant } from './voiceSurfaceTypes';
-import type { VoiceConnectRecoveryTarget } from './resolveVoiceConnectRecoveryTarget';
 
+/**
+ * The Voice surface's own actions. Recovery is **not** one of them: the
+ * placement-neutral attempt projection owns the single recovery derivation and
+ * dispatch every surface fires (`voiceAttemptRecovery.ts`).
+ */
 export function createVoiceSurfaceActionHandlers(params: Readonly<{
     activeAdapterId: string | null;
-    globalStartAuthorized: boolean;
     fallbackOpenConversationControlSessionId: string | null;
     openConversationSessionId: string | null;
     providerId: string;
-    connectRecoveryTarget: VoiceConnectRecoveryTarget;
-    recoveryAction: VoiceMachineRecoveryAction | null;
-    runtimeRecoveryTarget: Readonly<{
-        agentId: string;
-        pluginId: string;
-        machineId: string;
-        serverId: string;
-    }> | null;
     routeSessionId: string | null;
     router: { push: (href: any) => void };
     captureNavigationFocusReturn?: () => NavigationFocusReturnCapture;
     navigateWithFocusReturn?: (navigate: () => void) => void;
     sessionId: string | null | undefined;
     snapSessionId: string | null;
-    startSessionId: string | null;
     variant: VoiceSurfaceVariant;
 }>) {
     const navigate = (href: unknown) => {
@@ -106,61 +98,6 @@ export function createVoiceSurfaceActionHandlers(params: Readonly<{
             const sessionId = String(params.sessionId ?? '').trim();
             if (!sessionId) return;
             fireAndForget(teleportVoiceAgentToSessionRoot({ sessionId }), { tag: 'VoiceSurface.teleport' });
-        },
-        onRecover: () => {
-            if (params.recoveryAction === 'connect_agent') {
-                if (params.connectRecoveryTarget.kind === 'unavailable') return;
-                navigate(
-                    params.connectRecoveryTarget.kind === 'exact'
-                        ? params.connectRecoveryTarget.route
-                        : params.connectRecoveryTarget.kind === 'provider_settings'
-                            ? SETTINGS_ROUTES.voice
-                            : SETTINGS_ROUTES.connectedServices,
-                );
-                return;
-            }
-            if (
-                params.recoveryAction === 'install_agent_runtime'
-                || params.recoveryAction === 'update_agent_runtime'
-            ) {
-                if (!params.runtimeRecoveryTarget) return;
-                navigate({
-                    pathname: '/(app)/settings/agents/[agentId]',
-                    params: {
-                        agentId: params.runtimeRecoveryTarget.agentId,
-                        pluginId: params.runtimeRecoveryTarget.pluginId,
-                        machineId: params.runtimeRecoveryTarget.machineId,
-                        serverId: params.runtimeRecoveryTarget.serverId,
-                        installIntent:
-                            params.recoveryAction === 'update_agent_runtime'
-                                ? 'update'
-                                : 'install',
-                    },
-                });
-                return;
-            }
-            if (params.recoveryAction === 'review_credentials') {
-                navigate(SETTINGS_ROUTES.voice);
-                return;
-            }
-            if (params.recoveryAction === 'open_settings' || params.recoveryAction === 'open_settings_then_reconnect') {
-                if (Platform.OS === 'web') {
-                    navigate(SETTINGS_ROUTES.voice);
-                    return;
-                }
-                fireAndForget(
-                    Linking.openSettings().catch(() => navigate(SETTINGS_ROUTES.voice)),
-                    { tag: 'VoiceSurface.openSettings' },
-                );
-                return;
-            }
-            if (params.recoveryAction === 'retry' || params.recoveryAction === 'reconnect') {
-                const retrySessionId = normalizeNonEmptyString(params.snapSessionId)
-                    ?? normalizeNonEmptyString(params.startSessionId)
-                    ?? (params.globalStartAuthorized ? '' : null);
-                if (retrySessionId === null) return;
-                fireAndForget(voiceSessionManager.toggle(retrySessionId), { tag: 'VoiceSurface.recover' });
-            }
         },
     };
 }

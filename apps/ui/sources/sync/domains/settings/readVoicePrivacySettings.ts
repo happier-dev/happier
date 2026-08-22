@@ -10,9 +10,20 @@ export function readVoicePrivacySettings(settings: unknown): VoiceSettings['priv
         ? rawPrivacy as Record<string, unknown>
         : null;
     const explicitlyShares = (key: string): boolean => privacyRecord?.[key] === true;
+    const hasCurrentUiContextMode = privacyRecord !== null
+        && Object.prototype.hasOwnProperty.call(privacyRecord, 'currentUiContextMode');
+    const rawCurrentUiContextMode = privacyRecord?.currentUiContextMode;
+    const currentUiContextMode = hasCurrentUiContextMode
+        && rawCurrentUiContextMode !== voiceSettings.privacy.currentUiContextMode
+        ? 'off'
+        : voiceSettings.privacy.currentUiContextMode;
 
     return {
         ...voiceSettings.privacy,
+        // The settings parser recovers malformed input for UI editing, but a
+        // present value that did not survive parsing must not authorize
+        // provider disclosure. Missing predecessor data retains on-demand.
+        currentUiContextMode,
         // These values are consumed at provider boundaries. A malformed or
         // partial payload must never inherit the account schema's UI defaults.
         shareSessionSummary: explicitlyShares('shareSessionSummary'),

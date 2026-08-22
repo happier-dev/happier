@@ -9,6 +9,7 @@ import {
   stopLocalVoiceSession,
   toggleLocalVoiceTurn,
 } from './localVoiceEngine';
+import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
 
 export type LocalVoiceRuntimeController = Readonly<{
   abortTurn: (sessionId: string) => Promise<void>;
@@ -27,7 +28,7 @@ export type LocalVoiceRuntimeController = Readonly<{
   }>) => Promise<void>;
   sendAgentTextUpdate: (sessionId: string, update: string) => Promise<void>;
   stopSession: () => Promise<void>;
-  toggleTurn: (sessionId: string) => Promise<void>;
+  toggleTurn: (sessionId: string, currentUiContext?: VoiceCurrentUiToolPort) => Promise<void>;
 }>;
 
 export function createLocalVoiceRuntimeController(): LocalVoiceRuntimeController {
@@ -41,7 +42,7 @@ export function createLocalVoiceRuntimeController(): LocalVoiceRuntimeController
       await sendLocalVoiceAgentTextTurn(controlSessionId, text, durableDispatch, onAccepted),
     sendAgentTextUpdate: async (sessionId, update) => await sendLocalVoiceAgentTextUpdate(sessionId, update),
     stopSession: async () => await stopLocalVoiceSession(),
-    toggleTurn: async (sessionId) => await toggleLocalVoiceTurn(sessionId),
+    toggleTurn: async (sessionId, currentUiContext) => await toggleLocalVoiceTurn(sessionId, currentUiContext),
   };
 }
 

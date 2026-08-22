@@ -11,7 +11,8 @@ import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountS
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
-import { resolveVoiceProviderIdForSurface } from '@/voice/settings/resolveVoiceProviderId';
+import { resolveVoicePresentedProviderId } from '@/voice/settings/resolveVoiceProviderId';
+import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
 
 import { resolveVoiceSurfaceStatusPresentation } from './resolveVoiceSurfaceStatusPresentation';
 import { useVoiceSurfaceConversationState } from './useVoiceSurfaceConversationState';
@@ -256,7 +257,8 @@ export const VoiceAnnouncer = React.memo(function VoiceAnnouncer(): React.ReactE
     const control = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
     const voice = useSetting('voice');
     const canonicalVoice = React.useMemo(() => voiceSettingsParse(voice), [voice]);
-    const providerId = resolveVoiceProviderIdForSurface(canonicalVoice, voiceProviderRegistry) ?? 'off';
+    const snap = useVoiceSessionSnapshot();
+    const providerId = resolveVoicePresentedProviderId(snap, canonicalVoice, voiceProviderRegistry) ?? 'off';
     /*
      * Gated on the same setting the surfaces are (`useVoiceSurfaceModel.ts:153`).
      * Reading canonical transcript state directly would start announcing the

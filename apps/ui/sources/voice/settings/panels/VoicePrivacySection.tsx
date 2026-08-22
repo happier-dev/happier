@@ -1,8 +1,11 @@
 import * as React from 'react';
+import { View } from 'react-native';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Icon } from '@/components/ui/icons/Icon';
 import { Modal } from '@/modal';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
@@ -10,6 +13,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (next: VoiceSettings) => void }) {
   const privacy = props.voice.privacy;
+  const [currentUiContextModeMenuOpen, setCurrentUiContextModeMenuOpen] = React.useState(false);
 
   const setPrivacy = (patch: Partial<VoiceSettings['privacy']>) => {
     props.setVoice({
@@ -23,6 +27,64 @@ export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (ne
       title={t('settingsVoice.privacy.title')}
       footer={t('settingsVoice.privacy.footer')}
     >
+      <DropdownMenu
+        open={currentUiContextModeMenuOpen}
+        onOpenChange={setCurrentUiContextModeMenuOpen}
+        variant="selectable"
+        search={false}
+        selectedId={privacy.currentUiContextMode}
+        showCategoryTitles={false}
+        matchTriggerWidth={true}
+        connectToTrigger={true}
+        rowKind="item"
+        itemTrigger={{
+          title: t('settingsVoice.privacy.currentUiContextModeTitle'),
+          subtitle: t('settingsVoice.privacy.currentUiContextModeSubtitle'),
+          showSelectedSubtitle: false,
+          itemProps: {
+            testID: 'settings.voice.privacy.currentUiContextMode',
+            subtitleLines: 0,
+          },
+        }}
+        items={[
+          {
+            id: 'off',
+            title: t('settingsVoice.privacy.currentUiContextMode.offTitle'),
+            subtitle: t('settingsVoice.privacy.currentUiContextMode.offSubtitle'),
+            icon: (
+              <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="minus" size={20} />
+              </View>
+            ),
+          },
+          {
+            id: 'on_demand',
+            title: t('settingsVoice.privacy.currentUiContextMode.onDemandTitle'),
+            subtitle: t('settingsVoice.privacy.currentUiContextMode.onDemandSubtitle'),
+            icon: (
+              <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="hand" size={20} />
+              </View>
+            ),
+          },
+          {
+            id: 'automatic',
+            title: t('settingsVoice.privacy.currentUiContextMode.automaticTitle'),
+            subtitle: t('settingsVoice.privacy.currentUiContextMode.automaticSubtitle'),
+            icon: (
+              <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="sparkle" size={20} />
+              </View>
+            ),
+          },
+        ]}
+        onSelect={(id) => {
+          if (id === 'off' || id === 'on_demand' || id === 'automatic') {
+            setPrivacy({ currentUiContextMode: id });
+          }
+          setCurrentUiContextModeMenuOpen(false);
+        }}
+      />
       <Item
         title={t('settingsVoice.privacy.shareSessionSummary')}
         subtitle={t('settingsVoice.privacy.shareSessionSummarySubtitle')}

@@ -4,8 +4,13 @@ import {
   isActionEnabledByActionsSettings,
   listActionSpecs,
   normalizeSpawnSessionErrorDetail,
+  PluginContributionIdentityV1Schema,
   type ActionId,
 } from '@happier-dev/protocol';
+import {
+  PluginUiJsonValueV1Schema,
+  type PluginUiJsonValueV1,
+} from '@happier-dev/protocol/plugins/ui';
 
 import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
@@ -24,6 +29,11 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveAskUserQuestionDecisionAnswers } from '@/voice/requests/resolveAskUserQuestionDecisionAnswers';
+import type { VoiceCurrentUiToolPort } from './currentUiContextToolPort';
+import {
+  isCurrentUiContextVoiceAction,
+  isVoiceActionAvailableInState,
+} from './resolveDisabledVoiceActionIds';
 
 type AgentRequestKind = SessionPendingRequest['kind'];
 type PendingVoiceRequest = Readonly<{
@@ -49,6 +59,34 @@ function normalizeId(raw: unknown): string {
 function asPlainObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+type CurrentUiCommandInvocationInput = Readonly<{ commandId: string }>;
+type VoiceActionInvocationInput = Readonly<{
+  action: ReturnType<typeof PluginContributionIdentityV1Schema.parse>;
+  input?: PluginUiJsonValueV1;
+}>;
+
+/**
+ * ActionSpec deliberately exposes a heterogeneous input-schema union, so its
+ * successful parse data is `unknown` at this boundary. Re-narrow the already
+ * validated value through the canonical field schemas instead of giving the
+ * Voice effect bridge an unchecked local cast.
+ */
+function readCurrentUiCommandInvocationInput(value: unknown): CurrentUiCommandInvocationInput | null {
+  const record = asPlainObject(value);
+  const commandId = record?.commandId;
+  return typeof commandId === 'string' && commandId.length > 0 ? { commandId } : null;
+}
+
+function readVoiceActionInvocationInput(value: unknown): VoiceActionInvocationInput | null {
+  const record = asPlainObject(value);
+  if (!record) return null;
+  const action = PluginContributionIdentityV1Schema.safeParse(record.action);
+  if (!action.success) return null;
+  if (record.input === undefined) return { action: action.data };
+  const input = PluginUiJsonValueV1Schema.safeParse(record.input);
+  return input.success ? { action: action.data, input: input.data } : null;
 }
 
 function readErrorCode(error: unknown): string | null {
@@ -149,6 +187,20 @@ const VOICE_TOOL_ACTION_ID_BY_TOOL_NAME: Readonly<Record<string, ActionId>> = ((
   return Object.freeze(Object.fromEntries(entries));
 })();
 
+const CURRENT_UI_CONTEXT_READ_ACTION_ID: ActionId = 'ui.current_context.read';
+const CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID: ActionId = 'ui.current_context.command.invoke';
+const ACTION_INVOKE_ACTION_ID: ActionId = 'action.invoke';
+
+const CURRENT_UI_CONTEXT_READ_TOOL_NAME = String(
+  getActionSpec(CURRENT_UI_CONTEXT_READ_ACTION_ID).bindings?.voiceClientToolName ?? '',
+).trim();
+const CURRENT_UI_CONTEXT_COMMAND_INVOKE_TOOL_NAME = String(
+  getActionSpec(CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID).bindings?.voiceClientToolName ?? '',
+).trim();
+const ACTION_INVOKE_TOOL_NAME = String(
+  getActionSpec(ACTION_INVOKE_ACTION_ID).bindings?.voiceClientToolName ?? '',
+).trim();
+
 export function resolveVoiceToolEffectClass(toolName: string): VoiceToolEffectClass {
   const actionId = VOICE_TOOL_ACTION_ID_BY_TOOL_NAME[toolName];
   if (!actionId) return 'external';
@@ -159,7 +211,10 @@ export function resolveVoiceToolEffectClass(toolName: string): VoiceToolEffectCl
 }
 
 export function createVoiceToolHandlers(
-  deps: Readonly<{ resolveSessionId: (explicitSessionId?: string | null) => string | null }>,
+  deps: Readonly<{
+    resolveSessionId: (explicitSessionId?: string | null) => string | null;
+    currentUiContext?: VoiceCurrentUiToolPort;
+  }>,
 ): Readonly<Record<string, VoiceToolHandler>> {
   const resolveSessionIdOrError = (
     explicitSessionId?: string | null,
@@ -298,6 +353,13 @@ export function createVoiceToolHandlers(
   const executor = createDefaultActionExecutor({
     resolveServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
     resolveServerNameForSessionId: (sessionId: string) => resolveSessionListLookupSessionServerScopeFromState(storage.getState(), sessionId)?.serverName ?? null,
+    listContributedActionDefinitions: () => (
+      deps.currentUiContext?.listCurrentContributedActionDefinitions?.() ?? []
+    ),
+    isActionEnabled: (actionId) => (
+      !isCurrentUiContextVoiceAction(actionId)
+      || isVoiceActionAvailableInState(storage.getState(), actionId)
+    ),
   });
 
   const execute = async (toolName: string, parameters: unknown, ctx?: { serverId?: string | null }): Promise<string> => {
@@ -468,10 +530,111 @@ export function createVoiceToolHandlers(
     return jsonOk({ status: 'done', sessionId, requestId });
   };
 
+  const readCurrentUiContext = async (
+    parameters: unknown,
+    context?: VoiceToolInvocationContext,
+  ): Promise<string> => {
+    const parsed = getActionSpec(CURRENT_UI_CONTEXT_READ_ACTION_ID).inputSchema.safeParse(parameters ?? {});
+    if (!parsed.success) return jsonError('invalid_parameters', 'invalid_parameters');
+    if (context?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
+    if (!deps.currentUiContext || !isVoiceActionAvailableInState(storage.getState(), CURRENT_UI_CONTEXT_READ_ACTION_ID)) {
+      return jsonError('current_ui_context_unavailable', 'current_ui_context_unavailable');
+    }
+    const snapshot = deps.currentUiContext.readCurrentUiContext();
+    if (!snapshot) return jsonError('current_ui_context_unavailable', 'current_ui_context_unavailable');
+    if (context?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
+    // The provider owns this descriptor-only DTO. In particular, do not
+    // resolve or serialize its private semantic command payload here.
+    return JSON.stringify(snapshot);
+  };
+
+  const invokeCurrentUiCommand = async (
+    parameters: unknown,
+    context?: VoiceToolInvocationContext,
+  ): Promise<string> => {
+    const parsed = getActionSpec(CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID).inputSchema.safeParse(parameters ?? {});
+    if (!parsed.success) return jsonError('invalid_parameters', 'invalid_parameters');
+    const commandInput = readCurrentUiCommandInvocationInput(parsed.data);
+    if (!commandInput) return jsonError('invalid_parameters', 'invalid_parameters');
+    if (context?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
+    const currentUiContext = deps.currentUiContext;
+    if (
+      !currentUiContext
+      || typeof currentUiContext.invokeCurrentUiCommand !== 'function'
+      || !isVoiceActionAvailableInState(storage.getState(), CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID)
+    ) {
+      return jsonError('current_ui_command_unavailable', 'current_ui_command_unavailable');
+    }
+    const outcome = await currentUiContext.invokeCurrentUiCommand({
+      commandId: commandInput.commandId,
+      ...(context?.signal ? { signal: context.signal } : {}),
+    });
+    // The UI bridge intentionally returns only its canonical settlement. Do
+    // not echo the opaque id, private semantic command, command input, or
+    // host diagnostics across the provider boundary.
+    return outcome.ok
+      ? jsonOk(outcome.result === undefined ? undefined : { result: outcome.result })
+      : jsonError(outcome.code, outcome.code);
+  };
+
+  const invokeAction = async (
+    parameters: unknown,
+    context?: VoiceToolInvocationContext,
+  ): Promise<string> => {
+    const parsed = getActionSpec(ACTION_INVOKE_ACTION_ID).inputSchema.safeParse(parameters ?? {});
+    if (!parsed.success) return jsonError('invalid_parameters', 'invalid_parameters');
+    const actionInput = readVoiceActionInvocationInput(parsed.data);
+    if (!actionInput) return jsonError('invalid_parameters', 'invalid_parameters');
+    if (context?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
+    const currentUiContext = deps.currentUiContext;
+    if (!currentUiContext || typeof currentUiContext.invokeAction !== 'function') {
+      return jsonError('action_unavailable', 'action_unavailable');
+    }
+    const outcome = await currentUiContext.invokeAction({
+      action: actionInput.action,
+      ...(actionInput.input === undefined ? {} : { input: actionInput.input }),
+      ...(context?.signal ? { signal: context.signal } : {}),
+    });
+    // The shared dispatcher owns identity, policy, confirmation, target and
+    // settlement. Voice projects only its bounded result, never a target
+    // binding, raw Action input, or plugin/host diagnostic.
+    return outcome.ok
+      ? jsonOk(outcome.result === undefined ? undefined : { result: outcome.result })
+      : jsonError(outcome.code, outcome.code);
+  };
+
   const handlers: Record<string, VoiceToolHandler> = {};
 
-  for (const toolName of Object.keys(VOICE_TOOL_ACTION_ID_BY_TOOL_NAME)) {
+  for (const [toolName, actionId] of Object.entries(VOICE_TOOL_ACTION_ID_BY_TOOL_NAME)) {
+    if (
+      actionId === CURRENT_UI_CONTEXT_READ_ACTION_ID
+      || actionId === CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID
+      || actionId === ACTION_INVOKE_ACTION_ID
+    ) continue;
     handlers[toolName] = async (parameters) => await execute(toolName, parameters);
+  }
+
+  if (
+    CURRENT_UI_CONTEXT_READ_TOOL_NAME
+    && deps.currentUiContext
+    && isVoiceActionAvailableInState(storage.getState(), CURRENT_UI_CONTEXT_READ_ACTION_ID)
+  ) {
+    handlers[CURRENT_UI_CONTEXT_READ_TOOL_NAME] = readCurrentUiContext;
+  }
+  if (
+    CURRENT_UI_CONTEXT_COMMAND_INVOKE_TOOL_NAME
+    && deps.currentUiContext
+    && typeof deps.currentUiContext.invokeCurrentUiCommand === 'function'
+    && isVoiceActionAvailableInState(storage.getState(), CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID)
+  ) {
+    handlers[CURRENT_UI_CONTEXT_COMMAND_INVOKE_TOOL_NAME] = invokeCurrentUiCommand;
+  }
+  if (
+    ACTION_INVOKE_TOOL_NAME
+    && deps.currentUiContext
+    && typeof deps.currentUiContext.invokeAction === 'function'
+  ) {
+    handlers[ACTION_INVOKE_TOOL_NAME] = invokeAction;
   }
 
   // Voice surface overrides (extra UX behavior).

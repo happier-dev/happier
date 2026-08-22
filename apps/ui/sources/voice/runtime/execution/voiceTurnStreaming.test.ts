@@ -264,7 +264,7 @@ describe('createVoiceTurnStreaming', () => {
             assistantText: 'legacy reply',
             actions: [{ t: 'sendSessionMessage', args: { message: 'Legacy action' } }],
         });
-        expect(readVoiceAgentActionEffectId(result.actions[0])).toBeNull();
+        expect(readVoiceAgentActionEffectId(result.actions[0])).toBe('stale_rpc:client:1:0');
         expect(sendTurn).toHaveBeenCalledTimes(1);
         expect(startTurnStream).not.toHaveBeenCalled();
     });

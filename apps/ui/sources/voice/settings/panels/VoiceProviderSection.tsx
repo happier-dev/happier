@@ -407,8 +407,13 @@ export function VoiceProviderSection(props: {
       modeId: row.modeId,
       hostedEnabled: availability.happier.enabled,
     }) ?? descriptorReadiness;
-    const credentialConfigurationAvailable = row.entry.source.kind === 'bundled'
-      && row.entry.kind === 'voice.conversation-provider.v1'
+    // Whether a credential *can* be supplied is answered by the contribution's
+    // own declaration (a savedSecret/connectedAccount source) or by a bundled
+    // settings section — never by where the provider came from. Gating this on
+    // bundled provenance left an externally installed provider whose only
+    // blocker is `configure_credential` unselectable, so the credential it
+    // declares could never be configured.
+    const credentialConfigurationAvailable = row.entry.kind === 'voice.conversation-provider.v1'
       && (
         typeof row.entry.presentation?.createSettingsSection === 'function'
         || credentialDeclaration?.sources.some((source) => (

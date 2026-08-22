@@ -369,7 +369,7 @@ describe('VoiceProviderSettingsActions', () => {
 
   it('composes the final ElevenLabs Agent PATCH HTTP failure into a safe actionable diagnostic without applying settings', async () => {
     const parsedDeclaration = VoiceProviderContributionSchema.safeParse(
-      PLUGIN_MANIFEST.contributes.voiceProviders[0],
+      (PLUGIN_MANIFEST.contributes.voiceProviders ?? [])[0],
     );
     if (
       !parsedDeclaration.success

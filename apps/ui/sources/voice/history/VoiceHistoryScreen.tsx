@@ -10,6 +10,8 @@ import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
@@ -141,7 +143,7 @@ function VoiceHistoryActionMessage(props: Readonly<{ message: string }>) {
   );
 }
 
-export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
+const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
   props: VoiceHistoryScreenProps,
 ) {
   const { theme } = useUnistyles();
@@ -432,6 +434,22 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
         keyboardDismissMode="on-drag"
       />
     </View>
+  );
+});
+
+export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
+  props: VoiceHistoryScreenProps,
+) {
+  // History is Account-owned content. The body holds a long-lived consumer and
+  // its already-decrypted rendered rows, so remount it on the canonical
+  // server-Account scope key: Account A's rows must leave the tree the moment
+  // the scope changes, not when Account B's read resolves.
+  const scope = useActiveServerAccountScope();
+  return (
+    <VoiceHistoryScreenBody
+      key={scope ? serverAccountScopeKeySuffix(scope) : 'unscoped'}
+      {...props}
+    />
   );
 });
 

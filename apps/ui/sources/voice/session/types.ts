@@ -8,6 +8,15 @@ export type VoiceSessionPresentationState = 'reconnecting' | 'interrupted';
 export type VoiceAdapterTranscriptMode = 'native_session' | 'synthetic';
 export type VoiceInterruptionPolicy = 'disabled' | 'client_two_stage' | 'provider_immediate';
 export type VoiceConversationTargeting = 'route_target' | 'bound_conversation';
+/**
+ * Normalized execution-owned authority over host-authored conversation
+ * context. `session_context` providers let Happier author the conversation's
+ * bootstrap and ongoing stored-session context. `current_ui_only` providers
+ * attach to an Agent session whose own runtime owns the authoritative prompt
+ * and startup context; Happier may add no bootstrap or stored-session item
+ * there and sends only the authorized current-UI metadata projection.
+ */
+export type VoiceHostAuthoredContextScope = 'session_context' | 'current_ui_only';
 
 export type VoiceAdapterSurfaceCapabilities = Readonly<{
   allowsGlobalStart: boolean;
@@ -22,6 +31,8 @@ export type VoiceAdapterSurfaceCapabilities = Readonly<{
 }>;
 
 export type VoiceAdapterContextChannel = Readonly<{
+  /** Which host-authored context this provider's execution kind authorizes. */
+  hostAuthoredContext: VoiceHostAuthoredContextScope;
   sendContextualUpdate(update: string): void;
   sendTextMessage(text: string): void;
   announceAssistantText?(text: string): void;

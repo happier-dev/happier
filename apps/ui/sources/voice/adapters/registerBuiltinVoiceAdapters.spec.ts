@@ -111,6 +111,7 @@ function createPublicEntry(input: Readonly<{
     platforms: ['web' as const],
     capabilities: Object.freeze({
       turn: Object.freeze({ cancelResponse: false, bargeIn: false }),
+      tools: Object.freeze({ effectCalls: 'none' as const }),
     }),
     client: Object.freeze({
       artifactId: 'voice-runtime',
@@ -277,7 +278,9 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
       readBundledEntryProviderId,
     )).toEqual([
       'happier.agent.codex/realtime-codex',
+      'happier.voice.elevenlabs/realtime-elevenlabs',
       'happier.voice.openai/realtime-openai',
+      'happier.voice.xai/realtime-grok',
     ]);
 
     const assembly = createBuiltinVoiceAdapterAssembly({
@@ -286,7 +289,9 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
 
     expect(assembly.adapters.map((adapter) => adapter.id)).toEqual([
       'happier.agent.codex/realtime-codex',
+      'happier.voice.elevenlabs/realtime-elevenlabs',
       'happier.voice.openai/realtime-openai',
+      'happier.voice.xai/realtime-grok',
       'local_direct',
       'local_conversation',
     ]);
@@ -340,7 +345,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
     const host = capturedHostRef.current;
     if (!host) throw new Error('tool projection test runtime did not receive a host');
 
-    const baselineNames = host.getRealtimeClientToolDefinitions().map((tool) => tool.name);
+    const baselineNames = host.getRealtimeClientToolDefinitions({ effectCalls: 'none', exposure: 'voice_assistant' }).map((tool) => tool.name);
     expect(baselineNames.length).toBeGreaterThan(0);
     expect(baselineNames).toContain('listMachines');
 
@@ -360,7 +365,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
         },
       },
     }));
-    expect(host.getRealtimeClientToolDefinitions().map((tool) => tool.name)).not.toContain('listMachines');
+    expect(host.getRealtimeClientToolDefinitions({ effectCalls: 'none', exposure: 'voice_assistant' }).map((tool) => tool.name)).not.toContain('listMachines');
 
     storage.setState((state) => ({
       ...state,
@@ -373,7 +378,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
         },
       },
     }));
-    const privateNames = host.getRealtimeClientToolDefinitions().map((tool) => tool.name);
+    const privateNames = host.getRealtimeClientToolDefinitions({ effectCalls: 'none', exposure: 'voice_assistant' }).map((tool) => tool.name);
     expect(privateNames).not.toContain('listRecentPaths');
     expect(privateNames).not.toContain('listMachines');
     expect(privateNames).not.toContain('listServers');

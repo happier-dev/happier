@@ -16,6 +16,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { VOICE_CONFIG } from '@/voice/runtime/voiceConfig';
 import { getVoiceContextSinkForSession } from '@/voice/context/getVoiceContextSinkForSession';
+import type { VoiceContextSink } from '@/voice/context/VoiceContextSink';
 import { resolveEffectiveVoiceTargetState } from '@/voice/context/resolveEffectiveVoiceTargetState';
 import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
 import { useVoiceContextSeenStore } from '@/voice/runtime/voiceContextSeenStore';
@@ -23,6 +24,8 @@ import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { resolveVoiceSessionUpdatePolicy, type VoiceSessionUpdatePolicy } from '@/voice/runtime/voiceUpdatePolicy';
 import type { AgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
+import type { CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/ui';
+import type { VoiceHostAuthoredContextScope } from '@/voice/session/types';
 
 /**
  * Centralized voice assistant hooks for multi-session context updates.
@@ -88,12 +91,88 @@ function getVoiceContextPrefs(sessionId: string) {
   });
 }
 
-function reportContextualUpdate(sessionId: string, update: string | null | undefined) {
+/**
+ * What a host-authored contextual update is. `current_ui` is the authorized
+ * bounded navigation metadata projection; `session_context` is everything
+ * Happier composes from stored session state. A provider whose Agent runtime
+ * owns the authoritative prompt accepts only the former.
+ */
+type HostAuthoredContextClass = 'current_ui' | 'session_context';
+
+/**
+ * The single host-authored context disclosure decision. A `current_ui_only`
+ * sink attaches to an Agent runtime that already owns the conversation's
+ * prompt and content, so stored-session context never reaches it through any
+ * transport the sink happens to offer.
+ */
+function sinkAcceptsHostAuthoredContext(
+  sink: VoiceContextSink,
+  contextClass: HostAuthoredContextClass,
+): boolean {
+  return !(contextClass === 'session_context' && sink.hostAuthoredContext === 'current_ui_only');
+}
+
+/** Returns whether an active context sink actually received the update. */
+function reportContextualUpdate(
+  sessionId: string,
+  update: string | null | undefined,
+  contextClass: HostAuthoredContextClass,
+): boolean {
   emitVoiceDebugDiagnostic('voice_contextual_update', { sessionId, payload: update });
-  if (!update) return;
+  if (!update) return false;
   const sink = getVoiceContextSinkForSession(sessionId);
-  if (!sink) return;
+  if (!sink) return false;
+  if (!sinkAcceptsHostAuthoredContext(sink, contextClass)) return false;
   sink.sendContextualUpdate(sessionId, update);
+  return true;
+}
+
+/**
+ * Automatic UI updates intentionally contain only the provider-composed
+ * navigation projection. Mounted entity/detail records and opaque command
+ * descriptors remain on-demand tool data, never ambient voice context.
+ */
+function formatCurrentUiNavigationUpdate(snapshot: CurrentUiContextSnapshotV1): string {
+  const navigation = snapshot.navigation;
+  return `CURRENT UI CONTEXT\n\n${JSON.stringify({ navigation: {
+    area: navigation.area,
+    screen: navigation.screen,
+    ...(navigation.presentation === undefined ? {} : { presentation: navigation.presentation }),
+    // Plugin page labels are useful in an explicit current-UI read, but are
+    // plugin-provided text and must not cross the automatic provider channel.
+    // The composer preserves external plugin Settings title provenance through
+    // this host-owned semantic screen without exposing page identity or text.
+    ...(navigation.area === 'plugin' || navigation.screen === 'settings.plugin_page' || navigation.title === undefined
+      ? {}
+      : { title: navigation.title }),
+  } })}`;
+}
+
+/**
+ * An automatic-update projector is deliberately created by the exact Voice
+ * attempt owner. It remembers only that attempt's last delivered metadata
+ * projection: no module-global registry can make a later attempt inherit a
+ * prior attempt's context, and retirement is an ordinary one-shot transition.
+ */
+export type CurrentUiContextAutomaticUpdateProjector = Readonly<{
+  project: (snapshot: CurrentUiContextSnapshotV1 | null) => string | null;
+  markDelivered: (update: string) => void;
+}>;
+
+export function createCurrentUiContextAutomaticUpdateProjector(): CurrentUiContextAutomaticUpdateProjector {
+  const unavailableUpdate = 'CURRENT UI CONTEXT\n\n{"navigation":{"state":"unavailable"}}';
+  let lastDeliveredProjection: string | null = null;
+  return Object.freeze({
+    project(snapshot) {
+      const nextProjection = snapshot === null
+        ? (lastDeliveredProjection === null ? null : unavailableUpdate)
+        : formatCurrentUiNavigationUpdate(snapshot);
+      return nextProjection === lastDeliveredProjection ? null : nextProjection;
+    },
+    markDelivered(update) {
+      lastDeliveredProjection = update;
+    },
+  });
 }
 
 function reportTextUpdate(sessionId: string, update: string | null | undefined) {
@@ -104,26 +183,16 @@ function reportTextUpdate(sessionId: string, update: string | null | undefined) 
   sink.sendTextMessage(sessionId, update);
 }
 
-function reportInterruptingUpdate(sessionId: string, update: string | null | undefined) {
+function reportAnnouncedSessionUpdate(sessionId: string, update: string | null | undefined) {
   if (!update) return;
   const sink = getVoiceContextSinkForSession(sessionId);
   if (!sink) return;
+  // An announcement carries stored-session text, so the text-turn transport
+  // below is bound by the same disclosure decision as the context channel.
+  if (!sinkAcceptsHostAuthoredContext(sink, 'session_context')) return;
 
   if (sink.announceAssistantText) {
-    sink.sendContextualUpdate(sessionId, update);
-    return;
-  }
-
-  sink.sendTextMessage(sessionId, update);
-}
-
-function reportAgentRequestUpdate(sessionId: string, update: string | null | undefined) {
-  if (!update) return;
-  const sink = getVoiceContextSinkForSession(sessionId);
-  if (!sink) return;
-
-  if (sink.announceAssistantText) {
-    sink.sendContextualUpdate(sessionId, update);
+    reportContextualUpdate(sessionId, update, 'session_context');
     return;
   }
 
@@ -133,7 +202,8 @@ function reportAgentRequestUpdate(sessionId: string, update: string | null | und
 function announceAssistantText(sessionId: string, update: string | null | undefined) {
   if (!update) return;
   const sink = getVoiceContextSinkForSession(sessionId);
-  sink?.announceAssistantText?.(sessionId, update);
+  if (!sink || !sinkAcceptsHostAuthoredContext(sink, 'session_context')) return;
+  sink.announceAssistantText?.(sessionId, update);
 }
 
 function reportSession(sessionId: string) {
@@ -145,7 +215,7 @@ function reportSession(sessionId: string) {
   if (!session) return;
   const messages = readStoredSessionMessages(storage.getState(), sessionId);
   const contextUpdate = formatSessionFull(session, messages, getVoiceContextPrefs(sessionId));
-  reportContextualUpdate(sessionId, contextUpdate);
+  reportContextualUpdate(sessionId, contextUpdate, 'session_context');
   // Mark as shown only once we've actually emitted the full context.
   seen.markSessionShown(sessionId);
 }
@@ -181,13 +251,27 @@ function shouldInterruptForAssistantReply(
 }
 
 export const voiceHooks = {
+  onCurrentUiContextChanged(
+    sessionId: string,
+    snapshot: CurrentUiContextSnapshotV1 | null,
+    automaticUpdateProjector: CurrentUiContextAutomaticUpdateProjector,
+  ) {
+    if (readVoicePrivacySettings(storage.getState().settings).currentUiContextMode !== 'automatic') return;
+    const update = automaticUpdateProjector.project(snapshot);
+    if (!update) return;
+    // Remember it only once a sink took it, so an update composed while no
+    // context channel is attached does not suppress the next real transition.
+    if (!reportContextualUpdate(sessionId, update, 'current_ui')) return;
+    automaticUpdateProjector.markDelivered(update);
+  },
+
   onSessionOnline(sessionId: string, metadata?: SessionMetadata) {
     if (VOICE_CONFIG.DISABLE_SESSION_STATUS) return;
     if (resolvePolicy(sessionId).level === 'none') return;
 
     reportSession(sessionId);
     const contextUpdate = formatSessionOnline(sessionId, metadata, getVoiceContextPrefs(sessionId));
-    reportContextualUpdate(sessionId, contextUpdate);
+    reportContextualUpdate(sessionId, contextUpdate, 'session_context');
   },
 
   onSessionOffline(sessionId: string, metadata?: SessionMetadata) {
@@ -196,7 +280,7 @@ export const voiceHooks = {
 
     reportSession(sessionId);
     const contextUpdate = formatSessionOffline(sessionId, metadata, getVoiceContextPrefs(sessionId));
-    reportContextualUpdate(sessionId, contextUpdate);
+    reportContextualUpdate(sessionId, contextUpdate, 'session_context');
   },
 
   onSessionFocus(sessionId: string, metadata?: SessionMetadata) {
@@ -206,7 +290,7 @@ export const voiceHooks = {
     // This is used as an activity signal; it does not override the active target.
     if (resolvePolicy(sessionId).level === 'none') return;
     reportSession(sessionId);
-    reportContextualUpdate(sessionId, formatSessionFocus(sessionId, metadata, getVoiceContextPrefs(sessionId)));
+    reportContextualUpdate(sessionId, formatSessionFocus(sessionId, metadata, getVoiceContextPrefs(sessionId)), 'session_context');
   },
 
   onAgentRequest(sessionId: string, requestId: string, requestKind: AgentRequestKind, toolName: string, toolArgs: any) {
@@ -218,7 +302,7 @@ export const voiceHooks = {
       sessionId,
       summarizeAgentRequestForVoiceHuman(requestKind, requestId, toolName, toolArgs, getVoiceContextPrefs(sessionId)),
     );
-    reportAgentRequestUpdate(
+    reportAnnouncedSessionUpdate(
       sessionId,
       requestKind === 'user_action'
         ? formatUserActionRequest(sessionId, requestId, toolName, toolArgs, getVoiceContextPrefs(sessionId))
@@ -236,7 +320,7 @@ export const voiceHooks = {
     const shareRecentMessages = readVoicePrivacySettings(storage.getState().settings).shareRecentMessages;
 
     if (level === 'activity') {
-      reportContextualUpdate(sessionId, formatNewMessagesActivity(sessionId, messages));
+      reportContextualUpdate(sessionId, formatNewMessagesActivity(sessionId, messages), 'session_context');
       return;
     }
 
@@ -245,34 +329,42 @@ export const voiceHooks = {
       const filtered = filterMessagesForVoiceUpdate(messages, policy);
       if (filtered.length > 0) {
         announceAssistantText(sessionId, summarizeMessagesForVoiceHuman(filtered, getVoiceContextPrefs(sessionId)));
-        reportInterruptingUpdate(sessionId, formatNewMessages(sessionId, filtered, getVoiceContextPrefs(sessionId)));
+        reportAnnouncedSessionUpdate(sessionId, formatNewMessages(sessionId, filtered, getVoiceContextPrefs(sessionId)));
         return;
       }
     }
 
     if (level === 'summaries') {
-      reportContextualUpdate(sessionId, formatNewMessagesActivity(sessionId, messages));
+      reportContextualUpdate(sessionId, formatNewMessagesActivity(sessionId, messages), 'session_context');
       return;
     }
 
     if (!shareRecentMessages) {
-      reportContextualUpdate(sessionId, formatNewMessagesActivity(sessionId, messages));
+      reportContextualUpdate(sessionId, formatNewMessagesActivity(sessionId, messages), 'session_context');
       return;
     }
 
     const filtered = filterMessagesForVoiceUpdate(messages, policy);
 
     if (filtered.length === 0) {
-      reportContextualUpdate(sessionId, formatNewMessagesActivity(sessionId, messages));
+      reportContextualUpdate(sessionId, formatNewMessagesActivity(sessionId, messages), 'session_context');
       return;
     }
 
-    reportContextualUpdate(sessionId, formatNewMessages(sessionId, filtered, getVoiceContextPrefs(sessionId)));
+    reportContextualUpdate(sessionId, formatNewMessages(sessionId, filtered, getVoiceContextPrefs(sessionId)), 'session_context');
   },
 
-  onVoiceStarted(sessionId: string): string {
+  /**
+   * Composes the host-authored startup context for a beginning Voice attempt.
+   * A `current_ui_only` provider attaches to an Agent session whose runtime
+   * already owns the authoritative startup prompt, so this contributes no
+   * bootstrap item there; the attempt-scoped seen state is still reset because
+   * that is ordinary attempt lifecycle, not context disclosure.
+   */
+  onVoiceStarted(sessionId: string, scope: VoiceHostAuthoredContextScope): string {
     emitVoiceDebugDiagnostic('voice_session_started', { sessionId });
     useVoiceContextSeenStore.getState().clearShownSessions();
+    if (scope === 'current_ui_only') return '';
     const state: any = storage.getState();
     const normalized = String(sessionId ?? '').trim();
 
@@ -310,7 +402,7 @@ export const voiceHooks = {
       : readStoredSessionMessages(storage.getState(), sessionId);
     const formatterPrefs = getVoiceContextPrefs(sessionId);
     const privacy = readVoicePrivacySettings(storage.getState().settings);
-    reportInterruptingUpdate(sessionId, formatReadyEvent(sessionId, recentMessages, {
+    reportAnnouncedSessionUpdate(sessionId, formatReadyEvent(sessionId, recentMessages, {
       ...formatterPrefs,
       // Ready announcements are not snippet serialization. Preserve the raw
       // provider-bound privacy decision instead of the update-level projection.

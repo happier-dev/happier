@@ -1,7 +1,12 @@
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { getActionSpec } from '@happier-dev/protocol';
 
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { createBundledConversationRuntimeHostLease } from '@/voice/registry/bundledConversationRuntimeHost';
+import { createVoiceCaptureAdmissionController } from '@/voice/runtime/input/VoiceCaptureAdmissionController';
+import { storage } from '@/sync/domains/state/storage';
+import { resolveDisabledVoiceActionIdsFromState } from '@/voice/tools/resolveDisabledVoiceActionIds';
 
 import type { VoiceAdapterController, VoiceSessionSnapshot } from './types';
 
@@ -580,6 +585,79 @@ describe('createVoiceSessionLifecycleController', () => {
             mode: 'idle',
             canStop: false,
         });
+    });
+
+    it('discards an Account-retired pending provider switch before source stop settles', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const { setVoiceSessionSnapshot } = await import('./voiceSessionStore');
+        const sourceStopDeferred = createDeferred<void>();
+        let sourceAdapter!: ReturnType<typeof createAdapter>;
+        sourceAdapter = createAdapter({
+            id: 'realtime-source',
+            snapshot: {
+                adapterId: 'realtime-source',
+                sessionId: 'voice-session',
+                status: 'connected',
+                mode: 'listening',
+                canStop: true,
+            },
+            stop: async () => {
+                await sourceStopDeferred.promise;
+                sourceAdapter.setSnapshot({
+                    adapterId: 'realtime-source',
+                    sessionId: null,
+                    status: 'disconnected',
+                    mode: 'idle',
+                    canStop: false,
+                });
+            },
+        });
+        const targetAdapter = createAdapter({
+            id: 'realtime-target',
+            snapshot: {
+                adapterId: 'realtime-target',
+                sessionId: null,
+                status: 'disconnected',
+                mode: 'idle',
+                canStop: false,
+            },
+        });
+        const registry: VoiceAdapterRegistry = {
+            get: (id) => {
+                if (id === sourceAdapter.controller.id) return sourceAdapter.controller;
+                if (id === targetAdapter.controller.id) return targetAdapter.controller;
+                return null;
+            },
+            list: () => [sourceAdapter.controller, targetAdapter.controller],
+        };
+
+        setVoiceSessionSnapshot({
+            adapterId: sourceAdapter.controller.id,
+            sessionId: 'voice-session',
+            status: 'connected',
+            mode: 'listening',
+            canStop: true,
+        });
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => registry });
+        controller.setConfiguredProviderId(sourceAdapter.controller.id);
+        controller.setConfiguredProviderId(targetAdapter.controller.id);
+
+        expect(sourceAdapter.stop).toHaveBeenCalledOnce();
+        expect(targetAdapter.start).not.toHaveBeenCalled();
+
+        controller.rearmAfterCredentialAuthorityChange({ exactSessionAccountScopeChanged: true });
+        sourceStopDeferred.resolve();
+        await sourceAdapter.stop.mock.results[0]?.value;
+
+        expect(targetAdapter.start).not.toHaveBeenCalled();
+        expect(controller.getSnapshot()).toEqual({
+            adapterId: null,
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+        });
+        await controller.dispose();
     });
 
     it('keeps ownership disconnected while a provider switch is pending and ignores stale source reconnects', async () => {
@@ -1308,5 +1386,615 @@ describe('createVoiceSessionLifecycleController', () => {
 
         expect(sourceAdapter.stop).toHaveBeenCalledWith({ sessionId: 'session-1' });
         expect(sourceAdapter.start).not.toHaveBeenCalled();
+    });
+
+    it('reconnects a realtime attempt with the current UI tool set only when disclosure crosses the off boundary', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const previousSettings = storage.getState().settings;
+        const currentUiContext = {
+            readCurrentUiContext: () => ({
+                navigation: { area: 'app' as const, screen: 'home' },
+                commands: [],
+            }),
+            resolveCurrentUiCommand: () => null,
+            subscribe: () => () => {},
+            invokeCurrentUiCommand: async () => ({ ok: true as const }),
+        };
+        const hostLease = createBundledConversationRuntimeHostLease({ currentUiContext });
+        const captureAdmission = createVoiceCaptureAdmissionController();
+        const toolSetsSeenByProvider: string[][] = [];
+        const currentUiToolNames = new Set([
+            String(getActionSpec('ui.current_context.read').bindings?.voiceClientToolName ?? '').trim(),
+            String(getActionSpec('ui.current_context.command.invoke').bindings?.voiceClientToolName ?? '').trim(),
+        ]);
+        let snapshot: VoiceSessionSnapshot = {
+            adapterId: 'realtime-test',
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+        };
+        const listeners = new Set<() => void>();
+        const publish = (next: VoiceSessionSnapshot) => {
+            snapshot = next;
+            for (const listener of listeners) listener();
+        };
+        const adapter: VoiceAdapterController = {
+            id: 'realtime-test',
+            engineKind: 'realtime',
+            start: vi.fn(async ({ sessionId }) => {
+                toolSetsSeenByProvider.push(
+                    hostLease.host.getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure: 'voice_assistant' })
+                        .map((tool) => tool.name)
+                        .filter((name) => currentUiToolNames.has(name)),
+                );
+                publish({
+                    adapterId: 'realtime-test',
+                    sessionId,
+                    status: 'connected',
+                    mode: 'listening',
+                    canStop: true,
+                });
+            }),
+            stop: vi.fn(async ({ sessionId }) => {
+                publish({
+                    adapterId: 'realtime-test',
+                    sessionId,
+                    status: 'disconnected',
+                    mode: 'idle',
+                    canStop: false,
+                });
+            }),
+            toggle: vi.fn(async () => {}),
+            interrupt: vi.fn(async () => {}),
+            setMuted: vi.fn(async () => {}),
+            sendContextUpdate: vi.fn(),
+            getSnapshot: () => snapshot,
+            subscribe: (listener) => {
+                listeners.add(listener);
+                return () => listeners.delete(listener);
+            },
+        };
+        const controller = createVoiceSessionLifecycleController({
+            captureAdmission,
+            getRegistry: () => ({
+                get: (id) => id === adapter.id ? adapter : null,
+                list: () => [adapter],
+            }),
+        });
+        const setMode = (currentUiContextMode: 'off' | 'on_demand' | 'automatic') => {
+            storage.setState((state) => ({
+                ...state,
+                settings: {
+                    ...state.settings,
+                    voice: {
+                        ...state.settings.voice,
+                        privacy: {
+                            ...state.settings.voice.privacy,
+                            currentUiContextMode,
+                        },
+                    },
+                },
+            }));
+        };
+
+        try {
+            controller.setConfiguredProviderId(adapter.id);
+            setMode('off');
+            controller.setCurrentUiContextToolSetEnabled(false);
+            await controller.toggle('voice-session');
+            expect(toolSetsSeenByProvider).toEqual([[]]);
+
+            setMode('on_demand');
+            controller.setCurrentUiContextToolSetEnabled(true);
+            await vi.waitFor(() => expect(adapter.start).toHaveBeenCalledTimes(2));
+            expect(toolSetsSeenByProvider).toEqual([
+                [],
+                ['readCurrentUiContext', 'invokeCurrentUiCommand'],
+            ]);
+
+            setMode('automatic');
+            controller.setCurrentUiContextToolSetEnabled(true);
+            setMode('on_demand');
+            controller.setCurrentUiContextToolSetEnabled(true);
+            expect(adapter.start).toHaveBeenCalledTimes(2);
+            expect(adapter.stop).toHaveBeenCalledTimes(1);
+            expect(controller.getSnapshot()).toMatchObject({
+                adapterId: adapter.id,
+                sessionId: 'voice-session',
+                status: 'connected',
+                canStop: true,
+            });
+
+            setMode('off');
+            controller.setCurrentUiContextToolSetEnabled(false);
+            await vi.waitFor(() => expect(adapter.start).toHaveBeenCalledTimes(3));
+            expect(toolSetsSeenByProvider).toEqual([
+                [],
+                ['readCurrentUiContext', 'invokeCurrentUiCommand'],
+                [],
+            ]);
+        } finally {
+            await controller.dispose();
+            hostLease.revoke();
+            storage.setState((state) => ({ ...state, settings: previousSettings }));
+        }
+    });
+
+    it('restarts a realtime provider-switch target when current-UI disclosure changes while it connects', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const { setVoiceSessionSnapshot } = await import('./voiceSessionStore');
+        const previousSettings = storage.getState().settings;
+        const currentUiContext = {
+            readCurrentUiContext: () => ({
+                navigation: { area: 'app' as const, screen: 'home' },
+                commands: [],
+            }),
+            resolveCurrentUiCommand: () => null,
+            subscribe: () => () => {},
+            invokeCurrentUiCommand: async () => ({ ok: true as const }),
+        };
+        const hostLease = createBundledConversationRuntimeHostLease({ currentUiContext });
+        const currentUiToolNames = new Set([
+            String(getActionSpec('ui.current_context.read').bindings?.voiceClientToolName ?? '').trim(),
+            String(getActionSpec('ui.current_context.command.invoke').bindings?.voiceClientToolName ?? '').trim(),
+        ]);
+        const targetToolSetsSeenByProvider: string[][] = [];
+        const targetFirstStart = createDeferred<void>();
+        let targetStarts = 0;
+        let sourceSnapshot: VoiceSessionSnapshot = {
+            adapterId: 'realtime-source',
+            sessionId: 'voice-session',
+            status: 'connected',
+            mode: 'listening',
+            canStop: true,
+        };
+        let targetSnapshot: VoiceSessionSnapshot = {
+            adapterId: 'realtime-target',
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+        };
+        const sourceListeners = new Set<() => void>();
+        const targetListeners = new Set<() => void>();
+        const sourceAdapter: VoiceAdapterController = {
+            id: 'realtime-source',
+            engineKind: 'realtime',
+            start: vi.fn(async () => {}),
+            stop: vi.fn(async ({ sessionId }) => {
+                sourceSnapshot = {
+                    adapterId: 'realtime-source',
+                    sessionId,
+                    status: 'disconnected',
+                    mode: 'idle',
+                    canStop: false,
+                };
+                for (const listener of sourceListeners) listener();
+            }),
+            toggle: vi.fn(async () => {}),
+            interrupt: vi.fn(async () => {}),
+            bargeIn: vi.fn(async () => {}),
+            setMuted: vi.fn(async () => {}),
+            sendContextUpdate: vi.fn(),
+            getSnapshot: () => sourceSnapshot,
+            subscribe: (listener) => {
+                sourceListeners.add(listener);
+                return () => sourceListeners.delete(listener);
+            },
+        };
+        const targetAdapter: VoiceAdapterController = {
+            id: 'realtime-target',
+            engineKind: 'realtime',
+            start: vi.fn(async ({ sessionId }) => {
+                targetStarts += 1;
+                targetToolSetsSeenByProvider.push(
+                    hostLease.host.getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure: 'voice_assistant' })
+                        .map((tool) => tool.name)
+                        .filter((name) => currentUiToolNames.has(name)),
+                );
+                if (targetStarts === 1) {
+                    await targetFirstStart.promise;
+                }
+                targetSnapshot = {
+                    adapterId: 'realtime-target',
+                    sessionId,
+                    status: 'connected',
+                    mode: 'listening',
+                    canStop: true,
+                };
+                for (const listener of targetListeners) listener();
+            }),
+            stop: vi.fn(async ({ sessionId }) => {
+                targetSnapshot = {
+                    adapterId: 'realtime-target',
+                    sessionId,
+                    status: 'disconnected',
+                    mode: 'idle',
+                    canStop: false,
+                };
+                for (const listener of targetListeners) listener();
+            }),
+            toggle: vi.fn(async () => {}),
+            interrupt: vi.fn(async () => {}),
+            bargeIn: vi.fn(async () => {}),
+            setMuted: vi.fn(async () => {}),
+            sendContextUpdate: vi.fn(),
+            getSnapshot: () => targetSnapshot,
+            subscribe: (listener) => {
+                targetListeners.add(listener);
+                return () => targetListeners.delete(listener);
+            },
+        };
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: (id) => {
+                if (id === sourceAdapter.id) return sourceAdapter;
+                if (id === targetAdapter.id) return targetAdapter;
+                return null;
+            },
+            list: () => [sourceAdapter, targetAdapter],
+        }) });
+        const setMode = (currentUiContextMode: 'off' | 'on_demand' | 'automatic') => {
+            storage.setState((state) => ({
+                ...state,
+                settings: {
+                    ...state.settings,
+                    voice: {
+                        ...state.settings.voice,
+                        privacy: {
+                            ...state.settings.voice.privacy,
+                            currentUiContextMode,
+                        },
+                    },
+                },
+            }));
+        };
+
+        try {
+            setVoiceSessionSnapshot(sourceSnapshot);
+            setMode('on_demand');
+            controller.setCurrentUiContextToolSetEnabled(true);
+            controller.setConfiguredProviderId(sourceAdapter.id);
+            controller.setConfiguredProviderId(targetAdapter.id);
+            await vi.waitFor(() => expect(targetAdapter.start).toHaveBeenCalledTimes(1));
+
+            setMode('off');
+            controller.setCurrentUiContextToolSetEnabled(false);
+            targetFirstStart.resolve();
+
+            await vi.waitFor(() => expect(targetAdapter.start).toHaveBeenCalledTimes(2));
+            expect(targetToolSetsSeenByProvider).toEqual([
+                ['readCurrentUiContext', 'invokeCurrentUiCommand'],
+                [],
+            ]);
+        } finally {
+            targetFirstStart.resolve();
+            await controller.dispose();
+            hostLease.revoke();
+            storage.setState((state) => ({ ...state, settings: previousSettings }));
+        }
+    });
+
+    it.each(['on_demand', 'automatic'] as const)(
+        'retires and reseeds an active local Agent model session when current-UI disclosure turns off from %s',
+        async (initialCurrentUiContextMode) => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const previousSettings = storage.getState().settings;
+        const currentUiActionIds = ['ui.current_context.read', 'ui.current_context.command.invoke'];
+        const seededModelSessions: Array<Readonly<{ id: string; disabledActionIds: readonly string[] }>> = [];
+        const retiredModelSessionIds: string[] = [];
+        let activeModelSessionId: string | null = null;
+        let snapshot: VoiceSessionSnapshot = {
+            adapterId: 'local_conversation',
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+        };
+        const listeners = new Set<() => void>();
+        const publish = (next: VoiceSessionSnapshot) => {
+            snapshot = next;
+            for (const listener of listeners) listener();
+        };
+        const adapter: VoiceAdapterController = {
+            id: 'local_conversation',
+            engineKind: 'local',
+            start: vi.fn(async ({ sessionId }) => {
+                const id = `model-session-${seededModelSessions.length + 1}`;
+                seededModelSessions.push({
+                    id,
+                    // This is the immutable daemon-start input that seeds the
+                    // Local Agent model session's available-action guidance.
+                    disabledActionIds: resolveDisabledVoiceActionIdsFromState(storage.getState()),
+                });
+                activeModelSessionId = id;
+                publish({
+                    adapterId: 'local_conversation',
+                    sessionId,
+                    status: 'connected',
+                    mode: 'listening',
+                    canStop: true,
+                });
+            }),
+            stop: vi.fn(async ({ sessionId }) => {
+                if (activeModelSessionId) {
+                    retiredModelSessionIds.push(activeModelSessionId);
+                    activeModelSessionId = null;
+                }
+                publish({
+                    adapterId: 'local_conversation',
+                    sessionId,
+                    status: 'disconnected',
+                    mode: 'idle',
+                    canStop: false,
+                });
+            }),
+            toggle: vi.fn(async () => {}),
+            interrupt: vi.fn(async () => {}),
+            bargeIn: vi.fn(async () => {}),
+            setMuted: vi.fn(async () => {}),
+            sendContextUpdate: vi.fn(),
+            sendTextTurn: vi.fn(async () => {}),
+            getSnapshot: () => snapshot,
+            subscribe: (listener) => {
+                listeners.add(listener);
+                return () => listeners.delete(listener);
+            },
+        };
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: (id) => id === adapter.id ? adapter : null,
+            list: () => [adapter],
+        }) });
+        const setMode = (currentUiContextMode: 'off' | 'on_demand' | 'automatic') => {
+            storage.setState((state) => ({
+                ...state,
+                settings: {
+                    ...state.settings,
+                    voice: {
+                        ...state.settings.voice,
+                        privacy: {
+                            ...state.settings.voice.privacy,
+                            currentUiContextMode,
+                        },
+                    },
+                },
+            }));
+        };
+
+        try {
+            controller.setConfiguredProviderId(adapter.id);
+            setMode(initialCurrentUiContextMode);
+            controller.setCurrentUiContextToolSetEnabled(true);
+            await controller.toggle('local-session');
+
+            expect(seededModelSessions).toHaveLength(1);
+            expect(seededModelSessions[0].disabledActionIds).not.toEqual(expect.arrayContaining(currentUiActionIds));
+
+            setMode('off');
+            controller.setCurrentUiContextToolSetEnabled(false);
+
+            await vi.waitFor(() => expect(adapter.start).toHaveBeenCalledTimes(2));
+            expect(adapter.stop).toHaveBeenCalledWith({ sessionId: 'local-session' });
+            expect(retiredModelSessionIds).toEqual(['model-session-1']);
+            expect(seededModelSessions.map((session) => session.id)).toEqual([
+                'model-session-1',
+                'model-session-2',
+            ]);
+            expect(seededModelSessions[1].disabledActionIds).toEqual(expect.arrayContaining(currentUiActionIds));
+            expect(controller.getSnapshot()).toMatchObject({
+                adapterId: adapter.id,
+                sessionId: 'local-session',
+                status: 'connected',
+                canStop: true,
+            });
+
+            // Restoring disclosure applies to the next explicit attempt; it does
+            // not mutate the already-seeded off-boundary model session in place.
+            setMode('on_demand');
+            controller.setCurrentUiContextToolSetEnabled(true);
+            expect(adapter.start).toHaveBeenCalledTimes(2);
+        } finally {
+            await controller.dispose();
+            storage.setState((state) => ({ ...state, settings: previousSettings }));
+        }
+        },
+    );
+
+    it('does not interrupt a local direct attempt with no model-session tool catalog', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const previousSettings = storage.getState().settings;
+        let snapshot: VoiceSessionSnapshot = {
+            adapterId: 'local_direct',
+            sessionId: 'local-session',
+            status: 'connected',
+            mode: 'listening',
+            canStop: true,
+        };
+        const listeners = new Set<() => void>();
+        const adapter: VoiceAdapterController = {
+            id: 'local_direct',
+            engineKind: 'local',
+            start: vi.fn(async () => {}),
+            stop: vi.fn(async ({ sessionId }) => {
+                snapshot = {
+                    adapterId: 'local_direct',
+                    sessionId,
+                    status: 'disconnected',
+                    mode: 'idle',
+                    canStop: false,
+                };
+                for (const listener of listeners) listener();
+            }),
+            toggle: vi.fn(async () => {}),
+            interrupt: vi.fn(async () => {}),
+            setMuted: vi.fn(async () => {}),
+            sendContextUpdate: vi.fn(),
+            getSnapshot: () => snapshot,
+            subscribe: (listener) => {
+                listeners.add(listener);
+                return () => listeners.delete(listener);
+            },
+        };
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: (id) => id === adapter.id ? adapter : null,
+            list: () => [adapter],
+        }) });
+
+        try {
+            controller.setConfiguredProviderId(adapter.id);
+            storage.setState((state) => ({
+                ...state,
+                settings: {
+                    ...state.settings,
+                    voice: {
+                        ...state.settings.voice,
+                        privacy: {
+                            ...state.settings.voice.privacy,
+                            currentUiContextMode: 'on_demand',
+                        },
+                    },
+                },
+            }));
+            controller.setCurrentUiContextToolSetEnabled(true);
+
+            storage.setState((state) => ({
+                ...state,
+                settings: {
+                    ...state.settings,
+                    voice: {
+                        ...state.settings.voice,
+                        privacy: {
+                            ...state.settings.voice.privacy,
+                            currentUiContextMode: 'off',
+                        },
+                    },
+                },
+            }));
+            controller.setCurrentUiContextToolSetEnabled(false);
+
+            expect(adapter.stop).not.toHaveBeenCalled();
+            expect(controller.getSnapshot()).toMatchObject({
+                adapterId: adapter.id,
+                sessionId: 'local-session',
+                status: 'connected',
+                canStop: true,
+            });
+        } finally {
+            await controller.dispose();
+            storage.setState((state) => ({ ...state, settings: previousSettings }));
+        }
+    });
+
+    it('keeps the withdrawn provider owning its live attempt until that exact adapter terminalizes', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const captureAdmission = createVoiceCaptureAdmissionController();
+        const stopReached = createDeferred<void>();
+        const releaseStop = createDeferred<void>();
+        let snapshot: VoiceSessionSnapshot = {
+            adapterId: 'realtime-retiring',
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+        };
+        const listeners = new Set<() => void>();
+        const publish = (next: VoiceSessionSnapshot) => {
+            snapshot = next;
+            for (const listener of listeners) listener();
+        };
+        const stop = vi.fn(async ({ sessionId }: Readonly<{ sessionId: string }>) => {
+            stopReached.resolve();
+            await releaseStop.promise;
+            publish({
+                adapterId: 'realtime-retiring',
+                sessionId,
+                status: 'disconnected',
+                mode: 'idle',
+                canStop: false,
+            });
+        });
+        const adapter: VoiceAdapterController = {
+            id: 'realtime-retiring',
+            engineKind: 'realtime',
+            start: vi.fn(async ({ sessionId }) => {
+                publish({
+                    adapterId: 'realtime-retiring',
+                    sessionId,
+                    status: 'connected',
+                    mode: 'listening',
+                    canStop: true,
+                });
+            }),
+            stop,
+            toggle: vi.fn(async () => {}),
+            interrupt: vi.fn(async () => {}),
+            setMuted: vi.fn(async () => {}),
+            sendContextUpdate: vi.fn(),
+            getSnapshot: () => snapshot,
+            subscribe: (listener) => {
+                listeners.add(listener);
+                return () => listeners.delete(listener);
+            },
+        };
+        let registered = true;
+        const registryListeners = new Set<() => void>();
+        const controller = createVoiceSessionLifecycleController({
+            captureAdmission,
+            getRegistry: () => ({
+                get: (id) => (registered && id === adapter.id ? adapter : null),
+                list: () => (registered ? [adapter] : []),
+                subscribe: (listener: () => void) => {
+                    registryListeners.add(listener);
+                    return () => registryListeners.delete(listener);
+                },
+            }),
+        });
+
+        try {
+            controller.setConfiguredProviderId(adapter.id);
+            await act(async () => {
+                await controller.toggle('voice-global');
+            });
+            expect(controller.getSnapshot()).toMatchObject({
+                adapterId: adapter.id,
+                status: 'connected',
+                canStop: true,
+            });
+            expect(captureAdmission.acquire('dictation')).toMatchObject({ status: 'busy' });
+
+            // The plugin projection withdraws the registration synchronously so
+            // no new Start can select it, while its runtime is still stopping.
+            registered = false;
+            act(() => {
+                for (const listener of [...registryListeners]) listener();
+            });
+
+            // Withdrawal is not termination: the retired adapter still owns live
+            // media, so this owner must not publish idle or hand global capture
+            // admission to another product.
+            expect(controller.getSnapshot()).toMatchObject({
+                adapterId: adapter.id,
+                status: 'connected',
+                canStop: true,
+            });
+            expect(captureAdmission.acquire('dictation')).toMatchObject({ status: 'busy' });
+
+            // Stop authority stays with that exact adapter.
+            await stopReached.promise;
+            await act(async () => {
+                releaseStop.resolve();
+                await releaseStop.promise;
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+            await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('disconnected'));
+            expect(stop).toHaveBeenCalledTimes(1);
+            const afterTerminal = captureAdmission.acquire('dictation');
+            expect(afterTerminal).toMatchObject({ status: 'acquired' });
+            if (afterTerminal.status === 'acquired') afterTerminal.lease.release();
+        } finally {
+            releaseStop.resolve();
+            await controller.dispose();
+        }
     });
 });

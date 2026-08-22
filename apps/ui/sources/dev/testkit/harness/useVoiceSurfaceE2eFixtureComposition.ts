@@ -29,6 +29,8 @@ import {
     setVoiceConversationRuntimeSnapshot,
 } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 
+import { isVoiceQaDebugRuntime } from '@/voice/qa/voiceQaDebugRuntime';
+
 const VOICE_SURFACE_E2E_FIXTURE_QUERY_PARAM = 'happier_voice_e2e_fixture';
 const VOICE_SURFACE_E2E_FIXTURE_STORAGE_KEY = 'happier.voice.e2e.fixture';
 const VOICE_SURFACE_E2E_FIXTURE_SIDEBAR_HIDDEN_CONVERSATION = 'sidebar_hidden_conversation';
@@ -608,11 +610,6 @@ function ensureCancelDuringAssistantSpeechFixtureInstalled(): void {
     installCancelDuringAssistantSpeechFixture();
 }
 
-function isVoiceSurfaceE2eFixtureRuntimeEnabled(): boolean {
-    if (typeof __DEV__ !== 'undefined' && __DEV__ === true) return true;
-    return process.env.EXPO_PUBLIC_DEBUG === '1';
-}
-
 function subscribeThrottledFixtureRepair(repair: () => void, delayMs: number): () => void {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
@@ -668,7 +665,7 @@ function subscribeThrottledFixtureRepair(repair: () => void, delayMs: number): (
 export function useVoiceSurfaceE2eFixtureComposition(): Readonly<{ shouldSuppressOnboarding: boolean }> {
     const params = useLocalSearchParams<{ happier_voice_e2e_fixture?: string | string[] }>();
     const installedFixtureRef = React.useRef<string | null>(null);
-    const runtimeEnabled = isVoiceSurfaceE2eFixtureRuntimeEnabled();
+    const runtimeEnabled = isVoiceQaDebugRuntime();
     const fixtureId = runtimeEnabled
         ? normalizeFixtureParam(params[VOICE_SURFACE_E2E_FIXTURE_QUERY_PARAM]) || readPersistedFixtureId()
         : '';

@@ -15,17 +15,20 @@ import {
 } from '@/voice/tools/localVoiceEffectOutcomeCustody';
 import {
   formatVoiceToolResultsFollowUp,
+  getActionSpec,
   VOICE_TOOL_RESULT_INSTRUCTIONS_PREFIX,
 } from '@happier-dev/protocol';
 import { resolveVoiceToolResultHumanSummary } from '@/voice/context/resolveVoiceToolResultHumanSummary';
-import { isAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { storage } from '@/sync/domains/state/storage';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import {
   isVoiceToolResultBlockedByPrivacy,
+  redactVoiceToolResultForProvider,
   redactVoiceToolResultValue,
   type VoiceToolResultRedactionPrefs,
 } from '@/voice/context/redactVoiceToolResult';
+import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
 
 type VoiceToolAction = Readonly<{ t?: unknown; args?: unknown }>;
 
@@ -65,6 +68,10 @@ export type { LocalVoiceAgentToolResultEntry } from '@/voice/tools/localVoiceEff
 const FOLLOW_UP_RESULT_MAX_ITEMS = 8;
 const FOLLOW_UP_RESULT_MAX_STRING_LENGTH = 160;
 const FOLLOW_UP_RESULT_OMITTED_KEYS = new Set(['uiConnectedService', 'flavorAliases']);
+const PROVIDER_RESULT_ARGUMENT_OMITTED_TOOL_NAMES = new Set([
+  getActionSpec('action.invoke').bindings?.voiceClientToolName,
+  getActionSpec('ui.current_context.command.invoke').bindings?.voiceClientToolName,
+].filter((value): value is string => typeof value === 'string' && value.length > 0));
 
 function readBackendIdFromTargetKey(targetKey: string): string | null {
   const trimmed = String(targetKey ?? '').trim();
@@ -88,7 +95,7 @@ function selectListItemsForFollowUp(params: Readonly<{
     const targetKey = typeof item?.targetKey === 'string' ? item.targetKey : '';
     if (!targetKey) continue;
     const backendId = readBackendIdFromTargetKey(targetKey);
-    if (backendId && !isAgentId(backendId)) {
+    if (backendId && !isBundledAgentId(backendId)) {
       pinned.add(targetKey);
       break;
     }
@@ -241,9 +248,17 @@ function compactToolResultsForFollowUp(
 
     return {
       t: entry.t,
-      args: compactToolResultValue(redactVoiceToolResultValue(entry.args, prefs)),
+      // The provider already owns the originating call. Repeating these arguments in the
+      // result channel would disclose Action input or an ephemeral current-UI command id.
+      args: PROVIDER_RESULT_ARGUMENT_OMITTED_TOOL_NAMES.has(entry.t)
+        ? null
+        : compactToolResultValue(redactVoiceToolResultValue(entry.args, prefs)),
       result: (() => {
-        const compacted = compactToolResultValue(redactVoiceToolResultValue(entry.result, prefs));
+        const compacted = compactToolResultValue(redactVoiceToolResultForProvider(
+          entry.t,
+          entry.result,
+          prefs,
+        ));
         if (!humanSummary) {
           return compacted;
         }
@@ -479,6 +494,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
   userText: string;
   durableLocalId: string;
   currentToolSessionId?: string | null;
+  currentUiContext?: VoiceCurrentUiToolPort;
   voiceAgentSessions: VoiceAgentSessionsLike;
   signal?: AbortSignal;
   onOutputEvent?: (output: VoiceAgentAcceptedOutputV1) => void | Promise<void>;
@@ -514,6 +530,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
         explicitSessionId,
         currentSessionId: params.currentToolSessionId ?? null,
       }),
+    ...(params.currentUiContext ? { currentUiContext: params.currentUiContext } : {}),
   });
 
   const directPermissionDecision = resolveDirectPermissionDecision(params.userText);
@@ -664,6 +681,14 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
 
       const effectId = readVoiceAgentActionEffectId(actionRaw);
       const effectClass = resolveVoiceToolEffectClass(toolName);
+      if (!effectId && effectClass !== 'read_only') {
+        results.push(createLocalToolErrorResult(
+          toolName,
+          action?.args ?? null,
+          'tool_call_identity_required',
+        ));
+        continue;
+      }
       if (effectId && effectClass !== 'read_only') {
         const retained = await runRetainedEffect({
           effectId,

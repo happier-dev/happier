@@ -70,6 +70,7 @@ const completePendingMachineSpawnAttemptCustodyForSession =
 const refreshSessions = vi.fn();
 const patchSessionMetadataWithRetry = vi.fn();
 const ensureSessionVisibleForMessageRoute = vi.fn();
+const applySettings = vi.fn();
 const globalVoiceStartupInstructionsMarker = Object.freeze({
   v: 1 as const,
   id: GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID,
@@ -88,6 +89,9 @@ function enableCodexStartupInstructionsV1(): void {
           id: 'codex',
           capabilities: {
             sessions: {
+              open: ['create', 'resume'],
+              delivery: ['newTurn'],
+              cancel: true,
               startupInstructions: { versions: [1] },
             },
           },
@@ -118,6 +122,9 @@ function enableCollidingQualifiedAgentProjection(): void {
           isBuiltIn: true,
           capabilities: {
             sessions: {
+              open: ['create', 'resume'],
+              delivery: ['newTurn'],
+              cancel: true,
               startupInstructions: { versions: [1] },
             },
           },
@@ -132,6 +139,9 @@ function enableCollidingQualifiedAgentProjection(): void {
           isBuiltIn: false,
           capabilities: {
             sessions: {
+              open: ['create', 'resume'],
+              delivery: ['newTurn'],
+              cancel: true,
               startupInstructions: { versions: [1] },
             },
           },
@@ -299,7 +309,7 @@ vi.mock('@/agents/registry/registryCore', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/agents/registry/registryCore')>();
   return {
     ...actual,
-    isAgentId: (value: unknown) => actual.isAgentId(value),
+    isBundledAgentId: (value: unknown) => actual.isBundledAgentId(value),
   };
 });
 
@@ -361,6 +371,13 @@ vi.mock('@/sync/sync', () => ({
     patchSessionMetadataWithRetry: (...args: any[]) => patchSessionMetadataWithRetry(...args),
     ensureSessionVisibleForMessageRoute: (...args: any[]) => ensureSessionVisibleForMessageRoute(...args),
   },
+}));
+
+// The sticky auto-target write reaches the sync singleton through its own lazy accessor,
+// which is a bundler-only `require` and therefore never sees the `@/sync/sync` mock above.
+// Mock the accessor that owns it, exactly as `voiceAutoTargetMachineSettings.test.ts` does.
+vi.mock('@/sync/runtime/getSyncSingleton', () => ({
+  getSyncSingleton: () => ({ applySettings }),
 }));
 
 vi.mock('@/utils/sessions/machineUtils', () => ({
@@ -1243,6 +1260,23 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       backendTarget: {
         kind: 'backend',
         backendId: 'codex',
+      },
+    }));
+  });
+
+  it('spawns the voice home on an externally installed configured Agent', async () => {
+    state.settings.lastUsedAgent = 'claude';
+    state.settings.voice.providers.local_conversation.config.agent.agentSource = 'agent';
+    state.settings.voice.providers.local_conversation.config.agent.agentId = 'acme-external-agent';
+
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'acme-external-agent',
       },
     }));
   });

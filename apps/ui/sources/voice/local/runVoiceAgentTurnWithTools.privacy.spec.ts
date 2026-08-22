@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseVoiceToolResultsFollowUp } from '@happier-dev/protocol';
+import { getActionSpec, parseVoiceToolResultsFollowUp } from '@happier-dev/protocol';
 
 import {
   buildToolResultsFollowUpPrompt,
@@ -193,6 +193,101 @@ describe('runVoiceAgentTurnWithTools follow-up prompt privacy', () => {
     const parsed = parseFollowUpJson(prompt);
     const open = parsed.toolResults[0]!.result as { session?: Record<string, unknown> };
     expect(open.session?.title).toBe('Stored Summary Alpha');
+  });
+
+  it('keeps current UI presentation labels while retaining path redaction when session-summary sharing is off', () => {
+    const prompt = buildToolResultsFollowUpPrompt([{
+      t: 'readCurrentUiContext',
+      args: {},
+      result: {
+        navigation: { title: 'Triage issue' },
+        entity: { label: 'happier#123' },
+        commands: [{ id: 'current-ui-command:1', title: 'Open issue #124' }],
+        detail: { path: '/Users/leeroy/private-worktree' },
+      },
+    }], {
+      shareFilePaths: false,
+      shareSessionSummary: false,
+      sharePermissionRequests: true,
+      shareDeviceInventory: true,
+    });
+
+    expect(prompt).toContain('Triage issue');
+    expect(prompt).toContain('happier#123');
+    expect(prompt).toContain('Open issue #124');
+    expect(prompt).not.toContain('/Users/leeroy/private-worktree');
+    expect(prompt).toContain('<path_redacted>');
+  });
+
+  it('does not echo Action input or current-UI command ids in the provider result channel', () => {
+    const invokeActionTool = getActionSpec('action.invoke').bindings?.voiceClientToolName;
+    const invokeCurrentUiCommandTool = getActionSpec('ui.current_context.command.invoke')
+      .bindings?.voiceClientToolName;
+    if (!invokeActionTool || !invokeCurrentUiCommandTool) {
+      throw new Error('Expected canonical Voice tool bindings');
+    }
+
+    const prompt = buildToolResultsFollowUpPrompt([
+      {
+        t: invokeActionTool,
+        args: {
+          action: { pluginId: 'acme.triage', localId: 'comment' },
+          input: { body: 'private comment body' },
+        },
+        result: {
+          ok: false,
+          errorCode: 'stale_surface',
+          errorMessage: 'raw provider error: private-token',
+          result: {
+            credential: { token: 'private-token' },
+            providerId: 'private-provider',
+            connectionId: 'private-connection',
+            originalInput: { body: 'private comment body' },
+            error: { message: 'raw provider error' },
+          },
+        },
+      },
+      {
+        t: invokeCurrentUiCommandTool,
+        args: { commandId: 'current-ui-command:private-selection' },
+        result: {
+          ok: true,
+          result: {
+            credential: { token: 'private-command-token' },
+            providerId: 'private-command-provider',
+            connectionId: 'private-command-connection',
+            commandId: 'current-ui-command:private-selection',
+            error: { message: 'raw current UI command error' },
+          },
+        },
+      },
+    ], {
+      shareFilePaths: true,
+      shareSessionSummary: true,
+      sharePermissionRequests: true,
+      shareDeviceInventory: true,
+    });
+
+    expect(prompt).not.toContain('private comment body');
+    expect(prompt).not.toContain('current-ui-command:private-selection');
+    expect(prompt).not.toContain('private-token');
+    expect(prompt).not.toContain('private-provider');
+    expect(prompt).not.toContain('private-connection');
+    expect(prompt).not.toContain('raw provider error');
+    expect(prompt).not.toContain('private-command-token');
+    expect(prompt).not.toContain('private-command-provider');
+    expect(prompt).not.toContain('private-command-connection');
+    expect(prompt).not.toContain('raw current UI command error');
+    const parsed = parseFollowUpJson(prompt);
+    expect(parsed.toolResults.map((entry) => entry.args)).toEqual([null, null]);
+    expect(parsed.toolResults.map((entry) => entry.result)).toEqual([
+      {
+        ok: false,
+        errorCode: 'stale_surface',
+        errorMessage: 'stale_surface',
+      },
+      { ok: true },
+    ]);
   });
 
   it('strips pending permission-request identifiers when sharePermissionRequests is false', () => {

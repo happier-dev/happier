@@ -4,7 +4,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
-import { createExternalVoiceProviderActivationScope } from '@/voice/registry/externalVoiceProviderActivation';
+import { createExternalVoiceProviderActivationScope } from '@/voice/registry/externalVoiceProviderActivation.testkit';
 import { createBundledConversationRuntimeHostLease } from '@/voice/registry/bundledConversationRuntimeHost';
 import { VoiceRawCredentialAccessReview } from '@/voice/credentials/VoiceRawCredentialAccessReview';
 

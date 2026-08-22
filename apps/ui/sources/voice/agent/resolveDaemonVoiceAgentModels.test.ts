@@ -26,8 +26,7 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
                 commitModelId: 'ignored',
             },
         });
-        expect(result.chatModelId).toBe('session-model');
-        expect(result.commitModelId).toBe('session-model');
+        expect(result).toEqual({ chatModelId: 'session-model', commitModelId: 'session-model' });
     });
 
     it('uses commit source=session even when chat is custom', () => {
@@ -56,7 +55,7 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
         expect(result).toEqual({ chatModelId: 'session-model', commitModelId: 'commit-model' });
     });
 
-    it('falls back to default model ids for unknown session flavor metadata', () => {
+    it('reports the typed unavailable when the session Agent identity is unreadable', () => {
         const result = resolveDaemonVoiceAgentModelIds({
             session: { id: 's1', metadata: { flavor: 'unknown-agent' }, modelMode: 'default' } as any,
             agent: {
@@ -64,8 +63,27 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
                 commitModelSource: 'chat',
             },
         });
-        expect(result.chatModelId).toBe('default');
-        expect(result.commitModelId).toBe('default');
+
+        expect(result).toBeNull();
+    });
+
+    it('resolves models for an externally installed Agent declared by the session runtime', () => {
+        const result = resolveDaemonVoiceAgentModelIds({
+            session: {
+                id: 's1',
+                modelMode: 'default',
+                metadata: {
+                    runtimeDescriptorV1: { v: 1, agentId: 'acme-external-agent', agent: {} },
+                },
+            } as any,
+            agent: {
+                chatModelSource: 'custom',
+                chatModelId: 'acme-fast',
+                commitModelSource: 'chat',
+            },
+        });
+
+        expect(result).toEqual({ chatModelId: 'acme-fast', commitModelId: 'acme-fast' });
     });
 
     it('uses the target session flavor defaults for default sentinel values', () => {

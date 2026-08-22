@@ -18,6 +18,8 @@ import {
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+
 import { normalizeVoiceRuntimeFailureCode } from '../voiceRuntimeFailureCode';
 
 type SessionRpc = (input: Readonly<{
@@ -84,6 +86,19 @@ function unavailableAvailability(
     reason,
     diagnostic: diagnostic({ code, fallbackCode, message }),
   });
+}
+
+/**
+ * The RPC seam rejects with this exact message when a request is refused
+ * because the attempt or its owning runtime generation has been retired —
+ * never because the daemon failed. It is a retirement fact, not an error, so
+ * consumers classify it as an aborted attempt rather than an operation failure.
+ */
+export const AGENT_REALTIME_REQUEST_ABORTED_REJECTION = 'agent_realtime_request_aborted';
+
+function isRequestAbortedRejection(error: unknown): boolean {
+  return error instanceof Error
+    && error.message === AGENT_REALTIME_REQUEST_ABORTED_REJECTION;
 }
 
 function waitForOperationOrAbort<T>(
@@ -164,7 +179,7 @@ export function createAgentSessionRealtimeService(input: Readonly<{
     payload: unknown,
     signal: AbortSignal,
   ): Promise<unknown> => {
-    if (signal.aborted) throw new Error('agent_realtime_request_aborted');
+    if (signal.aborted) throw new Error(AGENT_REALTIME_REQUEST_ABORTED_REJECTION);
     return await input.sessionRpc({
       sessionId: input.conversationSessionId,
       method,
@@ -173,10 +188,8 @@ export function createAgentSessionRealtimeService(input: Readonly<{
     });
   };
 
-  const bindOperationSignal = (callerSignal?: AbortSignal): AbortSignal => (
-    callerSignal
-      ? AbortSignal.any([input.signal, callerSignal])
-      : input.signal
+  const bindOperationSignal = (callerSignal?: AbortSignal) => (
+    mergeAbortSignals([input.signal, callerSignal])
   );
 
   const requestStop = async (
@@ -434,7 +447,8 @@ export function createAgentSessionRealtimeService(input: Readonly<{
           HOST_DIAGNOSTIC_MESSAGES.unavailable,
         );
       }
-      const signal = bindOperationSignal(options.signal);
+      const operationSignal = bindOperationSignal(options.signal);
+      const signal = operationSignal.signal;
       try {
         const raw = await waitForOperationOrAbort(rpc(
           SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT,
@@ -468,16 +482,19 @@ export function createAgentSessionRealtimeService(input: Readonly<{
           status: 'available' as const,
           transport: 'webrtc' as const,
         });
-      } catch {
+      } catch (error) {
+        const retired = signal.aborted || isRequestAbortedRejection(error);
         return unavailableAvailability(
-          signal.aborted
+          retired
             ? 'agent_realtime_attempt_aborted'
             : 'agent_realtime_inspect_failed',
           'agent_realtime_inspect_failed',
-          signal.aborted
+          retired
             ? HOST_DIAGNOSTIC_MESSAGES.unavailable
             : HOST_DIAGNOSTIC_MESSAGES.inspectFailed,
         );
+      } finally {
+        operationSignal.dispose();
       }
     },
     async start(
@@ -502,7 +519,8 @@ export function createAgentSessionRealtimeService(input: Readonly<{
         };
       }
       started = true;
-      const signal = bindOperationSignal(options.signal);
+      const operationSignal = bindOperationSignal(options.signal);
+      const signal = operationSignal.signal;
       try {
         const startRequest = rpc(
           SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START,
@@ -567,6 +585,8 @@ export function createAgentSessionRealtimeService(input: Readonly<{
             message: HOST_DIAGNOSTIC_MESSAGES.startFailed,
           }),
         };
+      } finally {
+        operationSignal.dispose();
       }
     },
   });

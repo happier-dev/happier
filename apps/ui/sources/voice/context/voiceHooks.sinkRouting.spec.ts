@@ -14,6 +14,7 @@ import { createLocalConversationVoiceAdapter } from '@/voice/adapters/localConve
 const { realtimeState, appendLocalVoiceAgentContextUpdate, sendLocalVoiceAgentTextUpdate, announceLocalVoiceAgentAssistantText, isLocalVoiceAgentActive, resolveVoiceBindingByControlSessionId } = vi.hoisted(() => ({
   realtimeState: {
     started: false,
+    hostAuthoredContext: 'session_context' as 'session_context' | 'current_ui_only',
     session: null as Pick<VoiceSession, 'sendContextualUpdate' | 'sendTextMessage'> | null,
   },
   appendLocalVoiceAgentContextUpdate: vi.fn<(sessionId: string, update: string) => void>(),
@@ -42,7 +43,10 @@ vi.mock('@/voice/binding/VoiceConversationBindingResolver', () => ({
   },
 }));
 
-import { voiceHooks } from './voiceHooks';
+import {
+  createCurrentUiContextAutomaticUpdateProjector,
+  voiceHooks,
+} from './voiceHooks';
 
 describe('voiceHooks sink routing', () => {
   beforeEach(() => {
@@ -58,6 +62,7 @@ describe('voiceHooks sink routing', () => {
       sendContextUpdate: ({ update }) => realtimeState.session?.sendContextualUpdate(update),
       sendContextText: ({ text }) => realtimeState.session?.sendTextMessage(text),
       resolveContextChannel: () => realtimeState.session ? {
+        hostAuthoredContext: realtimeState.hostAuthoredContext,
         sendContextualUpdate: (update) => realtimeState.session?.sendContextualUpdate(update),
         sendTextMessage: (text) => realtimeState.session?.sendTextMessage(text),
       } : null,
@@ -74,6 +79,7 @@ describe('voiceHooks sink routing', () => {
     resolveVoiceBindingByControlSessionId.mockReset();
     resolveVoiceBindingByControlSessionId.mockReturnValue(null);
     realtimeState.started = false;
+    realtimeState.hostAuthoredContext = 'session_context';
     realtimeState.session = null;
     voiceHooks.onVoiceStopped();
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
@@ -301,7 +307,7 @@ describe('voiceHooks sink routing', () => {
       targetSessionId: 's1',
       updatedAt: 1,
     });
-    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === 'voice-conversation-1');
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === VOICE_AGENT_GLOBAL_SESSION_ID);
     setVoiceSessionSnapshot({
       adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: 'realtime-s1',
@@ -347,7 +353,7 @@ describe('voiceHooks sink routing', () => {
       targetSessionId: 's1',
       updatedAt: 1,
     });
-    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === 'voice-conversation-1');
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === VOICE_AGENT_GLOBAL_SESSION_ID);
     setVoiceSessionSnapshot({
       adapterId: 'local_conversation',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -368,14 +374,14 @@ describe('voiceHooks sink routing', () => {
     } as any]);
 
     expect(appendLocalVoiceAgentContextUpdate).toHaveBeenCalledWith(
-      'voice-conversation-1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('The coding assistant finished the review.'),
     );
     expect(sendTextMessage).not.toHaveBeenCalled();
     expect(sendContextualUpdate).not.toHaveBeenCalled();
   });
 
-  it('routes local ready updates to the bound hidden conversation session as contextual background', () => {
+  it('routes local ready updates through the active global agent transport as contextual background', () => {
     resolveVoiceBindingByControlSessionId.mockReturnValue({
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -384,20 +390,20 @@ describe('voiceHooks sink routing', () => {
       targetSessionId: 's1',
       updatedAt: 1,
     });
-    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === 'voice-conversation-1');
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === VOICE_AGENT_GLOBAL_SESSION_ID);
 
     voiceHooks.onReady('s1');
 
     expect(appendLocalVoiceAgentContextUpdate).toHaveBeenCalledWith(
-      'voice-conversation-1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('# Session: Session summary'),
     );
     expect(appendLocalVoiceAgentContextUpdate).toHaveBeenCalledWith(
-      'voice-conversation-1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('Coding assistant finished working in “Session summary”'),
     );
     expect(sendLocalVoiceAgentTextUpdate).not.toHaveBeenCalledWith(
-      'voice-conversation-1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('Coding assistant finished working in “Session summary”'),
     );
   });
@@ -411,12 +417,12 @@ describe('voiceHooks sink routing', () => {
       targetSessionId: 's1',
       updatedAt: 1,
     });
-    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === 'voice-conversation-1');
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === VOICE_AGENT_GLOBAL_SESSION_ID);
 
     voiceHooks.onReady('s2');
 
     expect(appendLocalVoiceAgentContextUpdate).toHaveBeenCalledWith(
-      'voice-conversation-1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('Coding assistant finished working in'),
     );
     expect(sendLocalVoiceAgentTextUpdate).not.toHaveBeenCalled();
@@ -468,7 +474,7 @@ describe('voiceHooks sink routing', () => {
       targetSessionId: 's1',
       updatedAt: 1,
     });
-    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === 'voice-conversation-1');
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === VOICE_AGENT_GLOBAL_SESSION_ID);
 
     voiceHooks.onMessages('s1', [{
       kind: 'agent-text',
@@ -481,11 +487,11 @@ describe('voiceHooks sink routing', () => {
       expect.stringContaining('The coding assistant needs approval.'),
     );
     expect(appendLocalVoiceAgentContextUpdate).toHaveBeenCalledWith(
-      'voice-conversation-1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('The coding assistant needs approval.'),
     );
     expect(sendLocalVoiceAgentTextUpdate).not.toHaveBeenCalledWith(
-      'voice-conversation-1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('The coding assistant needs approval.'),
     );
   });
@@ -499,7 +505,7 @@ describe('voiceHooks sink routing', () => {
       targetSessionId: 's1',
       updatedAt: 1,
     });
-    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === 'voice-hidden-s1');
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === VOICE_AGENT_GLOBAL_SESSION_ID);
 
     voiceHooks.onMessages('s1', [{
       kind: 'tool-call',
@@ -528,7 +534,7 @@ describe('voiceHooks sink routing', () => {
       expect.stringContaining('Invalid review output (expected strict JSON).'),
     );
     expect(appendLocalVoiceAgentContextUpdate).toHaveBeenCalledWith(
-      'voice-hidden-s1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('Invalid review output (expected strict JSON).'),
     );
   });
@@ -542,7 +548,7 @@ describe('voiceHooks sink routing', () => {
       targetSessionId: 's1',
       updatedAt: 1,
     });
-    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === 'voice-hidden-s1');
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === VOICE_AGENT_GLOBAL_SESSION_ID);
 
     voiceHooks.onMessages('s1', [{
       kind: 'agent-text',
@@ -555,11 +561,11 @@ describe('voiceHooks sink routing', () => {
       expect.stringContaining('What do you want handled in this workspace?'),
     );
     expect(appendLocalVoiceAgentContextUpdate).toHaveBeenCalledWith(
-      'voice-hidden-s1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('What do you want handled in this workspace?'),
     );
     expect(sendLocalVoiceAgentTextUpdate).not.toHaveBeenCalledWith(
-      'voice-hidden-s1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('What do you want handled in this workspace?'),
     );
   });
@@ -575,7 +581,7 @@ describe('voiceHooks sink routing', () => {
       targetSessionId: 's1',
       updatedAt: 1,
     });
-    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === 'voice-hidden-s1');
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === VOICE_AGENT_GLOBAL_SESSION_ID);
 
     voiceHooks.onMessages('s1', [{
       kind: 'agent-text',
@@ -588,11 +594,11 @@ describe('voiceHooks sink routing', () => {
       expect.stringContaining('Choose one of the onboarding options.'),
     );
     expect(appendLocalVoiceAgentContextUpdate).toHaveBeenCalledWith(
-      'voice-hidden-s1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('Choose one of the onboarding options.'),
     );
     expect(sendLocalVoiceAgentTextUpdate).not.toHaveBeenCalledWith(
-      'voice-hidden-s1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('Choose one of the onboarding options.'),
     );
   });
@@ -606,7 +612,7 @@ describe('voiceHooks sink routing', () => {
       targetSessionId: 's1',
       updatedAt: 1,
     });
-    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === 'voice-conversation-1');
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === VOICE_AGENT_GLOBAL_SESSION_ID);
 
     voiceHooks.onAgentRequest('s1', 'req_1', 'permission', 'Bash', { command: 'rm -rf /tmp/x' });
 
@@ -615,11 +621,11 @@ describe('voiceHooks sink routing', () => {
       expect.stringContaining('needs permission'),
     );
     expect(appendLocalVoiceAgentContextUpdate).toHaveBeenCalledWith(
-      'voice-conversation-1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('<request_id>req_1</request_id>'),
     );
     expect(sendLocalVoiceAgentTextUpdate).not.toHaveBeenCalledWith(
-      'voice-conversation-1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('<request_id>req_1</request_id>'),
     );
   });
@@ -633,7 +639,7 @@ describe('voiceHooks sink routing', () => {
       targetSessionId: 's1',
       updatedAt: 1,
     });
-    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === 'voice-conversation-1');
+    isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === VOICE_AGENT_GLOBAL_SESSION_ID);
 
     voiceHooks.onAgentRequest('s2', 'req_2', 'user_action', 'AskUserQuestion', {
       prompt: 'Pick a shape',
@@ -645,7 +651,7 @@ describe('voiceHooks sink routing', () => {
       expect.stringContaining('needs your input'),
     );
     expect(appendLocalVoiceAgentContextUpdate).toHaveBeenCalledWith(
-      'voice-conversation-1',
+      VOICE_AGENT_GLOBAL_SESSION_ID,
       expect.stringContaining('<request_id>req_2</request_id>'),
     );
     expect(sendLocalVoiceAgentTextUpdate).not.toHaveBeenCalled();
@@ -685,5 +691,99 @@ describe('voiceHooks sink routing', () => {
     expect(sendTextMessage).not.toHaveBeenCalledWith(
       expect.stringContaining('Background session reply.'),
     );
+  });
+  it('withholds host-authored session context from a provider whose Agent runtime owns the prompt, while keeping authorized current-UI metadata', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        voice: {
+          ...state.settings.voice,
+          providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+          privacy: { ...state.settings.voice.privacy, currentUiContextMode: 'automatic' },
+        },
+      },
+    }));
+    const sendContextualUpdate = vi.fn();
+    const sendTextMessage = vi.fn();
+    realtimeState.started = true;
+    realtimeState.hostAuthoredContext = 'current_ui_only';
+    realtimeState.session = { sendContextualUpdate, sendTextMessage };
+    setVoiceSessionSnapshot({
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+      sessionId: 'realtime-s1',
+      status: 'connected',
+      mode: 'listening',
+      canStop: true,
+    });
+
+    voiceHooks.onSessionOnline('s1', { summary: { text: 'Session summary' } } as any);
+    voiceHooks.onSessionFocus('s1', { summary: { text: 'Session summary' } } as any);
+    voiceHooks.onMessages('s1', [{
+      kind: 'agent-text',
+      text: 'Stored transcript content.',
+      createdAt: 1,
+    } as any]);
+
+    expect(sendContextualUpdate).not.toHaveBeenCalled();
+    expect(sendTextMessage).not.toHaveBeenCalled();
+
+    voiceHooks.onCurrentUiContextChanged(
+      's1',
+      { navigation: { area: 'app', screen: 'home' }, commands: [] } as any,
+      createCurrentUiContextAutomaticUpdateProjector(),
+    );
+
+    expect(sendContextualUpdate).toHaveBeenCalledTimes(1);
+    expect(sendContextualUpdate.mock.calls[0]?.[0]).toContain('CURRENT UI CONTEXT');
+  });
+
+  it('withholds announced stored-session text from a provider whose Agent runtime owns the prompt', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        voice: {
+          ...state.settings.voice,
+          providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+        },
+      },
+    }));
+    const sendContextualUpdate = vi.fn();
+    const sendTextMessage = vi.fn();
+    realtimeState.started = true;
+    realtimeState.hostAuthoredContext = 'current_ui_only';
+    realtimeState.session = { sendContextualUpdate, sendTextMessage };
+    setVoiceSessionSnapshot({
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+      sessionId: 'realtime-s1',
+      status: 'connected',
+      mode: 'speaking',
+      canStop: true,
+    });
+    storage.setState((state: any) => ({
+      ...state,
+      sessionMessages: {
+        ...state.sessionMessages,
+        s1: {
+          messageIdsOldestFirst: ['m1', 'm2'],
+          messagesById: {
+            m1: { id: 'm1', kind: 'user-text', text: 'Please inspect this.', createdAt: 1 },
+            m2: { id: 'm2', kind: 'agent-text', text: 'I found the root cause in the session sync path.', createdAt: 2 },
+          },
+          messagesMap: {
+            m1: { id: 'm1', kind: 'user-text', text: 'Please inspect this.', createdAt: 1 },
+            m2: { id: 'm2', kind: 'agent-text', text: 'I found the root cause in the session sync path.', createdAt: 2 },
+          },
+        },
+      },
+    }));
+
+    // An announced ready/assistant update is stored-session context whichever
+    // transport the sink offers, so the text-turn channel must withhold it too.
+    voiceHooks.onReady('s1');
+
+    expect(sendTextMessage).not.toHaveBeenCalled();
+    expect(sendContextualUpdate).not.toHaveBeenCalled();
   });
 });

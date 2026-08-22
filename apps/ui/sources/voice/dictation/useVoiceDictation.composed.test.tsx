@@ -77,6 +77,10 @@ describe('useVoiceDictation composed daemon readiness', () => {
                 [executionMachineId]: createMachineFixture({
                     id: executionMachineId,
                     active: true,
+                    // Voice execution-machine resolution fails closed on a stale
+                    // heartbeat, so a machine this test calls "ready at start"
+                    // must carry a live `activeAt` rather than the epoch default.
+                    activeAt: Date.now(),
                 }),
             },
             settings: {

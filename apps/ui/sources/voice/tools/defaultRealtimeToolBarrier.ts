@@ -1,4 +1,5 @@
 import type {
+  VoiceConversationToolEffectCalls,
   VoiceRealtimeToolResultV1,
 } from '@happier-dev/protocol';
 
@@ -13,6 +14,7 @@ import {
   resolveVoiceToolEffectClass,
   type VoiceToolHandler,
 } from '@/voice/tools/handlers';
+import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
 import {
   createRealtimeToolBarrier,
   RealtimeToolExecutionError,
@@ -22,6 +24,8 @@ type VoiceToolHandlers = Readonly<Record<string, VoiceToolHandler>>;
 
 type VoiceHandlerBarrierDeps = Readonly<{
   handlers: VoiceToolHandlers;
+  /** Omission is intentionally fail-closed for internal and legacy callers. */
+  effectCalls?: VoiceConversationToolEffectCalls;
   readRedactionPrefs: () => VoiceToolResultRedactionPrefs;
   submitResults: (
     responseId: string,
@@ -35,6 +39,10 @@ type VoiceHandlerBarrierDeps = Readonly<{
 
 type DefaultRealtimeToolBarrierDeps = Readonly<{
   resolveSessionId: (explicitSessionId?: string | null) => string | null;
+  /** Provider-local current-context capability; absent means no such tool. */
+  currentUiContext?: VoiceCurrentUiToolPort;
+  /** Omission is intentionally fail-closed for internal and legacy callers. */
+  effectCalls?: VoiceConversationToolEffectCalls;
   submitResults: (
     responseId: string,
     results: readonly VoiceRealtimeToolResultV1[],
@@ -66,7 +74,15 @@ function readSafeHandlerFailure(value: unknown): string | null {
 export function createRealtimeToolBarrierForVoiceHandlers(deps: VoiceHandlerBarrierDeps) {
   return createRealtimeToolBarrier({
     classifyCall: (call) => resolveVoiceToolEffectClass(call.toolName),
-    authorizeCall: async () => ({ status: 'allowed' }),
+    authorizeCall: async (call) => {
+      if (
+        deps.effectCalls !== 'stable_ids'
+        && resolveVoiceToolEffectClass(call.toolName) !== 'read_only'
+      ) {
+        return { status: 'denied', code: 'voice_effect_call_custody_unavailable' };
+      }
+      return { status: 'allowed' };
+    },
     executeCall: async (call, signal) => {
       const handler = deps.handlers[call.toolName];
       if (!handler) throw new RealtimeToolExecutionError('error', 'unsupported_action');
@@ -88,7 +104,11 @@ export function createRealtimeToolBarrierForVoiceHandlers(deps: VoiceHandlerBarr
 
 export function createDefaultRealtimeToolBarrier(deps: DefaultRealtimeToolBarrierDeps) {
   return createRealtimeToolBarrierForVoiceHandlers({
-    handlers: createVoiceToolHandlers({ resolveSessionId: deps.resolveSessionId }),
+    handlers: createVoiceToolHandlers({
+      resolveSessionId: deps.resolveSessionId,
+      ...(deps.currentUiContext ? { currentUiContext: deps.currentUiContext } : {}),
+    }),
+    effectCalls: deps.effectCalls,
     readRedactionPrefs: () => {
       const settings = (storage.getState() as { settings?: unknown }).settings;
       const privacy = readVoicePrivacySettings(settings);

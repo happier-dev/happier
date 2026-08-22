@@ -223,6 +223,7 @@ describe('local voice engine device STT (experimental)', () => {
         expect(submitMessage).toHaveBeenCalledWith('s1', 'hello from device stt', undefined, undefined, {
             callerSurface: 'voice_turn',
             forceImmediate: true,
+            hostAdmissionOrigin: 'voice',
         });
         expect((globalThis.fetch as any).mock.calls.length).toBe(0);
     });
@@ -346,6 +347,7 @@ describe('local voice engine device STT (experimental)', () => {
         expect(submitMessage).toHaveBeenCalledWith('s1', 'hands free message', undefined, undefined, {
             callerSurface: 'voice_turn',
             forceImmediate: true,
+            hostAdmissionOrigin: 'voice',
         });
         expect(speechRecStart).toHaveBeenCalledTimes(2);
         expect(getLocalVoiceState().status).toBe('recording');
@@ -492,6 +494,7 @@ describe('local voice engine device STT (experimental)', () => {
         expect(submitMessage).toHaveBeenCalledWith('s1', 'timed hands free', undefined, undefined, {
             callerSurface: 'voice_turn',
             forceImmediate: true,
+            hostAdmissionOrigin: 'voice',
         });
     });
 
@@ -596,6 +599,7 @@ describe('local voice engine device STT (experimental)', () => {
         expect(submitMessage).toHaveBeenCalledWith('s1', 'hands free message', undefined, undefined, {
             callerSurface: 'voice_turn',
             forceImmediate: true,
+            hostAdmissionOrigin: 'voice',
         });
     });
 

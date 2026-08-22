@@ -1,6 +1,7 @@
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { hasVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
+import { resolveVoiceTranscriptEntryId } from './voiceTranscriptEntryIdentity';
 import { resolveVoiceTranscriptRenderWindow, VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX } from './voiceTranscriptBounds';
 import { isVoiceTurnInterrupted, voiceTurnInterruptionVersion } from './voiceTurnInterruption';
 
@@ -89,20 +90,6 @@ function extractMessageText(message: unknown): string | null {
     return null;
 }
 
-function resolveTranscriptEntryId(message: unknown): string | null {
-    const record = readRecord(message);
-    if (!record) return null;
-    return normalizeNonEmptyString(
-        typeof record.localId === 'string'
-                ? record.localId
-            : typeof record.realID === 'string'
-                ? record.realID
-                : typeof record.id === 'string'
-                    ? record.id
-                    : null,
-    );
-}
-
 export function selectVoiceTranscriptEntriesForConversationSession(
     state: Readonly<{ sessionMessages?: Record<string, unknown> }> | null | undefined,
     conversationSessionId: string | null | undefined,
@@ -125,7 +112,7 @@ export function selectVoiceTranscriptEntriesForConversationSession(
     const entries: VoiceTranscriptEntry[] = [];
     for (const message of messages) {
         const record = readRecord(message);
-        const entryId = resolveTranscriptEntryId(message);
+        const entryId = resolveVoiceTranscriptEntryId(message);
         if (!record || !entryId) continue;
         const text = extractMessageText(message);
         if (!text) continue;

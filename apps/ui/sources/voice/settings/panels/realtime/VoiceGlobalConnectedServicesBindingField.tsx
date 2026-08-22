@@ -11,7 +11,7 @@ import {
 } from '@happier-dev/protocol';
 
 import {
-  isAgentId,
+  isBundledAgentId,
   resolveBundledAgentIdFromContributionIdentity,
 } from '@/agents/catalog/catalog';
 import { resolveConnectedServiceDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
@@ -89,7 +89,7 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
   const settings = useSettings();
   const router = useRouter();
   const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
-  const bundledAgentId = isAgentId(props.agentId)
+  const bundledAgentId = isBundledAgentId(props.agentId)
     ? props.agentId
     : resolveBundledAgentIdFromContributionIdentity(props.agentId);
   const qualifiedAgent = React.useMemo(() => {

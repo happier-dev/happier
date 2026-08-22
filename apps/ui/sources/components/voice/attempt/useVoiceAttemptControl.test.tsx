@@ -86,6 +86,7 @@ function createGlobalStartAdapter(
     overrides: Partial<Readonly<{
         requiresVoiceAgentFeature: boolean;
         allowsGlobalStart: boolean;
+        cancelResponse: 'unsupported' | 'immediate';
         agentRuntime: Readonly<{ pluginId: string; localId: string }>;
     }>> = {},
 ): VoiceAdapterController {
@@ -111,7 +112,7 @@ function createGlobalStartAdapter(
             controlSessionScope: 'global',
             requiresVoiceAgentFeature: overrides.requiresVoiceAgentFeature ?? false,
             bargeInEnabled: false,
-            cancelResponse: 'unsupported',
+            cancelResponse: overrides.cancelResponse ?? 'unsupported',
             ...(overrides.agentRuntime ? { agentRuntime: overrides.agentRuntime } : {}),
         }),
     } as VoiceAdapterController;
@@ -234,6 +235,202 @@ describe('useVoiceAttemptControl start admission', () => {
 });
 
 /**
+ * The configured provider names the **next** idle admission; the published snapshot's `adapterId`
+ * names the attempt running right now. Presentation must follow the attempt, because the lifecycle
+ * owner keeps the source adapter live until its hand-off observes a disconnect — so a surface that
+ * followed the selection would hide a still-open microphone (deleting its own Stop control) and
+ * would project the newly selected provider's capabilities onto someone else's attempt.
+ */
+describe('presentation follows the running attempt, not the next selection', () => {
+    const RUNNING_PROVIDER_ID = 'local_conversation';
+    const NEXT_PROVIDER_ID = 'happier.agent.codex/realtime-codex';
+
+    async function seedRunningAttempt() {
+        const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
+        const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+        registerVoiceAdapters([
+            createGlobalStartAdapter(RUNNING_PROVIDER_ID, { cancelResponse: 'immediate' }),
+            createGlobalStartAdapter(NEXT_PROVIDER_ID, { cancelResponse: 'unsupported' }),
+        ]);
+        seedVoiceSettings({
+            providerId: RUNNING_PROVIDER_ID,
+            ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+            providers: {
+                local_conversation: { schemaVersion: 1, config: { conversationMode: 'agent' } },
+            },
+        });
+        // Mid-turn: the assistant is thinking, so the attempt owns a cancellable response.
+        setVoiceSessionSnapshot({
+            adapterId: RUNNING_PROVIDER_ID,
+            sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            status: 'connected',
+            mode: 'thinking',
+            canStop: true,
+        } as any);
+    }
+
+    beforeEach(async () => {
+        getStorage().setState(initialStorageState, true);
+        featureState.current = { 'voice.agent': true };
+        const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+        setVoiceSessionSnapshot({
+            adapterId: null,
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+        } as any);
+    });
+
+    afterEach(async () => {
+        standardCleanup();
+        const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
+        const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+        registerVoiceAdapters([]);
+        setVoiceSessionSnapshot({
+            adapterId: null,
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+        } as any);
+        getStorage().setState(initialStorageState, true);
+    });
+
+    it('keeps a live attempt visible and stoppable after the selection changes to Off', async () => {
+        await seedRunningAttempt();
+        const hook = await renderBothOwners();
+        expect(hook.getCurrent().model).not.toBeNull();
+
+        await act(async () => {
+            seedVoiceSettings({
+                providerId: 'off',
+                ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+            });
+        });
+
+        // Off selects the next idle admission. It does not retire the running attempt, so hiding
+        // the surface would leave the microphone open with nothing left to stop it.
+        expect(hook.getCurrent().model).not.toBeNull();
+        expect(hook.getCurrent().model!.canCancelTurn).toBe(true);
+        expect(hook.getCurrent().control.canStop).toBe(true);
+
+        await hook.unmount();
+    });
+
+    it('keeps the running provider capabilities after a different provider is selected', async () => {
+        await seedRunningAttempt();
+        const hook = await renderBothOwners();
+        expect(hook.getCurrent().model!.canCancelTurn).toBe(true);
+
+        await act(async () => {
+            seedVoiceSettings({
+                providerId: NEXT_PROVIDER_ID,
+                ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+            });
+        });
+
+        // The newly selected provider cannot cancel a response; the one actually running can.
+        expect(hook.getCurrent().model).not.toBeNull();
+        expect(hook.getCurrent().model!.canCancelTurn).toBe(true);
+        expect(hook.getCurrent().control.canStop).toBe(true);
+
+        await hook.unmount();
+    });
+});
+
+/**
+ * C1 parity — an external provider must reach the surface exactly like a built-in one.
+ *
+ * The selected provider is resolved through the same registry a plugin registers into, and that
+ * registry is only populated once the plugin's runtime activates — after the first render on a cold
+ * boot. Without a subscription to the registry's own revision the surface keeps its first answer
+ * forever, so a persisted external selection stays permanently unrunnable until some unrelated
+ * render happens to refresh it.
+ */
+describe('external provider registration reaches the surface', () => {
+    const externalToken = Object.freeze({});
+    const EXTERNAL_PROVIDER_ID = 'acme.voice.demo/realtime-demo';
+
+    function externalDescriptor() {
+        return {
+            kind: 'voice.conversation-provider.v1' as const,
+            pluginId: 'acme.voice.demo',
+            providerId: EXTERNAL_PROVIDER_ID,
+            settingsSectionId: 'voice.acme-demo',
+            roles: [] as never[],
+            requirements: [] as never[],
+            source: { kind: 'external' as const, pluginId: 'acme.voice.demo', localId: 'realtime-demo' },
+            projectSettings: () => ({ status: 'ready' as const, modeId: 'byo' }),
+        };
+    }
+
+    beforeEach(async () => {
+        getStorage().setState(initialStorageState, true);
+        featureState.current = { 'voice.agent': true };
+        const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+        setVoiceSessionSnapshot({
+            adapterId: null,
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+        } as any);
+    });
+
+    afterEach(async () => {
+        const { removeExternalVoiceProviderRegistration } = await import(
+            '@/voice/registry/externalVoiceProviderRegistrations'
+        );
+        await act(async () => {
+            removeExternalVoiceProviderRegistration(externalToken);
+        });
+        standardCleanup();
+        const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
+        registerVoiceAdapters([]);
+        getStorage().setState(initialStorageState, true);
+    });
+
+    it('becomes available when the plugin registers, with no unrelated rerender', async () => {
+        const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
+        const { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } =
+            await import('@/voice/registry/externalVoiceProviderRegistrations');
+        registerVoiceAdapters([createGlobalStartAdapter(EXTERNAL_PROVIDER_ID)]);
+        seedVoiceSettings({
+            providerId: EXTERNAL_PROVIDER_ID,
+            ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+        });
+
+        const hook = await renderBothOwners();
+        // Cold boot: the plugin runtime has not registered its provider yet.
+        expect(hook.getCurrent().model).toBeNull();
+
+        await act(async () => {
+            commitExternalVoiceProviderRegistration(Object.freeze({
+                token: externalToken,
+                pluginId: 'acme.voice.demo',
+                localId: 'realtime-demo',
+                providerId: EXTERNAL_PROVIDER_ID,
+                descriptor: externalDescriptor() as never,
+                adapter: null,
+            }));
+        });
+
+        expect(hook.getCurrent().model).not.toBeNull();
+        expect(hook.getCurrent().control.canStart).toBe(true);
+
+        // Withdrawal is the same authority in the other direction.
+        await act(async () => {
+            removeExternalVoiceProviderRegistration(externalToken);
+        });
+        expect(hook.getCurrent().model).toBeNull();
+        expect(hook.getCurrent().control.canStart).toBe(false);
+
+        await hook.unmount();
+    });
+});
+
+/**
  * §2.2 — the availability ladder has three rungs, and the middle one is the whole point.
  *
  * A provider the user selected but has not finished connecting cannot start, and it publishes no
@@ -344,6 +541,9 @@ describe('useVoiceAttemptControl recovery routing', () => {
             pluginId: 'happier.agent.codex',
             localId: 'openai-codex',
         },
+        // The projected entry for a released adapter carries its legacy service id; the canonical
+        // account-route resolver refuses to build a route for an entry that does not.
+        legacyServiceId: 'openai-codex',
         connectCommand: 'happier connect acme.connected-accounts/codex-account',
         supportsOauth: true,
         executable: true,

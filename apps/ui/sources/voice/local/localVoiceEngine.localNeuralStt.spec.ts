@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
+// Attach-time daemon model warm-up is an independent background boundary that
+// also transitions the runtime to idle-with-error on failure (its own contract
+// lives in `localVoiceEngine.agent.spec.ts`). Neutralize it here so these tests
+// observe the capture-start failure they are about, not a warm race.
+vi.mock('@/voice/runtime/daemonInference/warmDaemonVoiceInferenceOnVoiceHomeAttach', () => ({
+  warmDaemonVoiceInferenceOnVoiceHomeAttach: async () => undefined,
+}));
+
 import {
   audioStreamStart,
   emitAudioStreamEvent,
@@ -158,6 +166,7 @@ describe('local voice engine local neural STT (streaming)', () => {
     expect(submitMessage).toHaveBeenCalledWith('s1', 'hello sherpa', undefined, undefined, {
       callerSurface: 'voice_turn',
       forceImmediate: true,
+      hostAdmissionOrigin: 'voice',
     });
   });
 
@@ -266,6 +275,7 @@ describe('local voice engine local neural STT (streaming)', () => {
       expect(submitMessage).toHaveBeenCalledWith('s1', 'hands free sherpa', undefined, undefined, {
         callerSurface: 'voice_turn',
         forceImmediate: true,
+        hostAdmissionOrigin: 'voice',
       });
     });
     await vi.waitFor(() => {

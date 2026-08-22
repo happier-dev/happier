@@ -48,6 +48,7 @@ function createPublicEntry(input: Readonly<{
         bargeIn: false,
         ...(input.resumption ? { resumption: input.resumption } : {}),
       }),
+      tools: Object.freeze({ effectCalls: 'none' as const }),
     }),
     client: Object.freeze({
       artifactId: 'voice-runtime',

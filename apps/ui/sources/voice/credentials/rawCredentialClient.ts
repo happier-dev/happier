@@ -8,6 +8,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { VoiceCredentialAccessPhase, VoiceRawCredentialAccess } from '@happier-dev/plugin-sdk/voice';
 
+import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
+
 import { createSelectedVoiceMachineClient } from './selectedMachineClient';
 
 type ClientVoiceCredentialPhase = Exclude<VoiceCredentialAccessPhase, 'speech'>;
@@ -74,10 +76,9 @@ export function createVoiceClientRawCredentialAccess(input: Readonly<{
             if (input.signal.aborted || !input.isCurrent() || !input.isInvocationCurrent()) {
                 throw unavailable();
             }
-            const signal = options.signal && options.signal !== input.signal
-                ? AbortSignal.any([input.signal, options.signal])
-                : input.signal;
-            signal.throwIfAborted();
+            const mergedSignal = mergeAbortSignals([input.signal, options.signal]);
+            const signal = mergedSignal.signal;
+            throwIfAborted(signal);
             let rawResponse: unknown;
             try {
                 rawResponse = await client.invoke(
@@ -86,16 +87,18 @@ export function createVoiceClientRawCredentialAccess(input: Readonly<{
                     signal,
                 );
             } catch {
+                mergedSignal.dispose();
                 if (input.signal.aborted || !input.isCurrent() || !input.isInvocationCurrent()) {
                     throw unavailable();
                 }
-                options.signal?.throwIfAborted();
+                throwIfAborted(options.signal);
                 throw unavailable();
             }
+            mergedSignal.dispose();
             if (input.signal.aborted || !input.isCurrent() || !input.isInvocationCurrent()) {
                 throw unavailable();
             }
-            options.signal?.throwIfAborted();
+            throwIfAborted(options.signal);
             const response = DaemonVoiceClientRawCredentialMaterializeResponseV1Schema.safeParse(rawResponse);
             if (!response.success) throw materializationFailed();
             if (!response.data.ok) {

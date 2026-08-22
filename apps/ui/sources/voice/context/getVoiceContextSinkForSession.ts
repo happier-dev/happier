@@ -12,6 +12,7 @@ function createProjectedContextSink(adapterId: string, voiceSettings: unknown): 
     const channel = resolveVoiceAdapterContextChannel(adapterId, voiceSettings);
     if (!channel) return null;
     return {
+        hostAuthoredContext: channel.hostAuthoredContext,
         sendContextualUpdate: (_sessionId, update) => channel.sendContextualUpdate(update),
         sendTextMessage: (_sessionId, text) => channel.sendTextMessage(text),
         ...(channel.announceAssistantText

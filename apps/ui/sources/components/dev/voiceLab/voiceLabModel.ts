@@ -391,12 +391,12 @@ export const VOICE_LAB_PROVIDER_BY_ID: Readonly<Record<VoiceLabProviderId, Voice
 /**
  * The controls, and the exact states in which each is truthful.
  *
- * Two rules the shipped surface breaks and every concept here must not:
+ * Two rules every concept here must hold:
  *
- *  - **End Voice stays reachable in every connected state.** Today
- *    `VoiceSurfaceControls` early-returns when `canRecover`, rendering only the
- *    recovery button — so during a recoverable error on a live session the user
- *    cannot stop the session from this surface.
+ *  - **End Voice stays reachable in every connected state.** Rendering only
+ *    the recovery button while `canRecover` would strand a user in a
+ *    recoverable error on a live session with no way to stop it, so recovery is
+ *    an addition beside the transport and never a replacement for it.
  *  - **Return to session is session-variant only** (`getVoiceAgentSessionTeleport
  *    Availability`). It must never appear in a sidebar concept.
  */

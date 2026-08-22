@@ -1,5 +1,9 @@
 import { parseModelPackManifest, type ModelPackManifest } from '@happier-dev/protocol';
+import { getOptionalHappierSherpaNativeModule } from '@happier-dev/sherpa-native';
 import { installModelPackWithHost, type ModelPackPromotionPriorInstallV1 } from '@happier-dev/voice-modelpacks';
+
+import { uriToFilePath } from '@/platform/fileUri';
+import { forgetSpeakerCountForAssetsDir } from '@/voice/kokoro/runtime/kokoroSpeakerCountCache';
 
 import { getFetch, getFs } from './installer/fs.native';
 import {
@@ -9,7 +13,33 @@ import {
 } from './installer/host.native';
 import { fetchRemoteManifest } from './installer/network';
 import { assertManifestPathsSafe, getMetaFile, getPackRootDir, normalizePackId } from './installer/paths';
-import type { InstallerFs, InstallMode, InstallerOverrides, UpdatePolicy } from './installer/types';
+import type { InstallerFs, InstallMode, InstallerOverrides, InvalidatePackRuntime, UpdatePolicy } from './installer/types';
+
+/**
+ * Runtime state derived from the live pack directory. Native voice engines and
+ * the speaker count are keyed by that stable path, which the installer reuses
+ * across replacements, so the derived state must be dropped whenever the bytes
+ * behind it change. Resolved here — the one place that owns both the installer
+ * host and the app's voice runtime — rather than inside the filesystem host.
+ *
+ * The native streaming recognizer cached for that directory is evicted through
+ * the sherpa module, which owns the stream lifetime: the eviction marks the jobs
+ * decoding against the pack and releases the recognizer, and the handles are
+ * destroyed by whichever holder releases last. A native binary that predates
+ * that method simply keeps its recognizer, which is no worse than before, so the
+ * removal or promotion still proceeds.
+ *
+ * Offline TTS engines are still cached natively by the same path and are not
+ * evicted here: their handles are passed to synthesis as raw pointers, so they
+ * cannot be released safely until they own their lifetime the way streams now do.
+ */
+function getInvalidatePackRuntime(overrides: InstallerOverrides): InvalidatePackRuntime {
+  return overrides.invalidatePackRuntime ?? (async (packDirUri) => {
+    const assetsDir = uriToFilePath(packDirUri);
+    forgetSpeakerCountForAssetsDir(assetsDir);
+    await getOptionalHappierSherpaNativeModule()?.releaseStreamingAssetsDir?.({ assetsDir }).catch(() => {});
+  });
+}
 
 function manifestsEqual(a: ModelPackManifest, b: ModelPackManifest): boolean {
   if (a.packId !== b.packId) return false;
@@ -26,6 +56,7 @@ function manifestsEqual(a: ModelPackManifest, b: ModelPackManifest): boolean {
 async function installViaHost(opts: {
   fs: InstallerFs;
   fetchImpl: typeof fetch;
+  invalidatePackRuntime: InvalidatePackRuntime;
   packId: string;
   manifest: ModelPackManifest;
   timeoutMs: number;
@@ -37,6 +68,7 @@ async function installViaHost(opts: {
     fs: opts.fs,
     fetchImpl: opts.fetchImpl,
     timeoutMs: opts.timeoutMs,
+    invalidatePackRuntime: opts.invalidatePackRuntime,
   });
   const result = await installModelPackWithHost({
     host,
@@ -63,10 +95,11 @@ export async function ensureModelPackInstalled(
 ): Promise<{ packDirUri: string; manifest: ModelPackManifest }> {
   const fs = await getFs(overrides);
   const fetchImpl = getFetch(overrides);
+  const invalidatePackRuntime = getInvalidatePackRuntime(overrides);
   const id = normalizePackId(opts.packId);
   // X-M1: roll forward/back any swap this pack left interrupted by a crash before
   // inspecting/serving it, so a transiently-missing live dir is never observed.
-  await reconcileExpoModelPackPromotion({ fs, packId: id });
+  await reconcileExpoModelPackPromotion({ fs, packId: id, invalidatePackRuntime });
   const rootDir = getPackRootDir(fs, id);
 
   const meta = getMetaFile(fs, rootDir);
@@ -99,6 +132,7 @@ export async function ensureModelPackInstalled(
       return await installViaHost({
         fs,
         fetchImpl,
+        invalidatePackRuntime,
         packId: id,
         manifest: remote,
         timeoutMs: opts.timeoutMs,
@@ -132,6 +166,7 @@ export async function ensureModelPackInstalled(
   return await installViaHost({
     fs,
     fetchImpl,
+    invalidatePackRuntime,
     packId: id,
     manifest,
     timeoutMs: opts.timeoutMs,
@@ -207,7 +242,11 @@ export async function getModelPackInstallSummary(
   const fs = await getFs(overrides);
   const id = normalizePackId(opts.packId);
   // X-M1: recover an interrupted swap before reporting install state.
-  await reconcileExpoModelPackPromotion({ fs, packId: id });
+  await reconcileExpoModelPackPromotion({
+    fs,
+    packId: id,
+    invalidatePackRuntime: getInvalidatePackRuntime(overrides),
+  });
   const rootDir = getPackRootDir(fs, id);
   const meta = getMetaFile(fs, rootDir);
 
@@ -230,5 +269,10 @@ export async function removeModelPack(
 ): Promise<void> {
   const fs = await getFs(overrides);
   const id = normalizePackId(opts.packId);
-  await removeExpoModelPackWithHost({ fs, packId: id, signal: opts.signal });
+  await removeExpoModelPackWithHost({
+    fs,
+    packId: id,
+    signal: opts.signal,
+    invalidatePackRuntime: getInvalidatePackRuntime(overrides),
+  });
 }

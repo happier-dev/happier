@@ -46,7 +46,8 @@ export function createDefaultVoiceQaControllerDeps(): VoiceQaControllerDeps {
         getLocalBinding: (controlSessionId) =>
             voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId, adapterId: 'local_conversation' }),
         ensureLocalRunningAndMaybeWelcome: (sessionId) => voiceAgentSessions.ensureRunningAndMaybeWelcome(sessionId),
-        ensureSessionVisibleForMessageRoute: (sessionId) => sync.ensureSessionVisibleForMessageRoute(sessionId),
+        ensureSessionVisibleForMessageRoute: (sessionId, options) =>
+            sync.ensureSessionVisibleForMessageRoute(sessionId, options),
         refreshSessionMessages: (sessionId) => sync.refreshSessionMessages(sessionId),
         pendingPort: voiceTextTurnPendingPort,
         commitLocalUserTranscript: (sessionId, prompt, localId) =>

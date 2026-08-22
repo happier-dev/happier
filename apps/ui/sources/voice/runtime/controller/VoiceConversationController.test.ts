@@ -182,6 +182,44 @@ describe('VoiceConversationController', () => {
     expect(machine.transitions).toEqual([]);
   });
 
+  it('never acquires attempt resources when the attempt is retired during credential preparation', async () => {
+    const mint = deferred<{
+      kind: 'prepared';
+      session: { config: Record<string, never>; safeMetadata: null };
+    }>();
+    const resources = {
+      prepare: vi.fn(async () => {}),
+      release: vi.fn(async () => {}),
+    };
+    const prepare = vi.fn(async () => await mint.promise);
+    const machine = createMachineFixture();
+    const controller = createVoiceConversationController({
+      adapter: createAdapter({ prepare }),
+      machine: machine.machine,
+      createConnection: async () => createConnectionFixture().connection,
+      isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {},
+      resources,
+    });
+
+    const start = controller.start({ controlSessionId: 'account-a-voice' });
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+
+    // The canonical server-Account scope fence retires this exact attempt while
+    // the provider credential is still being minted.
+    const stopped = controller.stop();
+    mint.resolve({ kind: 'prepared', session: { config: {}, safeMetadata: null } });
+
+    await expect(start).resolves.toEqual({ status: 'aborted' });
+    await stopped;
+
+    // The transcript carrier is created inside resource preparation, against
+    // whichever Account is active when it runs. A retired attempt must never
+    // reach it, or an Account-A conversation would create or bind a carrier
+    // inside Account B.
+    expect(resources.prepare).not.toHaveBeenCalled();
+  });
+
   it('passes the provider-neutral start request through preparation without interpreting it', async () => {
     const prepare = vi.fn(async () => ({
       kind: 'prepared' as const,

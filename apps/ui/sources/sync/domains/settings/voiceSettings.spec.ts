@@ -13,6 +13,23 @@ import { DEFAULT_ELEVENLABS_VOICE_ID } from '../../../../../../packages/plugins/
 
 describe('voiceSettings', () => {
   const elevenLabsProviderId = 'happier.voice.elevenlabs/realtime-elevenlabs';
+
+  it.each(['off', 'on_demand', 'automatic'] as const)(
+    'preserves the independent current UI context privacy mode %s',
+    (currentUiContextMode) => {
+      expect(voiceSettingsParse({
+        privacy: { currentUiContextMode },
+      }).privacy.currentUiContextMode).toBe(currentUiContextMode);
+    },
+  );
+
+  it('defaults an absent or malformed current UI context privacy mode to on demand', () => {
+    expect(voiceSettingsParse({}).privacy.currentUiContextMode).toBe('on_demand');
+    expect(voiceSettingsParse({
+      privacy: { currentUiContextMode: 'always' },
+    }).privacy.currentUiContextMode).toBe('on_demand');
+  });
+
   it('drops never-released conversation selections and envelopes at settings ingress', () => {
     const parsed = voiceSettingsParse({
       providerId: 'realtime_codex',

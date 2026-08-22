@@ -2,47 +2,6 @@ function createTurnAbortError() {
     return Object.assign(new Error('turn_aborted'), { name: 'AbortError' });
 }
 
-export function mergeAbortSignals(signals: ReadonlyArray<AbortSignal | undefined>) {
-    const activeSignals = signals.filter((signal): signal is AbortSignal => Boolean(signal));
-    if (activeSignals.length === 0) {
-        return { signal: undefined, dispose: () => {} } as const;
-    }
-    if (activeSignals.length === 1) {
-        return { signal: activeSignals[0], dispose: () => {} } as const;
-    }
-
-    const controller = new AbortController();
-    const listeners: Array<Readonly<{ signal: AbortSignal; listener: () => void }>> = [];
-    const abortMerged = () => {
-        if (!controller.signal.aborted) {
-            controller.abort();
-        }
-    };
-
-    for (const signal of activeSignals) {
-        if (signal.aborted) {
-            abortMerged();
-            break;
-        }
-        const listener = () => abortMerged();
-        listeners.push({ signal, listener });
-        signal.addEventListener('abort', listener, { once: true });
-    }
-
-    return {
-        signal: controller.signal,
-        dispose: () => {
-            for (const { signal, listener } of listeners) {
-                try {
-                    signal.removeEventListener('abort', listener);
-                } catch {
-                    // ignore
-                }
-            }
-        },
-    } as const;
-}
-
 export function createAbortRacer(signal: AbortSignal | undefined) {
     if (!signal) {
         return {

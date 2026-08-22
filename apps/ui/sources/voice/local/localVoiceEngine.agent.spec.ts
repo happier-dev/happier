@@ -1,5 +1,8 @@
+import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { renderScreen } from '@/dev/testkit';
 
 import {
     daemonVoiceAgentCancelTurnStream,
@@ -9,6 +12,7 @@ import {
     daemonVoiceAgentStart,
     daemonVoiceAgentStartTurnStream,
     daemonVoiceAgentWelcome,
+    emitSpeechRecEvent,
     expoSpeechSpeak,
     getStorage,
     loadLocalVoiceEngineWithCompatState,
@@ -19,10 +23,17 @@ import {
     sessionExecutionRunStart,
     sendSessionMessageWithServerScope,
     sendMessage,
+    speechRecStart,
+    speechRecStop,
+    audioSessionRelease,
 } from './localVoiceEngine.testHarness';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol';
-import type { VoiceAgentClient } from '@/voice/agent/types';
+import type { CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/ui';
+import {
+    attachVoiceAgentActionEffectId,
+    type VoiceAgentClient,
+} from '@/voice/agent/types';
 
 const warmDaemonVoiceInferenceOnVoiceHomeAttachMock = vi.hoisted(() => vi.fn());
 
@@ -101,6 +112,7 @@ describe('local voice engine agent behavior', () => {
         targetState.setPrimaryActionSessionId(null);
         targetState.setTrackedSessionIds([]);
         targetState.setLastFocusedSessionId(null);
+        vi.restoreAllMocks();
     });
 
 
@@ -345,6 +357,350 @@ describe('local voice engine agent behavior', () => {
         await flushMicrotasks(4000);
 
         expect(daemonVoiceAgentStart).toHaveBeenCalledTimes(1);
+    });
+
+    it('delivers automatic bounded current UI metadata through the active local agent attempt only', async () => {
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_conversation',
+                    privacy: {
+                        ...storage.getState().settings.voice.privacy,
+                        currentUiContextMode: 'automatic',
+                    },
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
+                            conversationMode: 'agent',
+                            stt: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
+                                baseUrl: 'http://localhost:8000',
+                            },
+                            tts: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
+                                autoSpeakReplies: false,
+                            },
+                            agent: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
+                                prewarmOnConnect: true,
+                            },
+                            streaming: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
+                                enabled: false,
+                            },
+                        } },
+                    },
+                },
+            },
+            sessions: {
+                ...storage.getState().sessions,
+                s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+            },
+        });
+
+        const agentStart = {
+            resolve: null as ((value: { voiceAgentId: string }) => void) | null,
+        };
+        daemonVoiceAgentStart.mockImplementationOnce(
+            () => new Promise<{ voiceAgentId: string }>((resolve) => {
+                agentStart.resolve = resolve;
+            }),
+        );
+        let snapshot: CurrentUiContextSnapshotV1 | null = {
+            navigation: {
+                area: 'settings',
+                screen: 'settings_page',
+                title: 'VOICE_TITLE_SENTINEL',
+                presentation: 'screen',
+            },
+            entity: { kind: 'issue', label: 'PRIVATE_ENTITY_SENTINEL' },
+            detail: { secret: 'PRIVATE_DETAIL_SENTINEL' },
+            commands: [],
+        };
+        const currentUiSubscription = {
+            listener: null as (() => void) | null,
+        };
+        const currentUiContext = {
+            readCurrentUiContext: vi.fn(() => snapshot),
+            resolveCurrentUiCommand: vi.fn(() => null),
+            subscribe: vi.fn((nextListener: () => void) => {
+                currentUiSubscription.listener = nextListener;
+                return () => { currentUiSubscription.listener = null; };
+            }),
+        };
+
+        const setCurrentUiContextMode = (mode: 'automatic' | 'on_demand' | 'off') => {
+            const state = storage.getState();
+            storage.__setState({
+                settings: {
+                    ...state.settings,
+                    voice: {
+                        ...state.settings.voice,
+                        privacy: {
+                            ...state.settings.voice.privacy,
+                            currentUiContextMode: mode,
+                        },
+                    },
+                },
+            });
+        };
+        const readLastProviderUserText = () => String(
+            (daemonVoiceAgentSendTurn.mock.calls.at(-1)?.[0] as { userText?: unknown } | undefined)?.userText ?? '',
+        );
+
+        const { voiceSessionBindingManager } = await import('@/voice/binding/voiceConversationBindingRuntime');
+        await expect(voiceSessionBindingManager.ensureBound({
+            adapterId: 'local_conversation',
+            controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            requestedTargetSessionId: null,
+        })).resolves.toMatchObject({
+            controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            conversationSessionId: 'voice-home-session',
+        });
+
+        const { voiceHooks } = await import('@/voice/context/voiceHooks');
+        const currentUiContextChangedSpy = vi.spyOn(voiceHooks, 'onCurrentUiContextChanged');
+
+        const toggle = localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID, currentUiContext);
+        await waitForMockCalls(daemonVoiceAgentStart, 1);
+        await toggle;
+        expect(currentUiContext.subscribe).not.toHaveBeenCalled();
+
+        const resolveAgentStart = agentStart.resolve;
+        if (!resolveAgentStart) throw new Error('missing local voice agent start resolver');
+        resolveAgentStart({ voiceAgentId: 'va1' });
+        await waitForMockCalls(currentUiContext.subscribe, 1);
+
+        await localVoiceEngine.sendLocalVoiceAgentTextTurn(
+            VOICE_AGENT_GLOBAL_SESSION_ID,
+            'What can you see?',
+            { localId: 'automatic-current-ui-turn', deliveryCommand: 'interrupt_and_send' },
+        );
+        const automaticProviderText = readLastProviderUserText();
+        expect(automaticProviderText).toContain('CURRENT UI CONTEXT');
+        expect(automaticProviderText).toContain('"area":"settings"');
+        expect(automaticProviderText).toContain('"screen":"settings_page"');
+        expect(automaticProviderText).toContain('VOICE_TITLE_SENTINEL');
+        expect(automaticProviderText).not.toContain('PRIVATE_ENTITY_SENTINEL');
+        expect(automaticProviderText).not.toContain('PRIVATE_DETAIL_SENTINEL');
+
+        const attemptListener = currentUiSubscription.listener;
+        if (!attemptListener) throw new Error('missing local current UI subscription');
+        snapshot = null;
+        attemptListener();
+        attemptListener();
+        await localVoiceEngine.sendLocalVoiceAgentTextTurn(
+            VOICE_AGENT_GLOBAL_SESSION_ID,
+            'Has the screen retired?',
+            { localId: 'automatic-current-ui-retirement', deliveryCommand: 'interrupt_and_send' },
+        );
+        const retirementProviderText = readLastProviderUserText();
+        expect(retirementProviderText).toContain('"state":"unavailable"');
+        expect(retirementProviderText.match(/CURRENT UI CONTEXT/g)).toHaveLength(1);
+        expect(retirementProviderText).not.toContain('PRIVATE_ENTITY_SENTINEL');
+        expect(retirementProviderText).not.toContain('PRIVATE_DETAIL_SENTINEL');
+
+        setCurrentUiContextMode('on_demand');
+        snapshot = {
+            navigation: { area: 'settings', screen: 'settings_page', title: 'ON_DEMAND_NAVIGATION_SENTINEL' },
+            commands: [],
+        };
+        attemptListener();
+        await localVoiceEngine.sendLocalVoiceAgentTextTurn(
+            VOICE_AGENT_GLOBAL_SESSION_ID,
+            'Read only when I ask.',
+            { localId: 'on-demand-current-ui-turn', deliveryCommand: 'interrupt_and_send' },
+        );
+        expect(readLastProviderUserText()).toBe('Read only when I ask.');
+
+        setCurrentUiContextMode('off');
+        snapshot = {
+            navigation: { area: 'settings', screen: 'settings_page', title: 'OFF_NAVIGATION_SENTINEL' },
+            commands: [],
+        };
+        attemptListener();
+        await localVoiceEngine.sendLocalVoiceAgentTextTurn(
+            VOICE_AGENT_GLOBAL_SESSION_ID,
+            'No current UI context.',
+            { localId: 'off-current-ui-turn', deliveryCommand: 'interrupt_and_send' },
+        );
+        expect(readLastProviderUserText()).toBe('No current UI context.');
+
+        const pendingNativeAudio = {
+            release: null as (() => void) | null,
+        };
+        audioSessionRelease.mockImplementationOnce(
+            () => new Promise<void>((resolve) => {
+                pendingNativeAudio.release = resolve;
+            }),
+        );
+        const stop = localVoiceEngine.stopLocalVoiceSession();
+        await waitForMockCalls(audioSessionRelease, 1);
+        expect(currentUiSubscription.listener).toBeNull();
+        const releasePendingNativeAudio = pendingNativeAudio.release;
+        if (!releasePendingNativeAudio) throw new Error('missing pending native audio release');
+        releasePendingNativeAudio();
+        await stop;
+        const providerCallsAfterStop = daemonVoiceAgentSendTurn.mock.calls.length;
+        setCurrentUiContextMode('automatic');
+        attemptListener();
+        expect(currentUiSubscription.listener).toBeNull();
+        expect(daemonVoiceAgentSendTurn).toHaveBeenCalledTimes(providerCallsAfterStop);
+        expect(currentUiContextChangedSpy).toHaveBeenCalled();
+        expect(currentUiContextChangedSpy.mock.calls.every(([sessionId]) => sessionId === VOICE_AGENT_GLOBAL_SESSION_ID)).toBe(true);
+        expect(currentUiContextChangedSpy.mock.calls.some(([sessionId]) => sessionId === 'voice-home-session')).toBe(false);
+
+        const retiringAgentStart = {
+            resolve: null as ((value: { voiceAgentId: string }) => void) | null,
+        };
+        daemonVoiceAgentStart.mockImplementationOnce(
+            () => new Promise<{ voiceAgentId: string }>((resolve) => {
+                retiringAgentStart.resolve = resolve;
+            }),
+        );
+        const retiringCurrentUiContext = {
+            readCurrentUiContext: vi.fn(() => snapshot),
+            resolveCurrentUiCommand: vi.fn(() => null),
+            subscribe: vi.fn(() => () => {}),
+        };
+        const retiringToggle = localVoiceEngine.toggleLocalVoiceTurn(
+            VOICE_AGENT_GLOBAL_SESSION_ID,
+            retiringCurrentUiContext,
+        );
+        await waitForMockCalls(daemonVoiceAgentStart, 2);
+        await retiringToggle;
+        expect(retiringCurrentUiContext.subscribe).not.toHaveBeenCalled();
+
+        const retiringNativeAudio = {
+            release: null as (() => void) | null,
+        };
+        audioSessionRelease.mockImplementationOnce(
+            () => new Promise<void>((resolve) => {
+                retiringNativeAudio.release = resolve;
+            }),
+        );
+        const retiringStop = localVoiceEngine.stopLocalVoiceSession();
+        await waitForMockCalls(audioSessionRelease, 2);
+        const resolveRetiringAgentStart = retiringAgentStart.resolve;
+        if (!resolveRetiringAgentStart) throw new Error('missing retiring local voice agent start resolver');
+        resolveRetiringAgentStart({ voiceAgentId: 'va2' });
+        await flushMicrotasks(4000);
+        expect(retiringCurrentUiContext.subscribe).not.toHaveBeenCalled();
+        const releaseRetiringNativeAudio = retiringNativeAudio.release;
+        if (!releaseRetiringNativeAudio) throw new Error('missing retiring native audio release');
+        releaseRetiringNativeAudio();
+        await retiringStop;
+    });
+
+    it('does not read or invoke Account B after Account A capture retires during transcription', async () => {
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_conversation',
+                    privacy: {
+                        ...storage.getState().settings.voice.privacy,
+                        currentUiContextMode: 'on_demand',
+                    },
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
+                            conversationMode: 'agent',
+                            stt: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
+                                baseUrl: 'http://localhost:8000',
+                            },
+                            tts: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
+                                autoSpeakReplies: false,
+                            },
+                            streaming: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
+                                enabled: false,
+                            },
+                        } },
+                    },
+                },
+            },
+        });
+
+        let currentAccount: 'account-a' | 'account-b' = 'account-a';
+        const readAccounts: Array<'account-a' | 'account-b'> = [];
+        const readCurrentUiContext = vi.fn((): CurrentUiContextSnapshotV1 => {
+            readAccounts.push(currentAccount);
+            return {
+                navigation: {
+                    area: 'settings',
+                    screen: 'settings_page',
+                    title: currentAccount === 'account-a'
+                        ? 'ACCOUNT_A_CURRENT_UI_SENTINEL'
+                        : 'ACCOUNT_B_CURRENT_UI_SENTINEL',
+                    presentation: 'screen',
+                },
+                commands: [],
+            };
+        });
+        const invokeCurrentUiCommand = vi.fn(async () => ({ ok: true as const }));
+        const currentUiContext = {
+            readCurrentUiContext,
+            resolveCurrentUiCommand: vi.fn(() => null),
+            subscribe: vi.fn(() => () => {}),
+            invokeCurrentUiCommand,
+        };
+
+        let resolveTranscription!: (value: { ok: true; json: () => Promise<{ text: string }> }) => void;
+        (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementationOnce(() => (
+            new Promise<{ ok: true; json: () => Promise<{ text: string }> }>((resolve) => {
+                resolveTranscription = resolve;
+            })
+        ));
+        daemonVoiceAgentStart.mockResolvedValue({ voiceAgentId: 'va-account-a' });
+        daemonVoiceAgentSendTurn
+            .mockResolvedValueOnce({
+                assistantText: 'Checking the current interface.',
+                actions: [
+                    { t: 'readCurrentUiContext', args: {} },
+                    attachVoiceAgentActionEffectId({
+                        t: 'invokeCurrentUiCommand',
+                        args: { commandId: 'account-b-command' },
+                    }, 'account-retired-current-ui-effect'),
+                ],
+            })
+            .mockResolvedValueOnce({ assistantText: 'Done.', actions: [] });
+
+        await localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID, currentUiContext);
+        const pendingTurn = localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+        await waitForCondition(
+            () => (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length === 1,
+            'recorded transcription request',
+        );
+
+        // VoiceSessionRuntime invokes this exact local stop when Account A's
+        // active-scope lifetime retires. The raw AppShell port then follows the
+        // next render and would otherwise expose Account B after transcription.
+        await localVoiceEngine.stopLocalVoiceSession();
+        currentAccount = 'account-b';
+        resolveTranscription({
+            ok: true,
+            json: async () => ({ text: 'What is on the screen now?' }),
+        });
+        await pendingTurn;
+
+        await waitForMockCalls(daemonVoiceAgentSendTurn, 2);
+        expect(readAccounts).not.toContain('account-b');
+        expect(invokeCurrentUiCommand).not.toHaveBeenCalled();
+        const providerText = daemonVoiceAgentSendTurn.mock.calls
+            .map(([request]) => String((request as { userText?: unknown } | undefined)?.userText ?? ''))
+            .join('\n');
+        expect(providerText).not.toContain('ACCOUNT_A_CURRENT_UI_SENTINEL');
+        expect(providerText).not.toContain('ACCOUNT_B_CURRENT_UI_SENTINEL');
     });
 
     it('suppresses expected daemon-unavailable prewarm errors while still starting the local recording flow', async () => {
@@ -1070,6 +1426,184 @@ describe('local voice engine agent behavior', () => {
 
         expect(daemonVoiceAgentStartTurnStream).toHaveBeenCalledTimes(1);
         expect(expoSpeechSpeak).toHaveBeenCalledTimes(1);
+    });
+
+    it('retires the real Local Agent context admission synchronously on Account retirement before deferred native stop settles', async () => {
+        const storage = await getStorage();
+        storage.__setState({
+            ...storage.getState(),
+            profileScope: { serverId: 'server-a', accountId: 'account-a' },
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_conversation',
+                    privacy: {
+                        ...storage.getState().settings.voice.privacy,
+                        currentUiContextMode: 'automatic',
+                    },
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
+                            conversationMode: 'agent',
+                            stt: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
+                                baseUrl: 'http://localhost:8000',
+                            },
+                            tts: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
+                                autoSpeakReplies: false,
+                            },
+                            agent: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
+                                prewarmOnConnect: true,
+                            },
+                            streaming: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
+                                enabled: false,
+                            },
+                        } },
+                    },
+                },
+            },
+        });
+        storage.__setState({
+            ...storage.getState(),
+            settings: {
+                ...storage.getState().settings,
+                voiceSettingsV1: storage.getState().settings.voice,
+            },
+        });
+
+        let currentAccount: 'account-a' | 'account-b' = 'account-a';
+        const reads: Array<'account-a' | 'account-b'> = [];
+        const invocations: Array<'account-a' | 'account-b'> = [];
+        const subscription = {
+            listener: null as (() => void) | null,
+            unsubscribeCalls: 0,
+        };
+        const currentUiContext = {
+            readCurrentUiContext: () => {
+                reads.push(currentAccount);
+                return {
+                    navigation: {
+                        area: 'settings' as const,
+                        screen: 'settings_page',
+                        title: currentAccount === 'account-a' ? 'ACCOUNT_A_CONTEXT' : 'ACCOUNT_B_CONTEXT',
+                        presentation: 'screen' as const,
+                    },
+                    commands: [],
+                };
+            },
+            resolveCurrentUiCommand: () => null,
+            subscribe: (listener: () => void) => {
+                subscription.listener = listener;
+                return () => {
+                    subscription.unsubscribeCalls += 1;
+                    if (subscription.listener === listener) subscription.listener = null;
+                };
+            },
+            invokeCurrentUiCommand: async () => {
+                invocations.push(currentAccount);
+                return { ok: true as const };
+            },
+        };
+        vi.doMock('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort', () => ({
+            useCurrentUiContextVoiceToolPort: () => currentUiContext,
+        }));
+
+        const agentStart = {
+            resolve: null as ((value: { voiceAgentId: string }) => void) | null,
+        };
+        daemonVoiceAgentStart.mockImplementationOnce(
+            () => new Promise<{ voiceAgentId: string }>((resolve) => {
+                agentStart.resolve = resolve;
+            }),
+        );
+
+        const { VoiceSessionRuntime } = await import('@/voice/session/VoiceSessionRuntime');
+        const { getVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
+        const { getVoiceAdapterRegistry } = await import('@/voice/session/voiceAdapterRegistry');
+        const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+        registerStorageStateReader(() => storage.getState());
+        const screen = await renderScreen(React.createElement(VoiceSessionRuntime), {
+            // The lifecycle owner is installed in a layout effect. Do not
+            // drain unrelated diagnostics background effects in this local
+            // engine composition fixture.
+            flushOptions: { cycles: 0 },
+        });
+        const controller = getVoiceSessionLifecycleController();
+        if (!controller) throw new Error('voice lifecycle controller unavailable');
+
+        const start = controller.toggle(VOICE_AGENT_GLOBAL_SESSION_ID);
+        await waitForMockCalls(daemonVoiceAgentStart, 1);
+        await start;
+        const resolveAgentStart = agentStart.resolve;
+        if (!resolveAgentStart) throw new Error('missing local agent start resolver');
+        resolveAgentStart({ voiceAgentId: 'local-agent-account-a' });
+        await waitForCondition(() => subscription.listener !== null, 'local current UI subscription');
+        const retainedAutomaticListener = subscription.listener;
+        if (!retainedAutomaticListener) throw new Error('missing retained local current UI subscription');
+
+        const pendingNativeStop = {
+            release: null as (() => void) | null,
+        };
+        audioSessionRelease.mockImplementationOnce(
+            () => new Promise<void>((resolve) => {
+                pendingNativeStop.release = resolve;
+            }),
+        );
+
+        // Retirement is synchronous at the Account owner. The Local Adapter and
+        // engine must revoke their admission before this native boundary settles.
+        retireActiveServerAccountScopeLifetime();
+        await waitForMockCalls(audioSessionRelease, 1);
+        currentAccount = 'account-b';
+        const readsBeforeLateEvents = reads.length;
+        const invocationsBeforeLateEvents = invocations.length;
+        retainedAutomaticListener();
+        expect(reads).toHaveLength(readsBeforeLateEvents);
+        expect(invocations).toHaveLength(invocationsBeforeLateEvents);
+
+        const localAdapter = getVoiceAdapterRegistry().get('local_conversation');
+        if (!localAdapter?.sendTextTurn) throw new Error('local conversation adapter unavailable');
+        daemonVoiceAgentSendTurn.mockResolvedValueOnce({
+            assistantText: 'This must not reach Account B.',
+            actions: [
+                { t: 'readCurrentUiContext', args: {} },
+                attachVoiceAgentActionEffectId({
+                    t: 'invokeCurrentUiCommand',
+                    args: { commandId: 'retired-account-command' },
+                }, 'retired-local-agent-tool'),
+            ],
+        });
+        await localAdapter.sendTextTurn({
+            controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            conversationSessionId: 'voice-home-session',
+            text: 'Run the retained tool.',
+            localId: 'retired-local-agent-turn',
+            deliveryCommand: 'interrupt_and_send',
+            onAccepted: async () => {},
+        });
+
+        const releasePendingNativeStop = pendingNativeStop.release;
+        if (!releasePendingNativeStop) throw new Error('missing deferred native stop release');
+        releasePendingNativeStop();
+        await act(async () => {
+            await Promise.resolve();
+        });
+        await screen.unmount();
+        retireActiveServerAccountScopeLifetime();
+        vi.doUnmock('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
+
+        expect(subscription.unsubscribeCalls).toBeGreaterThan(0);
+        expect(subscription.listener).toBeNull();
+        expect(reads).toHaveLength(readsBeforeLateEvents);
+        expect(invocations).toHaveLength(invocationsBeforeLateEvents);
+        expect(reads).not.toContain('account-b');
+        expect(invocations).not.toContain('account-b');
     });
 
 

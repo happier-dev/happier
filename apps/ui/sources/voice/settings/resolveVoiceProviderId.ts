@@ -1,4 +1,5 @@
 import { VoiceProviderIdSchema, type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import type { VoiceSessionSnapshot } from '@/voice/session/types';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import {
     projectVoiceProviderSettings,
@@ -96,6 +97,35 @@ export function resolveVoiceProviderIdForSurface(
         && contribution.providerSettings?.connectedServicesBinding
         ? providerId
         : null;
+}
+
+/**
+ * The provider a Voice surface must present.
+ *
+ * `settings.providerId` names the provider the **next** idle Start would admit; the published
+ * snapshot's `adapterId` names the attempt that is running **right now**. The two diverge the
+ * moment the user picks a different provider — or Off — while an attempt is still live, and
+ * presentation must follow the attempt: hiding the surface would leave an open microphone with
+ * no control to stop it, and projecting the newly selected provider's capabilities, recovery and
+ * energy onto someone else's attempt states facts that do not belong to it.
+ *
+ * The lifecycle owner already publishes `adapterId` as that truth (it retains the source adapter
+ * until the hand-off observes its disconnect, and clears it to `null` once nothing is running),
+ * so this reads that answer rather than deriving a second one.
+ */
+export function resolveVoicePresentedProviderId(
+    snapshot: Pick<VoiceSessionSnapshot, 'adapterId'>,
+    settings: Pick<VoiceSettings, 'providerId' | 'providers'>,
+    registry: VoiceProviderRegistry = getDefaultRegistry(),
+): KnownVoiceProviderId | null {
+    const attemptProviderId = normalizeNonEmptyString(snapshot.adapterId);
+    if (
+        attemptProviderId !== null
+        && registry.get(attemptProviderId)?.kind === 'voice.conversation-provider.v1'
+    ) {
+        return attemptProviderId;
+    }
+    return resolveVoiceProviderIdForSurface(settings, registry);
 }
 
 export function resetVoiceProviderResolverRegistryForTests(): void {

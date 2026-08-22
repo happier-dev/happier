@@ -5,7 +5,12 @@ import type {
 import {
   buildQualifiedPluginContributionKey,
   createPluginContributionIdentity,
+  derivePluginClientContributionRegistrationRights,
 } from '@happier-dev/protocol';
+import {
+  createPluginRegistrationScope,
+  type PluginRuntimeRegistration,
+} from '@happier-dev/plugin-sdk/host/registration';
 
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import {
@@ -20,6 +25,8 @@ import {
 } from './bundledConversationRuntimeHost';
 import {
   createExternalVoiceProviderActivationScope,
+  type ExternalVoiceProviderActivationScope,
+  type VoiceProviderActivationRegistrationScope,
 } from './externalVoiceProviderActivation';
 import {
   getExternalVoiceProviderRegistration,
@@ -45,6 +52,88 @@ function isAdapter(value: VoiceAdapterController | null, providerId: string): va
     && value.engineKind === 'realtime'
     && typeof value.start === 'function'
     && typeof value.stop === 'function';
+}
+
+/**
+ * Compatibility bridge for statically app-bundled first-party Voice modules.
+ * These generated entries have no installed Artifact origin/generation, so
+ * they cannot truthfully enter the generic installed-target index. It retains
+ * the existing public activate(api) ABI and canonical rights derivation, and
+ * must be removed once the generated entries gain that provenance.
+ */
+function createBundledVoiceRegistrationScope(input: Readonly<{
+  pluginId: string;
+  declaration: BundledConversationRuntimeEntry['declaration'];
+  hostPlatform: 'web' | 'ios' | 'android';
+  isCurrent(): boolean;
+}>): VoiceProviderActivationRegistrationScope {
+  const target = Object.freeze({
+    artifactId: input.declaration.client.artifactId,
+    modulePath: input.declaration.client.modulePath,
+    exportName: input.declaration.client.exportName,
+    platform: input.hostPlatform,
+  });
+  const rights = derivePluginClientContributionRegistrationRights(
+    Object.freeze({ voiceProviders: Object.freeze([input.declaration]) }),
+    target,
+  );
+  if (rights.length === 0) {
+    throw excluded('voice_bundled_runtime_registration_right_missing');
+  }
+  const registrationScope = createPluginRegistrationScope({
+    pluginId: input.pluginId,
+    target: Object.freeze({ realm: 'client' as const, ...target }),
+    rights,
+  });
+  let committed = false;
+  let unwound = false;
+  let registrations: readonly PluginRuntimeRegistration[] = Object.freeze([]);
+
+  return Object.freeze({
+    api: registrationScope.api,
+    commit() {
+      if (committed || unwound || !input.isCurrent()) {
+        throw excluded('voice_bundled_runtime_registration_closed');
+      }
+      registrations = registrationScope.commit();
+      committed = true;
+    },
+    registrations: () => registrations,
+    isCurrent: () => !unwound && input.isCurrent(),
+    async unwind() {
+      if (unwound) return;
+      unwound = true;
+      await registrationScope.dispose();
+    },
+  });
+}
+
+function createBundledVoiceActivationScope(input: Readonly<{
+  pluginId: string;
+  declaration: BundledConversationRuntimeEntry['declaration'];
+  host: BundledConversationRuntimeHost;
+  hostBindingsByLocalId: Parameters<typeof createExternalVoiceProviderActivationScope>[0]['hostBindingsByLocalId'];
+}>): ExternalVoiceProviderActivationScope {
+  const registrationScope = createBundledVoiceRegistrationScope({
+    pluginId: input.pluginId,
+    declaration: input.declaration,
+    hostPlatform: input.host.getPlatform(),
+    isCurrent: () => getCurrentBundledConversationRuntimeHost() === input.host,
+  });
+  const scope = createExternalVoiceProviderActivationScope({
+    pluginId: input.pluginId,
+    declarations: [input.declaration],
+    hostPlatform: input.host.getPlatform(),
+    registrationScope,
+    hostBindingsByLocalId: input.hostBindingsByLocalId,
+  });
+  return Object.freeze({
+    ...scope,
+    async unwind() {
+      await registrationScope.unwind();
+      await scope.unwind();
+    },
+  });
 }
 
 /**
@@ -87,10 +176,10 @@ export function createBundledConversationRuntimes(input: Readonly<{
         pluginId: entry.pluginId,
         declaration: entry.declaration,
       });
-      scope = createExternalVoiceProviderActivationScope({
+      scope = createBundledVoiceActivationScope({
         pluginId: entry.pluginId,
-        declarations: [entry.declaration],
-        hostPlatform: input.host.getPlatform(),
+        declaration: entry.declaration,
+        host: input.host,
         hostBindingsByLocalId: Object.freeze({
           [entry.declaration.id]: Object.freeze({
             recipientContract,

@@ -231,6 +231,18 @@ const refreshSessionMessages = vi.fn(async (_sessionId: string) => {});
 const onSessionVisible = vi.fn((_sessionId: string) => {});
 const refreshMachinesThrottled = vi.fn(async (_params?: { staleMs?: number; force?: boolean }) => {});
 
+// `persistVoiceAutoTargetMachineId` reaches the sync singleton through its own
+// lazy accessor, a bundler-only `require` that never sees the `@/sync/sync`
+// mock below. Mock the accessor that owns it, as `voiceCarrierSession.test.ts` does.
+vi.mock('@/sync/runtime/getSyncSingleton', () => ({
+  getSyncSingleton: () => ({
+    applySettings: (delta: any) => applySettingsLocal(delta),
+    refreshSessions: () => refreshSessions(),
+    patchSessionMetadataWithRetry: (sessionId: string, updater: (m: any) => any) =>
+      patchSessionMetadataWithRetry(sessionId, updater),
+  }),
+}));
+
 vi.mock('@/sync/sync', () => ({
   sync: {
     patchSessionMetadataWithRetry: (sessionId: string, updater: (m: any) => any) =>

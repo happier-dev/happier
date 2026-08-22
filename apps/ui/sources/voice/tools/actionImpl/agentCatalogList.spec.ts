@@ -405,10 +405,10 @@ describe('agent catalog voice tools', () => {
     });
   });
 
-  it('does not advertise model selection for plugin backends without a runtime carrier', async () => {
+  it('lists models for an externally installed Agent that has no bundled carrier', async () => {
     state.settings.backendEnabledByTargetKey = {
       ...state.settings.backendEnabledByTargetKey,
-      'backend:plugin-review-bot': true,
+      'backend:acme-review': true,
     };
 
     machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
@@ -416,20 +416,20 @@ describe('agent catalog voice tools', () => {
       projection: {
         v: 1,
         agentsById: {
-          'plugin:review-bot': {
-            id: 'plugin:review-bot',
-            title: 'Review Bot Plugin',
+          'acme-review': {
+            id: 'acme-review',
+            title: 'Acme Review',
             subtitle: undefined,
             channel: 'plugin',
             isBuiltIn: false,
           },
         },
         backendsById: {
-          'plugin-review-bot': {
-            id: 'plugin-review-bot',
-            backendId: 'plugin-review-bot',
-            agentId: 'plugin:review-bot',
-            title: 'Review Bot (plugin)',
+          'acme-review': {
+            id: 'acme-review',
+            backendId: 'acme-review',
+            agentId: 'acme-review',
+            title: 'Acme Review (plugin)',
             subtitle: undefined,
             catalogAgentId: undefined,
             iconAgentId: undefined,
@@ -438,13 +438,98 @@ describe('agent catalog voice tools', () => {
       },
     });
 
-    const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
+    machineCapabilitiesInvoke.mockResolvedValue({
+      supported: true,
+      response: {
+        ok: true,
+        result: {
+          availableModels: [
+            { id: 'default', name: 'Default' },
+            { id: 'acme-large', name: 'Acme Large' },
+          ],
+          supportsFreeform: true,
+        },
+      },
+    });
+
+    const { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } = await import('./agentCatalogList');
     const backends: any = await listAgentBackendsForVoiceTool({ includeDisabled: true, machineId: 'm1' } as any);
-    const pluginItem = (backends?.items ?? []).find((i: any) => i.targetKey === 'backend:plugin-review-bot');
+    const pluginItem = (backends?.items ?? []).find((i: any) => i.targetKey === 'backend:acme-review');
     expect(pluginItem).toBeTruthy();
-    expect(pluginItem.agentId).toBeUndefined();
-    expect(pluginItem.supportsModelSelection).toBe(false);
-    expect(pluginItem.supportsFreeformModels).toBe(false);
+    expect(pluginItem.agentId).toBe('acme-review');
+    expect(pluginItem.supportsModelSelection).toBe(true);
+    expect(pluginItem.supportsFreeformModels).toBe(true);
+
+    const models: any = await listAgentModelsForVoiceTool({
+      agentId: pluginItem.agentId,
+      backendTargetKey: pluginItem.targetKey,
+      machineId: 'm1',
+    });
+
+    expect(machineCapabilitiesInvoke).toHaveBeenCalledWith(
+      'm1',
+      {
+        id: 'cli.acme-review',
+        method: 'probeModels',
+        params: {
+          timeoutMs: 15_000,
+          backendTarget: { kind: 'builtInAgent', agentId: 'acme-review' },
+        },
+      },
+      { serverId: 'server-a' },
+    );
+    expect(models).toMatchObject({
+      agentId: 'acme-review',
+      machineId: 'm1',
+      source: 'preflight',
+      supportsFreeform: true,
+      items: [
+        { modelId: 'default', label: 'Default' },
+        { modelId: 'acme-large', label: 'Acme Large' },
+      ],
+    });
+  });
+
+  it('lists models for an externally installed Agent named only by its backend target', async () => {
+    machineCapabilitiesInvoke.mockResolvedValue({
+      supported: true,
+      response: {
+        ok: true,
+        result: {
+          availableModels: [{ id: 'acme-large', name: 'Acme Large' }],
+          supportsFreeform: false,
+        },
+      },
+    });
+
+    const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+
+    const models: any = await listAgentModelsForVoiceTool({
+      backendTargetKey: 'backend:acme-review',
+      machineId: 'm1',
+    });
+
+    expect(models).not.toMatchObject({ ok: false });
+    expect(machineCapabilitiesInvoke).toHaveBeenCalledWith(
+      'm1',
+      {
+        id: 'cli.acme-review',
+        method: 'probeModels',
+        params: {
+          timeoutMs: 15_000,
+          backendTarget: { kind: 'builtInAgent', agentId: 'acme-review' },
+        },
+      },
+      { serverId: 'server-a' },
+    );
+    expect(models).toMatchObject({
+      agentId: 'acme-review',
+      source: 'preflight',
+      items: [
+        { modelId: 'default', label: 'Default' },
+        { modelId: 'acme-large', label: 'Acme Large' },
+      ],
+    });
   });
 
   it('filters disabled backends by default (includeDisabled=false)', async () => {

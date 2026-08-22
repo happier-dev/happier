@@ -64,15 +64,30 @@ import {
   resolveLocalConversationControlSessionId,
 } from './localVoiceSettings';
 import { sendVoiceTextTurn as sendVoiceTextTurnImpl } from './sendVoiceTextTurn';
+import {
+  bindCurrentUiContextVoiceToolPortToAdmission,
+  type VoiceCurrentUiToolPort,
+} from '@/voice/tools/currentUiContextToolPort';
+import {
+  createCurrentUiContextAutomaticUpdateProjector,
+  type CurrentUiContextAutomaticUpdateProjector,
+  voiceHooks,
+} from '@/voice/context/voiceHooks';
 
 let inFlight: Promise<void> | null = null;
 let activeTurnAbortController: AbortController | null = null;
 let activeTurnAbortSessionId: string | null = null;
 let inputLevelWriter: VoiceRuntimeLevelWriter | null = null;
-let captureAdmission: Readonly<{
+type LocalVoiceCaptureAdmission = {
   controlSessionId: string;
   lease: VoiceCaptureAdmissionLease;
-}> | null = null;
+  currentUiContext?: VoiceCurrentUiToolPort;
+  currentUiContextRetirementController?: AbortController;
+  currentUiContextAutomaticUpdateProjector?: CurrentUiContextAutomaticUpdateProjector;
+  currentUiContextUnsubscribe?: () => void;
+};
+
+let captureAdmission: LocalVoiceCaptureAdmission | null = null;
 const localVoicePreparationAttemptGuard = createAttemptGuard();
 
 type EndpointDrivenCaptureProvider = Extract<LocalVoiceCaptureProvider, 'device' | 'local_neural'>;
@@ -108,15 +123,30 @@ const localVoiceCaptureOwner = createLocalVoiceCaptureOwner({
   createSherpaSttController: createSherpaStreamingSttController,
 });
 
+function detachCaptureCurrentUiContext(controlSessionId?: string): void {
+  const admission = captureAdmission;
+  if (!admission) return;
+  if (controlSessionId && admission.controlSessionId !== controlSessionId) return;
+  if (!admission.currentUiContextRetirementController?.signal.aborted) {
+    admission.currentUiContextRetirementController?.abort();
+  }
+  admission.currentUiContextUnsubscribe?.();
+  admission.currentUiContextUnsubscribe = undefined;
+}
+
 function releaseCaptureAdmission(controlSessionId?: string): void {
   const admission = captureAdmission;
   if (!admission) return;
   if (controlSessionId && admission.controlSessionId !== controlSessionId) return;
+  detachCaptureCurrentUiContext(controlSessionId);
   captureAdmission = null;
   admission.lease.release();
 }
 
-function acquireCaptureAdmission(controlSessionId: string): boolean {
+function acquireCaptureAdmission(
+  controlSessionId: string,
+  currentUiContext?: VoiceCurrentUiToolPort,
+): boolean {
   if (captureAdmission?.controlSessionId === controlSessionId) return true;
   if (captureAdmission) {
     surfaceRecoverableVoiceCaptureError({
@@ -135,11 +165,69 @@ function acquireCaptureAdmission(controlSessionId: string): boolean {
     });
     return false;
   }
+  const currentUiContextRetirementController = currentUiContext
+    ? new AbortController()
+    : undefined;
   captureAdmission = {
     controlSessionId,
     lease: admission.lease,
+    ...(currentUiContext && currentUiContextRetirementController ? {
+      currentUiContext: bindCurrentUiContextVoiceToolPortToAdmission(
+        currentUiContext,
+        currentUiContextRetirementController.signal,
+      ),
+      currentUiContextRetirementController,
+      currentUiContextAutomaticUpdateProjector: createCurrentUiContextAutomaticUpdateProjector(),
+    } : {}),
   };
   return true;
+}
+
+function readCaptureCurrentUiContext(controlSessionId: string): VoiceCurrentUiToolPort | undefined {
+  return captureAdmission?.controlSessionId === controlSessionId
+    ? captureAdmission.currentUiContext
+    : undefined;
+}
+
+function isCaptureCurrentUiContextAdmissionCurrent(admission: LocalVoiceCaptureAdmission): boolean {
+  return captureAdmission === admission
+    && admission.currentUiContextRetirementController?.signal.aborted !== true;
+}
+
+/**
+ * The active capture admission owns this subscription. It starts only after
+ * the local agent is live, and its callback must still name that exact
+ * admission before publishing through the existing voice context channel.
+ */
+function beginAutomaticCurrentUiContextUpdates(controlSessionId: string): void {
+  const admission = captureAdmission;
+  const port = admission?.controlSessionId === controlSessionId
+    ? admission.currentUiContext
+    : undefined;
+  const automaticUpdateProjector = admission?.controlSessionId === controlSessionId
+    ? admission.currentUiContextAutomaticUpdateProjector
+    : undefined;
+  if (
+    !admission
+    || !port
+    || !automaticUpdateProjector
+    || admission.currentUiContextRetirementController?.signal.aborted === true
+    || admission.currentUiContextUnsubscribe
+  ) return;
+  if (!voiceAgentSessions.isActive(controlSessionId)) return;
+
+  const publishCurrentSnapshot = (): void => {
+    if (!isCaptureCurrentUiContextAdmissionCurrent(admission)) return;
+    const snapshot = port.readCurrentUiContext();
+    voiceHooks.onCurrentUiContextChanged(controlSessionId, snapshot, automaticUpdateProjector);
+  };
+  const unsubscribe = port.subscribe(publishCurrentSnapshot);
+  if (!isCaptureCurrentUiContextAdmissionCurrent(admission)) {
+    unsubscribe();
+    return;
+  }
+  admission.currentUiContextUnsubscribe = unsubscribe;
+  publishCurrentSnapshot();
 }
 
 async function startCaptureWithInputLevel(
@@ -453,8 +541,9 @@ async function startLocalVoiceCapture(args: Readonly<{
   provider: LocalVoiceCaptureProvider;
   handsFree: boolean;
   interrupted?: boolean;
+  currentUiContext?: VoiceCurrentUiToolPort;
 }>): Promise<void> {
-  if (!acquireCaptureAdmission(args.sessionId)) {
+  if (!acquireCaptureAdmission(args.sessionId, args.currentUiContext)) {
     return;
   }
 
@@ -494,6 +583,8 @@ async function startLocalVoiceCapture(args: Readonly<{
     || startedState.status !== 'recording'
   ) {
     releaseCaptureAdmission(args.sessionId);
+  } else {
+    beginAutomaticCurrentUiContextUpdates(args.sessionId);
   }
 
   if (args.provider !== 'recorded_audio' || !startError) {
@@ -523,6 +614,7 @@ async function runVoiceTurnWithSendFailureHandling(
 ): Promise<void> {
   try {
     await runAbortableVoiceTurn(sessionId, runner);
+    beginAutomaticCurrentUiContextUpdates(sessionId);
   } catch (error) {
     if (isAbortedVoiceTurnError(error)) {
       return;
@@ -570,6 +662,7 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
   }
 
   const settings = storage.getState().settings as any;
+  const currentUiContext = readCaptureCurrentUiContext(sessionId);
   let text: string | null = null;
   try {
     text = await recordedAudioTranscriptionController.transcribe({ sessionId, uri, settings });
@@ -604,6 +697,7 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
       onAssistantFinalAvailable: noteAssistantFinalAvailable,
       onTtsStopped: noteTtsStopped,
       signal,
+      ...(currentUiContext ? { currentUiContext } : {}),
     }),
   );
 }
@@ -612,6 +706,7 @@ async function stopSttAndSend(sessionId: string, provider: Extract<LocalVoiceCap
   voiceConversationRuntimeMachine.transitionToTranscribing({ controlSessionId: sessionId });
 
   const settings = storage.getState().settings as any;
+  const currentUiContext = readCaptureCurrentUiContext(sessionId);
   const endpointDecision = await localVoiceCaptureOwner.stopEndpointDrivenCapture({
     adaptiveConfig: resolveAdaptiveInterruptionConfig(),
     provider,
@@ -641,6 +736,7 @@ async function stopSttAndSend(sessionId: string, provider: Extract<LocalVoiceCap
       onAssistantFinalAvailable: noteAssistantFinalAvailable,
       onTtsStopped: noteTtsStopped,
       signal,
+      ...(currentUiContext ? { currentUiContext } : {}),
     }),
   );
 
@@ -706,6 +802,7 @@ export async function sendLocalVoiceAgentTextTurn(
 
   const settings = storage.getState().settings as any;
   const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
+  const currentUiContext = readCaptureCurrentUiContext(resolvedSessionId);
   await runVoiceTurnWithSendFailureHandling(sessionId, settings, (signal) =>
     sendVoiceTextTurnImpl({
       sessionId: resolvedSessionId,
@@ -719,6 +816,7 @@ export async function sendLocalVoiceAgentTextTurn(
       signal,
       durableDispatch,
       onUserTranscriptAccepted: onAccepted,
+      ...(currentUiContext ? { currentUiContext } : {}),
     }),
   );
 }
@@ -729,6 +827,7 @@ export async function sendLocalVoiceAgentTextUpdate(sessionId: string, update: s
 
   const settings = storage.getState().settings as any;
   const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
+  const currentUiContext = readCaptureCurrentUiContext(resolvedSessionId);
   await runVoiceTurnWithSendFailureHandling(sessionId, settings, (signal) =>
     sendVoiceTextTurnImpl({
       sessionId: resolvedSessionId,
@@ -743,6 +842,7 @@ export async function sendLocalVoiceAgentTextUpdate(sessionId: string, update: s
       onAssistantFinalAvailable: noteAssistantFinalAvailable,
       onTtsStopped: noteTtsStopped,
       signal,
+      ...(currentUiContext ? { currentUiContext } : {}),
     }),
   );
 }
@@ -827,7 +927,10 @@ export async function setLocalVoiceMuted(sessionId: string, muted: boolean): Pro
   });
 }
 
-export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
+export async function toggleLocalVoiceTurn(
+  sessionId: string,
+  currentUiContext?: VoiceCurrentUiToolPort,
+): Promise<void> {
   const initialSettings = storage.getState().settings as any;
   if (!isLocalVoiceProviderSelected(initialSettings)) {
     return;
@@ -896,6 +999,7 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
 
         if (welcomeEnabled && welcomeMode === 'immediate' && canSpeakWelcome) {
           const assistantText = await voiceAgentSessions.ensureRunningAndMaybeWelcome(controlSessionId).catch(() => null);
+          beginAutomaticCurrentUiContextUpdates(controlSessionId);
           const text = typeof assistantText === 'string' ? assistantText.trim() : '';
           if (text) {
             const assistantEntryId = projectLocalVoiceAgentAssistantText(controlSessionId, text);
@@ -916,6 +1020,7 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
         }
 
         await voiceAgentSessions.ensureRunning(controlSessionId);
+        beginAutomaticCurrentUiContextUpdates(controlSessionId);
       })().catch((error) => {
         if (isUnsupportedVoiceAgentPrewarmError(error)) return;
         throw error;
@@ -989,6 +1094,7 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
       provider: bargeInDecision.provider,
       handsFree: bargeInDecision.handsFree,
       interrupted: true,
+      ...(currentUiContext ? { currentUiContext } : {}),
     }).finally(() => {
       inFlight = null;
     });
@@ -1009,6 +1115,7 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
       sessionId: controlSessionId,
       provider,
       handsFree: isHandsFreeCaptureEnabled(settings, provider, config),
+      ...(currentUiContext ? { currentUiContext } : {}),
     }).finally(() => {
       inFlight = null;
     });
@@ -1049,6 +1156,10 @@ export async function stopLocalVoiceSession(): Promise<void> {
   }
 
   const activeSessionId = current.sessionId;
+  // The UI-context subscription carries the admitting Account's authority.
+  // Revoke it synchronously; native capture cleanup may yield while the next
+  // Account is already publishing through the shared current-UI port.
+  detachCaptureCurrentUiContext(activeSessionId);
   await settleEndingTransition(activeSessionId, 'disconnected', async () => {
     playbackController.interrupt();
     noteTtsStopped();

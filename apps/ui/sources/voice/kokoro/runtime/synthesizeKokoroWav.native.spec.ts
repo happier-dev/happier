@@ -371,9 +371,15 @@ describe('synthesizeKokoroWav (native)', () => {
       },
     );
 
+    // Abort only once the native job is genuinely in flight: cancelling before
+    // it starts would prove the pre-start bail, not in-flight cancellation.
+    await vi.waitFor(() => expect(kokoroNativeModule.synthesizeToWavFile).toHaveBeenCalledTimes(1));
     controller.abort();
 
     expect(kokoroNativeModule.cancel).toHaveBeenCalledTimes(1);
+    expect(kokoroNativeModule.cancel).toHaveBeenCalledWith({
+      jobId: kokoroNativeModule.synthesizeToWavFile.mock.calls[0]?.[0]?.jobId,
+    });
 
     const settle: (v: { wavPath: string; sampleRate: number }) => void = synthesizeResolve ?? (() => {});
     settle({ wavPath: 'file:///tmp/out.wav', sampleRate: 24000 });

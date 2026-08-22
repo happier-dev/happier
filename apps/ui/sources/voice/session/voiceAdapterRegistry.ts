@@ -125,6 +125,11 @@ export function resolveVoiceAdapterContextChannel(
       return null;
     }
     return Object.freeze({
+      // Fail closed: an adapter that does not name its execution-owned context
+      // authority gets the narrow scope, never Happier-authored session text.
+      hostAuthoredContext: channel.hostAuthoredContext === 'session_context'
+        ? 'session_context'
+        : 'current_ui_only',
       sendContextualUpdate: channel.sendContextualUpdate,
       sendTextMessage: channel.sendTextMessage,
       ...(channel.announceAssistantText ? { announceAssistantText: channel.announceAssistantText } : {}),

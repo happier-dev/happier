@@ -408,10 +408,13 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
   const stop = async (): Promise<void> => {
     if (stopPromise) return stopPromise;
     lifecycleVersion += 1;
-    const pendingStart = startPromise;
+    // Ownership moves here, so an outstanding start is abandoned rather than
+    // joined: `performStart` bails and cleans up at its next version check, and
+    // a startup step the browser never settles (an unanswered permission
+    // prompt, a suspended context) can no longer pin Stop. Dropping the handle
+    // also stops a later `start()` from re-binding to that abandoned attempt.
+    startPromise = null;
     stopPromise = (async () => {
-      cleanup();
-      await pendingStart?.catch(() => {});
       cleanup();
       await drainTail.catch(() => {});
     })().finally(() => {
@@ -626,10 +629,13 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
     if (active) return;
     if (startPromise) return startPromise;
     const version = ++lifecycleVersion;
-    startPromise = performStart(version).finally(() => {
-      startPromise = null;
+    const attempt = performStart(version).finally(() => {
+      // Only the attempt that still owns the handle may clear it; a stop (or a
+      // newer start) has already taken ownership otherwise.
+      if (startPromise === attempt) startPromise = null;
     });
-    return startPromise;
+    startPromise = attempt;
+    return attempt;
   };
 
   return Object.freeze({

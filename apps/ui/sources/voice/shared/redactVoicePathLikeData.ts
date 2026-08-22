@@ -4,11 +4,11 @@ const ABSOLUTE_PATH_PATTERNS = [
     /\/Users\/[^\s"'<>]+/g,
     /\/home\/[^\s"'<>]+/g,
     /\/tmp\/[^\s"'<>]+/g,
-    /[A-Za-z]:\\\\[^\s"'<>]+/g,
-    /\\\\\\\\[^\s"'<>]+/g,
+    /[A-Za-z]:[\\/][^\s"'<>]+/g,
+    /\\\\[^\s"'<>]+/g,
 ] as const;
 
-const CANDIDATE_PATH_TOKEN_PATTERN = /[~./A-Za-z0-9_-][A-Za-z0-9._~/-]*[\\/][A-Za-z0-9._~/-]*/g;
+const CANDIDATE_PATH_TOKEN_PATTERN = /[~./A-Za-z0-9_-][A-Za-z0-9._~\\/-]*[\\/][A-Za-z0-9._~\\/-]*/g;
 const COMMON_RELATIVE_PATH_ROOTS = new Set([
     '.project',
     '.vscode',

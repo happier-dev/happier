@@ -2,32 +2,44 @@ import * as React from 'react';
 
 import { useRouter } from 'expo-router';
 
-import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { resolveVoiceConnectRecoveryTarget } from '@/components/voice/surface/resolveVoiceConnectRecoveryTarget';
 import { resolveVoiceStartAdmission } from '@/components/voice/surface/resolveVoiceStartAdmission';
 import { resolveVoiceSurfaceRecovery } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
 import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 import { resolveVoiceSurfaceStatusPresentation } from '@/components/voice/surface/resolveVoiceSurfaceStatusPresentation';
+import { useStoreSnapshot } from '@/components/voice/surface/useStoreSnapshot';
 import { useVoiceInputSourceActive } from '@/components/voice/light/VoiceEnergyAppProvider';
 import { voiceSurfaceHaptics } from '@/components/voice/surface/voiceSurfaceHaptics';
+import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { storage, useSetting } from '@/sync/domains/state/storage';
-import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { readVoiceProviderSettingsConfig, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { useNavigationFocusReturn } from '@/utils/navigation/useNavigationFocusReturn';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
+import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { resolveVoiceBindingBySessionId } from '@/voice/binding/resolveVoiceBindingBySessionId';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
-import { resolveVoiceProviderIdForSurface } from '@/voice/settings/resolveVoiceProviderId';
+import { useVoiceProviderRegistryRevision } from '@/voice/registry/useVoiceProviderRegistryRevision';
+import { resolveVoicePresentedProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
 import { resolveVoiceMicCaptureActive } from '@/voice/session/resolveVoiceMicCaptureActive';
 import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
 
 import {
-    resolveVoiceAttemptActionability,
     resolveVoiceAttemptControl,
     type VoiceAttemptControl,
 } from './resolveVoiceAttemptControl';
+import {
+    createVoiceAttemptRecoveryDispatch,
+    resolveVoiceAttemptRecoveryAvailable,
+    type VoiceAttemptRecoveryRuntimeTarget,
+} from './voiceAttemptRecovery';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
@@ -77,46 +89,6 @@ export type VoiceAttemptControlProjection = VoiceAttemptControl & Readonly<{
     onOpenConversation: () => void;
 }>;
 
-export type VoiceAttemptRecoveryProjectionOverride = Readonly<{
-    label: string;
-    onRecover: () => void;
-}> | null;
-
-/**
- * Composes a placement's richer recovery route without letting it re-select Start, End or Recover.
- * Horizon needs extra navigation context for some recovery kinds; the attempt projection remains
- * the one place that turns actionability into transport semantics.
- */
-export function overrideVoiceAttemptRecoveryProjection(
-    control: VoiceAttemptControlProjection,
-    recovery: VoiceAttemptRecoveryProjectionOverride,
-): VoiceAttemptControlProjection {
-    const recoveryAvailable = recovery !== null;
-    const { availability, primaryAction } = resolveVoiceAttemptActionability({
-        canStart: control.canStart,
-        canStop: control.canStop,
-        recoveryAvailable,
-    });
-    const onRecover = recovery?.onRecover ?? (() => {});
-    const recoveryLabel = recovery?.label ?? null;
-    const captionLabel = recoveryLabel ?? control.micStateLabel;
-    const primaryActionLabel = primaryAction === 'recover' ? recoveryLabel : control.primaryActionLabel;
-    const primaryActionHint = primaryAction === 'recover' ? recovery?.label ?? null : control.primaryActionHint;
-    const onPrimaryAction = primaryAction === 'recover' ? onRecover : control.onToggle;
-    return {
-        ...control,
-        availability,
-        primaryAction,
-        primaryActionHint,
-        primaryActionLabel,
-        recoveryLabel,
-        captionLabel,
-        recoveryAvailable,
-        onPrimaryAction,
-        onRecover,
-    };
-}
-
 /**
  * The single projection over the canonical Voice lifecycle that placement-free surfaces consume
  * (§2.5): the floating orb, the composer planet and the announcer.
@@ -131,8 +103,14 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     const snap = useVoiceSessionSnapshot();
     const inputSourceActive = useVoiceInputSourceActive();
     const voice = useSetting('voice');
-    const canonicalVoice = voiceSettingsParse(voice);
-    const providerId = resolveVoiceProviderIdForSurface(canonicalVoice, voiceProviderRegistry) ?? 'off';
+    /*
+     * Memoized on the setting's identity: the parse is the most expensive work in this hook, and
+     * an unmemoized result is a fresh object every render that would defeat every downstream memo
+     * — including the recovery target and, through it, the surface model's `React.memo` seam.
+     */
+    const canonicalVoice = React.useMemo(() => voiceSettingsParse(voice), [voice]);
+    useVoiceProviderRegistryRevision(voiceProviderRegistry);
+    const providerId = resolveVoicePresentedProviderId(snap, canonicalVoice, voiceProviderRegistry) ?? 'off';
     const capabilities = resolveVoiceAdapterSurfaceCapabilities(providerId, voice);
     const voiceAgentFeatureEnabled = useFeatureEnabled('voice.agent');
     const surfaceState = resolveVoiceSurfaceState({
@@ -193,6 +171,111 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         status: snap.status,
         inputSourceActive,
     });
+
+    /*
+     * Where a failure is actually repaired — the exact Connected Account, the exact Agent runtime
+     * on the exact machine, the platform microphone settings — derived here so every placement
+     * offers the same remedy. Horizon used to own this and the orb fell back to a generic jump to
+     * Voice settings, which made the same failure offer different help depending on the surface.
+     */
+    const activeServerSnapshot = useActiveServerSnapshot();
+    const voiceExecutionMachine = useVoiceExecutionMachinePresentation();
+    const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
+    const navigateWithFocusReturn = useNavigationFocusReturn();
+    const agentRuntime = capabilities?.agentRuntime ?? null;
+    /*
+     * `resolveVoiceAdapterSurfaceCapabilities` freezes a new capability object on every call, so a
+     * stable identity built from the two ids the recovery target actually reads is the same value
+     * with a usable reference.
+     */
+    const agentRuntimeIdentity = React.useMemo(
+        () => (agentRuntime ? { localId: agentRuntime.localId, pluginId: agentRuntime.pluginId } : null),
+        [agentRuntime?.localId, agentRuntime?.pluginId],
+    );
+    /*
+     * The session a recovery is about: the running attempt's control session, or — when nothing is
+     * running — the conversation this caller would start. Never a third session.
+     */
+    const recoverySessionId = normalizeNonEmptyString(snap.sessionId) ?? startSessionId;
+    const selectRecoverySession = React.useCallback(
+        (state: any) => (recoverySessionId ? state?.sessions?.[recoverySessionId] ?? null : null),
+        [recoverySessionId],
+    );
+    const recoverySession = useStoreSnapshot(storage as any, selectRecoverySession);
+    const recoverySessionOwnerMetadata = recoverySession
+        ? readSessionOwnerMetadataView(recoverySession)
+        : null;
+    const recoverySessionServerId = normalizeNonEmptyString(recoverySession?.serverId);
+    const runtimeRecoveryTarget = React.useMemo<VoiceAttemptRecoveryRuntimeTarget | null>(() => {
+        const agentId = normalizeNonEmptyString(agentRuntimeIdentity?.localId);
+        const pluginId = normalizeNonEmptyString(agentRuntimeIdentity?.pluginId);
+        const serverId = normalizeNonEmptyString(
+            bindingScope === 'session' ? recoverySessionServerId : activeServerSnapshot.serverId,
+        );
+        const machineId = normalizeNonEmptyString(
+            bindingScope === 'session'
+                ? recoverySessionOwnerMetadata?.machineId
+                : voiceExecutionMachine.machineId,
+        );
+        if (!agentId || !pluginId || !serverId || !machineId) return null;
+        return { agentId, pluginId, machineId, serverId };
+    }, [
+        activeServerSnapshot.serverId,
+        agentRuntimeIdentity,
+        bindingScope,
+        recoverySessionOwnerMetadata,
+        recoverySessionServerId,
+        voiceExecutionMachine.machineId,
+    ]);
+    const providerEntry = voiceProviderRegistry.get(providerId);
+    const providerSourcePluginId = providerEntry?.source.kind === 'bundled'
+        || providerEntry?.source.kind === 'external'
+        ? providerEntry.source.pluginId
+        : null;
+    const providerConnectedServicesBinding =
+        providerEntry?.providerSettings?.connectedServicesBinding ?? null;
+    const connectRecoveryTarget = React.useMemo(() => resolveVoiceConnectRecoveryTarget({
+        agentRuntime: agentRuntimeIdentity,
+        bindingScope,
+        runtimeTarget: runtimeRecoveryTarget,
+        provider: providerEntry
+            ? {
+                sourcePluginId: providerSourcePluginId,
+                connectedServicesBinding: providerConnectedServicesBinding,
+            }
+            : null,
+        providerConfig: bindingScope === 'session'
+            ? null
+            : readVoiceProviderSettingsConfig(canonicalVoice, providerId),
+        sessionMetadata: bindingScope === 'session' ? recoverySessionOwnerMetadata : null,
+        connectedServiceEntries: connectedServicesRegistry.entries,
+    }), [
+        agentRuntimeIdentity,
+        bindingScope,
+        canonicalVoice,
+        connectedServicesRegistry.entries,
+        providerConnectedServicesBinding,
+        providerEntry,
+        providerId,
+        providerSourcePluginId,
+        recoverySessionOwnerMetadata,
+        runtimeRecoveryTarget,
+    ]);
+    const globalStartAuthorized = bindingScope === 'global';
+    const recoveryContext = React.useMemo(() => ({
+        connectRecoveryTarget,
+        runtimeRecoveryTarget,
+        attemptSessionId: snap.sessionId ?? null,
+        startSessionId,
+        globalStartAuthorized,
+    }), [
+        connectRecoveryTarget,
+        globalStartAuthorized,
+        runtimeRecoveryTarget,
+        snap.sessionId,
+        startSessionId,
+    ]);
+    const recoveryAvailable = resolveVoiceAttemptRecoveryAvailable(recovery, recoveryContext);
     const control = React.useMemo(() => resolveVoiceAttemptControl({
         surfaceState,
         tone: resolveVoiceSurfaceStatusPresentation(surfaceState).tone,
@@ -202,9 +285,9 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         muted: snap.micMuted === true,
         capturing,
         startAdmitted: startAdmission.canStart,
-        hasRecovery: recovery !== null || setupIncomplete,
+        hasRecovery: recoveryAvailable || setupIncomplete,
     }), [
-        recovery,
+        recoveryAvailable,
         setupIncomplete,
         snap.canStop,
         snap.micMuted,
@@ -246,20 +329,12 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         fireAndForget(voiceSessionManager.setMuted(sessionId, !muted), { tag: 'VoiceAttemptControl.mute' });
     }, [canMute, muted, snapSessionId]);
 
-    const recoveryKind = recovery?.kind ?? null;
-    const onRecover = React.useCallback(() => {
-        if (recoveryKind === 'retry' || recoveryKind === 'reconnect') {
-            fireAndForget(
-                voiceSessionManager.toggle(snapSessionId?.trim() ?? ''),
-                { tag: 'VoiceAttemptControl.recover' },
-            );
-            return;
-        }
-        if (recoveryKind === null && !setupIncomplete) return;
-        // Every other recovery — and an unfinished setup, which is the same problem before it has
-        // had a chance to fail — is owned by the Voice settings screen. One dispatch, not two.
-        router.push(SETTINGS_ROUTES.voice as never);
-    }, [recoveryKind, router, setupIncomplete, snapSessionId]);
+    const onRecover = React.useMemo(() => createVoiceAttemptRecoveryDispatch({
+        recoveryAction,
+        setupIncomplete,
+        context: recoveryContext,
+        navigate: (href: unknown) => navigateWithFocusReturn(() => router.push(href as never)),
+    }), [navigateWithFocusReturn, recoveryAction, recoveryContext, router, setupIncomplete]);
 
     const recoveryLabel = control.recoveryAvailable
         ? t(recovery?.labelKey ?? 'modals.openSettings')

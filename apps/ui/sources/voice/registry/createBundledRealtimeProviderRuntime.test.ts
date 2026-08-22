@@ -816,14 +816,6 @@ describe('createBundledRealtimeProviderRuntime', () => {
     const beginOutputInterruptionCandidate = vi.fn(() => 'retained' as const);
     const resolveOutputInterruptionCandidate = vi.fn();
     const requestReconnect = vi.fn(async () => true);
-    const inboundWatchdog = {
-      start: vi.fn(),
-      stop: vi.fn(),
-      markTurnActive: vi.fn(),
-      markAwaitingResponse: vi.fn(),
-      noteInboundEvent: vi.fn(),
-    };
-    let reportInboundStall = (): void => {};
     const getActiveControlSessionId = vi.fn((): string | null => 'voice-global');
     const micStream = { getAudioTracks: () => [] } as unknown as MediaStream;
     const ensureMicActive = vi.fn<() => Promise<void>>(async () => undefined);
@@ -899,6 +891,12 @@ describe('createBundledRealtimeProviderRuntime', () => {
       createWebSocketPcmMedia,
       createWebSocketPcmConnection,
     };
+    const onConnected = vi.fn();
+    const currentUiVoiceHooks = {
+      onStarted: vi.fn(() => 'context'),
+      onStopped: vi.fn(),
+      onConnected,
+    };
     const host = {
       globalVoiceSessionId: 'voice-global',
       isCurrentGeneration: () => hostGenerationCurrent,
@@ -944,10 +942,6 @@ describe('createBundledRealtimeProviderRuntime', () => {
         emitMicFailure = (failure) => options.onFailure(failure);
         return mic;
       }),
-      createInboundWatchdog: vi.fn((options: Readonly<{ onStall(): void }>) => {
-        reportInboundStall = options.onStall;
-        return inboundWatchdog;
-      }),
       openLevelWriter,
       ensureBound: vi.fn(async () => undefined),
       acquireDirectMediaConversation: vi.fn(async () => {
@@ -992,7 +986,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
         barrierInput = input;
         return { run: vi.fn(async () => ({ status: 'submitted' as const })), cancel: vi.fn(), dispose: vi.fn() };
       }),
-      voiceHooks: { onStarted: vi.fn(() => 'context'), onStopped: vi.fn() },
+      voiceHooks: currentUiVoiceHooks,
       createMachineError: vi.fn((input) => ({
         ...input,
         phase: 'runtime' as const,
@@ -1012,6 +1006,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       execution: { kind: 'direct_media' },
       protocol: {
         id: 'realtime_example',
+        toolEffectCalls: 'stable_ids' as const,
         turnControls: {
           cancelResponse: 'immediate' as const,
           truncatePlayback: 'unsupported' as const,
@@ -1057,6 +1052,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
     await runtime.adapter.start({ sessionId: 'session-1' });
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ controlSessionId: 'session-1' }));
     expect(host.voiceHooks.onStarted).toHaveBeenCalledWith('session-1');
+    expect(onConnected).toHaveBeenCalledWith('session-1');
     expect(openLevelWriter).toHaveBeenCalledWith({ channel: 'input', sourceId: 'realtime_example:session-1' });
     expect(openLevelWriter).not.toHaveBeenCalledWith({ channel: 'output', sourceId: expect.any(String) });
     emitMicLevel(0.5);
@@ -1067,7 +1063,6 @@ describe('createBundledRealtimeProviderRuntime', () => {
       onConnectionReady: expect.any(Function),
     });
     const runtimeEvents = controllerInput as unknown as Readonly<{
-      onInboundControlEvent(): void;
       onCanonicalEvent(
         event: Parameters<VoiceConversationControllerDeps['onCanonicalEvent']>[0],
       ): Promise<void>;
@@ -1078,8 +1073,6 @@ describe('createBundledRealtimeProviderRuntime', () => {
         event: unknown;
       }>): void;
     }>;
-    runtimeEvents.onInboundControlEvent();
-    expect(inboundWatchdog.noteInboundEvent).toHaveBeenCalledTimes(1);
     const createControllerConnection = (controllerInput as unknown as Readonly<{
       createConnection(session: unknown, attemptId: number, signal: AbortSignal): Promise<unknown>;
     }>).createConnection;
@@ -1146,7 +1139,6 @@ describe('createBundledRealtimeProviderRuntime', () => {
     )).rejects.toMatchObject({ name: 'AbortError' });
     expect(createConnection).toHaveBeenCalledTimes(2);
     await runtimeEvents.onCanonicalEvent({ type: 'assistant_output_started', itemId: 'assistant-1' });
-    expect(inboundWatchdog.markTurnActive).toHaveBeenCalledWith(true);
     // Generation replacement revokes A's live provider authority before A's
     // asynchronous disposal completes. A queued provider event must not enter
     // its barge-in coordinator and create an interruption candidate.
@@ -1358,8 +1350,6 @@ describe('createBundledRealtimeProviderRuntime', () => {
     interruptOrder.length = 0;
     sentEvents.length = 0;
     await runtimeEvents.onCanonicalEvent({ type: 'assistant_output_stopped' });
-    expect(inboundWatchdog.markTurnActive).toHaveBeenCalledWith(false);
-    expect(inboundWatchdog.markAwaitingResponse).toHaveBeenCalledWith(false);
     expect(attemptTwoWriter.reset).toHaveBeenCalledTimes(1);
     closeWebRtcConnection.mockClear();
     failAfterConnectionCreation = true;
@@ -1402,7 +1392,6 @@ describe('createBundledRealtimeProviderRuntime', () => {
     prepare.mockRejectedValueOnce(Object.assign(new Error('rate_limited'), { code: 'rate_limited' }));
     await expect(controllerProtocol.adapter.prepare({})).rejects.toThrow('rate_limited');
     controllerProtocol.machine.reconnecting({ controlSessionId: 'voice-global', active: true });
-    expect(inboundWatchdog.stop).toHaveBeenCalled();
     expect(host.machine.setReconnecting).toHaveBeenCalledWith(
       'voice-global',
       'realtime_example',
@@ -1410,9 +1399,6 @@ describe('createBundledRealtimeProviderRuntime', () => {
       undefined,
     );
     controllerProtocol.machine.connected({ controlSessionId: 'voice-global', attemptId: 1 });
-    expect(inboundWatchdog.start).toHaveBeenCalled();
-    reportInboundStall();
-    await vi.waitFor(() => expect(requestReconnect).toHaveBeenCalledTimes(1));
     controllerProtocol.machine.disconnected({ controlSessionId: 'voice-global', code: 'credential_unavailable' });
     expect(inputLevelWriter.close).toHaveBeenCalledTimes(1);
     expect(attemptTwoWriter.close).toHaveBeenCalledTimes(1);
@@ -1556,6 +1542,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
     }>).createToolBarrier;
     createToolBarrier();
     const barrier = barrierInput!;
+    expect(barrier).toMatchObject({ effectCalls: 'stable_ids' });
     const signal = new AbortController().signal;
     await barrier.submitResults('response-1', [], signal);
     await barrier.continueResponse('response-1', signal);

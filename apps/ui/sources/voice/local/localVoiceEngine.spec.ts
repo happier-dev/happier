@@ -26,6 +26,7 @@ describe('local voice engine (turn-based) smoke', () => {
         expect(submitMessage).toHaveBeenCalledWith('s1', 'hello world', undefined, undefined, {
             callerSurface: 'voice_turn',
             forceImmediate: true,
+            hostAdmissionOrigin: 'voice',
         });
         // After a turn completes, the local voice session remains active (ready for another turn)
         // until the user explicitly hangs up.
@@ -42,6 +43,10 @@ describe('local voice engine (turn-based) smoke', () => {
         const { voiceConversationRuntimeMachine } = await import(
             '@/voice/runtime/machine/VoiceConversationRuntimeMachine'
         );
+        voiceConversationRuntimeMachine.transitionToConnecting({
+            controlSessionId: 's-realtime',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+        });
         voiceConversationRuntimeMachine.transitionToConnected({
             controlSessionId: 's-realtime',
             adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
@@ -77,6 +82,10 @@ describe('local voice engine (turn-based) smoke', () => {
         const { voiceConversationRuntimeMachine } = await import(
             '@/voice/runtime/machine/VoiceConversationRuntimeMachine'
         );
+        voiceConversationRuntimeMachine.transitionToConnecting({
+            controlSessionId: 's-future',
+            adapterId: 'future_realtime',
+        });
         voiceConversationRuntimeMachine.transitionToConnected({
             controlSessionId: 's-future',
             adapterId: 'future_realtime',

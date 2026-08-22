@@ -173,6 +173,28 @@ describe('VoiceRealtimeConnection implementations', () => {
     expect(pcm.stop).toHaveBeenCalledTimes(1);
   });
 
+  it('closes the socket without waiting for a capture stop that has not settled', async () => {
+    const fixture = createDriver();
+    let settleCaptureStop!: () => void;
+    const captureStopped = new Promise<void>((resolve) => { settleCaptureStop = resolve; });
+    const pcm = {
+      start: vi.fn(async (_signal: AbortSignal) => {}),
+      stop: vi.fn(async () => await captureStopped),
+    };
+    const connection = createWebSocketPcmConnection({ driver: fixture.driver, pcm });
+    await connection.connect(new AbortController().signal);
+
+    const closed = connection.close({ code: 'user_stop' });
+    // Socket teardown is independent of capture teardown: a capture stop that
+    // is still draining must not retain the transport.
+    await vi.waitFor(() => expect(fixture.close).toHaveBeenCalledTimes(1));
+    expect(pcm.stop).toHaveBeenCalledTimes(1);
+
+    settleCaptureStop();
+    await closed;
+    expect(connection.state()).toBe('closed');
+  });
+
   it('closes a websocket PCM connection when its canonical media owner reports a terminal failure', async () => {
     const fixture = createDriver();
     const terminalListener = { current: null as ((error: Error) => void) | null };

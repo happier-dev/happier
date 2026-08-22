@@ -61,4 +61,33 @@ describe('resolveVoiceToolSpawnBackendTarget (RU-02 customAcp ingress-only)', ()
       backendTargetKey,
     });
   });
+  it('accepts an externally installed Agent id and targets it directly', () => {
+    // An installed non-bundled Agent is a legitimate voice spawn target: `isBundledAgentId`
+    // answers only "is this one of the bundled ids" and must never reject an installed Agent.
+    const res = resolveVoiceToolSpawnBackendTarget({
+      state: {},
+      agentId: 'acme-agent',
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.backendTarget).toEqual({ kind: 'backend', backendId: 'acme-agent' });
+  });
+
+  it('accepts an externally installed Agent id that matches its backendTargetKey', () => {
+    const backendTargetKey = buildBackendTargetKeyV2({
+      kind: 'backend',
+      backendId: 'acme-agent',
+    });
+
+    const res = resolveVoiceToolSpawnBackendTarget({
+      state: {},
+      agentId: 'acme-agent',
+      backendTargetKey,
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.backendTarget.backendId).toBe('acme-agent');
+  });
 });

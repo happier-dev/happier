@@ -8,6 +8,24 @@ function attemptAborted(): Error {
   });
 }
 
+async function executeBeforeAttemptAborts<T>(
+  execute: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted) throw attemptAborted();
+  let rejectAbort: ((reason: Error) => void) | null = null;
+  const onAbort = (): void => rejectAbort?.(attemptAborted());
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    return await Promise.race([execute(), aborted]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
 /** Bind host-owned tool execution to the exact provider connection attempt. */
 export function bindVoiceClientToolsToAttempt(
   tools: readonly VoiceClientToolDefinition[],
@@ -17,9 +35,7 @@ export function bindVoiceClientToolsToAttempt(
     ...tool,
     async execute(parameters: VoiceRealtimeJsonValue) {
       if (signal.aborted) throw attemptAborted();
-      const result = await tool.execute(parameters);
-      if (signal.aborted) throw attemptAborted();
-      return result;
+      return await executeBeforeAttemptAborts(() => tool.execute(parameters), signal);
     },
   })));
 }

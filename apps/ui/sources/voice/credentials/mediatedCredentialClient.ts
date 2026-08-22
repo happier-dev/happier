@@ -6,6 +6,7 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { log } from '@/log';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 
 import { createSelectedVoiceMachineClient } from './selectedMachineClient';
 
@@ -68,7 +69,7 @@ export function createVoiceClientMediatedCredentialHeadersMaterializer(input: Re
       throw failure('request', 'voice_account_operation_unauthorized', 'request_invalid');
     }
     if (!input.isCurrent()) throw operationError('voice_account_operation_cancelled');
-    request.signal.throwIfAborted();
+    throwIfAborted(request.signal);
     let raw: unknown;
     try {
       raw = await client.invoke(
@@ -77,10 +78,10 @@ export function createVoiceClientMediatedCredentialHeadersMaterializer(input: Re
         request.signal,
       );
     } catch (error) {
-      request.signal.throwIfAborted();
+      throwIfAborted(request.signal);
       throw failure('machine_rpc', 'credential_unavailable', readSafeCause(error));
     }
-    request.signal.throwIfAborted();
+    throwIfAborted(request.signal);
     if (!input.isCurrent()) throw operationError('voice_account_operation_cancelled');
     const response = DaemonVoiceClientMediatedCredentialMaterializeResponseV1Schema.safeParse(raw);
     if (!response.success) {

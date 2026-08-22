@@ -23,6 +23,13 @@ function authorization() {
       installedGenerationId: 'generation-1' as never,
       installReviewPrincipalDigest: PluginInstallReviewPrincipalDigestSchema.parse('a'.repeat(64)),
     },
+    // The daemon only ever authorizes as an exact machine installation, so the
+    // response carries the installation whose approval a client must match.
+    authoritySource: {
+      kind: 'machine_installation' as const,
+      machineId: 'machine-1',
+      installationId: 'installation-1',
+    },
     disclosures: [{
       sourceClass: { kind: 'savedSecret' as const, secretKinds: ['apiKey' as const] },
       realm: 'web' as const,
@@ -64,7 +71,7 @@ describe('raw credential authorization client', () => {
           capability: 'credentials.materialize.raw',
           targetScope: { kind: 'account' },
           subject: authorization().subject,
-          authoritySource: { kind: 'bundled' },
+          authoritySource: authorization().authoritySource,
           requester: { kind: 'plugin', pluginId: contribution.pluginId },
           reason: 'Voice provider raw credential access review',
           status: 'pending',

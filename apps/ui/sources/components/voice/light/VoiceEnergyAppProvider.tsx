@@ -5,7 +5,7 @@ import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoic
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { useSetting } from '@/sync/domains/state/storage';
 import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
-import { resolveVoiceProviderIdForSurface } from '@/voice/settings/resolveVoiceProviderId';
+import { resolveVoicePresentedProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
 import { resolveVoiceEnergyState } from './resolveVoiceEnergyState';
 import { resolveVoiceEnergyRuntimeActivation } from './resolveVoiceEnergyRuntimeActivation';
@@ -53,12 +53,20 @@ export function VoiceEnergyAppProvider(props: Readonly<{
     const sourceActivity = useVoiceLevelSourceActivity();
     const inputSourceActive = sourceActivity.inputSourceActive;
 
-    // The canonical resolver, memoized on the setting's identity: it walks the
-    // provider registry and projects the provider's settings envelope, which is
-    // far too much work to repeat on an unrelated render.
+    /*
+     * The canonical resolver, memoized on the setting's identity and the running attempt's
+     * adapter: it walks the provider registry and projects the provider's settings envelope,
+     * which is far too much work to repeat on an unrelated render.
+     *
+     * The attempt is part of the key because the light must follow the provider that is
+     * actually running. Selecting Off (or another provider) mid-attempt only chooses the next
+     * idle admission, and a light that read the selection would go dark while the microphone
+     * was still open.
+     */
+    const attemptAdapterId = snapshot.adapterId;
     const providerId = React.useMemo(
-        () => resolveVoiceProviderIdForSurface(voiceSettingsParse(voice)),
-        [voice],
+        () => resolveVoicePresentedProviderId({ adapterId: attemptAdapterId }, voiceSettingsParse(voice)),
+        [attemptAdapterId, voice],
     );
 
     /*

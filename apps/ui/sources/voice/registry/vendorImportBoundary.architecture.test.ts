@@ -16,8 +16,10 @@ describe('first-party voice UI package boundary', () => {
 
     const violations: string[] = [];
     for (const file of files) {
-      if (file.pathname.endsWith('/voice/registry/generatedBundledVoiceEntries.ts')) continue;
-      if (file.pathname.endsWith('/voice/registry/generatedBundledVoiceRuntimeEntries.ts')) continue;
+      // The generated build-time projection is emitted per host platform by
+      // `apps/cli/scripts/build-owned/generateBundledPluginEntries.ts`; every emitted
+      // variant is the same generated boundary, not a hand-written import.
+      if (/\/voice\/registry\/generatedBundledVoice(?:Entries|RuntimeEntries)(?:\.(?:web|ios|android))?\.ts$/u.test(file.pathname)) continue;
       const source = await readFile(file, 'utf8');
       if (
         source.includes('@happier-dev/plugins-elevenlabs/')

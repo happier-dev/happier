@@ -35,7 +35,7 @@ describe('useVoiceExecutionMachinePresentation', () => {
     });
 
     const hook = await renderHook(() => useVoiceExecutionMachinePresentation());
-    expect(hook.getCurrent()).toEqual({ machineId: null, machineLabel: null });
+    expect(hook.getCurrent()).toEqual({ machineId: null, machineLabel: null, selectionKind: 'none' });
 
     await act(async () => {
       storage.setState((state) => ({
@@ -56,7 +56,7 @@ describe('useVoiceExecutionMachinePresentation', () => {
       await Promise.resolve();
     });
 
-    expect(hook.getCurrent()).toEqual({ machineId: 'machine-a', machineLabel: 'Machine A' });
+    expect(hook.getCurrent()).toEqual({ machineId: 'machine-a', machineLabel: 'Machine A', selectionKind: 'resolved' });
   });
 
   it('reacts to a committed machine replacement and its label', async () => {
@@ -79,7 +79,7 @@ describe('useVoiceExecutionMachinePresentation', () => {
     });
 
     const hook = await renderHook(() => useVoiceExecutionMachinePresentation());
-    expect(hook.getCurrent()).toEqual({ machineId: 'machine-a', machineLabel: 'Machine A' });
+    expect(hook.getCurrent()).toEqual({ machineId: 'machine-a', machineLabel: 'Machine A', selectionKind: 'resolved' });
 
     await act(async () => {
       storage.setState((state) => ({
@@ -98,6 +98,6 @@ describe('useVoiceExecutionMachinePresentation', () => {
       await Promise.resolve();
     });
 
-    expect(hook.getCurrent()).toEqual({ machineId: 'machine-b', machineLabel: 'Machine B' });
+    expect(hook.getCurrent()).toEqual({ machineId: 'machine-b', machineLabel: 'Machine B', selectionKind: 'resolved' });
   });
 });

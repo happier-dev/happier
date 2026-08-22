@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { attachVoiceAgentActionEffectId } from '@/voice/agent/types';
 
 const appendUser = vi.fn();
 const appendAssistant = vi.fn();
@@ -310,7 +311,10 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
         await opts?.onUserTranscriptAccepted?.();
         return {
           assistantText: 'I will send that now.',
-          actions: [{ t: 'sendSessionMessage', args: { message: 'hello' } }],
+          actions: [attachVoiceAgentActionEffectId(
+            { t: 'sendSessionMessage', args: { message: 'hello' } },
+            'probe-turn:client:1:0',
+          )],
         };
       })
       .mockImplementationOnce(async (_sessionId, _userText, opts?: AcceptedTurnOptions) => {
@@ -351,7 +355,10 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
         await opts?.onUserTranscriptAccepted?.();
         return {
           assistantText: 'I will send that now.',
-          actions: [{ t: 'sendSessionMessage', args: { message: 'hello' } }],
+          actions: [attachVoiceAgentActionEffectId(
+            { t: 'sendSessionMessage', args: { message: 'hello' } },
+            'probe-turn-2:client:1:0',
+          )],
         };
       })
       .mockImplementationOnce(async (_sessionId, _userText, opts?: AcceptedTurnOptions) => {

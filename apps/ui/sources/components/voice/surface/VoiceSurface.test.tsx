@@ -96,10 +96,6 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: createHostComponentMock('StatusDot'),
 }));
 
-vi.mock('./VoiceLevelVisualizer', () => ({
-    VoiceLevelVisualizer: createHostComponentMock('VoiceLevelVisualizer'),
-}));
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: createHostComponentMock('Ionicons'),
 }));
@@ -134,6 +130,9 @@ const connectedServicesRegistryState = vi.hoisted(() => ({
         pluginId: 'happier.agent.codex',
         localId: 'openai-codex',
       },
+      // The projected entry for a released adapter carries its legacy service id; the canonical
+      // account-route resolver refuses to build a route for an entry that does not.
+      legacyServiceId: 'openai-codex',
       connectCommand: 'happier connect openai-codex',
       supportsOauth: true,
       executable: true,
@@ -750,25 +749,6 @@ describe('VoiceSurface', () => {
     // Start (and, on a live session, Stop) away with it. Recovery is an addition.
     expect(screen.findAllByProps({ accessibilityLabel: 'voiceAssistant.startVoice' }).length)
       .toBeGreaterThan(0);
-  });
-
-  it('does not show the level visualizer for stale speaking mode after disconnect', async () => {
-    vi.resetModules();
-    featureEnabledState['voice.agent'] = true;
-    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
-    setVoiceSessionSnapshot({
-      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
-      sessionId: null,
-      status: 'disconnected',
-      mode: 'speaking',
-      canStop: false,
-    });
-
-    const { VoiceSurface } = await import('./VoiceSurface');
-
-    const screen = await renderVoiceSurface(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-
-    expect(screen.findAllByType('VoiceLevelVisualizer' as any)).toHaveLength(0);
   });
 
   it('routes the stop control through voiceSessionManager.stop using the active voice session id', async () => {
@@ -2564,7 +2544,7 @@ describe('VoiceSurface', () => {
     }
   });
 
-  it('does not violate hook ordering when provider setting toggles off', async () => {
+  it('keeps a live attempt presented when the provider setting toggles off, without violating hook ordering', async () => {
     vi.resetModules();
     voiceSettingState.current = {
       providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
@@ -2581,12 +2561,33 @@ describe('VoiceSurface', () => {
     });
 
     const { VoiceSurface } = await import('./VoiceSurface');
+    const surface = () => React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' });
 
-    const screen = await renderVoiceSurface(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
+    const screen = await renderVoiceSurface(surface());
 
+    /*
+     * Off names the provider the NEXT idle Start would admit; it does not retire the attempt that
+     * is running. The ElevenLabs attempt is still connected with an open microphone, so the
+     * surface — and the Stop control that is the only way to close that microphone — must stay.
+     */
     await act(async () => {
       voiceSettingState.current = { providerId: 'off', ui: { activityFeedEnabled: false, scopeDefault: 'session', surfaceLocation: 'session' } };
-      screen.tree.update(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
+      screen.tree.update(await withVoiceEnergyBus(surface()));
+    });
+
+    expect(screen.tree.toJSON()).not.toBeNull();
+
+    // Once the attempt itself retires there is nothing left to present, and the surface unmounts
+    // through the same render path rather than reordering its hooks.
+    await act(async () => {
+      setVoiceSessionSnapshot({
+        adapterId: null,
+        sessionId: null,
+        status: 'disconnected',
+        mode: 'idle',
+        canStop: false,
+      });
+      screen.tree.update(await withVoiceEnergyBus(surface()));
     });
 
     expect(screen.tree.toJSON()).toBeNull();

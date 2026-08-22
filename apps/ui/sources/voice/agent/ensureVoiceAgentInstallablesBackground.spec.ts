@@ -126,4 +126,33 @@ describe('ensureVoiceAgentInstallablesBackground', () => {
       }),
     );
   });
+  it('ensures installables for an externally installed Agent id', async () => {
+    // Installable deps are contributed per Agent, including by plugin-contributed Agents.
+    // Narrowing to the bundled ids would deny an installed external Agent its own installables.
+    storageGetState.mockReturnValue({
+      settings: { voice: { providers: { local_conversation: { schemaVersion: 1, config: {} } } } },
+      sessions: {
+        s1: {
+          id: 's1',
+          metadata: { machineId: 'machine-raw' },
+        },
+      },
+      sessionListRenderables: {},
+      sessionListIndexByServerId: {},
+      concurrentSessionListCacheByServerId: {},
+    });
+
+    const { ensureVoiceAgentInstallablesBackground } = await import('./ensureVoiceAgentInstallablesBackground');
+
+    await ensureVoiceAgentInstallablesBackground({ agentId: 'acme-agent', sessionId: 's1' });
+
+    expect(ensureAgentInstallablesBackground).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'acme-agent',
+        machineId: 'machine-raw',
+        serverId: 'server-a',
+        resumeSessionId: 's1',
+      }),
+    );
+  });
 });

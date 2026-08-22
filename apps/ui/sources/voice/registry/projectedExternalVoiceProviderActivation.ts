@@ -1,38 +1,28 @@
 import {
-  DaemonPluginReactNativeBundleCacheIdentityV1Schema,
   buildQualifiedPluginContributionKey,
   createPluginContributionIdentity,
-  type PluginMachineExecutionOriginV1,
+  type PluginContributionClientPlatform,
   type VoiceProviderContribution,
 } from '@happier-dev/protocol';
-import {
-  PluginUiArtifactsManifestEntryV1Schema,
-  type PluginUiArtifactsManifestEntryV1,
-} from '@happier-dev/protocol/plugins/ui';
 
 import {
-  getInstalledPluginReactNativeBundleCache,
-} from '@/components/plugins/reactNative/bundleCache';
+  type PluginUiClientExecutableDerivedScopeFactory,
+} from '@/components/plugins/reactNative/clientExecutableActivation';
+import type { PluginUiClientExecutableRegistrationScope } from '@/components/plugins/reactNative/clientExecutableContributions';
 import {
   getInstalledPluginUiExecutableModuleHost,
-  type PluginUiExecutableAuthority,
-  type PluginUiExecutableModuleActivationResult,
   type PluginUiExecutableModuleHost,
 } from '@/components/plugins/reactNative/executableModuleHost';
+import type { PluginUiProjectedClientExecutableTarget } from '@/components/plugins/reactNative/clientExecutableProjection';
+import type { PluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import {
-  derivePluginUiFederatedContainerName,
-  type PluginReactNativeLoaderBackend,
-  type RepackInstalledArtifactModuleReference,
-} from '@/components/plugins/reactNative/loader';
-import { resolveDefaultReactNativeLoaderBackend } from '@/components/plugins/reactNative/resolveDefaultReactNativeLoaderBackend';
+  createAppShellPluginUiInvocationHost,
+} from '@/components/appShell/plugins/pluginUiInvocationHost';
 import {
-  acquirePluginReactNativeArtifactAvailability,
-} from '@/sync/domains/plugins/availability/reactNativeArtifactAvailability';
-import type { PluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
-import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
-import { readPluginUiProjectionEntryExecutionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
-import { createAppShellPluginUiInvocationHost } from '@/components/appShell/plugins/pluginUiInvocationHost';
+  createPluginUiProjectedActionResolver,
+  type PluginUiProjectedActionResolver,
+  type PluginUiProjectionModel,
+} from '@/sync/domains/plugins/ui/projection';
 
 import {
   createExternalVoiceProviderActivationScope,
@@ -46,58 +36,13 @@ import {
   projectVoiceProviderDeclarationRequirements,
   type VoiceProviderRegistryEntry,
 } from './providerRegistry';
-import { createExternalVoiceProviderSettingsDescriptor, projectExternalVoiceProviderSettings } from '@/voice/settings/externalProviderSettings';
+import {
+  createExternalVoiceProviderSettingsDescriptor,
+  projectExternalVoiceProviderSettings,
+} from '@/voice/settings/externalProviderSettings';
 import type { VoiceProviderPresentation, VoiceSpeechSettingsPresentation } from './voiceProviderPresentation';
 
-type ActivationAttempt = Readonly<{
-  providerId: string;
-  result: PluginUiExecutableModuleActivationResult;
-}>;
-
-type ValidProjectedVoiceProvider = Readonly<{
-  entry: PluginUiProjectionModel['voiceProvidersById'][string];
-  declaration: VoiceConversationProviderContribution;
-  identity: ReturnType<typeof DaemonPluginReactNativeBundleCacheIdentityV1Schema.parse>;
-  artifactGraph: PluginUiArtifactsManifestEntryV1;
-  moduleReference: RepackInstalledArtifactModuleReference;
-  origin: PluginMachineExecutionOriginV1;
-}>;
-
-type ExternalVoiceProviderHostPlatform = 'web' | 'ios' | 'android';
-
 const projectedSpeechRegistrationTokens = new WeakMap<PluginUiExecutableModuleHost, object>();
-const projectedSpeechAuthorityTokens = new WeakMap<PluginUiExecutableModuleHost, object>();
-
-function isExternalVoiceProviderHostPlatform(value: string): value is ExternalVoiceProviderHostPlatform {
-  return value === 'web' || value === 'ios' || value === 'android';
-}
-
-function areSameProjectedVoiceExecutionOrigins(
-  left: PluginMachineExecutionOriginV1,
-  right: PluginMachineExecutionOriginV1,
-): boolean {
-  return left.serverIdentityId === right.serverIdentityId
-    && left.materializationRef.machineId === right.materializationRef.machineId
-    && left.materializationRef.materializationId === right.materializationRef.materializationId
-    && left.materializationRef.pluginId === right.materializationRef.pluginId;
-}
-
-function bindArtifactCurrentnessToLoaderBackend(input: Readonly<{
-  backend: PluginReactNativeLoaderBackend;
-  isCurrent: () => boolean;
-}>): PluginReactNativeLoaderBackend {
-  const loadInstalledBundle = input.backend.loadInstalledBundle;
-  if (!loadInstalledBundle) return input.backend;
-  return Object.freeze({
-    ...input.backend,
-    loadInstalledBundle: async (request) => {
-      if (!input.isCurrent()) throw new Error('voice_artifact_lease_revoked');
-      const exported = await loadInstalledBundle(request);
-      if (!input.isCurrent()) throw new Error('voice_artifact_lease_revoked');
-      return exported;
-    },
-  });
-}
 
 function localizedText(
   value: string | Readonly<{ key: string; fallback: string }> | undefined,
@@ -175,267 +120,144 @@ function projectExternalSpeechDescriptor(input: Readonly<{
   });
 }
 
-export async function withdrawProjectedExternalVoiceProviders(
-  executableHost: PluginUiExecutableModuleHost = getInstalledPluginUiExecutableModuleHost(),
-): Promise<void> {
-  projectedSpeechAuthorityTokens.delete(executableHost);
-  const speechToken = projectedSpeechRegistrationTokens.get(executableHost);
-  if (speechToken) {
-    removeExternalVoiceProviderRegistration(speechToken);
-    projectedSpeechRegistrationTokens.delete(executableHost);
+function readCurrent(input: Readonly<{ isCurrent?: () => boolean }>): boolean {
+  try {
+    return input.isCurrent?.() ?? true;
+  } catch {
+    return false;
   }
-  await executableHost.replaceAuthority(null);
 }
 
 /**
- * Production F35 consumer. The generic projection/artifact owners establish
- * identity, integrity, currentness, and bytes; this adapter only maps the
- * declared Voice registration right into the canonical Voice activation scope.
+ * Speech has no client executable target. Its existing registry projection is
+ * synchronous and token-owned; the generic activation owner never observes
+ * or reconstructs these settings descriptors.
  */
-export async function activateProjectedExternalVoiceProviders(input: Readonly<{
-  projection: PluginUiProjectionModel;
-  machineId: string;
-  serverId?: string | null;
-  hostPlatform: string;
-  executableHost?: PluginUiExecutableModuleHost;
-  loaderBackend?: PluginReactNativeLoaderBackend;
-  /** Account Availability is the only Artifact admission/source owner. */
-  reader?: PluginAccountAvailabilityReader | null;
-  /** Captured active Account lifetime; missing/retired scopes fail closed. */
-  accountLifetime?: ActiveServerAccountScopeLifetime | null;
-  createInvocationUi?: typeof createAppShellPluginUiInvocationHost;
-}>): Promise<readonly ActivationAttempt[]> {
-  const executableHost = input.executableHost ?? getInstalledPluginUiExecutableModuleHost();
-  const cache = getInstalledPluginReactNativeBundleCache();
-  const authority: PluginUiExecutableAuthority = Object.freeze({
-    serverId: input.serverId ?? null,
-    machineId: input.machineId,
-    projectionGeneration: input.projection.generation,
-  });
-  const speechAuthorityToken = Object.freeze({});
-  projectedSpeechAuthorityTokens.set(executableHost, speechAuthorityToken);
-  const previousSpeechToken = projectedSpeechRegistrationTokens.get(executableHost);
-  if (previousSpeechToken) {
-    removeExternalVoiceProviderRegistration(previousSpeechToken);
-    projectedSpeechRegistrationTokens.delete(executableHost);
+function reconcileProjectedExternalSpeechProviders(input: Readonly<{
+  projection: PluginUiProjectionModel | null;
+  hostPlatform: PluginContributionClientPlatform;
+  executableHost: PluginUiExecutableModuleHost;
+  isCurrent?: () => boolean;
+}>): void {
+  if (!readCurrent(input)) return;
+  const previousToken = projectedSpeechRegistrationTokens.get(input.executableHost);
+  if (previousToken) {
+    removeExternalVoiceProviderRegistration(previousToken);
+    projectedSpeechRegistrationTokens.delete(input.executableHost);
   }
-  await executableHost.replaceAuthority(authority);
-  if (projectedSpeechAuthorityTokens.get(executableHost) !== speechAuthorityToken) {
-    return Object.freeze([]);
-  }
-  if (!isExternalVoiceProviderHostPlatform(input.hostPlatform) || input.projection.generation === null) {
-    return Object.freeze([]);
-  }
+  const projection = input.projection;
+  if (!projection || projection.generation === null || !readCurrent(input)) return;
 
-  const loaderBackend = input.loaderBackend ?? resolveDefaultReactNativeLoaderBackend();
-  const attempts: ActivationAttempt[] = [];
-  const speechToken = Object.freeze({});
-  let projectedSpeech = false;
-  for (const entry of Object.values(input.projection.voiceProvidersById)) {
+  const token = Object.freeze({});
+  let projected = false;
+  for (const entry of Object.values(projection.voiceProvidersById)) {
     const declaration = entry.definition;
-    if (entry.generation !== input.projection.generation
+    if (
+      entry.generation !== projection.generation
       || declaration.kind !== 'speech'
-      || !declaration.platforms.includes(input.hostPlatform)) continue;
+      || !declaration.platforms.includes(input.hostPlatform)
+    ) {
+      continue;
+    }
     const descriptor = projectExternalSpeechDescriptor({ pluginId: entry.pluginId, declaration });
     if (descriptor.providerId !== entry.id) continue;
     commitExternalVoiceProviderRegistration(Object.freeze({
-      token: speechToken,
+      token,
       pluginId: entry.pluginId,
       localId: declaration.id,
       providerId: entry.id,
       descriptor,
       adapter: null,
     }));
-    projectedSpeech = true;
+    projected = true;
   }
-  if (projectedSpeech) projectedSpeechRegistrationTokens.set(executableHost, speechToken);
-  const groups = new Map<string, ValidProjectedVoiceProvider[]>();
-  for (const entry of Object.values(input.projection.voiceProvidersById)) {
-    const declaration = entry.definition;
-    if (declaration.kind !== 'conversation') continue;
-    if (!declaration.platforms.includes(input.hostPlatform)) continue;
-    const contributionId = declaration.id;
-    const bundle = input.projection.reactNativeBundlesById[`reactNativeBundle:${entry.pluginId}:${contributionId}`];
-    const runtime = bundle?.runtime;
-    const runtimeRecord = runtime && typeof runtime === 'object' && !Array.isArray(runtime)
-      ? runtime as Readonly<Record<string, unknown>>
-      : null;
-    const decision = runtimeRecord?.decision;
-    const decisionRecord = decision && typeof decision === 'object' && !Array.isArray(decision)
-      ? decision as Readonly<Record<string, unknown>>
-      : null;
-    const loadPolicy = runtimeRecord?.loadPolicy;
-    const loadPolicyRecord = loadPolicy && typeof loadPolicy === 'object' && !Array.isArray(loadPolicy)
-      ? loadPolicy as Readonly<Record<string, unknown>>
-      : null;
-    const artifactGraph = PluginUiArtifactsManifestEntryV1Schema.safeParse(bundle?.artifactGraph);
-    const identity = DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(runtimeRecord?.cacheIdentity);
-    const entryOrigin = readPluginUiProjectionEntryExecutionOrigin(entry);
-    const bundleOrigin = readPluginUiProjectionEntryExecutionOrigin(bundle);
-    if (
-      bundle?.pluginId !== entry.pluginId
-      || bundle?.contributionId !== contributionId
-      || !entryOrigin
-      || !bundleOrigin
-      || !areSameProjectedVoiceExecutionOrigins(entryOrigin, bundleOrigin)
-      || entryOrigin.materializationRef.machineId !== input.machineId
-      || !artifactGraph.success
-      || artifactGraph.data.contributionId !== declaration.client.artifactId
-      || artifactGraph.data.platform !== input.hostPlatform
-      || decisionRecord?.state !== 'load'
-      || loadPolicyRecord?.source !== 'installedArtifact'
-      || !identity.success
-      || identity.data.pluginId !== entry.pluginId
-      || identity.data.contributionId !== contributionId
-      || identity.data.projectionGeneration !== input.projection.generation
-      || identity.data.platform !== input.hostPlatform
-      || identity.data.artifactDigest !== artifactGraph.data.digest
-    ) continue;
-
-    const moduleReference = artifactGraph.data.repack ?? Object.freeze({
-      containerName: derivePluginUiFederatedContainerName({
-        pluginId: entry.pluginId,
-        contributionId: declaration.client.artifactId,
-      }),
-      modulePath: declaration.client.modulePath,
-      exportName: declaration.client.exportName,
-    });
-    const groupKey = [
-      entry.pluginId,
-      declaration.client.artifactId,
-      moduleReference.containerName,
-      moduleReference.modulePath,
-      moduleReference.exportName,
-      entryOrigin.serverIdentityId,
-      entryOrigin.materializationRef.machineId,
-      entryOrigin.materializationRef.materializationId,
-      entryOrigin.materializationRef.pluginId,
-    ].join('\u0000');
-    const group = groups.get(groupKey) ?? [];
-    group.push(Object.freeze({
-      entry,
-      declaration,
-      identity: identity.data,
-      artifactGraph: artifactGraph.data,
-      moduleReference,
-      origin: entryOrigin,
-    }));
-    groups.set(groupKey, group);
+  if (projected && readCurrent(input)) {
+    projectedSpeechRegistrationTokens.set(input.executableHost, token);
+  } else if (projected) {
+    removeExternalVoiceProviderRegistration(token);
   }
+}
 
-  for (const unorderedGroup of groups.values()) {
-    const group = [...unorderedGroup].sort((left, right) => left.entry.id.localeCompare(right.entry.id));
-    const first = group[0];
-    if (!first) continue;
-    if (group.some((candidate) => (
-      candidate.artifactGraph.digest !== first.artifactGraph.digest
-      || !areSameProjectedVoiceExecutionOrigins(candidate.origin, first.origin)
-    ))) continue;
+/** Voice-only cleanup: generic executable unload remains a separate owner. */
+export async function withdrawProjectedExternalVoiceProviders(
+  executableHost: PluginUiExecutableModuleHost = getInstalledPluginUiExecutableModuleHost(),
+): Promise<void> {
+  const speechToken = projectedSpeechRegistrationTokens.get(executableHost);
+  if (!speechToken) return;
+  removeExternalVoiceProviderRegistration(speechToken);
+  projectedSpeechRegistrationTokens.delete(executableHost);
+}
 
-    const reader = input.reader;
-    const accountLifetime = input.accountLifetime;
-    const serverId = input.serverId;
-    if (!reader || !accountLifetime || !accountLifetime.isCurrent() || !serverId) continue;
-    const consumerIsCurrent = () => (
-      projectedSpeechAuthorityTokens.get(executableHost) === speechAuthorityToken
-      && accountLifetime.isCurrent()
-    );
-    const acquired = await acquirePluginReactNativeArtifactAvailability({
-      reader,
-      artifactGraph: first.artifactGraph,
-      cacheIdentity: first.identity,
-      accountLifetime,
-      artifactOwnerKind: 'voiceProvider',
-      daemon: {
-        origin: first.origin,
-        serverId,
-      },
-      isCurrent: consumerIsCurrent,
-    });
-    if (acquired.kind !== 'available') continue;
-    if (!acquired.isCurrent()) {
-      acquired.dispose();
-      continue;
+function createVoiceDerivedScope(input: Readonly<{
+  target: PluginUiProjectedClientExecutableTarget;
+  registrationScope: PluginUiClientExecutableRegistrationScope;
+  resolveContributedAction: PluginUiProjectedActionResolver;
+  readNavigationBinding?: () => PluginSurfaceDestinationNavigationBinding | null | undefined;
+  createInvocationUi?: typeof createAppShellPluginUiInvocationHost;
+}>): ReturnType<PluginUiClientExecutableDerivedScopeFactory> {
+  if (input.target.voiceProviders.length === 0) return null;
+  const declarations: readonly VoiceConversationProviderContribution[] = input.target.voiceProviders
+    .map((provider) => provider.declaration);
+  const scope = createExternalVoiceProviderActivationScope({
+    pluginId: input.target.pluginId,
+    generation: String(input.target.projectionGeneration),
+    declarations,
+    registrationScope: input.registrationScope,
+    clientRuntimeIdentitiesByLocalId: Object.freeze(Object.fromEntries(
+      input.target.voiceProviders.map((provider) => [provider.declaration.id, provider.cacheIdentity] as const),
+    )),
+    recipientContractsByLocalId: Object.freeze(Object.fromEntries(input.target.voiceProviders.flatMap((provider) => (
+      provider.entry.recipientContract
+        ? [[provider.declaration.id, provider.entry.recipientContract] as const]
+        : []
+    )))),
+    hostPlatform: input.target.target.platform,
+    createInvocationUi: (operation) => (input.createInvocationUi ?? createAppShellPluginUiInvocationHost)({
+      ...operation,
+      machineId: input.target.authority.machineId,
+      serverId: input.target.authority.serverId,
+      resolveContributedAction: input.resolveContributedAction,
+      readNavigationBinding: input.readNavigationBinding,
+    }),
+  });
+  return scope;
+}
+
+/**
+ * Voice receives raw targets after generic projection and Artifact admission.
+ * It only projects speech descriptors and layers the Voice runtime scope onto
+ * the generic registration transaction; it owns no lease, currentness token,
+ * target grouping, loader, or activation call.
+ */
+export function createProjectedExternalVoiceProviderDerivedScopeFactory(input: Readonly<{
+  projection: PluginUiProjectionModel | null;
+  hostPlatform: PluginContributionClientPlatform;
+  executableHost?: PluginUiExecutableModuleHost;
+  actionProjection?: PluginUiProjectionModel | null;
+  resolveContributedAction?: PluginUiProjectedActionResolver;
+  readNavigationBinding?: () => PluginSurfaceDestinationNavigationBinding | null | undefined;
+  createInvocationUi?: typeof createAppShellPluginUiInvocationHost;
+  isCurrent?: () => boolean;
+}>): PluginUiClientExecutableDerivedScopeFactory {
+  const executableHost = input.executableHost ?? getInstalledPluginUiExecutableModuleHost();
+  reconcileProjectedExternalSpeechProviders({
+    projection: input.projection,
+    hostPlatform: input.hostPlatform,
+    executableHost,
+    isCurrent: input.isCurrent,
+  });
+  const resolveContributedAction = input.resolveContributedAction
+    ?? createPluginUiProjectedActionResolver(input.actionProjection?.actionsById);
+  return ({ target, registrationScope }) => {
+    if (!readCurrent(input)) {
+      throw new Error('projected_external_voice_provider_scope_stale');
     }
-
-    let leaseReleased = false;
-    let scopeCreated = false;
-    let artifactLeaseRevocation: Readonly<{ dispose(): void }> | null = null;
-    let accountLifetimeRetirement: Readonly<{ dispose(): void }> | null = null;
-    const releaseLease = () => {
-      if (leaseReleased) return;
-      leaseReleased = true;
-      artifactLeaseRevocation?.dispose();
-      accountLifetimeRetirement?.dispose();
-      acquired.dispose();
-    };
-    artifactLeaseRevocation = acquired.onRevoke(() => {
-      void executableHost.invalidatePlugin(first.entry.pluginId);
+    return createVoiceDerivedScope({
+      target,
+      registrationScope,
+      resolveContributedAction,
+      readNavigationBinding: input.readNavigationBinding,
+      createInvocationUi: input.createInvocationUi,
     });
-    accountLifetimeRetirement = accountLifetime.onRetire(() => {
-      void executableHost.invalidatePlugin(first.entry.pluginId);
-    });
-    if (!acquired.isCurrent()) {
-      releaseLease();
-      continue;
-    }
-
-    const result = await executableHost.activate({
-      cache,
-      identity: first.identity,
-      moduleReference: first.moduleReference,
-      backend: bindArtifactCurrentnessToLoaderBackend({
-        backend: loaderBackend,
-        isCurrent: acquired.isCurrent,
-      }),
-      hostPlatform: input.hostPlatform,
-      authority,
-      createScope: () => {
-        const scope = createExternalVoiceProviderActivationScope({
-          pluginId: first.entry.pluginId,
-          generation: String(first.identity.projectionGeneration),
-          declarations: group.map((candidate) => candidate.declaration),
-          clientRuntimeIdentitiesByLocalId: Object.freeze(Object.fromEntries(
-            group.map((candidate) => [candidate.declaration.id, candidate.identity] as const),
-          )),
-          recipientContractsByLocalId: Object.freeze(Object.fromEntries(group.flatMap((candidate) => (
-            candidate.entry.recipientContract
-              ? [[candidate.declaration.id, candidate.entry.recipientContract] as const]
-              : []
-          )))),
-          hostPlatform: input.hostPlatform,
-          createInvocationUi: (operation) => (input.createInvocationUi ?? createAppShellPluginUiInvocationHost)({
-            ...operation,
-            machineId: input.machineId,
-            serverId: input.serverId ?? null,
-            executionOrigin: first.origin,
-          }),
-        });
-        scopeCreated = true;
-        return Object.freeze({
-          ...scope,
-          isCurrent: () => acquired.isCurrent() && (scope.isCurrent?.() ?? true),
-          async commit() {
-            if (!acquired.isCurrent()) throw new Error('voice_artifact_lease_revoked');
-            await scope.commit();
-            if (!acquired.isCurrent()) throw new Error('voice_artifact_lease_revoked');
-          },
-          unwind: () => {
-            try {
-              return scope.unwind();
-            } finally {
-              // Call the Voice scope first: its synchronous prefix withdraws
-              // registrations before this Artifact lease is released.
-              releaseLease();
-            }
-          },
-        });
-      },
-    });
-    if (!scopeCreated) releaseLease();
-    for (const candidate of group) {
-      attempts.push(Object.freeze({ providerId: candidate.entry.id, result }));
-    }
-  }
-  return Object.freeze(attempts);
+  };
 }

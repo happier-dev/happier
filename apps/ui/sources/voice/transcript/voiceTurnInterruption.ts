@@ -6,6 +6,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX } from './voiceTranscriptBounds';
 import { hasVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
+import { resolveVoiceTranscriptEntryId } from './voiceTranscriptEntryIdentity';
 
 /**
  * Bounded projection state for assistant turns whose playback was interrupted.
@@ -49,18 +50,6 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return value as Readonly<Record<string, unknown>>;
 }
 
-function resolveEntryId(record: Readonly<Record<string, unknown>>): string | null {
-    return normalizeNonEmptyString(
-        typeof record.realID === 'string'
-            ? record.realID
-            : typeof record.localId === 'string'
-                ? record.localId
-                : typeof record.id === 'string'
-                    ? record.id
-                    : null,
-    );
-}
-
 function isAssistantTranscriptTurn(record: Readonly<Record<string, unknown>>): boolean {
     if (record.kind === 'user-text' || record.role === 'user') return false;
     if (hasVoiceTranscriptNoteMeta(record.meta)) return false;
@@ -90,7 +79,7 @@ function resolveExactAssistantEntryId(
             || record.localId === assistantEntryId
             || record.id === assistantEntryId
         );
-        if (matchesProjectedIdentity) return resolveEntryId(record);
+        if (matchesProjectedIdentity) return resolveVoiceTranscriptEntryId(record);
     }
     return null;
 }

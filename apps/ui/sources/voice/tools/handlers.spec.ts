@@ -4,6 +4,8 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { registerStorageStateReader } from '@/sync/domains/state/storageStateReaderBridge';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
+import { createVoiceToolHandlers } from './handlers';
+
 const trackPermissionResponse = vi.fn();
 const sendMessage = vi.fn();
 const submitMessage = vi.fn();
@@ -354,6 +356,231 @@ describe('voice tool handlers', () => {
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
     expect(tools.startReview).toEqual(expect.any(Function));
+  });
+
+  it('reads the descriptor-only current UI snapshot through the attempt-scoped port', async () => {
+    const snapshot = {
+      navigation: {
+        area: 'plugin' as const,
+        screen: 'page',
+        title: 'PLUGIN_LABEL_SENTINEL',
+      },
+      commands: [{ id: 'opaque-command', title: 'Open issue #124' }],
+    };
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({
+      resolveSessionId: () => 's1',
+      currentUiContext: {
+        readCurrentUiContext: () => snapshot,
+        resolveCurrentUiCommand: () => null,
+        subscribe: () => () => {},
+      },
+    });
+
+    await expect(tools.readCurrentUiContext({})).resolves.toBe(JSON.stringify(snapshot));
+  });
+
+  it('does not expose current UI read or command tools when UI context sharing is off', async () => {
+    state.settings.voice.privacy.currentUiContextMode = 'off';
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({
+      resolveSessionId: () => 's1',
+      currentUiContext: {
+        readCurrentUiContext: () => ({
+          navigation: { area: 'app', screen: 'home' },
+          commands: [],
+        }),
+        resolveCurrentUiCommand: () => null,
+        subscribe: () => () => {},
+        invokeCurrentUiCommand: async () => ({ ok: true as const }),
+      },
+    });
+
+    expect(tools.readCurrentUiContext).toBeUndefined();
+    expect(tools.invokeCurrentUiCommand).toBeUndefined();
+  });
+
+  it('withholds current-UI Action specs from generic Voice discovery when sharing is off', async () => {
+    state.settings.voice.privacy.currentUiContextMode = 'off';
+    const { getActionSpec } = await import('@happier-dev/protocol');
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({
+      resolveSessionId: () => 's1',
+      currentUiContext: {
+        readCurrentUiContext: () => null,
+        resolveCurrentUiCommand: () => null,
+        subscribe: () => () => {},
+      },
+    });
+    const searchToolName = getActionSpec('action.spec.search').bindings?.voiceClientToolName;
+    if (!searchToolName) throw new Error('Missing action.spec.search Voice binding');
+
+    const result = JSON.parse(await tools[searchToolName]!({ query: '', limit: 100 }));
+
+    expect(result.ok).toBe(true);
+    expect(result.actionSpecs).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'ui.current_context.read' }),
+      expect.objectContaining({ id: 'ui.current_context.command.invoke' }),
+    ]));
+  });
+
+  it('denies captured current-UI handlers when an active Local Voice attempt turns sharing off', async () => {
+    const readCurrentUiContext = vi.fn(() => ({
+      navigation: { area: 'app' as const, screen: 'home' },
+      commands: [],
+    }));
+    const invokeCurrentUiCommand = vi.fn(async () => ({ ok: true as const }));
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({
+      resolveSessionId: () => 's1',
+      currentUiContext: {
+        readCurrentUiContext,
+        resolveCurrentUiCommand: () => null,
+        subscribe: () => () => {},
+        invokeCurrentUiCommand,
+      },
+    });
+    const read = tools.readCurrentUiContext;
+    const invoke = tools.invokeCurrentUiCommand;
+    if (!read || !invoke) throw new Error('Expected current-UI handlers while sharing is enabled');
+
+    state.settings.voice.privacy.currentUiContextMode = 'off';
+
+    await expect(read({})).resolves.toBe(JSON.stringify({
+      ok: false,
+      errorCode: 'current_ui_context_unavailable',
+      errorMessage: 'current_ui_context_unavailable',
+    }));
+    await expect(invoke({ commandId: 'opaque-command' })).resolves.toBe(JSON.stringify({
+      ok: false,
+      errorCode: 'current_ui_command_unavailable',
+      errorMessage: 'current_ui_command_unavailable',
+    }));
+    expect(readCurrentUiContext).not.toHaveBeenCalled();
+    expect(invokeCurrentUiCommand).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['invalid string', 'always'],
+    ['invalid non-string', true],
+  ])('does not expose current UI tools when the persisted mode is an %s', async (_caseName, currentUiContextMode) => {
+    state.settings.voice.privacy.currentUiContextMode = currentUiContextMode;
+    const tools = createVoiceToolHandlers({
+      resolveSessionId: () => 's1',
+      currentUiContext: {
+        readCurrentUiContext: () => ({
+          navigation: { area: 'app', screen: 'home' },
+          commands: [],
+        }),
+        resolveCurrentUiCommand: () => null,
+        subscribe: () => () => {},
+        invokeCurrentUiCommand: async () => ({ ok: true as const }),
+      },
+    });
+
+    expect(tools.readCurrentUiContext).toBeUndefined();
+    expect(tools.invokeCurrentUiCommand).toBeUndefined();
+  });
+
+  it('delegates current UI commands without exposing their private semantic payload', async () => {
+    const invokeCurrentUiCommand = vi.fn(async () => ({
+      ok: true as const,
+      result: { opened: true },
+    }));
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({
+      resolveSessionId: () => 's1',
+      currentUiContext: {
+        readCurrentUiContext: () => null,
+        resolveCurrentUiCommand: () => null,
+        subscribe: () => () => {},
+        invokeCurrentUiCommand,
+      },
+    });
+
+    const result = await tools.invokeCurrentUiCommand({ commandId: 'opaque-command' });
+
+    expect(invokeCurrentUiCommand).toHaveBeenCalledWith({ commandId: 'opaque-command' });
+    expect(JSON.parse(result)).toEqual({ ok: true, result: { opened: true } });
+    expect(result).not.toContain('opaque-command');
+  });
+
+  it('delegates contributed Actions by identity through the same current UI port', async () => {
+    const invokeAction = vi.fn(async () => ({
+      ok: true as const,
+      result: { refreshed: true },
+    }));
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({
+      resolveSessionId: () => 's1',
+      currentUiContext: {
+        readCurrentUiContext: () => null,
+        resolveCurrentUiCommand: () => null,
+        subscribe: () => () => {},
+        invokeAction,
+      },
+    });
+
+    const result = await tools.invokeAction({
+      action: { pluginId: 'acme.triage', localId: 'refresh-issues' },
+      input: { repository: 'acme/widgets' },
+    });
+
+    expect(invokeAction).toHaveBeenCalledWith({
+      action: { pluginId: 'acme.triage', localId: 'refresh-issues' },
+      input: { repository: 'acme/widgets' },
+    });
+    expect(JSON.parse(result)).toEqual({ ok: true, result: { refreshed: true } });
+    expect(result).not.toContain('acme/widgets');
+  });
+
+  it('denies the captured contributed Action tool when the user disables action.invoke mid-attempt', async () => {
+    const invokeAction = vi.fn(async () => ({ ok: true as const, result: { refreshed: true } }));
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({
+      resolveSessionId: () => 's1',
+      currentUiContext: {
+        readCurrentUiContext: () => null,
+        resolveCurrentUiCommand: () => null,
+        subscribe: () => () => {},
+        invokeAction,
+      },
+    });
+    const invoke = tools.invokeAction;
+    if (!invoke) throw new Error('Expected the contributed Action tool while the Action is enabled');
+
+    state.settings.actionsSettingsV1 = {
+      v: 1,
+      actions: { 'action.invoke': { enabled: false } },
+    };
+
+    await expect(invoke({
+      action: { pluginId: 'acme.triage', localId: 'refresh-issues' },
+    })).resolves.toBe(JSON.stringify({
+      ok: false,
+      errorCode: 'action_unavailable',
+      errorMessage: 'action_unavailable',
+    }));
+    expect(invokeAction).not.toHaveBeenCalled();
+  });
+
+  it('does not expose the contributed Action tool when action.invoke is already disabled', async () => {
+    state.settings.actionsSettingsV1 = {
+      v: 1,
+      actions: { 'action.invoke': { disabledSurfaces: ['voice'] } },
+    };
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({
+      resolveSessionId: () => 's1',
+      currentUiContext: {
+        readCurrentUiContext: () => null,
+        resolveCurrentUiCommand: () => null,
+        subscribe: () => () => {},
+        invokeAction: async () => ({ ok: true as const }),
+      },
+    });
+
+    expect(tools.invokeAction).toBeUndefined();
   });
 
   it('starts an execution run through the canonical Voice Action binding', async () => {
