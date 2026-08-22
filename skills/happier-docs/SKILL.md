@@ -51,7 +51,15 @@ An approved or preferred version becomes the baseline for later edits. A high ch
 
 Before a substantial rewrite, inventory every material claim involving behavior, commands, settings, support, platforms, providers, compatibility, security, failure/recovery, readiness, and exact names. Account for each in the result. Humanizing is not summarizing.
 
-## 5. Draft for meaning and human voice
+## 5. Prefer generating over writing
+
+Before drafting a reference table, check whether the same list already exists as structured data — agent capabilities, feature flags, environment variables, CLI commands, keyboard shortcuts all do. Hand-maintained restatements of code are the single largest source of documentation drift in this repository, because nothing connects the data changing to the prose describing it.
+
+Generate it, or link to the generated page. Reserve hand-written prose for what a generator cannot produce: the mental model, the reason the mechanism exists, the failure modes, the judgement calls.
+
+Where a capability is gated — a server feature flag, an experimental toggle, the account-level Experiments switch, a platform, a channel — the gate is part of the claim. Read `uiFeatureRegistry.ts` and `features/catalog.ts` rather than assuming availability, and state the gate where the reader meets the feature.
+
+## 6. Draft for meaning and human voice
 
 Write like a thoughtful builder helping another developer: warm, direct, concrete, and technically honest.
 
@@ -60,16 +68,20 @@ Write like a thoughtful builder helping another developer: warm, direct, concret
 - Lead with the user consequence, then include enough implementation detail to make the behavior trustworthy.
 - Keep commands, exact product terms, security boundaries, platform/provider differences, fallbacks, recovery, and readiness close to the claims they qualify.
 - Use topic headings that remain meaningful without the body and contain words readers recognize.
+- Follow the page skeleton in `apps/docs/AGENTS.md` — outcome lede, availability, prerequisites, the normal path, limits, failure modes, `## Related`. A reader who has read one page should already know how to read the next.
+- Use the vocabulary in `apps/docs/AGENTS.md`: agents are Agents, `provider` is reserved for model/identity/voice/SCM providers, and a quoted UI label must match what the app renders today.
 - Avoid promotional fog, artificial urgency, generic importance, invented slogans, repetitive field-label bullets, and definition primarily by negation.
 - Preserve warmth, useful detail, and natural rhythm. Treat anti-slop patterns as diagnostic signals, not forbidden grammar.
 - Keep repository paths and implementation trivia out of user/operator prose unless the page is explicitly development-facing.
 - Never expose secrets, tokens, private URLs, internal-only evidence, or sensitive screenshots.
 
-## 6. Validate the documentation contract
+## 7. Validate the documentation contract
 
 Run the narrowest checks that can falsify the edit:
 
 - inspect materially changed commands, links, examples, settings, defaults, and support statements;
+- run `yarn --cwd apps/docs check:content` — it resolves every internal link and every `#fragment`, and checks that each documented `Settings → …` path names strings the app actually renders. It runs inside the build too, so a broken link or a renamed label fails the build rather than shipping;
+- run `yarn --cwd apps/docs test` for the guardrails themselves;
 - run `yarn --cwd apps/docs types:check` for published MDX/schema/TypeScript/generated-content changes;
 - run `yarn --cwd apps/docs build` when routing, navigation, generation, rendering, or production build behavior can be affected;
 - use current non-sensitive screenshots only when they materially improve a UI-heavy workflow;
@@ -77,7 +89,7 @@ Run the narrowest checks that can falsify the edit:
 
 Do not add wording-policing tests. Validate parsing, generation, routing, links, commands, and factual behavior rather than exact prose.
 
-## 7. Handoff
+## 8. Handoff
 
 Report:
 

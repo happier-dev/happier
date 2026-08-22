@@ -172,8 +172,14 @@ tar transcript trees before routine lanes.
   mandate `agent*` for executable agents; voice/oauth/scm provider naming is on the keep-list.
   Exchange ledger pointers with the owning plan's orchestrator and run their deny-list greps before
   landing new vocabulary.
-- **Real voice/audio QA is possible — don't hand-wave it.** Recipe (fixture WAVs + Chromium
-  `--use-file-for-fake-audio-capture` + the `voiceQaController` injection seam + BlackHole for
-  sim/emulator mic) lives in
-  `.project/plans/2026-07-09-voice-deep-audit-and-provider-extensibility/VOICE-QA-STRATEGY.md`.
-  AEC/audio-focus/route quality stays an explicit human device gate — never fake-PASS it.
+- **Real voice/audio QA is possible — don't hand-wave it.** The live authority is
+  `.project/plans/2026-07-20-voice-convergence-and-program-completion/PLAN.md` §23 ("Live QA and
+  independent review boundaries"), approved at contract revision `r1.5.15`. Recipe: fixture WAVs +
+  Chromium `--use-file-for-fake-audio-capture` + the `voiceQaController` injection seam + BlackHole
+  for sim/emulator mic. **Verify the fake track actually carries energy before trusting a run** —
+  §23 records this host's fake-file microphone reporting `Fake Default Audio Input`, `live`, 48 kHz
+  mono while measuring RMS 0, so a run logged as "microphone active for N seconds" proves admission,
+  media lifecycle and cleanup and proves NOTHING about transcript or assistant content.
+  AEC/audio-focus/route quality stays an explicit human physical-device gate — never fake-PASS it.
+  The former pointer here, `2026-07-09-voice-deep-audit-and-provider-extensibility/VOICE-QA-STRATEGY.md`,
+  sits in a wholly superseded folder and is historical evidence only.

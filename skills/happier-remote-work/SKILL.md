@@ -35,6 +35,9 @@ For a suitable read-only or ignored-output command without a public entry point:
 ./apps/stack/bin/hstack-exec -- <command> [args...]
 ```
 
+Use `--script=` only for an actual repository package script. Direct tools such as `rg`, `find`,
+`node --test`, or a test-runner binary use the `-- <command>` form.
+
 Run that path from the checkout root. On POSIX, the no-target path replaces itself with the
 requested command without starting Node, Yarn, Mutagen, SSH, or a load probe. Node validates target
 configuration and refreshes a private shell-safe projection only after configuration changes;

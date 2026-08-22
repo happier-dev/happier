@@ -12,6 +12,8 @@ Do not merge distinct plan activities:
 
 ## Review a draft plan before approval
 
+When we talk about overengineering in a draft plan, the target is not the feature; it is the underlying implementation logic. Start from the feature's real intent and requirements, preserve those outcomes, and ask whether any disproportionate machinery exists only to satisfy unreal, assumed, speculative, or unreachable requirements. Require the simplest design that satisfies the real requirements. Inspect whether the proposed behavior can be satisfied by or folded into existing canonical logic through reuse, extraction, refinement, extension, consolidation, or refactoring; reject new split-brain, similar-but-different, or parallel logic when an existing owner can satisfy the need.
+
 Only in pre-approval plan review, re-derive the user-visible problem and desired invariant independently of the draft's chosen mechanism. For every proposed protocol, state machine, table, registry, lease, credential, generation, feature gate, or parallel path, require:
 
 - the complete justification chain through dependent mechanisms to an approved outcome, required invariant, released or external contract, reproduced failure, or reachable material risk—not another proposed mechanism, future consumer, generalized reuse, or architectural completeness;
