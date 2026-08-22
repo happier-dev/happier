@@ -32,6 +32,14 @@ on:
         value: ${{ jobs.resolve.outputs.server_version }}
       ui_web_version:
         value: ${{ jobs.resolve.outputs.ui_web_version }}
+      cli_requested:
+        value: ${{ jobs.resolve.outputs.cli_version != '' }}
+      stack_requested:
+        value: ${{ jobs.resolve.outputs.stack_version != '' }}
+      server_requested:
+        value: ${{ jobs.resolve.outputs.server_version != '' }}
+      ui_web_requested:
+        value: ${{ jobs.resolve.outputs.ui_web_version != '' }}
 
 permissions:
   contents: read

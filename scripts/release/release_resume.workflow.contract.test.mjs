@@ -23,7 +23,17 @@ test('one trusted reusable workflow resolves prior release candidates by exact r
   assert.ok(parsed.on.workflow_call.inputs.origin_run_id);
   assert.ok(parsed.on.workflow_call.inputs.expected_workflow);
   assert.ok(parsed.on.workflow_call.inputs.expected_channel);
-  for (const output of ['source_sha', 'cli_version', 'stack_version', 'server_version', 'ui_web_version']) {
+  for (const output of [
+    'source_sha',
+    'cli_version',
+    'stack_version',
+    'server_version',
+    'ui_web_version',
+    'cli_requested',
+    'stack_requested',
+    'server_requested',
+    'ui_web_requested',
+  ]) {
     assert.ok(parsed.on.workflow_call.outputs[output], `missing resume output ${output}`);
   }
   const resolveJob = parsed.jobs.resolve;
