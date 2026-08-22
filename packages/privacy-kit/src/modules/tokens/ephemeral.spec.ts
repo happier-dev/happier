@@ -1,18 +1,22 @@
+import { decodeJwt } from 'jose';
 import { describe, expect, it } from "vitest";
 import { createEphemeralTokenGenerator, createEphemeralTokenVerifier } from "./ephemeral";
 
 describe('Ephemeral Token Generator', () => {
     it('should create a token', async () => {
+        const ttl = 1000;
         const generator = await createEphemeralTokenGenerator({
             service: 'test',
             seed: 'test',
-            ttl: 1000
+            ttl
         });
         const verifier = await createEphemeralTokenVerifier({
             service: 'test',
             publicKey: generator.publicKey
         });
+        const mintedAtMs = Date.now();
         const token = await generator.new({ user: 'some-user-id' });
+        expect(decodeJwt(token).exp! * 1000).toBeGreaterThanOrEqual(mintedAtMs + ttl);
         const result = await verifier.verify(token);
         expect(result).not.toBeNull();
         expect(result?.user).toBe('some-user-id');
@@ -30,7 +34,8 @@ describe('Ephemeral Token Generator', () => {
             publicKey: generator.publicKey
         });
         const token = await generator.new({ user: 'some-user-id' });
-        await new Promise(resolve => setTimeout(resolve, 10)); // Wait for token to expire
+        const expiresAtMs = decodeJwt(token).exp! * 1000;
+        await new Promise(resolve => setTimeout(resolve, Math.max(0, expiresAtMs - Date.now() + 10)));
         const result = await verifier.verify(token);
         expect(result).toBeNull();
     });
