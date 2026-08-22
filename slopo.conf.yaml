@@ -1,0 +1,39 @@
+# Slopo is an advisory duplicate-implementation scanner. Its findings require
+# owner-level review; they are not automatic refactoring or CI decisions.
+source_dir: .
+source_dir_exclude:
+  - ".git/**"
+  - ".project/**"
+  - ".slopo/**"
+  - ".worktrees/**"
+  - ".yarn/**"
+  - "graphify-out/**"
+  - "node_modules/**"
+  - "remote-dev/**"
+  - "**/build/**"
+  - "**/coverage/**"
+  - "**/dist/**"
+  - "**/fixtures/**"
+  - "**/generated/**"
+  - "**/__generated__/**"
+  - "**/__tests__/**"
+  - "**/test/**"
+  - "**/tests/**"
+  - "**/vendor/**"
+  - "**/*.spec.*"
+  - "**/*.test.*"
+
+db_file: .slopo/slopo.db
+report_dir: .slopo/report
+ignore_file: slopo.ignore.txt
+
+# Keep this model and its output dimensions aligned. When the local model bytes
+# change, rebuild the ignored database before comparing results with an older run.
+embedding_model: ollama/unclemusclez/jina-embeddings-v2-base-code
+embedding_dimensions: 768
+embedding_params:
+  api_base: http://127.0.0.1:11434
+
+similarity_threshold: 0.92
+rerank_threshold: 0.94
+body_node_count_threshold: 30

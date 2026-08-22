@@ -39,6 +39,7 @@ yarn-error.*
 .yarn-cache/
 .yarn-global/
 .argent/
+.slopo/
 __pycache__/
 *.py[cod]
 

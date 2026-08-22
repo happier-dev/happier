@@ -1,0 +1,5 @@
+# Cluster hashes reviewed and dismissed. One hash per line.
+#
+# A hash covers each unit's code body and its path relative to the repository
+# root. Add a hash only after inspecting the cluster and recording why its
+# similarity is intentional. Code or path changes make the cluster re-surface.
