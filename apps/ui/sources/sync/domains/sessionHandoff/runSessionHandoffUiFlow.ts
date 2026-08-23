@@ -8,6 +8,7 @@ import { openSessionHandoffFailureRecoveryModal } from '@/components/sessions/ha
 import { executeSessionHandoffAction } from './executeSessionHandoffAction';
 import { subscribeSessionHandoffProgress } from './sessionHandoffProgressEvents';
 import { performSessionHandoffRecoveryAction } from '../../ops/sessionHandoffs';
+import { sync } from '@/sync/sync';
 
 type ExecuteAction = (actionId: 'session.handoff', input: unknown, context?: ActionExecutorContext) => Promise<unknown>;
 
@@ -74,7 +75,13 @@ export async function runSessionHandoffUiFlow(
             progressModalClosed = true;
         };
         try {
-            let result = await executeSessionHandoffAction(args as any);
+            const releaseUserRequestLease = sync.acquireUserRequestLease();
+            let result: Awaited<ReturnType<typeof executeSessionHandoffAction>>;
+            try {
+                result = await executeSessionHandoffAction(args as any);
+            } finally {
+                releaseUserRequestLease();
+            }
             if (result.ok) {
                 return result;
             }

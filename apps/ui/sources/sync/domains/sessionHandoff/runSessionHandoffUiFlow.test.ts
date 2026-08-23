@@ -40,6 +40,8 @@ vi.mock('../../ops/sessionHandoffs', () => ({
   performSessionHandoffRecoveryAction: (...args: unknown[]) => performSessionHandoffRecoveryActionMock(...args),
 }));
 
+vi.mock('@/sync/sync', () => ({ sync: { acquireUserRequestLease: () => () => {} } }));
+
 describe('runSessionHandoffUiFlow', () => {
   beforeEach(() => {
     vi.resetModules();

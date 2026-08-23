@@ -54,14 +54,13 @@ describe('runSessionHandoffPickerFlow', () => {
         const result = await runSessionHandoffPickerFlow({
             execute: vi.fn() as any,
             sessionId: 'sess_1',
-            sourceMachineId: 'machine_source',
             serverId: 'server_a',
             placement: 'session_info',
         });
 
         expect(openSessionHandoffPickerMock).toHaveBeenCalledWith({
             sessionId: 'sess_1',
-            sourceMachineId: 'machine_source',
+            sourceMachineId: null,
             serverId: 'server_a',
         });
         expect(modalConfirmMock).not.toHaveBeenCalled();
