@@ -1119,7 +1119,7 @@ export async function ensureHappierCliDistExists(
   let buildRes = null;
   try {
     // In auto mode, ensureCliBuilt() is a fast no-op when nothing changed.
-    buildRes = await ensureCliBuilt(cliDir, { buildCli: true });
+    buildRes = await ensureCliBuiltImpl(cliDir, { buildCli: true, env });
     if (buildRes?.built) {
       // eslint-disable-next-line no-console
       console.warn(`[local] happier-cli: rebuilt (${cliDir})`);

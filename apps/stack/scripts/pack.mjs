@@ -412,6 +412,15 @@ export async function resolvePackSandboxSourceRelDirs({ monorepoRoot, packageRel
       canonicalBuildOwnerSourceRelDirs.push(relativePath);
     }
   }
+  // Public-package prepack scripts invoke this shared owner by its canonical
+  // repository-relative path. Stage the owner itself, rather than weakening
+  // those checks or creating package-local governance copies.
+  const canonicalApiGovernanceOwnerRelDir = 'scripts/api-governance';
+  const canonicalApiGovernanceOwnerSourceRelDirs = await pathExists(
+    join(monorepoRoot, canonicalApiGovernanceOwnerRelDir),
+  )
+    ? [canonicalApiGovernanceOwnerRelDir]
+    : [];
   const sourceRelDirs = [...new Set([
     'scripts/workspaces',
     'scripts/testing/process',
@@ -420,6 +429,7 @@ export async function resolvePackSandboxSourceRelDirs({ monorepoRoot, packageRel
     ...publicToolchainConsumerSourceRelDirs,
     ...capabilityMatrixProvingConsumerSourceRelDirs,
     ...canonicalBuildOwnerSourceRelDirs,
+    ...canonicalApiGovernanceOwnerSourceRelDirs,
   ])].sort((left, right) => left.localeCompare(right));
   return await validatePackSandboxSourceRelDirs({
     monorepoRoot,
@@ -1106,19 +1116,273 @@ async function copyFileAtomicallyWithoutOverwrite(sourcePath, destinationPath) {
   }
 }
 
+function isPlainRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizePublicationPackageName(value) {
+  const name = String(value ?? '').trim();
+  if (!name || name.length > 214 || /\s/u.test(name)) {
+    throw new Error('[pack] publication expectedPackageName must be a bounded npm package name');
+  }
+  return name;
+}
+
+function normalizePublicationDependencyVersions(value) {
+  if (value === undefined) return {};
+  if (!isPlainRecord(value)) {
+    throw new Error('[pack] publication dependencyVersions must be an object');
+  }
+  const normalized = {};
+  for (const [name, version] of Object.entries(value)) {
+    const dependencyName = normalizePublicationPackageName(name);
+    const dependencyVersion = String(version ?? '').trim();
+    if (
+      !dependencyVersion
+      || dependencyVersion !== version
+      || dependencyVersion.length > 128
+      || dependencyVersion.startsWith('workspace:')
+      || /\s/u.test(dependencyVersion)
+    ) {
+      throw new Error(`[pack] publication dependency ${dependencyName} must have an exact non-workspace version`);
+    }
+    normalized[dependencyName] = dependencyVersion;
+  }
+  return normalized;
+}
+
+function normalizePublicationRequiredFiles(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('[pack] publication requiredFiles must be a non-empty array');
+  }
+  const files = value.map((entry) => String(entry ?? '').trim());
+  for (const file of files) {
+    if (!file || file.length > 512 || file.startsWith('/') || file.split('/').some((part) => part === '' || part === '.' || part === '..')) {
+      throw new Error(`[pack] publication required file is not a safe package-relative path: ${file || '<empty>'}`);
+    }
+  }
+  return [...new Set(files)].sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeExpectedPeerDependencies(value) {
+  if (value === undefined) return {};
+  if (!isPlainRecord(value)) throw new Error('[pack] publication expectedPeerDependencies must be an object');
+  const peers = {};
+  for (const [name, version] of Object.entries(value)) {
+    const peerName = normalizePublicationPackageName(name);
+    const peerVersion = String(version ?? '').trim();
+    if (!peerVersion || peerVersion !== version || peerVersion.length > 128 || /\s/u.test(peerVersion)) {
+      throw new Error(`[pack] publication peer dependency ${peerName} must have a bounded version range`);
+    }
+    peers[peerName] = peerVersion;
+  }
+  return peers;
+}
+
+function normalizePublicationApiGovernance(value) {
+  if (value === undefined) return null;
+  if (!isPlainRecord(value)) throw new Error('[pack] publication apiGovernance must be an object');
+  const profileId = String(value.profileId ?? '').trim();
+  if (!profileId || profileId.length > 128 || !/^[a-z][a-z0-9_-]*$/u.test(profileId)) {
+    throw new Error('[pack] publication apiGovernance.profileId must be a bounded identifier');
+  }
+  return Object.freeze({ profileId });
+}
+
+function normalizePublicationConfig(publication, packageVersion) {
+  if (publication === undefined || publication === null) return null;
+  if (!isPlainRecord(publication)) throw new Error('[pack] publication config must be an object');
+  if (packageVersion === null) {
+    throw new Error('[pack] publication config requires an exact packageVersion override');
+  }
+  return {
+    expectedPackageName: normalizePublicationPackageName(publication.expectedPackageName),
+    dependencyVersions: normalizePublicationDependencyVersions(publication.dependencyVersions),
+    requiredFiles: normalizePublicationRequiredFiles(publication.requiredFiles),
+    expectedPeerDependencies: normalizeExpectedPeerDependencies(publication.expectedPeerDependencies),
+    apiGovernance: normalizePublicationApiGovernance(publication.apiGovernance),
+  };
+}
+
+function isPackTestFile(relativePath) {
+  return /(?:^|\/)[^/]+\.test\.[cm]?[jt]sx?$/iu.test(relativePath);
+}
+
+async function removePackSandboxTestFiles(directory) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name === '.git') continue;
+    const entryPath = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      await removePackSandboxTestFiles(entryPath);
+      continue;
+    }
+    if (entry.isFile() && isPackTestFile(entry.name)) {
+      await unlink(entryPath);
+    }
+  }
+}
+
+/** @param {Record<string, unknown>} manifest */
+function projectPublicSdkDeveloperPreview(manifest) {
+  delete manifest.private;
+  if (!isPlainRecord(manifest.happier)) {
+    throw new Error('[pack] publication requires canonical Developer Preview metadata');
+  }
+  if (!isPlainRecord(manifest.happier.publicSdkRelease)) {
+    throw new Error('[pack] publication requires canonical Developer Preview release metadata');
+  }
+  const publicSdkRelease = manifest.happier.publicSdkRelease;
+  if (
+    publicSdkRelease.posture !== 'prepublish_hold'
+    && publicSdkRelease.posture !== 'developer_preview'
+  ) {
+    throw new Error('[pack] publication Developer Preview metadata has an unsupported posture');
+  }
+  // The sandbox sheds the unpublished package hold, but the public candidate
+  // still advertises its package-level Developer Preview contract.
+  manifest.happier = {
+    ...manifest.happier,
+    publicSdkRelease: {
+      ...publicSdkRelease,
+      posture: 'developer_preview',
+    },
+  };
+}
+
+async function applyPublicationPackSandboxTransform({ sandboxPackDir, config, packageVersion }) {
+  const packageJsonPath = join(sandboxPackDir, 'package.json');
+  const manifest = await readJson(packageJsonPath);
+  if (!isPlainRecord(manifest) || manifest.name !== config.expectedPackageName) {
+    throw new Error(`[pack] publication package name must be ${config.expectedPackageName}`);
+  }
+  if (manifest.version !== packageVersion) {
+    throw new Error(`[pack] publication package version must be ${packageVersion}`);
+  }
+  projectPublicSdkDeveloperPreview(manifest);
+  if (manifest.publishConfig !== undefined && !isPlainRecord(manifest.publishConfig)) {
+    throw new Error('[pack] publication publishConfig must be an object when present');
+  }
+  manifest.publishConfig = { ...(manifest.publishConfig ?? {}), access: 'public' };
+  if (Object.keys(config.dependencyVersions).length > 0) {
+    if (!isPlainRecord(manifest.dependencies)) {
+      throw new Error('[pack] publication dependency rewrite requires a dependencies object');
+    }
+    manifest.dependencies = { ...manifest.dependencies };
+    for (const [dependencyName, dependencyVersion] of Object.entries(config.dependencyVersions)) {
+      if (typeof manifest.dependencies[dependencyName] !== 'string') {
+        throw new Error(`[pack] publication dependency is not declared as a normal dependency: ${dependencyName}`);
+      }
+      manifest.dependencies[dependencyName] = dependencyVersion;
+    }
+  }
+  await writeFile(packageJsonPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  await removePackSandboxTestFiles(sandboxPackDir);
+}
+
+/**
+ * The public API governance owner is shared across package profiles. The pack
+ * sandbox owns its candidate bytes, so release preparation invokes that owner
+ * against the transformed sandbox rather than touching the shared worktree.
+ */
+async function preparePublicationApiGovernance(input) {
+  const {
+    preparePublicApiGovernance,
+    renderPublicApiReleaseComparison,
+    summarizePublicApiReleaseComparison,
+  } = await import('../../../scripts/pipeline/release/public-api-governance.mjs');
+  const report = await preparePublicApiGovernance(input);
+  return Object.freeze({
+    summary: summarizePublicApiReleaseComparison(report),
+    log: renderPublicApiReleaseComparison(report),
+  });
+}
+
+function assertNoWorkspaceResolution(manifest) {
+  for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies']) {
+    const entries = manifest[field];
+    if (entries === undefined) continue;
+    if (!isPlainRecord(entries)) throw new Error(`[pack] tarball ${field} must be an object when present`);
+    for (const [name, version] of Object.entries(entries)) {
+      if (typeof version !== 'string' || version.startsWith('workspace:')) {
+        throw new Error(`[pack] tarball has unresolved workspace dependency ${field}.${name}`);
+      }
+    }
+  }
+}
+
+async function validatePublicationTarball({
+  tarballPath,
+  tarPaths,
+  runCaptureImpl,
+  sandboxPackDir,
+  env,
+  config,
+  packageVersion,
+}) {
+  if (!tarPaths.includes('package/package.json')) {
+    throw new Error('[pack] public tarball is missing package/package.json');
+  }
+  for (const requiredFile of config.requiredFiles) {
+    if (!tarPaths.includes(`package/${requiredFile}`)) {
+      throw new Error(`[pack] public tarball is missing required file: ${requiredFile}`);
+    }
+  }
+  const testFile = tarPaths.find((tarPath) => isPackTestFile(tarPath));
+  if (testFile) throw new Error(`[pack] public tarball must not include test file: ${testFile}`);
+  const manifestRaw = await runCaptureImpl('tar', ['-xOf', tarballPath, 'package/package.json'], {
+    cwd: sandboxPackDir,
+    env,
+  });
+  let manifest;
+  try {
+    manifest = JSON.parse(manifestRaw);
+  } catch (error) {
+    throw new Error(`[pack] public tarball package.json is invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!isPlainRecord(manifest) || manifest.name !== config.expectedPackageName || manifest.version !== packageVersion) {
+    throw new Error('[pack] public tarball package identity did not match its exact candidate');
+  }
+  if (Object.hasOwn(manifest, 'private')) throw new Error('[pack] public tarball must not retain private');
+  if (
+    !isPlainRecord(manifest.happier)
+    || !isPlainRecord(manifest.happier.publicSdkRelease)
+    || manifest.happier.publicSdkRelease.posture !== 'developer_preview'
+  ) {
+    throw new Error('[pack] public tarball must retain canonical Developer Preview metadata');
+  }
+  if (!isPlainRecord(manifest.publishConfig) || manifest.publishConfig.access !== 'public') {
+    throw new Error('[pack] public tarball publishConfig.access must be public');
+  }
+  assertNoWorkspaceResolution(manifest);
+  for (const [dependencyName, dependencyVersion] of Object.entries(config.dependencyVersions)) {
+    if (manifest.dependencies?.[dependencyName] !== dependencyVersion) {
+      throw new Error(`[pack] public tarball dependency did not retain exact version: ${dependencyName}`);
+    }
+  }
+  for (const [peerName, peerVersion] of Object.entries(config.expectedPeerDependencies)) {
+    if (manifest.peerDependencies?.[peerName] !== peerVersion) {
+      throw new Error(`[pack] public tarball peer dependency did not retain expected range: ${peerName}`);
+    }
+  }
+}
+
 export async function exportPackSandboxTarball({
   monorepoRoot,
   packageRelDir,
   destinationDir,
   packageVersion = null,
+  publication = null,
   env = process.env,
   createPackSandboxImpl = createPackSandbox,
   runCaptureImpl = runCapture,
   removeTempDir = rm,
+  preparePublicationApiGovernanceImpl = preparePublicationApiGovernance,
 }) {
   const resolvedDestinationDir = await validatePackExportDestinationDir(destinationDir);
   const sandboxRoot = await createPackSandboxImpl({ monorepoRoot, packageRelDir });
   const sandboxPackDir = join(sandboxRoot, packageRelDir);
+  const publicationConfig = normalizePublicationConfig(publication, packageVersion);
+  let apiGovernancePreparation = null;
 
   try {
     if (packageVersion !== null) {
@@ -1140,6 +1404,30 @@ export async function exportPackSandboxTarball({
           version: normalizedPackageVersion,
         }, null, 2)}\n`,
       );
+    }
+    if (publicationConfig) {
+      await applyPublicationPackSandboxTransform({
+        sandboxPackDir,
+        config: publicationConfig,
+        packageVersion: String(packageVersion),
+      });
+    }
+    if (publicationConfig?.apiGovernance) {
+      apiGovernancePreparation = await preparePublicationApiGovernanceImpl({
+        profileId: publicationConfig.apiGovernance.profileId,
+        packageName: publicationConfig.expectedPackageName,
+        packageRoot: sandboxPackDir,
+        candidateVersion: String(packageVersion),
+        repositoryRoot: monorepoRoot,
+        env,
+      });
+      if (!isPlainRecord(apiGovernancePreparation) || !isPlainRecord(apiGovernancePreparation.summary)) {
+        throw new Error('[pack] public API governance preparation must return a bounded summary');
+      }
+      if (apiGovernancePreparation.log !== undefined && typeof apiGovernancePreparation.log !== 'string') {
+        throw new Error('[pack] public API governance preparation log must be a string when present');
+      }
+      if (apiGovernancePreparation.log) console.log(apiGovernancePreparation.log);
     }
     await runCaptureImpl('npm', ['pack', '--dry-run'], {
       cwd: sandboxPackDir,
@@ -1183,6 +1471,17 @@ export async function exportPackSandboxTarball({
       enforce: shouldEnforceBundledDeps,
       analysis: bundledWorkspaceAnalysis,
     });
+    if (publicationConfig) {
+      await validatePublicationTarball({
+        tarballPath,
+        tarPaths,
+        runCaptureImpl,
+        sandboxPackDir,
+        env,
+        config: publicationConfig,
+        packageVersion: String(packageVersion),
+      });
+    }
 
     const destinationPath = join(resolvedDestinationDir, tarballName);
     const existingDestination = await lstat(destinationPath).catch((error) => {
@@ -1216,6 +1515,15 @@ export async function exportPackSandboxTarball({
       dryRun: {
         ok: true,
       },
+      ...(publicationConfig ? {
+        publication: {
+          name: publicationConfig.expectedPackageName,
+          version: String(packageVersion),
+          publicAccess: true,
+          testFilesExcluded: true,
+          ...(apiGovernancePreparation ? { apiGovernance: apiGovernancePreparation.summary } : {}),
+        },
+      } : {}),
     };
   } finally {
     await removeTempDir(sandboxRoot, { recursive: true, force: true });

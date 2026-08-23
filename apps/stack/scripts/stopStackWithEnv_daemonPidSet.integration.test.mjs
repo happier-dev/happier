@@ -721,7 +721,16 @@ test('stopStackWithEnv retains runtime state and reports cleanup_incomplete when
 test('stopStackWithEnv finalizes when a reused lifecycle-owner pid is definitively unowned', async (t) => {
   const fixture = await createStopFixture(t, { stackName: 'owner-cleanup-unconfirmed' });
   const owner = await fixture.spawnScript('setInterval(() => {}, 1000);', 'foreign-owner', { owned: false });
-  await writeRuntimeState(fixture.runtimeStatePath, { version: 1, stackName: fixture.stackName, ownerPid: owner.pid, processes: {} });
+  await writeRuntimeState(fixture.runtimeStatePath, {
+    version: 1,
+    stackName: fixture.stackName,
+    ownerPid: owner.pid,
+    processes: {},
+    processInstances: {
+      owner: { pid: owner.pid, fingerprint: 'stale-owner-incarnation' },
+      processes: {},
+    },
+  });
 
   const result = await stopStackWithEnv({
     rootDir: fixture.repoRoot,
@@ -748,6 +757,12 @@ test('stopStackWithEnv finalizes past definitively unowned reused runtime member
     stackName: fixture.stackName,
     ownerPid: 999_999,
     processes: { serverPid: server.pid, watcherPid: watcher.pid },
+    processInstances: {
+      processes: {
+        serverPid: { pid: server.pid, fingerprint: 'stale-server-incarnation' },
+        watcherPid: { pid: watcher.pid, fingerprint: 'stale-watcher-incarnation' },
+      },
+    },
   });
 
   const result = await stopStackWithEnv({

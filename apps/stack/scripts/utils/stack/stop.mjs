@@ -64,6 +64,7 @@ const DEFINITIVE_NOT_OWNED_REASONS = new Set([
   'stack_name_mismatch',
   'missing_process_env',
   'process-not-found',
+  'process_instance_changed',
 ]);
 
 function isServerRuntimeProcessKey(key) {

@@ -53,6 +53,36 @@ function buildDaemonDistGuardEnv(overrides = {}) {
   };
 }
 
+test('missing local CLI dist recovery forwards the authoritative environment to the build owner', async (t) => {
+  const repoDir = await mkdtemp(join(tmpdir(), 'hstack-cli-dist-recovery-env-'));
+  t.after(async () => rm(repoDir, { recursive: true, force: true }));
+  const cliDir = join(repoDir, 'apps', 'cli');
+  const cliBin = join(cliDir, 'bin', 'happier.mjs');
+  await mkdir(dirname(cliBin), { recursive: true });
+  await writeFile(cliBin, 'process.exit(0);\n', 'utf-8');
+  const env = buildDaemonDistGuardEnv({
+    HAPPIER_STACK_CLI_ROOT_DIR: '',
+    HAPPIER_TEST_REBUILD_ENV: 'forwarded',
+  });
+
+  const result = await ensureHappierCliDistExists(
+    { cliBin, env },
+    {
+      ensureCliBuiltImpl: async (ownerDir, options) => {
+        assert.equal(ownerDir, cliDir);
+        assert.equal(options.env, env);
+        await mkdir(join(cliDir, 'dist'), { recursive: true });
+        await writeFile(join(cliDir, 'dist', 'index.mjs'), 'export {};\n', 'utf-8');
+        writeStubCliDistBuildManifest(cliDir);
+        return { built: true, current: true, reason: 'rebuilt' };
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.built, true);
+});
+
 test('watch startup admits a validated prior CLI publication without waiting for freshness build', async (t) => {
   const repoDir = await mkdtemp(join(tmpdir(), 'hstack-last-green-cli-startup-'));
   t.after(async () => rm(repoDir, { recursive: true, force: true }));
