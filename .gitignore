@@ -160,9 +160,17 @@ _.env.pipeline.production.local
 /apps/cli/vitest.*.temp.config.ts
 /apps/cli/vitest.*-composed.config.ts
 /apps/cli/src/plugins/discovery/sources/zzdbg.test.ts
+/apps/cli/src/plugins/authoring/zzProbe.test.ts
+/apps/cli/src/session/actions/externalSessions/zzmeasure.candidatePageOps.test.ts
+/apps/cli/tsconfig.*.scratch.json
+/apps/server/tsconfig.e4check.json
 /packages/plugins/codex/src/agent/rollout/discovery/*.tmp.test.ts
 /packages/tests/.eu8-*-entry.mjs
 /--fullpage
+
+# Editor and mis-rooted generator scratch output
+**/*.tmp.[0-9]*.[0-9a-f]*
+/undefined/
 
 # Reproducible fixture compiler output and one-off migration tooling
 /packages/plugin-ui/fixtures/external-authoring/dist-node/
