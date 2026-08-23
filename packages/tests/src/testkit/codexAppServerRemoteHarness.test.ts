@@ -174,6 +174,47 @@ describe('startCodexAppServerRemoteHarness', () => {
     }
   });
 
+  it('rejects a resume request for the wrong native thread when the test requires an exact identity', async () => {
+    const { writeFakeCodexAppServerScript } = await import('./codexAppServerRemoteHarness');
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-strict-resume-'));
+    const requestLogPath = join(testDir, 'requests.jsonl');
+    const scriptPath = await writeFakeCodexAppServerScript({
+      dir: testDir,
+      requestLogPath,
+      expectedResumeThreadId: 'thread-started',
+    });
+    const child = spawnChild(process.execPath, [scriptPath], {
+      cwd: testDir,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+
+    try {
+      const response = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Timed out waiting for strict resume response')), 5_000);
+        lines.on('line', (line) => {
+          const parsed = JSON.parse(line) as Record<string, unknown>;
+          if (parsed.id !== 1) return;
+          clearTimeout(timeout);
+          resolve(parsed);
+        });
+        child.once('exit', () => {
+          clearTimeout(timeout);
+          reject(new Error('Fake app-server exited before strict resume response'));
+        });
+        child.stdin.write(`${JSON.stringify({ id: 1, method: 'thread/resume', params: { threadId: 'wrong-thread' } })}\n`);
+      });
+
+      expect(response).toMatchObject({
+        error: expect.objectContaining({ code: -32602 }),
+      });
+    } finally {
+      child.kill();
+      lines.close();
+      await once(child, 'exit').catch(() => {});
+    }
+  });
+
   it('writes a fake app-server that supports goals, catalog lists, and native review', async () => {
     const { writeFakeCodexAppServerScript } = await import('./codexAppServerRemoteHarness');
     const testDir = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-script-'));

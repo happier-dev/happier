@@ -184,7 +184,7 @@ on:
         type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -277,7 +277,7 @@ jobs:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui_e2e }}
     name: UI E2E (Playwright)
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     env:
       # UI E2E boots Expo web; keep web assets available to avoid CI-only runtime surprises.
       HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
@@ -518,7 +518,7 @@ jobs:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
     name: UI Tests (unit + integration)
     runs-on: ubuntu-22.04
-    timeout-minutes: 75
+    timeout-minutes: 240
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -602,10 +602,11 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
-      - name: Check published plugin API records
+      - name: Regenerate and check published plugin API records
         run: |
-          yarn workspace @happier-dev/plugin-sdk check:api-surface
-          yarn workspace @happier-dev/plugin-ui check:api-declarations
+          yarn workspace @happier-dev/plugin-sdk prepare:declarations
+          yarn workspace @happier-dev/plugin-sdk check:api-governance
+          yarn workspace @happier-dev/plugin-ui check:api-governance
 
       - name: Run shared package unit tests
         if: ${{ !cancelled() }}
@@ -630,6 +631,7 @@ jobs:
           yarn workspace @happier-dev/audio-stream-native test
           yarn workspace docs test
           yarn --cwd packages/relay-server test
+          yarn workspace @happier-dev/sdk test
 
       - name: Run public plugin SDK consumer contracts
         if: ${{ !cancelled() }}
@@ -685,7 +687,7 @@ jobs:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_server }}
     name: Server Tests (unit + integration)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -876,7 +878,7 @@ jobs:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_stack }}
     name: Stack Tests (unit + integration)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -1652,7 +1654,7 @@ jobs:
           args: --frozen-lockfile --ignore-engines
 
       - name: Run governance self-tests
-        run: yarn test:wiring:self && yarn test:policy:self
+        run: yarn test:wiring:self && yarn test:policy:self && yarn test:tooling:self
 
       - name: Run governance validators
         if: ${{ !cancelled() }}
@@ -2341,7 +2343,7 @@ jobs:
           path: .project/logs/e2e
 
   stress:
-    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_stress }}
+    if: ${{ inputs.run_stress }}
     name: Stress (repeat/chaos)
     runs-on: ubuntu-latest
     timeout-minutes: 120

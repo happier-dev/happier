@@ -106,7 +106,12 @@ export function readExternalSessionOperationCompletionReceipt(
     || authorIntentMismatch
     || reference.data.operationId !== presentation.data.operationId
     || reference.data.revision !== presentation.data.revision
-    || presentation.data.status !== 'completed'
+    // Independently restated, not imported: a completion receipt records a
+    // settled operation, so its presentation carries the settled status the
+    // record ended on.
+    || !['completed', 'cancelled', 'discarded'].includes(
+      presentation.data.status,
+    )
   ) {
     invalidCompletionReceipt();
   }

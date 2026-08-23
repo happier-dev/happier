@@ -33,6 +33,24 @@ export interface ArtifactCreateRequest {
   dataEncryptionKey: string;
 }
 
+export type ArtifactUpdateRequest = Readonly<{
+  header?: string;
+  expectedHeaderVersion?: number;
+  body?: string;
+  expectedBodyVersion?: number;
+}>;
+
+export type ArtifactUpdateResult =
+  | Readonly<{ success: true; headerVersion?: number; bodyVersion?: number }>
+  | Readonly<{
+      success: false;
+      error: 'version-mismatch';
+      currentHeaderVersion?: number;
+      currentBodyVersion?: number;
+      currentHeader?: string;
+      currentBody?: string;
+    }>;
+
 export async function listArtifactsViaApi(params: Readonly<{
   baseUrl: string;
   token: string;
@@ -158,6 +176,65 @@ export function decodeEncryptedArtifactJsonBase64ForCliAccessKey<T>(params: Read
   return unwrapSerializedJsonValue(decrypted) as T | null;
 }
 
+/**
+ * Reuses an existing E2EE artifact's data-encryption key and version preconditions.
+ * This keeps a present-user test update on the same encrypted artifact path the
+ * daemon consumes, rather than substituting a plaintext artifact write.
+ */
+export function buildEncryptedArtifactUpdateRequestForCliAccessKey(params: Readonly<{
+  artifact: Pick<ArtifactRecord, 'dataEncryptionKey' | 'headerVersion' | 'bodyVersion'>;
+  cliAccessKey: CliAccessKey;
+  headerJson?: unknown;
+  bodyJson?: unknown;
+}>): ArtifactUpdateRequest {
+  const updatesHeader = Object.hasOwn(params, 'headerJson');
+  const updatesBody = Object.hasOwn(params, 'bodyJson');
+  if (!updatesHeader && !updatesBody) {
+    throw new Error('Encrypted artifact update requires a header or body');
+  }
+
+  const credentials = requireDataKeyAccessKey(params.cliAccessKey);
+  const dataEncryptionKey = openEncryptedDataKeyEnvelopeV1({
+    envelope: decodeBase64Bytes(params.artifact.dataEncryptionKey),
+    recipientSecretKeyOrSeed: credentials.machineKey,
+  });
+  if (!dataEncryptionKey) {
+    throw new Error('Unable to open artifact data encryption key');
+  }
+
+  return {
+    ...(updatesHeader
+      ? {
+          header: encryptDataKeyBase64(params.headerJson, dataEncryptionKey),
+          expectedHeaderVersion: params.artifact.headerVersion,
+        }
+      : {}),
+    ...(updatesBody
+      ? {
+          body: encryptDataKeyBase64(params.bodyJson, dataEncryptionKey),
+          expectedBodyVersion: params.artifact.bodyVersion,
+        }
+      : {}),
+  };
+}
+
+export async function updateEncryptedArtifactViaApi(params: Readonly<{
+  baseUrl: string;
+  token: string;
+  artifact: ArtifactRecord;
+  cliAccessKey: CliAccessKey;
+  headerJson?: unknown;
+  bodyJson?: unknown;
+}>): Promise<ArtifactUpdateResult> {
+  const request = buildEncryptedArtifactUpdateRequestForCliAccessKey(params);
+  return await updateArtifactRequestViaApi({
+    baseUrl: params.baseUrl,
+    token: params.token,
+    artifactId: params.artifact.id,
+    request,
+  });
+}
+
 export async function updateArtifactViaApi(params: Readonly<{
   baseUrl: string;
   token: string;
@@ -166,38 +243,42 @@ export async function updateArtifactViaApi(params: Readonly<{
   expectedHeaderVersion?: number;
   bodyJson?: unknown;
   expectedBodyVersion?: number;
-}>): Promise<
-  | Readonly<{ success: true; headerVersion?: number; bodyVersion?: number }>
-  | Readonly<{
-      success: false;
-      error: 'version-mismatch';
-      currentHeaderVersion?: number;
-      currentBodyVersion?: number;
-      currentHeader?: string;
-      currentBody?: string;
-    }>
-> {
-  const body: Record<string, unknown> = {};
+}>): Promise<ArtifactUpdateResult> {
+  const request: ArtifactUpdateRequest = {};
   if (Object.prototype.hasOwnProperty.call(params, 'headerJson')) {
-    body.header = encodeJsonBase64(params.headerJson);
+    request.header = encodeJsonBase64(params.headerJson);
   }
   if (typeof params.expectedHeaderVersion === 'number') {
-    body.expectedHeaderVersion = params.expectedHeaderVersion;
+    request.expectedHeaderVersion = params.expectedHeaderVersion;
   }
   if (Object.prototype.hasOwnProperty.call(params, 'bodyJson')) {
-    body.body = encodeJsonBase64(params.bodyJson);
+    request.body = encodeJsonBase64(params.bodyJson);
   }
   if (typeof params.expectedBodyVersion === 'number') {
-    body.expectedBodyVersion = params.expectedBodyVersion;
+    request.expectedBodyVersion = params.expectedBodyVersion;
   }
 
-  const res = await fetchJson<any>(`${params.baseUrl}/v1/artifacts/${encodeURIComponent(params.artifactId)}`, {
+  return await updateArtifactRequestViaApi({
+    baseUrl: params.baseUrl,
+    token: params.token,
+    artifactId: params.artifactId,
+    request,
+  });
+}
+
+async function updateArtifactRequestViaApi(params: Readonly<{
+  baseUrl: string;
+  token: string;
+  artifactId: string;
+  request: ArtifactUpdateRequest;
+}>): Promise<ArtifactUpdateResult> {
+  const res = await fetchJson<ArtifactUpdateResult>(`${params.baseUrl}/v1/artifacts/${encodeURIComponent(params.artifactId)}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${params.token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(params.request),
   });
   if (res.status !== 200 || !res.data || typeof res.data !== 'object') {
     throw new Error(`Expected 200 artifact update, received ${res.status}`);

@@ -522,9 +522,7 @@ export const V2_ZERO_INVENTORY_CATEGORY_SPECS: readonly V2ZeroInventoryCategoryS
     description: 'Files that still rely on the legacy customAcp sentinel in live behavior or compatibility paths.',
     migrationScaffold: 'Use this list to reduce customAcp to compatibility-only reads and remove new writes or routing decisions.',
     matchStrategy: 'customacp-sentinel-consumers',
-    matchAnyOf: [
-      { contentMatches: /(?=a)b/ },
-    ],
+    matchAnyOf: [],
   }),
   createCategorySpec({
     id: 'shared-core-provider-branching',
@@ -594,9 +592,7 @@ export const V2_ZERO_INVENTORY_CATEGORY_SPECS: readonly V2ZeroInventoryCategoryS
     description: 'Production owners and positive tests that retain voice_media(agent_realtime), its PCM/frame schemas, media authority, dispatcher, encryption, or tunnel consumers.',
     migrationScaffold: 'Keep this hard-zero release category red until the approved V3-F contraction gate authorizes atomic deletion; retain voice_media(speech_transcription).',
     matchStrategy: 'voice-v3-f-v2-media-residue',
-    matchAnyOf: [
-      { contentMatches: /(?=a)b/ },
-    ],
+    matchAnyOf: [],
   }),
   createCategorySpec({
     id: 'shared-session-retirement-compatibility-surfaces',

@@ -146,7 +146,11 @@ async function loadAppConfigWithNativeSshFlag(value) {
 
 test('apps/ui fast test lane includes the native modules package contract check', async () => {
     const packageJson = await readJson(join(appRoot, 'package.json'));
-    const testScript = packageJson?.scripts?.test;
+    // `scripts.test` is only the Stack executor indirection
+    // (`hstack-exec --script=test:local`); the executed lane body — and therefore
+    // the file list this contract is about — lives in `scripts['test:local']`.
+    // Reading `scripts.test` made this assertion unsatisfiable.
+    const testScript = packageJson?.scripts?.['test:local'];
 
     assert.equal(typeof testScript, 'string');
     assert.match(testScript, /nativeModulesPackageContract\.test\.mjs/);

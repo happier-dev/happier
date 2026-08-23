@@ -76,12 +76,21 @@ function createDefaultFakeCodexSkills(dir: string): FakeCodexAppServerSkill[] {
 export async function writeFakeCodexAppServerScript(params: Readonly<{
   dir: string;
   requestLogPath: string;
+  /**
+   * Test-only strict resume boundary. When set, the fake app-server must reject
+   * a `thread/resume` request that names any other native thread.
+   */
+  expectedResumeThreadId?: string;
   initialGoal?: FakeCodexAppServerGoal | null;
   goalSetBehavior?: 'objectiveRequired' | 'nativePartial';
   vendorPlugins?: readonly FakeCodexAppServerVendorPlugin[];
   skills?: readonly FakeCodexAppServerSkill[];
 }>): Promise<string> {
   const scriptPath = join(params.dir, 'fake-codex-app-server.mjs');
+  const expectedResumeThreadId = typeof params.expectedResumeThreadId === 'string'
+    && params.expectedResumeThreadId.trim().length > 0
+    ? params.expectedResumeThreadId.trim()
+    : null;
   const initialGoal = params.initialGoal ?? null;
   const goalSetBehavior = params.goalSetBehavior ?? 'objectiveRequired';
   const vendorPlugins = params.vendorPlugins ?? createDefaultFakeCodexVendorPlugins();
@@ -91,6 +100,7 @@ export async function writeFakeCodexAppServerScript(params: Readonly<{
     'import { appendFile, readFile, rm, writeFile } from "node:fs/promises";',
     'import readline from "node:readline";',
     `const requestLogPath = ${JSON.stringify(params.requestLogPath)};`,
+    `const expectedResumeThreadId = ${JSON.stringify(expectedResumeThreadId)};`,
     `const goalStatePath = ${JSON.stringify(join(params.dir, 'fake-codex-app-server.goal.json'))};`,
     `let currentGoal = ${JSON.stringify(initialGoal)};`,
     `const goalSetBehavior = ${JSON.stringify(goalSetBehavior)};`,
@@ -193,6 +203,11 @@ export async function writeFakeCodexAppServerScript(params: Readonly<{
     '    continue;',
     '  }',
     '  if (msg.method === "thread/resume") {',
+    '    const requestedThreadId = typeof msg.params?.threadId === "string" ? msg.params.threadId : null;',
+    '    if (expectedResumeThreadId !== null && requestedThreadId !== expectedResumeThreadId) {',
+    '      process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "thread/resume rejected unexpected thread id" } }) + "\\n");',
+    '      continue;',
+    '    }',
     '    process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: msg.params?.threadId ?? null, model: "gpt-5.4", serviceTier: null } }) + "\\n");',
     '    continue;',
     '  }',

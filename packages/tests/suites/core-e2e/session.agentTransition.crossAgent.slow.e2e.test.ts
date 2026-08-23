@@ -16,7 +16,15 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { startTestDaemon, stopDaemonFromHomeDir, type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
+import {
+    fakeClaudeFixturePath,
+    waitForFakeClaudeInvocation,
+    waitForFakeClaudeUserText,
+} from '../../src/testkit/fakeClaude';
+import {
+    readFakeCodexAppServerRequestLog,
+    writeFakeCodexAppServerScript,
+} from '../../src/testkit/codexAppServerRemoteHarness';
 import { callEncryptedMachineRpc } from '../../src/testkit/memoryRpc';
 import { decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -75,6 +83,33 @@ function createProviderEnv(params: ProviderEnvParams): Record<string, string> {
         HAPPIER_E2E_GEMINI_LOG: params.fakeGeminiLogPath,
         GEMINI_API_KEY: 'e2e-fake-gemini-api-key',
         PATH: `${params.fakeBinDir}${delimiter}${process.env.PATH ?? ''}`,
+    };
+}
+
+function createClaudeCodexProviderEnv(params: Readonly<{
+    daemonHomeDir: string;
+    fakeClaudeLogPath: string;
+    fakeClaudePath: string;
+    fakeCodexAppServerPath: string;
+    serverBaseUrl: string;
+}>): Record<string, string> {
+    return {
+        CI: '1',
+        HAPPIER_VARIANT: 'dev',
+        HAPPIER_DISABLE_CAFFEINATE: '1',
+        HAPPIER_HOME_DIR: params.daemonHomeDir,
+        HAPPIER_SERVER_URL: params.serverBaseUrl,
+        HAPPIER_WEBAPP_URL: params.serverBaseUrl,
+        HAPPIER_CLAUDE_PATH: params.fakeClaudePath,
+        // The composed assertion reads the target's real prompt. The default
+        // fixture log only retains a preview, which can omit the admitted input
+        // after a bounded replay seed.
+        HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: '1',
+        HAPPIER_E2E_FAKE_CLAUDE_LOG: params.fakeClaudeLogPath,
+        HAPPIER_CODEX_APP_SERVER_BIN: params.fakeCodexAppServerPath,
+        HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '2000',
+        HAPPIER_CODEX_EXECUTION_RUN_TRANSPORT: 'appServer',
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     };
 }
 
@@ -196,6 +231,21 @@ async function readJsonlEvents(path: string): Promise<Array<Record<string, unkno
 function readEventTimestamp(event: Record<string, unknown>): number {
     const ts = event.ts;
     return typeof ts === 'number' && Number.isFinite(ts) ? ts : 0;
+}
+
+function readCodexTurnInputText(params: Record<string, unknown> | null | undefined): string {
+    const input = params?.input;
+    if (!Array.isArray(input)) return '';
+    return input.flatMap((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+        const text = (entry as { text?: unknown }).text;
+        return typeof text === 'string' ? [text] : [];
+    }).join('\n');
+}
+
+function readCodexThreadId(params: Record<string, unknown> | null | undefined): string | null {
+    const threadId = params?.threadId;
+    return typeof threadId === 'string' && threadId.length > 0 ? threadId : null;
 }
 
 describe('core e2e: same-Session cross-Agent transition', () => {
@@ -509,4 +559,293 @@ describe('core e2e: same-Session cross-Agent transition', () => {
             return children.filter((child) => child.happySessionId === sessionId).length <= 1;
         }, { timeoutMs: 60_000, context: 'exactly one tracked runtime for the transitioned Session' });
     }, 600_000);
+
+    it('returns through the exact Codex app-server thread without duplicating a retried Claude-to-Codex input', async () => {
+        const testDir = run.testDir(`agent-transition-codex-claude-codex-${randomUUID()}`);
+        server = await startServerLight({ testDir, dbProvider: 'sqlite' });
+        const auth = await createTestAuth(server.baseUrl);
+        const secret = auth.accountSigningSeed;
+
+        daemonHomeDir = resolve(join(testDir, 'daemon-home'));
+        const workspaceDir = resolve(join(testDir, 'workspace'));
+        await mkdir(daemonHomeDir, { recursive: true });
+        await mkdir(workspaceDir, { recursive: true });
+        await seedCliAuthForTestAccount({
+            cliHome: daemonHomeDir,
+            serverUrl: server.baseUrl,
+            auth,
+            mode: 'legacy',
+        });
+
+        const fakeClaudePath = fakeClaudeFixturePath();
+        const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
+        const requestLogPath = resolve(join(testDir, 'fake-codex-app-server.requests.jsonl'));
+        const fakeCodexAppServerPath = await writeFakeCodexAppServerScript({
+            dir: testDir,
+            requestLogPath,
+            // A logged resume request alone can be a prompt-transport lookalike.
+            // The fake provider rejects every other native id, so a green target
+            // turn proves the app-server accepted this exact returning identity.
+            expectedResumeThreadId: 'thread-started',
+        });
+        const providerEnv = createClaudeCodexProviderEnv({
+            daemonHomeDir,
+            fakeClaudeLogPath,
+            fakeClaudePath,
+            fakeCodexAppServerPath,
+            serverBaseUrl: server.baseUrl,
+        });
+        daemon = await startTestDaemon({
+            testDir,
+            happyHomeDir: daemonHomeDir,
+            env: {
+                ...process.env,
+                ...providerEnv,
+            },
+            snapshotDir: resolve(join(testDir, 'daemon-cli-snapshot')),
+        });
+
+        const spawnRes = await daemonControlPostJson<{ success: boolean; sessionId?: string }>({
+            port: daemon.state.httpPort,
+            path: '/spawn-session',
+            controlToken: daemon.state.controlToken,
+            body: {
+                directory: workspaceDir,
+                agent: 'codex',
+                spawnNonce: randomUUID(),
+                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                codexBackendMode: 'appServer',
+                terminal: { mode: 'plain' },
+                environmentVariables: providerEnv,
+            },
+        });
+        expect(spawnRes.status).toBe(200);
+        expect(spawnRes.data.success).toBe(true);
+        const sessionId = spawnRes.data.sessionId;
+        if (typeof sessionId !== 'string' || sessionId.length === 0) {
+            throw new Error('Missing sessionId from daemon spawn-session');
+        }
+
+        // Start with a real Codex turn. Its native identity must be persisted
+        // before the first cutover can capture it for the later native return.
+        const codexSourceText = `AGENT_TRANSITION_CODEX_SOURCE_${randomUUID()}`;
+        await enqueueSessionPromptForScenario({
+            baseUrl: server.baseUrl,
+            token: auth.token,
+            sessionId,
+            secret,
+            text: codexSourceText,
+        });
+        await waitFor(async () => {
+            const requests = await readFakeCodexAppServerRequestLog(requestLogPath);
+            return requests.some((request) => request.method === 'turn/start'
+                && readCodexTurnInputText(request.params).includes(codexSourceText));
+        }, { timeoutMs: 60_000, context: 'initial Codex app-server turn receives the source input' });
+        await waitForSessionActive({
+            baseUrl: server.baseUrl,
+            token: auth.token,
+            sessionId,
+            timeoutMs: 60_000,
+        });
+
+        let initialCodexThreadId: string | null = null;
+        await waitFor(async () => {
+            const snapshot = await fetchSessionV2(server!.baseUrl, auth.token, sessionId);
+            const metadata = decryptLegacyBase64(snapshot.metadata, secret) as Record<string, unknown>;
+            const threadId = typeof metadata.codexSessionId === 'string' ? metadata.codexSessionId : null;
+            if (metadata.flavor !== 'codex' || !threadId) return false;
+            initialCodexThreadId = threadId;
+            return true;
+        }, { timeoutMs: 60_000, context: 'initial Codex native thread identity is published' });
+        if (!initialCodexThreadId) throw new Error('Initial Codex native thread identity was not published');
+        expect(initialCodexThreadId).toBe('thread-started');
+
+        const beforeFirstCutover = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
+        const messagesBeforeFirstCutover = await fetchAllMessages(server.baseUrl, auth.token, sessionId);
+
+        const machineIds = await resolveMachineIdsFromSettings({
+            settingsPath: resolve(join(daemonHomeDir, 'settings.json')),
+            timeoutMs: 60_000,
+        });
+        expect(machineIds.length).toBeGreaterThan(0);
+        const machineId = machineIds[0]!;
+        ui = createUserScopedSocketCollector(server.baseUrl, auth.token);
+        ui.connect();
+
+        const toClaudeLocalId = `transition-to-claude-${randomUUID()}`;
+        const toClaudeText = `AGENT_TRANSITION_TO_CLAUDE_${randomUUID()}`;
+        const toClaude = await callEncryptedMachineRpc({
+            ui,
+            machineId,
+            method: RPC_METHODS.SESSION_AGENT_TRANSITION,
+            req: {
+                v: 1,
+                sessionId,
+                expectedCurrentAgentId: 'codex',
+                selection: { v: 1, agentId: 'claude' },
+                input: { text: toClaudeText, localId: toClaudeLocalId, meta: {} },
+            },
+            secret,
+            schema: SessionAgentTransitionResultV1Schema,
+            timeoutMs: 300_000,
+        });
+        expect(toClaude).toEqual({ type: 'accepted', localId: toClaudeLocalId });
+
+        const afterClaudeCutover = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
+        expect(afterClaudeCutover.id).toBe(sessionId);
+        expect(afterClaudeCutover.createdAt).toBe(beforeFirstCutover.createdAt);
+        const claudeMetadata = decryptLegacyBase64(afterClaudeCutover.metadata, secret) as Record<string, unknown>;
+        expect(claudeMetadata.flavor).toBe('claude');
+
+        const messagesAfterClaudeCutover = await fetchAllMessages(server.baseUrl, auth.token, sessionId);
+        const toClaudeDividerLocalId = buildSessionAgentTransitionDividerLocalId(toClaudeLocalId);
+        const toClaudeDivider = messagesAfterClaudeCutover.find((row) => row.localId === toClaudeDividerLocalId);
+        expect(toClaudeDivider).toBeDefined();
+        expect(readSessionAgentTransitionDividerFromStoredRecordV1({
+            localId: toClaudeDivider!.localId,
+            record: decodeRow(toClaudeDivider!, secret),
+        })).toEqual({
+            v: 1,
+            fromAgentId: 'codex',
+            toAgentId: 'claude',
+            sourceCutoffSeqInclusive: expect.any(Number),
+        });
+        expect(toClaudeDivider!.seq).toBeGreaterThanOrEqual(Math.max(...messagesBeforeFirstCutover.map((row) => row.seq)));
+
+        const claudeInvocation = await waitForFakeClaudeInvocation(
+            fakeClaudeLogPath,
+            (invocation) => invocation.mode === 'sdk',
+            { timeoutMs: 120_000 },
+        );
+        const claudeTargetPrompt = await waitForFakeClaudeUserText(
+            fakeClaudeLogPath,
+            (text) => text.includes(codexSourceText) && text.includes(toClaudeText),
+            { invocationId: claudeInvocation.invocationId, timeoutMs: 120_000 },
+        );
+        // The reverse Codex -> Claude leg is a real provider prompt with the
+        // source turn as a prefix, not a Session-only transcript projection.
+        expect(claudeTargetPrompt.indexOf(codexSourceText)).toBeLessThan(claudeTargetPrompt.indexOf(toClaudeText));
+        await waitForAssistantMessageContaining({
+            baseUrl: server.baseUrl,
+            token: auth.token,
+            sessionId,
+            secret,
+            requiredSubstring: 'FAKE_CLAUDE_OK_1',
+            afterSeqStart: toClaudeDivider!.seq,
+            timeoutMs: 180_000,
+        });
+
+        const toCodexLocalId = `transition-to-codex-${randomUUID()}`;
+        const toCodexText = `AGENT_TRANSITION_TO_CODEX_${randomUUID()}`;
+        const toCodexRequest = {
+            v: 1 as const,
+            sessionId,
+            expectedCurrentAgentId: 'claude' as const,
+            selection: { v: 1 as const, agentId: 'codex' as const },
+            input: { text: toCodexText, localId: toCodexLocalId, meta: {} },
+        };
+        const toCodex = await callEncryptedMachineRpc({
+            ui,
+            machineId,
+            method: RPC_METHODS.SESSION_AGENT_TRANSITION,
+            req: toCodexRequest,
+            secret,
+            schema: SessionAgentTransitionResultV1Schema,
+            timeoutMs: 300_000,
+        });
+        expect(toCodex).toEqual({ type: 'accepted', localId: toCodexLocalId });
+
+        const afterCodexReturn = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
+        expect(afterCodexReturn.id).toBe(sessionId);
+        expect(afterCodexReturn.createdAt).toBe(beforeFirstCutover.createdAt);
+        const codexMetadata = decryptLegacyBase64(afterCodexReturn.metadata, secret) as Record<string, unknown>;
+        expect(codexMetadata.flavor).toBe('codex');
+        expect(codexMetadata.codexSessionId).toBe(initialCodexThreadId);
+
+        const messagesAfterCodexReturn = await fetchAllMessages(server.baseUrl, auth.token, sessionId);
+        const toCodexDividerLocalId = buildSessionAgentTransitionDividerLocalId(toCodexLocalId);
+        const toCodexDivider = messagesAfterCodexReturn.find((row) => row.localId === toCodexDividerLocalId);
+        expect(toCodexDivider).toBeDefined();
+        expect(readSessionAgentTransitionDividerFromStoredRecordV1({
+            localId: toCodexDivider!.localId,
+            record: decodeRow(toCodexDivider!, secret),
+        })).toEqual({
+            v: 1,
+            fromAgentId: 'claude',
+            toAgentId: 'codex',
+            sourceCutoffSeqInclusive: expect.any(Number),
+        });
+
+        let codexRequests = await readFakeCodexAppServerRequestLog(requestLogPath);
+        await waitFor(async () => {
+            codexRequests = await readFakeCodexAppServerRequestLog(requestLogPath);
+            const resumeIndex = codexRequests.findIndex((request) => request.method === 'thread/resume'
+                && readCodexThreadId(request.params) === initialCodexThreadId);
+            const targetTurnIndex = codexRequests.findIndex((request) => request.method === 'turn/start'
+                && readCodexThreadId(request.params) === initialCodexThreadId
+                && readCodexTurnInputText(request.params).includes(toCodexText));
+            return resumeIndex >= 0 && targetTurnIndex > resumeIndex;
+        }, { timeoutMs: 120_000, context: 'Codex app-server strictly resumes the recorded native thread before the return turn' });
+
+        const returnedTurn = codexRequests.find((request) => request.method === 'turn/start'
+            && readCodexThreadId(request.params) === initialCodexThreadId
+            && readCodexTurnInputText(request.params).includes(toCodexText));
+        expect(returnedTurn).toBeDefined();
+        const returnedPrompt = readCodexTurnInputText(returnedTurn!.params);
+        // This is the required real-process Claude -> Codex direction: exact
+        // admitted input plus source-Claude history reaches the app-server.
+        expect(returnedPrompt).toContain(toClaudeText);
+        expect(returnedPrompt).toContain('FAKE_CLAUDE_OK_1');
+        expect(returnedPrompt).toContain(toCodexText);
+        expect(returnedPrompt.indexOf(toClaudeText)).toBeLessThan(returnedPrompt.indexOf(toCodexText));
+        expect(returnedPrompt.indexOf('FAKE_CLAUDE_OK_1')).toBeLessThan(returnedPrompt.indexOf(toCodexText));
+
+        await waitForAssistantMessageContaining({
+            baseUrl: server.baseUrl,
+            token: auth.token,
+            sessionId,
+            secret,
+            requiredSubstring: 'reply:',
+            afterSeqStart: toCodexDivider!.seq,
+            timeoutMs: 180_000,
+        });
+        const messagesAfterReturnedTurn = await fetchAllMessages(server.baseUrl, auth.token, sessionId);
+        expect(messagesAfterReturnedTurn.filter((row) => isSessionAgentTransitionDividerLocalId(row.localId))).toHaveLength(2);
+        expect(messagesAfterReturnedTurn.filter((row) => row.localId === toCodexDividerLocalId)).toHaveLength(1);
+        expect(messagesAfterReturnedTurn.filter((row) => row.localId === toCodexLocalId)).toHaveLength(1);
+        const returnedReply = messagesAfterReturnedTurn.find((row) => row.seq > toCodexDivider!.seq
+            && JSON.stringify(decodeRow(row, secret) ?? '').includes('reply:'));
+        expect(returnedReply).toBeDefined();
+
+        // Retry the exact same request after its first response. This is the
+        // retry/lost-ack-safe shape the coordinator reconciles: it must not
+        // append a second divider, re-admit the localId, or start another turn.
+        const targetTurnCountBeforeRetry = codexRequests.filter((request) => request.method === 'turn/start'
+            && readCodexThreadId(request.params) === initialCodexThreadId
+            && readCodexTurnInputText(request.params).includes(toCodexText)).length;
+        const retry = await callEncryptedMachineRpc({
+            ui,
+            machineId,
+            method: RPC_METHODS.SESSION_AGENT_TRANSITION,
+            req: toCodexRequest,
+            secret,
+            schema: SessionAgentTransitionResultV1Schema,
+            timeoutMs: 300_000,
+        });
+        expect(retry).toEqual({ type: 'accepted', localId: toCodexLocalId });
+
+        let stableRetryReads = 0;
+        await waitFor(async () => {
+            const rows = await fetchAllMessages(server!.baseUrl, auth.token, sessionId);
+            const requests = await readFakeCodexAppServerRequestLog(requestLogPath);
+            const stable = rows.filter((row) => isSessionAgentTransitionDividerLocalId(row.localId)).length === 2
+                && rows.filter((row) => row.localId === toCodexDividerLocalId).length === 1
+                && rows.filter((row) => row.localId === toCodexLocalId).length === 1
+                && requests.filter((request) => request.method === 'turn/start'
+                    && readCodexThreadId(request.params) === initialCodexThreadId
+                    && readCodexTurnInputText(request.params).includes(toCodexText)).length === targetTurnCountBeforeRetry;
+            stableRetryReads = stable ? stableRetryReads + 1 : 0;
+            return stableRetryReads >= 3;
+        }, { timeoutMs: 30_000, intervalMs: 250, context: 'retry leaves one divider, one input, and one returned Codex turn' });
+    }, 900_000);
 });

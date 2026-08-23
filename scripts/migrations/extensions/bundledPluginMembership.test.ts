@@ -8,14 +8,32 @@ import { readBundledPluginPackageNames } from './bundledPluginMembership.ts';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
-test('excludes reservation-only Channels provider packages from bundled plugins', () => {
+/**
+ * Both first-party Channels providers ship. Discord's `reservation_only` hold
+ * was lifted with the rest of its vertical, so this file asserts the shipping
+ * contract that is true now instead of an exclusion the product superseded.
+ * The `reservation_only` MECHANISM keeps its own discriminating coverage
+ * against synthetic packages in `syncCliBundledExtensionPackaging.test.ts` and
+ * `generateBundledPluginEntries.test.ts`; repeating it here against a real
+ * package only re-encodes one product decision as a build rule.
+ */
+const CHANNELS_PROVIDER_PACKAGE_NAMES = [
+  '@happier-dev/plugins-channel-discord',
+  '@happier-dev/plugins-channel-telegram',
+] as const;
+
+test('includes every first-party Channels provider package in bundled plugin membership', () => {
   const bundledPluginPackageNames = readBundledPluginPackageNames(repoRoot);
 
-  assert.ok(bundledPluginPackageNames.includes('@happier-dev/plugins-channel-telegram'));
-  assert.ok(!bundledPluginPackageNames.includes('@happier-dev/plugins-channel-discord'));
+  for (const packageName of CHANNELS_PROVIDER_PACKAGE_NAMES) {
+    assert.ok(
+      bundledPluginPackageNames.includes(packageName),
+      `${packageName} is missing from bundled plugin membership`,
+    );
+  }
 });
 
-test('ships only eligible Channels provider packages through the canonical CLI and UI projections', () => {
+test('ships every Channels provider package through the canonical CLI and UI projections', () => {
   const cliPackageJson = JSON.parse(readFileSync(resolve(repoRoot, 'apps/cli/package.json'), 'utf8')) as {
     bundledDependencies?: unknown;
     dependencies?: Record<string, unknown>;
@@ -32,16 +50,23 @@ test('ships only eligible Channels provider packages through the canonical CLI a
     'utf8',
   );
 
-  for (const packageName of ['@happier-dev/plugins-channel-telegram']) {
-    assert.ok(bundledDependencies.includes(packageName));
-    assert.equal(cliPackageJson.dependencies?.[packageName], '0.0.0');
-    assert.ok(generatedPluginSources.includes(packageName));
-    assert.ok(generatedUiPluginEntries.includes(packageName));
+  for (const packageName of CHANNELS_PROVIDER_PACKAGE_NAMES) {
+    assert.ok(
+      bundledDependencies.includes(packageName),
+      `${packageName} is missing from apps/cli bundledDependencies`,
+    );
+    assert.equal(
+      cliPackageJson.dependencies?.[packageName],
+      '0.0.0',
+      `${packageName} is missing from apps/cli dependencies`,
+    );
+    assert.ok(
+      generatedPluginSources.includes(packageName),
+      `${packageName} is missing from the generated CLI bundled-plugin projection`,
+    );
+    assert.ok(
+      generatedUiPluginEntries.includes(packageName),
+      `${packageName} is missing from the generated UI bundled-plugin projection`,
+    );
   }
-
-  const reservationOnlyPackageName = '@happier-dev/plugins-channel-discord';
-  assert.ok(!bundledDependencies.includes(reservationOnlyPackageName));
-  assert.equal(cliPackageJson.dependencies?.[reservationOnlyPackageName], undefined);
-  assert.ok(!generatedPluginSources.includes(reservationOnlyPackageName));
-  assert.ok(!generatedUiPluginEntries.includes(reservationOnlyPackageName));
 });

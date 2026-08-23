@@ -7,8 +7,6 @@ import { fileURLToPath } from 'node:url';
 
 import semver from 'semver';
 
-import './runVitestShards.test.mjs';
-
 const require = createRequire(import.meta.url);
 const { parsePatchFile } = require('patch-package/dist/patch/parse');
 

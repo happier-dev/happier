@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { fetchNodeRuntimeReleaseAsset } from '../dist/providers/nodeRelease.js';
+import { fetchNodeRuntimeReleaseAsset } from '../dist/agents/nodeRelease.js';
 
 function jsonResponse(value) {
   return {

@@ -128,3 +128,55 @@ test('Unistyles reload lifecycle isolates native state by JSI runtime', async ()
     'installing Android bindings must not destroy JSI values from a runtime that may still be alive',
   );
 });
+
+test('Unistyles consumes shadow-tree updates once and ignores inactive families', async () => {
+  const trafficControllerHeader = await readUnistylesSource('cxx/shadowTree/ShadowTrafficController.h');
+  const takeUpdatesBody = functionBody(trafficControllerHeader, 'inline shadow::ShadowLeafUpdates takeUpdates()');
+  assert.match(takeUpdatesBody, /auto updates = std::move\(_unistylesUpdates\)/);
+  assert.match(takeUpdatesBody, /_unistylesUpdates = \{\}/);
+  assert.match(takeUpdatesBody, /_canCommit = false/);
+  assert.doesNotMatch(
+    trafficControllerHeader,
+    /ShadowLeafUpdates& getUpdates\(\)/,
+    'committed updates must not remain available for a later dependency change to replay',
+  );
+
+  const registryHeader = await readUnistylesSource('cxx/core/UnistylesRegistry.h');
+  assert.match(
+    registryHeader,
+    /bool isActiveUnistylesFamily\(jsi::Runtime& rt, const ShadowNodeFamily\* family\) const noexcept/,
+  );
+
+  const registrySource = await readUnistylesSource('cxx/core/UnistylesRegistry.cpp');
+  const suspendBody = functionBody(
+    registrySource,
+    'void core::UnistylesRegistry::suspendShadowNode(jsi::Runtime& rt, const ShadowNodeFamily* shadowNodeFamily)',
+  );
+  assert.match(
+    suspendBody,
+    /trafficController\.removeShadowNode\(shadowNodeFamily\)/,
+    'suspending a family must discard any pending update that holds its raw pointer',
+  );
+
+  const dependencyMapBody = functionBody(
+    registrySource,
+    'core::DependencyMap core::UnistylesRegistry::buildDependencyMap(jsi::Runtime& rt, std::vector<UnistyleDependency>& deps)',
+  );
+  assert.match(
+    dependencyMapBody,
+    /_suspendedFamilies\[&rt\]\.count\(family\) > 0[\s\S]*?continue/,
+    'suspended families must not be queued by later dependency changes',
+  );
+
+  const shadowTreeSource = await readUnistylesSource('cxx/shadowTree/ShadowTreeManager.cpp');
+  const updateShadowTreeBody = functionBody(
+    shadowTreeSource,
+    'void shadow::ShadowTreeManager::updateShadowTree(jsi::Runtime& rt)',
+  );
+  assert.match(updateShadowTreeBody, /trafficController\.takeUpdates\(\)/);
+  assert.match(
+    updateShadowTreeBody,
+    /registry\.isActiveUnistylesFamily\(rt, it->first\)/,
+    'the commit path must reject families that were unlinked or suspended before dereferencing them',
+  );
+});

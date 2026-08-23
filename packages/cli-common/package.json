@@ -203,7 +203,8 @@
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
     "test": "../../apps/stack/bin/hstack-exec --script=test:local",
-    "test:local": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts"
+    "test:local": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts && yarn -s test:dist:local",
+    "test:dist:local": "node --test processInstance.test.mjs tests/componentArtifacts.cliDistBuildLock.test.mjs tests/componentArtifacts.test.mjs tests/downloadGitHubReleaseAsset.test.mjs tests/exports.test.mjs tests/firstPartyRuntime.componentCatalog.test.mjs tests/firstPartyRuntime.installLayout.test.mjs tests/firstPartyRuntime.installVersionedPayload.test.mjs tests/firstPartyRuntime.promoteVersionedPayload.test.mjs tests/firstPartyRuntime.pruneRetainedVersions.test.mjs tests/firstPartyRuntime.relayRuntime.test.mjs tests/firstPartyRuntime.retentionPolicy.test.mjs tests/firstPartyRuntime.syncInstalledShims.test.mjs tests/links.test.mjs tests/nodeRelease.test.mjs tests/pinnedRunnerSnapshot.test.mjs tests/service.test.mjs tests/update.test.mjs tests/vendorBundledPackageRuntimeDependencies.test.mjs tests/workspaces.test.mjs"
   },
   "dependencies": {
     "@noble/curves": "^1.9.0",

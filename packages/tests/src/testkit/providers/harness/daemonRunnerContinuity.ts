@@ -1186,7 +1186,9 @@ export async function runDaemonRunnerContinuityAToBToC(params: Readonly<{
   );
   previousCompletedTurnId = completedTurnB;
 
-  await transitionToDaemon('c');
+  // The final transition is driven exactly like A to B: the prompt reaches the retained
+  // Provider and its turn is still in flight when the daemon is replaced. Replacing an idle
+  // daemon proves only that a settled session survives, which is the weaker claim.
   await deps.enqueuePrompt({
     baseUrl: params.baseUrl,
     token: params.token,
@@ -1194,7 +1196,15 @@ export async function runDaemonRunnerContinuityAToBToC(params: Readonly<{
     secret: params.secret,
     text: phaseC.prompt,
   });
+  const activeTurnIdC = await deps.waitForActiveTurn({
+    baseUrl: params.baseUrl,
+    token: params.token,
+    sessionId: params.sessionId,
+    previousTurnId: previousCompletedTurnId,
+    timeoutMs,
+  });
   await deps.waitForMatchingEffect({ ...phaseC.effect, timeoutMs });
+  await transitionToDaemon('c');
   await deps.waitForMatchingAssistantTranscriptOutput({
     baseUrl: params.baseUrl,
     token: params.token,
@@ -1210,6 +1220,9 @@ export async function runDaemonRunnerContinuityAToBToC(params: Readonly<{
     previousTurnId: previousCompletedTurnId,
     timeoutMs,
   });
+  if (completedTurnC !== activeTurnIdC) {
+    throw new Error('Daemon B to C active turn identity changed before terminal settlement');
+  }
   completedTurnFingerprints.c = fingerprintSessionScopedValue(
     'completed_turn',
     authorityA.sessionId,
@@ -1332,6 +1345,7 @@ export async function runDaemonRunnerContinuityAToBToC(params: Readonly<{
       matchingEffectCounts: { b: 1, c: 1 },
       terminalEventCounts: { b: 1, c: 1 },
       activeTurnCrossedAToB: true,
+      activeTurnCrossedBToC: true,
       exactlyOneMatchingAssistantTranscriptOutputPerLaterPhase: true,
       exactlyOneMatchingEffectPerLaterPhase: true,
       exactlyOneTerminalEventPerLaterPhase: true,

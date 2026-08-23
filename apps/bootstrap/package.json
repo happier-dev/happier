@@ -14,7 +14,7 @@
     "typecheck": "../stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "node ./scripts/runTsc.mjs --noEmit -p tsconfig.json",
     "test": "../stack/bin/hstack-exec --script=test:local",
-    "test:local": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts"
+    "test:local": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts && node --test scripts/buildBinaryTarget.test.mjs scripts/resolveBootstrapRepoRoot.test.mjs scripts/writeDistBinWrappers.test.mjs"
   },
   "dependencies": {
     "@happier-dev/cli-common": "0.0.0",

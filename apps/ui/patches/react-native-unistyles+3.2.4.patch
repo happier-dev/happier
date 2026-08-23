@@ -75,7 +75,7 @@ index 2519407..61adb48 100644
  
          // scoped theme path — parse with scope so `withUnistyles`-wrapped
 diff --git a/node_modules/react-native-unistyles/cxx/core/UnistylesRegistry.cpp b/node_modules/react-native-unistyles/cxx/core/UnistylesRegistry.cpp
-index 7960fd7..b766cd9 100644
+index 7960fd7..7139cdc 100644
 --- a/node_modules/react-native-unistyles/cxx/core/UnistylesRegistry.cpp
 +++ b/node_modules/react-native-unistyles/cxx/core/UnistylesRegistry.cpp
 @@ -9,44 +9,47 @@ using namespace facebook::react;
@@ -186,7 +186,7 @@ index 7960fd7..b766cd9 100644
  
      unistyles.erase(
          std::remove_if(
-@@ -110,41 +115,47 @@ void core::UnistylesRegistry::removeDuplicatedUnistyles(const ShadowNodeFamily *
+@@ -110,41 +115,62 @@ void core::UnistylesRegistry::removeDuplicatedUnistyles(const ShadowNodeFamily *
      );
  }
  
@@ -212,9 +212,10 @@ index 7960fd7..b766cd9 100644
 +void core::UnistylesRegistry::suspendShadowNode(jsi::Runtime& rt, const ShadowNodeFamily* shadowNodeFamily) {
 +    auto& trafficController = this->getTrafficController(rt);
 +
-+    trafficController.withLock([this, &rt, shadowNodeFamily](){
++    trafficController.withLock([this, &rt, &trafficController, shadowNodeFamily](){
 +        if (this->_shadowRegistry[&rt].contains(shadowNodeFamily)) {
 +            this->_suspendedFamilies[&rt].insert(shadowNodeFamily);
++            trafficController.removeShadowNode(shadowNodeFamily);
          }
      });
  }
@@ -225,6 +226,16 @@ index 7960fd7..b766cd9 100644
 +    auto runtimeFamilies = this->_suspendedFamilies.find(&rt);
 +
 +    return runtimeFamilies != this->_suspendedFamilies.end() && runtimeFamilies->second.count(family) > 0;
++}
++
++bool core::UnistylesRegistry::isActiveUnistylesFamily(jsi::Runtime& rt, const ShadowNodeFamily* family) const noexcept {
++    auto runtimeRegistry = this->_shadowRegistry.find(&rt);
++    auto runtimeSuspendedFamilies = this->_suspendedFamilies.find(&rt);
++
++    return runtimeRegistry != this->_shadowRegistry.end()
++        && runtimeRegistry->second.count(family) > 0
++        && (runtimeSuspendedFamilies == this->_suspendedFamilies.end()
++            || runtimeSuspendedFamilies->second.count(family) == 0);
  }
  
  std::shared_ptr<core::StyleSheet> core::UnistylesRegistry::addStyleSheet(jsi::Runtime& rt, core::StyleSheetType type, jsi::Object&& rawValue) {
@@ -245,10 +256,14 @@ index 7960fd7..b766cd9 100644
  
 -    for (const auto& [family, unistyles] : this->_shadowRegistry) {
 +    for (const auto& [family, unistyles] : this->_shadowRegistry[&rt]) {
++        if (this->_suspendedFamilies[&rt].count(family) > 0) {
++            continue;
++        }
++
          bool hasAnyOfDependencies = false;
  
          // Check if any dependency matches
-@@ -179,13 +190,15 @@ core::DependencyMap core::UnistylesRegistry::buildDependencyMap(std::vector<Unis
+@@ -179,13 +205,15 @@ core::DependencyMap core::UnistylesRegistry::buildDependencyMap(std::vector<Unis
  // so we need to rebuild all instances as they may have different variants
  void core::UnistylesRegistry::shadowLeafUpdateFromUnistyle(jsi::Runtime& rt, Unistyle::Shared unistyle, jsi::Value& maybePressableId) {
      shadow::ShadowLeafUpdates updates;
@@ -266,7 +281,7 @@ index 7960fd7..b766cd9 100644
              for (const auto& unistyleData : unistyles) {
                  if (unistyleData->unistyle == unistyle) {
                      updates[family] = parser.parseStylesToShadowTreeStyles(rt, { unistyleData });
-@@ -193,11 +206,11 @@ void core::UnistylesRegistry::shadowLeafUpdateFromUnistyle(jsi::Runtime& rt, Uni
+@@ -193,11 +221,11 @@ void core::UnistylesRegistry::shadowLeafUpdateFromUnistyle(jsi::Runtime& rt, Uni
              }
          }
  
@@ -280,7 +295,7 @@ index 7960fd7..b766cd9 100644
      std::vector<std::shared_ptr<core::StyleSheet>> stylesheetsToRefresh;
      std::unordered_set<UnistyleDependency> depSet(
          unistylesDependencies.begin(),
-@@ -223,7 +236,7 @@ std::vector<std::shared_ptr<core::StyleSheet>>core::UnistylesRegistry::getStyleS
+@@ -223,7 +251,7 @@ std::vector<std::shared_ptr<core::StyleSheet>>core::UnistylesRegistry::getStyleS
          return false;
      };
  
@@ -289,7 +304,7 @@ index 7960fd7..b766cd9 100644
          if (styleSheet->type == StyleSheetType::ThemableWithMiniRuntime || styleSheet->type == StyleSheetType::Static) {
              if (hasMatchingDependency(styleSheet->unistyles)) {
                  stylesheetsToRefresh.emplace_back(styleSheet);
-@@ -238,8 +251,8 @@ std::vector<std::shared_ptr<core::StyleSheet>>core::UnistylesRegistry::getStyleS
+@@ -238,8 +266,8 @@ std::vector<std::shared_ptr<core::StyleSheet>>core::UnistylesRegistry::getStyleS
      return stylesheetsToRefresh;
  }
  
@@ -300,7 +315,7 @@ index 7960fd7..b766cd9 100644
          auto [_, stylesheet] = pair;
  
          for (auto unistylePair: stylesheet->unistyles) {
-@@ -254,19 +267,38 @@ core::Unistyle::Shared core::UnistylesRegistry::getUnistyleById(std::string unis
+@@ -254,19 +282,38 @@ core::Unistyle::Shared core::UnistylesRegistry::getUnistyleById(std::string unis
      return nullptr;
  }
  
@@ -351,10 +366,10 @@ index 7960fd7..b766cd9 100644
 +    this->_shouldUsePointsForBreakpoints.erase(rt);
  }
 diff --git a/node_modules/react-native-unistyles/cxx/core/UnistylesRegistry.h b/node_modules/react-native-unistyles/cxx/core/UnistylesRegistry.h
-index f501232..6da9d9e 100644
+index f501232..b42e916 100644
 --- a/node_modules/react-native-unistyles/cxx/core/UnistylesRegistry.h
 +++ b/node_modules/react-native-unistyles/cxx/core/UnistylesRegistry.h
-@@ -29,40 +29,42 @@ struct UnistylesRegistry: public StyleSheetRegistry {
+@@ -29,40 +29,44 @@ struct UnistylesRegistry: public StyleSheetRegistry {
      UnistylesRegistry(const UnistylesRegistry&) = delete;
      UnistylesRegistry(const UnistylesRegistry&&) = delete;
  
@@ -382,6 +397,8 @@ index f501232..6da9d9e 100644
 +    void unlinkShadowNodeWithUnistyles(jsi::Runtime& rt, const ShadowNodeFamily*);
 +    void suspendShadowNode(jsi::Runtime& rt, const ShadowNodeFamily*);
 +    bool isSuspended(jsi::Runtime& rt, const ShadowNodeFamily*) const noexcept;
++    // Caller must hold this runtime's traffic-controller lock when link/unlink/suspend may race.
++    bool isActiveUnistylesFamily(jsi::Runtime& rt, const ShadowNodeFamily* family) const noexcept;
      std::shared_ptr<core::StyleSheet> addStyleSheet(jsi::Runtime& rt, core::StyleSheetType type, jsi::Object&& rawValue);
 -    DependencyMap buildDependencyMap(std::vector<UnistyleDependency>& deps);
 +    DependencyMap buildDependencyMap(jsi::Runtime& rt, std::vector<UnistyleDependency>& deps);
@@ -758,11 +775,26 @@ index 536d771..2489950 100644
  
      for (const auto& unistyleData : unistyles) {
          if (!unistyleData->parsedStyle.has_value()) {
+diff --git a/node_modules/react-native-unistyles/cxx/shadowTree/ShadowTrafficController.h b/node_modules/react-native-unistyles/cxx/shadowTree/ShadowTrafficController.h
+index aafbece..2c952a5 100644
+--- a/node_modules/react-native-unistyles/cxx/shadowTree/ShadowTrafficController.h
++++ b/node_modules/react-native-unistyles/cxx/shadowTree/ShadowTrafficController.h
+@@ -24,4 +24,8 @@ struct ShadowTrafficController {
+-    inline shadow::ShadowLeafUpdates& getUpdates() {
++    inline shadow::ShadowLeafUpdates takeUpdates() {
+         // call it only within withLock!
+-        return _unistylesUpdates;
++        auto updates = std::move(_unistylesUpdates);
++        _unistylesUpdates = {};
++        _canCommit = false;
++
++        return updates;
+     }
 diff --git a/node_modules/react-native-unistyles/cxx/shadowTree/ShadowTreeManager.cpp b/node_modules/react-native-unistyles/cxx/shadowTree/ShadowTreeManager.cpp
-index 01026dc..9d4b83e 100644
+index 01026dc..0e001a7 100644
 --- a/node_modules/react-native-unistyles/cxx/shadowTree/ShadowTreeManager.cpp
 +++ b/node_modules/react-native-unistyles/cxx/shadowTree/ShadowTreeManager.cpp
-@@ -8,9 +8,10 @@ using AffectedNodes = std::unordered_map<const ShadowNodeFamily*, std::unordered
+@@ -8,9 +8,22 @@ using AffectedNodes = std::unordered_map<const ShadowNodeFamily*, std::unordered
  
  void shadow::ShadowTreeManager::updateShadowTree(jsi::Runtime& rt) {
      auto& registry = core::UnistylesRegistry::get();
@@ -771,7 +803,19 @@ index 01026dc..9d4b83e 100644
 -    registry.trafficController.withLock([&](){
 -        auto updates = registry.trafficController.getUpdates();
 +    trafficController.withLock([&](){
-+        auto updates = trafficController.getUpdates();
++        auto updates = trafficController.takeUpdates();
++
++        if (updates.empty()) {
++            return;
++        }
++
++        for (auto it = updates.begin(); it != updates.end();) {
++            if (!registry.isActiveUnistylesFamily(rt, it->first)) {
++                it = updates.erase(it);
++            } else {
++                ++it;
++            }
++        }
  
          if (updates.empty()) {
              return;

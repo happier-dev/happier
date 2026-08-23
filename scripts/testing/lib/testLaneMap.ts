@@ -124,6 +124,21 @@ const SERVER_INTEGRATION_RE = /\.(?:integration\.(?:test|spec)|real\.integration
 const UNIT_TEST_RE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
 /**
+ * Files each workspace's vitest configs can actually collect.
+ *
+ * A workspace running a vitest lane is not evidence that every test file inside it runs: each
+ * config declares `include` globs, and a file outside them (a `.mjs` node:test file, or a
+ * directory the config excludes) is invisible to that runner. These mirror the `include`/`exclude`
+ * declarations of the configs named by the workspaces' own test scripts, so a file outside them
+ * falls through to the explicit `node --test` list instead of being credited to a lane that never
+ * opens it.
+ */
+const UI_VITEST_COVERED_RE = /^apps\/ui\/(?:sources|tools)\/.*\.(?:spec|test)\.tsx?$/;
+const CLI_VITEST_COVERED_RE = /^apps\/cli\/(?:src\/.*\.(?:test|spec)\.tsx?|scripts\/.*\.(?:test|spec)\.ts)$/;
+const SERVER_VITEST_COVERED_RE = /^apps\/server\/(?:sources|scripts)\/.*\.(?:test|spec)\.ts$/;
+const CLI_COMMON_VITEST_COVERED_RE = /^packages\/cli-common\/(?:src\/.*\.test\.ts|scripts\/.*\.test\.mjs)$/;
+
+/**
  * Lane assignment for a workspace's own unit tests.
  *
  * `test` means the root unit executor runs the workspace; `workspace:test` means the workspace
@@ -295,6 +310,50 @@ export const DECLARED_UNWIRED_TEST_FILES: Readonly<Record<string, string>> = Obj
   'packages/plugin-sdk/examples/public-authoring/test/index.test.mjs':
     'Requires `happier plugins author build .` to emit dist/index.js; no unit lane builds the example.',
 
+  // Red where they would be wired. Measured 2026-08-23 with `node --test <file>` from `apps/ui`:
+  // `tauri_desktop_autostart` 0 pass / 1 fail (Cargo.toml no longer matches
+  // `tauri = { version = "2.8.2", features = [… "tray-icon"`), `tauri_mcp_bridge` 0 pass / 1 fail
+  // (dev capabilities are now `['default','overlay','pet_overlay']`, expected `['default']`), and
+  // `tauriOnboardingWizardMcpQa` 17 pass / 2 fail. Each asserts a real desktop contract against
+  // drifted current bytes, so the fix is the assertion or the product — not the wiring.
+  'apps/ui/scripts/tauri_desktop_autostart.test.mjs':
+    'Red at current bytes (0 pass / 1 fail): the Cargo.toml tauri feature-list assertion no longer matches.',
+  'apps/ui/scripts/tauri_mcp_bridge.test.mjs':
+    'Red at current bytes (0 pass / 1 fail): the dev Tauri capability-list assertion no longer matches.',
+  'apps/ui/scripts/qa/tauriOnboardingWizardMcpQa.test.mjs':
+    'Red at current bytes (17 pass / 2 fail); wiring it would land a failing lane.',
+
+  // Executed only by `yarn --cwd apps/ui certify:activity-surfaces`, whose file list lives in
+  // `scripts/runActivitySurfacesCertification.mjs`
+  // (`ACTIVITY_SURFACES_VALIDATION_NODE_TEST_FILES`). That command is a manual certification gate:
+  // no workflow step in `.github/workflows/**` invokes it. Naming them in the package `test` chain
+  // as well would create a second list for one file set.
+  'apps/ui/scripts/activitySurfacesValidationContract.test.mjs':
+    'Runs only in the manual `certify:activity-surfaces` command; no CI workflow invokes that lane.',
+  'apps/ui/scripts/runActivitySurfacesCertification.test.mjs':
+    'Runs only in the manual `certify:activity-surfaces` command; no CI workflow invokes that lane.',
+  'apps/ui/scripts/runActivitySurfacesNativeCertification.test.mjs':
+    'Runs only in the manual `certify:activity-surfaces` command; no CI workflow invokes that lane.',
+  'apps/ui/scripts/runActivitySurfacesReleaseReadiness.test.mjs':
+    'Runs only in the manual `certify:activity-surfaces` command; no CI workflow invokes that lane.',
+  'apps/ui/scripts/qa/tauriActivitySurfacesMcpQa.test.mjs':
+    'Runs only in the manual `certify:activity-surfaces` command, and is red there (224 pass / 1 fail).',
+  'apps/ui/scripts/validateExpoWidgetsGeneratedProject.test.mjs':
+    'Runs only in the manual `certify:activity-surfaces` command; no CI workflow invokes that lane.',
+  'apps/ui/scripts/validateExpoWidgetsNativeSync.test.mjs':
+    'Runs only in the manual `certify:activity-surfaces` command; no CI workflow invokes that lane.',
+  'apps/ui/scripts/validateExpoWidgetsSimulatorBuildSmoke.test.mjs':
+    'Runs only in the manual `certify:activity-surfaces` command; no CI workflow invokes that lane.',
+
+  // The other twenty files beside it are named by the `cli-common` `test:dist:local` chain and run
+  // green there (117 pass / 0 fail measured 2026-08-23). This one is red at current bytes:
+  // 33 pass / 7 fail, including `installAgentCli does not treat a system CLI as already-installed
+  // when explicitly installing a managed package-backed backend` and `resolveExistingPnpmCommand
+  // ignores a non-executable override on Unix`, which reads the real `~/.happier/tools/pnpm`
+  // instead of its fixture. Both are managed-agent-CLI install contracts, not wiring defects.
+  'packages/cli-common/tests/agents.test.mjs':
+    'Red at current bytes (33 pass / 7 fail) in the managed agent CLI install corridor.',
+
   // Retired 2026-08-19: the C9 out-of-tree channel-socket provider fixture was realigned to the
   // current definePlugin `execution.target` contract and now runs in the workspace `test` script
   // (packages/tests test:local -> test:plugin-platform:out-of-tree-channel-socket-provider).
@@ -322,6 +381,12 @@ export function classifyTestFile(context: TestLaneContext, relativePath: string)
 
   if (relativePath.startsWith('apps/ui/')) {
     if (/^apps\/ui\/scripts\/qa\/.+\.native-e2e\.test\.[cm]?[jt]s$/.test(relativePath)) return 'test:e2e:desktop:native';
+    if (!UI_VITEST_COVERED_RE.test(relativePath)) {
+      // The UI vitest configs include only `sources/**` and `tools/**` TypeScript. A `.mjs` file, or
+      // anything under `scripts/**` / `plugins/**`, runs only where the package `test` chain names
+      // it one by one, so membership of the workspace is not evidence that it runs.
+      return resolveExplicitlyNamedUnitLane(context, relativePath);
+    }
     if (UI_INTEGRATION_RE.test(relativePath)) return 'test:integration';
     return UNIT_TEST_RE.test(relativePath) ? 'test' : null;
   }
@@ -331,19 +396,43 @@ export function classifyTestFile(context: TestLaneContext, relativePath: string)
   }
 
   if (relativePath.startsWith('apps/cli/')) {
+    if (!CLI_VITEST_COVERED_RE.test(relativePath)) {
+      // The CLI vitest configs include `src/**/*.test.{ts,tsx}` plus `scripts/**/*.test.ts`; a
+      // `.mjs` script test matches none of them and runs only where the package `test` chain
+      // names it.
+      return resolveExplicitlyNamedUnitLane(context, relativePath);
+    }
     if (/\.slow\.test\.ts$/.test(relativePath)) return 'cli:test:slow';
     if (CLI_INTEGRATION_RE.test(relativePath)) return 'test:integration';
     return UNIT_TEST_RE.test(relativePath) ? 'test' : null;
   }
 
   if (relativePath.startsWith('apps/server/')) {
+    if (!SERVER_VITEST_COVERED_RE.test(relativePath)) {
+      // The server vitest configs include only `sources/**` and `scripts/**` TypeScript.
+      return resolveExplicitlyNamedUnitLane(context, relativePath);
+    }
     if (/\.dbcontract\.spec\.ts$/.test(relativePath)) return 'test:db-contract:docker';
     if (SERVER_INTEGRATION_RE.test(relativePath)) return 'test:integration';
     return UNIT_TEST_RE.test(relativePath) ? 'test' : null;
   }
 
   if (relativePath.startsWith('apps/bootstrap/')) {
-    return UNIT_TEST_RE.test(relativePath) ? 'test' : null;
+    // `vitest.config.ts` includes only `src/**/*.test.ts`.
+    if (!/^apps\/bootstrap\/src\/.*\.test\.ts$/.test(relativePath)) {
+      return resolveExplicitlyNamedUnitLane(context, relativePath);
+    }
+    return 'test';
+  }
+
+  if (relativePath.startsWith('packages/cli-common/')) {
+    // `vitest.config.ts` includes `src/**/*.test.ts` and `scripts/**/*.test.mjs`, and explicitly
+    // excludes `tests/**/*.mjs`. The excluded tree runs only where the package `test` chain names
+    // each file, so crediting the workspace lane for it reported coverage no runner provides.
+    if (!CLI_COMMON_VITEST_COVERED_RE.test(relativePath)) {
+      return resolveExplicitlyNamedUnitLane(context, relativePath);
+    }
+    return 'test';
   }
 
   if (relativePath.startsWith('packages/tests/')) {

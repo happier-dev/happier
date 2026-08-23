@@ -108,6 +108,7 @@ describe('writeTestManifest', () => {
         matchingEffectCounts: { b: 1, c: 1 },
         terminalEventCounts: { b: 1, c: 1 },
         activeTurnCrossedAToB: true,
+        activeTurnCrossedBToC: true,
         exactlyOneMatchingAssistantTranscriptOutputPerLaterPhase: true,
         exactlyOneMatchingEffectPerLaterPhase: true,
         exactlyOneTerminalEventPerLaterPhase: true,

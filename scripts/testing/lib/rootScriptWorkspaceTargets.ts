@@ -22,6 +22,7 @@ export interface YarnInvocationScan {
 }
 
 const HSTACK_SCRIPT_FLAG_RE = /--script=([A-Za-z0-9:._-]+)/g;
+const PACKAGE_MANAGER_RUNNER_TOKENS = new Set(['$npm_execpath', '${npm_execpath}', 'npm', 'pnpm']);
 const TEST_FILE_ARGUMENT_RE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
 function isFlag(token: string): boolean {
@@ -45,6 +46,18 @@ export function scanYarnInvocations(commandText: string): YarnInvocationScan {
 
   const tokens = tokenize(commandText);
   for (let index = 0; index < tokens.length; index += 1) {
+    // `$npm_execpath run <script>` is the package-manager-agnostic delegation form several
+    // workspaces use in place of `yarn <script>` (`apps/cli`'s `test:local` is exactly this).
+    // Skipping it makes the whole lane behind the wrapper invisible.
+    if (PACKAGE_MANAGER_RUNNER_TOKENS.has(tokens[index]!) && tokens[index + 1] === 'run') {
+      const scriptName = tokens[index + 2];
+      if (scriptName !== undefined && !isFlag(scriptName)) {
+        rootScriptRefs.push(scriptName);
+        index += 2;
+      }
+      continue;
+    }
+
     if (tokens[index] !== 'yarn') continue;
 
     let cursor = index + 1;

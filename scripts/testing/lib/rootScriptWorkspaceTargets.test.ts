@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   matchesWorkspaceScriptTarget,
   resolveRootScriptWorkspaceTargets,
+  resolveScriptNodeTestFiles,
   scanYarnInvocations,
 } from './rootScriptWorkspaceTargets.ts';
 
@@ -64,4 +65,23 @@ test('matches a workspace by package name or by directory', () => {
     matchesWorkspaceScriptTarget(workspace, { packageName: '@happier-dev/other', workspaceDirectory: 'packages/other', scriptName: 'test' }),
     false,
   );
+});
+
+test('follows `$npm_execpath run <script>` delegation like any other script reference', () => {
+  // `apps/cli` delegates its whole test lane this way (`test:local` is
+  // `"$npm_execpath run test:unit:local"`), so a scanner that only understands `yarn <script>`
+  // stops at the wrapper and reports every file the real lane names as having no runner.
+  const scan = scanYarnInvocations('$npm_execpath run test:unit:local');
+  assert.deepEqual(scan.rootScriptRefs, ['test:unit:local']);
+
+  const files = resolveScriptNodeTestFiles(
+    {
+      test: '../stack/bin/hstack-exec --script=test:local',
+      'test:local': '$npm_execpath run test:unit:local',
+      'test:unit:local': 'vitest run && node --test scripts/prepack-script.test.mjs',
+    },
+    'test',
+  );
+
+  assert.deepEqual(files, ['scripts/prepack-script.test.mjs']);
 });

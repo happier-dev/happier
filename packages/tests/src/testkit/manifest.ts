@@ -97,6 +97,7 @@ export type DaemonRunnerContinuityManifestEvidence = Readonly<{
     matchingEffectCounts: Readonly<{ b: 1; c: 1 }>;
     terminalEventCounts: Readonly<{ b: 1; c: 1 }>;
     activeTurnCrossedAToB: true;
+    activeTurnCrossedBToC: true;
     exactlyOneMatchingAssistantTranscriptOutputPerLaterPhase: true;
     exactlyOneMatchingEffectPerLaterPhase: true;
     exactlyOneTerminalEventPerLaterPhase: true;
@@ -232,6 +233,7 @@ function requireExactDaemonRunnerContinuityEvidenceKeys(
     'matchingEffectCounts',
     'terminalEventCounts',
     'activeTurnCrossedAToB',
+    'activeTurnCrossedBToC',
     'exactlyOneMatchingAssistantTranscriptOutputPerLaterPhase',
     'exactlyOneMatchingEffectPerLaterPhase',
     'exactlyOneTerminalEventPerLaterPhase',
@@ -474,6 +476,7 @@ export function sanitizeDaemonRunnerContinuityManifestEvidence(
     || evidence.turns.terminalEventCounts.b !== 1
     || evidence.turns.terminalEventCounts.c !== 1
     || evidence.turns.activeTurnCrossedAToB !== true
+    || evidence.turns.activeTurnCrossedBToC !== true
     || evidence.turns.exactlyOneMatchingAssistantTranscriptOutputPerLaterPhase !== true
     || evidence.turns.exactlyOneMatchingEffectPerLaterPhase !== true
     || evidence.turns.exactlyOneTerminalEventPerLaterPhase !== true
@@ -567,6 +570,7 @@ export function sanitizeDaemonRunnerContinuityManifestEvidence(
       matchingEffectCounts: { b: 1, c: 1 },
       terminalEventCounts: { b: 1, c: 1 },
       activeTurnCrossedAToB: true,
+      activeTurnCrossedBToC: true,
       exactlyOneMatchingAssistantTranscriptOutputPerLaterPhase: true,
       exactlyOneMatchingEffectPerLaterPhase: true,
       exactlyOneTerminalEventPerLaterPhase: true,

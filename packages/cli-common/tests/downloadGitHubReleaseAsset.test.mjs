@@ -6,7 +6,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { downloadGitHubReleaseAsset } from '../dist/providers/downloadGitHubReleaseAsset.js';
+import { downloadGitHubReleaseAsset } from '../dist/agents/downloadGitHubReleaseAsset.js';
 
 function sha256Hex(value) {
   return createHash('sha256').update(value).digest('hex');

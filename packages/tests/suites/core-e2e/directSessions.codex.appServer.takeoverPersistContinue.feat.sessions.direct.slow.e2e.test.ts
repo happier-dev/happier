@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-import { readLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol';
+import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -282,7 +282,7 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
         sessionId,
         machineKeys: [auth.accountMachineKey],
       });
-      const linked = readLinkedExternalSessionV1FromMetadata(linkedMetadata);
+      const linked = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(linkedMetadata);
       if (!linked?.qualifiedIdentity) {
         throw new Error('Expected canonical qualified linked-session identity.');
       }
