@@ -69,6 +69,7 @@ async function setupHarness() {
             refreshAutomations: vi.fn(async () => {}),
             refreshSessions: vi.fn(async () => {}),
             sendMessage: vi.fn(async () => {}),
+            acquireUserRequestLease: () => () => {},
             prepareAccountSettingsForDaemonSpawn: prepareAccountSettingsForDaemonSpawnMock,
         },
     }));

@@ -82,6 +82,7 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
             ensureSessionVisibleForMessageRoute: vi.fn(async () => {}),
             refreshMachines: vi.fn(async () => {}),
             sendMessage: syncSendMessageSpy,
+            acquireUserRequestLease: () => () => {},
             publishSessionModelsSeedToMetadata: publishModelsSeedSpy,
         },
     }));

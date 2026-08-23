@@ -209,6 +209,7 @@ async function setupUseCreateNewSessionHarness() {
             ensureSessionVisibleForMessageRoute: ensureSessionVisibleForMessageRouteSpy,
             refreshMachines: refreshMachinesSpy,
             sendMessage: syncSendMessageSpy,
+            acquireUserRequestLease: () => () => {},
         },
     }));
     vi.doMock('@/sync/store/settingsWriters', () => ({
@@ -1223,7 +1224,10 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'follow-up failed');
+        expect(modalAlertSpy).toHaveBeenCalledWith(
+            'newSession.createdWithSetupIssueTitle',
+            'newSession.createdWithSetupIssueBody\n\ncommon.details: follow-up failed',
+        );
         expect(saveSessionDraftsSpy).not.toHaveBeenCalled();
         expect(updateSessionDraftSpy).not.toHaveBeenCalled();
         expect(disableDraftPersistence).not.toHaveBeenCalled();
@@ -1304,7 +1308,10 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'follow-up failed');
+        expect(modalAlertSpy).toHaveBeenCalledWith(
+            'newSession.createdWithSetupIssueTitle',
+            'newSession.createdWithSetupIssueBody\n\ncommon.details: follow-up failed',
+        );
         expect(saveSessionDraftsSpy).not.toHaveBeenCalled();
         expect(updateSessionDraftSpy).not.toHaveBeenCalled();
         expect(disableDraftPersistence).not.toHaveBeenCalled();
@@ -1384,7 +1391,10 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'follow-up failed');
+        expect(modalAlertSpy).toHaveBeenCalledWith(
+            'newSession.createdWithSetupIssueTitle',
+            'newSession.createdWithSetupIssueBody\n\ncommon.details: follow-up failed',
+        );
         expect(saveSessionDraftsSpy).not.toHaveBeenCalled();
         expect(updateSessionDraftSpy).not.toHaveBeenCalled();
         expect(disableDraftPersistence).not.toHaveBeenCalled();

@@ -111,6 +111,10 @@ import {
     shouldSpawnForNewSessionLaunchAttempt,
     type NewSessionLaunchAttempt,
 } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
+import {
+    actionOperationReentry,
+    type NewSessionOperationReentryRegistration,
+} from '@/sync/domains/actionOperations/actionOperationReentry';
 
 type MutableSettingsDelta = {
     -readonly [TKey in keyof Settings]?: Settings[TKey];
@@ -299,6 +303,8 @@ export function useCreateNewSession(params: Readonly<{
         const trimmedEffectiveSelectedPath = effectiveSelectedPath;
         let rollbackActualPath: string | null = null;
         let rollbackServerId: string | null = current.targetServerId ?? null;
+        let confirmedCreatedSessionId: string | null = null;
+        let operationReentryRegistration: NewSessionOperationReentryRegistration | null = null;
         const isRepoNativeWorktreeLaunch = current.checkoutCreationDraft?.kind === 'git_worktree';
 
         if (!current.selectedMachineId) {
@@ -657,6 +663,15 @@ export function useCreateNewSession(params: Readonly<{
                 current.onLaunchUserAttemptIdChange?.(launchAttempt.attemptId);
             }
             launchAttemptRef.current = launchAttempt;
+            const launchDraftScope = Object.prototype.hasOwnProperty.call(current, 'draftScope')
+                ? current.draftScope
+                : getActiveNewSessionDraftScope();
+            if (launchDraftScope) {
+                operationReentryRegistration = actionOperationReentry.registerNewSession({
+                    requestId: launchAttempt.spawnNonce,
+                    draftScope: launchDraftScope,
+                });
+            }
 
             const daemonOwnsFirstTurn = supportsSpawnPendingFirstInput(
                 current.selectedMachine?.daemonState?.startedWithCliVersion,
@@ -752,7 +767,12 @@ export function useCreateNewSession(params: Readonly<{
                         : {}),
                 };
                 handedFirstTurnToDaemon = daemonOwnsFirstTurn && daemonFirstTurnText.length > 0;
-                result = await machineSpawnNewSession(spawnOptions);
+                const releaseUserRequestLease = sync.acquireUserRequestLease();
+                try {
+                    result = await machineSpawnNewSession(spawnOptions);
+                } finally {
+                    releaseUserRequestLease();
+                }
 
                 operationCustody = result.spawnAttemptCustody;
                 if (
@@ -825,6 +845,11 @@ export function useCreateNewSession(params: Readonly<{
             };
 
             if (result.type === 'success' && result.sessionId) {
+                confirmedCreatedSessionId = result.sessionId;
+                // Session custody is now authoritative. The checkout belongs to
+                // that session and must not be rolled back by a later UI-only
+                // follow-up or navigation failure.
+                rollbackActualPath = null;
                 if (launchAttempt.createdSessionId !== result.sessionId) {
                     launchAttempt = markNewSessionLaunchAttemptCreated(launchAttempt, {
                         createdSessionId: result.sessionId,
@@ -832,6 +857,7 @@ export function useCreateNewSession(params: Readonly<{
                     launchAttemptRef.current = launchAttempt;
                 }
                 if (!isLaunchScopeStillActive()) {
+                    operationReentryRegistration?.markSetupNeedsAttention(result.sessionId);
                     launchAttemptRef.current = null;
                     current.setIsCreating(false);
                     return;
@@ -1029,6 +1055,7 @@ export function useCreateNewSession(params: Readonly<{
                     }
 
                     if (!isLaunchScopeStillActive()) {
+                        operationReentryRegistration?.markSetupNeedsAttention(createdSessionId);
                         launchAttemptRef.current = null;
                         current.setIsCreating(false);
                         return;
@@ -1046,6 +1073,7 @@ export function useCreateNewSession(params: Readonly<{
                 }
 
                 if (!isLaunchScopeStillActive()) {
+                    operationReentryRegistration?.markSetupNeedsAttention(createdSessionId);
                     launchAttemptRef.current = null;
                     current.setIsCreating(false);
                     return;
@@ -1069,6 +1097,7 @@ export function useCreateNewSession(params: Readonly<{
                 }
 
                 if (postSpawnFollowUpError) {
+                    operationReentryRegistration?.markSetupNeedsAttention(createdSessionId);
                     const retryFailureClassification = classifyCurrentPostSpawnFailure(postSpawnFollowUpError);
                     launchAttempt = markNewSessionLaunchAttemptFailed(launchAttempt, {
                         phase: postSpawnFailurePhase,
@@ -1078,9 +1107,12 @@ export function useCreateNewSession(params: Readonly<{
                     launchAttemptRef.current = launchAttempt;
 
                     if (!suppressPostSpawnFollowUpAlert) {
+                        const followUpDetail = postSpawnFollowUpError instanceof Error
+                            ? postSpawnFollowUpError.message
+                            : t('common.error');
                         Modal.alert(
-                            t('common.error'),
-                            postSpawnFollowUpError instanceof Error ? postSpawnFollowUpError.message : t('common.error'),
+                            t('newSession.createdWithSetupIssueTitle'),
+                            `${t('newSession.createdWithSetupIssueBody')}\n\n${t('common.details')}: ${followUpDetail}`,
                         );
                     }
 
@@ -1100,6 +1132,7 @@ export function useCreateNewSession(params: Readonly<{
                     launchAttemptRef.current = null;
                     current.disableDraftPersistence?.();
                     clearNewSessionDraftForLaunchParams(current);
+                    operationReentryRegistration?.markWorkflowComplete(createdSessionId);
                 }
 
                 const sessionRoute = buildScopedSessionRouteHref({
@@ -1271,7 +1304,15 @@ export function useCreateNewSession(params: Readonly<{
                     errorMessage = 'Not connected to server. Check your internet connection.';
                 }
             }
-            Modal.alert(t('common.error'), errorMessage);
+            if (confirmedCreatedSessionId) {
+                operationReentryRegistration?.markSetupNeedsAttention(confirmedCreatedSessionId);
+                Modal.alert(
+                    t('newSession.createdWithSetupIssueTitle'),
+                    `${t('newSession.createdWithSetupIssueBody')}\n\n${t('common.details')}: ${errorMessage}`,
+                );
+            } else {
+                Modal.alert(t('common.error'), errorMessage);
+            }
             latestParamsRef.current.setIsCreating(false);
         } finally {
             createInFlightRef.current = false;

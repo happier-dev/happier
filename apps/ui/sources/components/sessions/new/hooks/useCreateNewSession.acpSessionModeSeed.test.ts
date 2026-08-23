@@ -82,6 +82,7 @@ async function setupHarness(options?: Readonly<{
       refreshSessions: vi.fn(async () => {}),
       refreshMachines: vi.fn(async () => {}),
       sendMessage: sendMessageSpy,
+      acquireUserRequestLease: () => () => {},
       fetchArtifactWithBody: vi.fn(async () => options?.fetchArtifactWithBodyResult ?? null),
       publishSessionAcpSessionModeOverrideToMetadata: publishModeSpy,
     },

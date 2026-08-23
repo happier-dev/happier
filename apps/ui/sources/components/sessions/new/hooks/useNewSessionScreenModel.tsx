@@ -124,6 +124,7 @@ import { resolveNewSessionFileSuggestionScope } from '@/components/sessions/new/
 
 
 import { useStableValueBySignature } from '@/hooks/ui/useStableValueBySignature';
+import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 
 // Configuration constants
 const RECENT_PATHS_DEFAULT_VISIBLE = 5;
@@ -235,6 +236,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentType: agentTypeParam,
         backendTarget: backendTargetParam,
         backendTargetKey: backendTargetKeyParam,
+        actionOperationId: actionOperationIdParam,
     } = useLocalSearchParams<{
         prompt?: string;
         dataId?: string;
@@ -260,6 +262,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentType?: string;
         backendTarget?: string;
         backendTargetKey?: string;
+        actionOperationId?: string | string[];
     }>();
     const recentMachinePaths = useSetting('recentMachinePaths');
     const lastUsedAgent = useSetting('lastUsedAgent');
@@ -937,7 +940,15 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         hydratedTempAuthoringDraft,
         hydratedPersistedAuthoringDraft: hydratedPersistedContentAuthoringDraft,
     });
-    const [isCreating, setIsCreating] = React.useState(false);
+    const [isCreatingLocally, setIsCreating] = React.useState(false);
+    const reentryOperationId = normalizeOptionalParam(actionOperationIdParam);
+    const reentryOperation = useActionOperation(
+        typeof reentryOperationId === 'string' ? reentryOperationId.trim() || null : null,
+    );
+    const isCreating = isCreatingLocally || (
+        reentryOperation?.actionId === 'session.spawn_new'
+        && (reentryOperation.state === 'accepted' || reentryOperation.state === 'running')
+    );
     const [isResumeSupportChecking, setIsResumeSupportChecking] = React.useState(false);
 
     React.useEffect(() => {

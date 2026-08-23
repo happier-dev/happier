@@ -58,7 +58,7 @@ async function setupHarness() {
     errorMessage: 'Daemon RPC is not available',
   }));
   const machineResolveSpawnSessionByNonceSpy = vi.fn(async (): Promise<ResolveSpawnSessionTestResult> => ({ status: 'not_found' }));
-  const machineResolveSpawnSessionByNonceUntilSettledSpy = vi.fn(async (): Promise<ResolveSpawnSessionTestResult> => ({ status: 'not_found' }));
+  const machineResolveSpawnSessionByNonceUntilSettledSpy = vi.fn(async (_params: unknown): Promise<ResolveSpawnSessionTestResult> => ({ status: 'not_found' }));
   const modalConfirmSpy = vi.fn(async () => false);
   const completeMachineSpawnAttemptCustodySpy = vi.fn(async () => true);
   const followUpSpawnedSessionWithServerScopeSpy = vi.fn(async (_params: unknown) => {});
@@ -101,6 +101,7 @@ async function setupHarness() {
       ensureSessionVisibleForMessageRoute: vi.fn(async (sessionId: string) => {
         storageState.sessions[sessionId] = { id: sessionId };
       }),
+      acquireUserRequestLease: () => () => {},
     },
   }));
   vi.doMock('@/sync/store/settingsWriters', () => ({
@@ -218,7 +219,14 @@ async function setupHarness() {
     completeMachineSpawnAttemptCustody: completeMachineSpawnAttemptCustodySpy,
     resetMachineSpawnAttemptCustody: vi.fn(async () => true),
   }));
-
+  vi.doMock('@/sync/ops/machines', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/ops/machines')>('@/sync/ops/machines');
+    return {
+      ...actual,
+      machineResolveSpawnSessionByNonce: machineResolveSpawnSessionByNonceSpy,
+      machineResolveSpawnSessionByNonceUntilSettled: machineResolveSpawnSessionByNonceUntilSettledSpy,
+    };
+  });
   const { useCreateNewSession } = await import('./useCreateNewSession');
   return {
     useCreateNewSession,
@@ -622,6 +630,110 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
     expect(modalAlertSpy).toHaveBeenCalled();
+  });
+
+  it('continues outer follow-up after direct spawn custody settles even when the launcher unmounts', async () => {
+    const {
+      useCreateNewSession,
+      machineSpawnNewSessionSpy,
+      storageState,
+      followUpSpawnedSessionWithServerScopeSpy,
+      completeMachineSpawnAttemptCustodySpy,
+    } = await setupHarness();
+    let resolveSpawn!: (value: Readonly<{
+      type: 'success';
+      sessionId: string;
+      spawnAttemptCustody: Readonly<{
+        status: 'completed';
+        userAttemptId: string;
+        spawnNonce: string;
+        targetFingerprint: string;
+      }>;
+    }>) => void;
+    machineSpawnNewSessionSpy.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSpawn = resolve;
+    }));
+    storageState.sessions['session-created'] = { id: 'session-created' };
+    completeMachineSpawnAttemptCustodySpy.mockResolvedValueOnce(false);
+    const router = { push: vi.fn(), replace: vi.fn() };
+    const afterCreated = vi.fn(async () => {});
+    const hook = await renderHook(() => useCreateNewSession({
+      launchIntentSignature: 'direct-launch-intent',
+      router,
+      selectedMachineId: 'm1',
+      selectedPath: '/tmp',
+      selectedMachine: { id: 'm1', active: true, activeAt: Date.now(), metadata: { host: 'devbox', homeDir: '/Users/alice' } },
+      setIsCreating: vi.fn(),
+      setIsResumeSupportChecking: vi.fn(),
+      settings: { experiments: false } as unknown as Settings,
+      useProfiles: false,
+      selectedProfileId: null,
+      profileMap: new Map(),
+      recentMachinePaths: [],
+      agentType: 'opencode' as any,
+      permissionMode: 'default' as PermissionMode,
+      modelMode: 'default' as ModelMode,
+      promptStore: createNewSessionPromptStore('First turn'),
+      resumeSessionId: '',
+      agentNewSessionOptions: null,
+      machineEnvPresence: { isPreviewEnvSupported: false, isLoading: false, meta: {}, refreshedAt: null, refresh: () => {} },
+      secrets: [],
+      secretBindingsByProfileId: {},
+      selectedSecretIdByProfileIdByEnvVarName: {},
+      sessionOnlySecretValueByProfileIdByEnvVarName: {},
+      selectedMachineCapabilities: {},
+      targetServerId: null,
+      allowedTargetServerIds: undefined,
+    }));
+
+    let createPromise: Promise<void> | void | null = null;
+    await act(async () => {
+      createPromise = hook.getCurrent().handleCreateSession({ afterCreated });
+      await flushHookEffects({ cycles: 1, turns: 2 });
+    });
+
+    expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'm1',
+      serverId: 'server-a',
+      directory: '/tmp',
+      spawnNonce: expect.stringMatching(/^spawn-/),
+      userAttemptId: expect.stringMatching(/^attempt-/),
+    }));
+    expect(router.replace).not.toHaveBeenCalled();
+
+    await hook.unmount();
+    const spawnOptions = machineSpawnNewSessionSpy.mock.calls[0]?.[0] as {
+      spawnNonce: string;
+      userAttemptId: string;
+    };
+    resolveSpawn({
+      type: 'success',
+      sessionId: 'session-created',
+      spawnAttemptCustody: {
+        status: 'completed',
+        userAttemptId: spawnOptions.userAttemptId,
+        spawnNonce: spawnOptions.spawnNonce,
+        targetFingerprint: 'machine.spawn_new:{"machineId":"m1","serverId":"server-a","directory":"/tmp"}',
+      },
+    });
+    await createPromise;
+
+    expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-created',
+      initialMessageText: 'First turn',
+      messageLocalId: expect.stringMatching(/^first-turn-/),
+    }));
+    expect(afterCreated).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-created',
+      launchAttempt: expect.objectContaining({
+        spawnTargetFingerprint: 'machine.spawn_new:{"machineId":"m1","serverId":"server-a","directory":"/tmp"}',
+      }),
+    }));
+    expect(completeMachineSpawnAttemptCustodySpy).toHaveBeenCalledTimes(1);
+    expect(router.replace).toHaveBeenCalledWith(
+      '/session/session-created?serverId=server-a',
+      expect.anything(),
+    );
   });
 
   it('consumes the operation settlement and actual custody identity without a hook-level resolver', async () => {

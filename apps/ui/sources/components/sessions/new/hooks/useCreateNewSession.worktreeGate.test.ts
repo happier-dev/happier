@@ -220,6 +220,7 @@ vi.mock('@/sync/sync', () => ({
         refreshSessions: vi.fn(async () => {}),
         ensureSessionVisibleForMessageRoute: ensureSessionVisibleForMessageRouteMock,
         refreshMachines: vi.fn(async () => {}),
+        acquireUserRequestLease: () => () => {},
         enqueuePendingMessage: vi.fn(async (
             _sessionId: string,
             _message: string,
