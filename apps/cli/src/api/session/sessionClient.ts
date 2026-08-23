@@ -2859,7 +2859,7 @@ export class ApiSessionClient extends EventEmitter {
                 replayPreviouslyObservedMessageIdsForObservation:
                     this.startupMessageCatchUpExplicitAfterSeq !== null,
             })
-                .catch((error) => {
+                .then(() => false, (error) => {
                     if (isAuthenticationError(error)) {
                         logger.debug('[API] Startup transcript catch-up retry failed with terminal auth', {
                             error: serializeAxiosErrorForLog(error),
@@ -2872,7 +2872,7 @@ export class ApiSessionClient extends EventEmitter {
                     return true;
                 })
                 .then((shouldContinue) => {
-                    if (shouldContinue !== false) {
+                    if (shouldContinue) {
                         this.scheduleNextStartupMessageCatchUpRetry();
                     }
                 });
@@ -3211,7 +3211,7 @@ export class ApiSessionClient extends EventEmitter {
                 replayPreviouslyObservedMessageIdsForObservation:
                     startupCursor.replayPreviouslyObservedMessageIdsForObservation,
             })
-                .catch((error) => {
+                .then(() => false, (error) => {
                     if (isAuthenticationError(error)) {
                         logger.debug('[API] Initial transcript catch-up failed with terminal auth', {
                             error: serializeAxiosErrorForLog(error),
@@ -3224,7 +3224,7 @@ export class ApiSessionClient extends EventEmitter {
                     return true;
                 })
                 .then((shouldContinue) => {
-                    if (shouldContinue !== false) {
+                    if (shouldContinue) {
                         this.scheduleNextStartupMessageCatchUpRetry();
                     }
                 });
