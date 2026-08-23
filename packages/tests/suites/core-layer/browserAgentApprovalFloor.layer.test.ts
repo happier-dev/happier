@@ -117,6 +117,26 @@ const READ_ONLY_AGENT_VERBS: readonly ActionId[] = [
 const EXECUTOR_DRIVE_ACTION_ID: ActionId = 'localServices.launcher.start';
 const EXECUTOR_DRIVE_INPUT = { machineId: 'machine_1', targetId: 'managed:web' } as const;
 
+/**
+ * The runtime leaf stands in for the daemon RPC transport, so what it returns must be what the
+ * daemon really returns: `createActionExecutor` projects every successful built-in Action through
+ * its declared `outputSchema` (`actionExecutor.ts` `settleActionOutput`) and answers
+ * `invalid_action_output` otherwise. A leaf returning an invented shape makes an approved dispatch
+ * indistinguishable from a rejected one.
+ */
+const EXECUTOR_DRIVE_LEAF_RESULT = {
+  protocolVersion: 1,
+  machineId: EXECUTOR_DRIVE_INPUT.machineId,
+  targetId: EXECUTOR_DRIVE_INPUT.targetId,
+  status: 'succeeded',
+  snapshot: {
+    v: 1,
+    machineId: EXECUTOR_DRIVE_INPUT.machineId,
+    updatedAt: 1_000,
+    targets: [],
+  },
+} as const;
+
 function unsupportedDep(): never {
   throw new Error('unexpected executor dependency invocation');
 }
@@ -212,7 +232,7 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
       decision: 'reject',
       runtimeLeaf: async () => {
         leafCalls += 1;
-        return { ok: true as const, snapshot: { started: true } };
+        return { ok: true as const, result: EXECUTOR_DRIVE_LEAF_RESULT };
       },
       onApprovalsCreate: () => { created += 1; },
       onApprovalsWait: () => { waited += 1; },
@@ -235,7 +255,7 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
       decision: 'reject',
       runtimeLeaf: async () => {
         leafCalls += 1;
-        return { ok: true as const, snapshot: { started: true } };
+        return { ok: true as const, result: EXECUTOR_DRIVE_LEAF_RESULT };
       },
       onApprovalsCreate: () => { created += 1; },
       onApprovalsWait: () => {},
@@ -256,7 +276,7 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
       decision: 'approve',
       runtimeLeaf: async () => {
         leafCalls += 1;
-        return { ok: true as const, snapshot: { started: true } };
+        return { ok: true as const, result: EXECUTOR_DRIVE_LEAF_RESULT };
       },
       onApprovalsCreate: () => { created += 1; },
       onApprovalsWait: () => { waited += 1; },

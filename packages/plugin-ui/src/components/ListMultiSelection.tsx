@@ -11,13 +11,14 @@ import {
 import { View } from 'react-native';
 
 import {
-  createInitialHappierListMultiSelectionState,
-  reduceHappierListMultiSelection,
+  HAPPIER_LIST_MULTI_SELECTION_INERT_ROW_SNAPSHOT,
+  HAPPIER_LIST_MULTI_SELECTION_INERT_SNAPSHOT,
+  createHappierListMultiSelectionStore,
   type CreateHappierListMultiSelectionStateInput,
-  type HappierListMultiSelectionAction,
+  type HappierListMultiSelectionActions,
   type HappierListMultiSelectionKey,
   type HappierListMultiSelectionSnapshot,
-  type HappierListMultiSelectionState,
+  type HappierListMultiSelectionStore,
 } from '../presentation/collection/multiSelection.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../presentation/portableTypes.js';
 import type { HappierTone } from '../presentation/semantics.js';
@@ -42,46 +43,20 @@ const LIST_MULTI_SELECTION_CONTEXT_GLOBAL_KEY = '__HAPPIER_LIST_MULTI_SELECTION_
 export type ListMultiSelectionKey = HappierListMultiSelectionKey;
 export type ListMultiSelectionSnapshot = HappierListMultiSelectionSnapshot;
 
-export type ListMultiSelectionActions = Readonly<{
-  /** Turn selection mode on, optionally with one row already chosen. */
-  enter: (preselectKey?: ListMultiSelectionKey | null) => void;
-  exit: () => void;
-  clear: () => void;
-  replaceWith: (key: ListMultiSelectionKey) => void;
-  toggle: (key: ListMultiSelectionKey) => void;
-  selectRange: (targetKey: ListMultiSelectionKey) => void;
-  addRange: (targetKey: ListMultiSelectionKey) => void;
-  selectAllVisible: () => void;
-  setSelectedKeys: (keys: readonly ListMultiSelectionKey[]) => void;
-  setFocusedKey: (key: ListMultiSelectionKey | null) => void;
-  isSelected: (key: ListMultiSelectionKey) => boolean;
-}>;
+export type ListMultiSelectionActions = HappierListMultiSelectionActions;
 
-export type ListMultiSelectionStore = ListMultiSelectionActions & Readonly<{
-  getSnapshot: () => ListMultiSelectionSnapshot;
-  /** A row's three facts as one primitive, so a row re-renders only on its own change. */
-  getRowSnapshot: (key: ListMultiSelectionKey) => string;
-  subscribe: (listener: () => void) => () => void;
-  /**
-   * The rows the collection currently shows, in traversal order.
-   *
-   * The MOUNTED COLLECTION owns this call. Only it can see the rows its
-   * virtualizer has not mounted, which is what makes range extension and
-   * select-all agree with what the reader can actually reach. A consumer that
-   * has no such collection supplies rows through the controller hook instead;
-   * the two are mutually exclusive by construction, never two writers.
-   */
-  setVisibleRows: (params: Readonly<{
-    visibleOrderedKeys: readonly ListMultiSelectionKey[];
-    eligibleKeys?: readonly ListMultiSelectionKey[] | ReadonlySet<ListMultiSelectionKey> | null;
-  }>) => void;
-  /** A new scope clears the selection; the same scope only re-syncs the rows. */
-  updateScope: (params: Readonly<{
-    scopeKey: string;
-    visibleOrderedKeys: readonly ListMultiSelectionKey[];
-    eligibleKeys?: readonly ListMultiSelectionKey[] | ReadonlySet<ListMultiSelectionKey> | null;
-  }>) => void;
-}>;
+/**
+ * The subscribable selection owner, re-exported under the author-facing name.
+ *
+ * The store itself lives beside its reducer in the presentation layer, so a
+ * consumer with its own list implementation — `apps/ui`'s sessions list — binds
+ * the same object without importing this component module at all.
+ */
+export type ListMultiSelectionStore = HappierListMultiSelectionStore;
+
+export const createListMultiSelectionStore: (
+  input: CreateHappierListMultiSelectionStateInput,
+) => ListMultiSelectionStore = createHappierListMultiSelectionStore;
 
 type ListMultiSelectionContextGlobal = typeof globalThis & {
   [LIST_MULTI_SELECTION_CONTEXT_GLOBAL_KEY]?: React.Context<ListMultiSelectionStore | null>;
@@ -98,17 +73,7 @@ function resolveListMultiSelectionContext(): React.Context<ListMultiSelectionSto
 
 const ListMultiSelectionContext = resolveListMultiSelectionContext();
 
-const INERT_SNAPSHOT: ListMultiSelectionSnapshot = Object.freeze({
-  isSelectionMode: false,
-  selectedKeys: new Set<ListMultiSelectionKey>(),
-  anchorKey: null,
-  focusedKey: null,
-  visibleOrderedKeys: [],
-  eligibleKeys: new Set<ListMultiSelectionKey>(),
-  scopeKey: '',
-  version: 0,
-  count: 0,
-});
+const INERT_SNAPSHOT: ListMultiSelectionSnapshot = HAPPIER_LIST_MULTI_SELECTION_INERT_SNAPSHOT;
 
 function subscribeInert(): () => void {
   return () => undefined;
@@ -119,68 +84,11 @@ function getInertSnapshot(): ListMultiSelectionSnapshot {
 }
 
 function getInertRowSnapshot(): string {
-  return '0:0:0';
+  return HAPPIER_LIST_MULTI_SELECTION_INERT_ROW_SNAPSHOT;
 }
 
 function noop(): void {
   // Optional hooks are intentionally inert outside a provider.
-}
-
-function createSnapshot(state: HappierListMultiSelectionState): ListMultiSelectionSnapshot {
-  return { ...state, count: state.selectedKeys.size };
-}
-
-export function createListMultiSelectionStore(
-  input: CreateHappierListMultiSelectionStateInput,
-): ListMultiSelectionStore {
-  const listeners = new Set<() => void>();
-  let state = createInitialHappierListMultiSelectionState(input);
-  let snapshot = createSnapshot(state);
-
-  const dispatch = (action: HappierListMultiSelectionAction) => {
-    const nextState = reduceHappierListMultiSelection(state, action);
-    if (nextState === state) return;
-    state = nextState;
-    snapshot = createSnapshot(state);
-    for (const listener of listeners) listener();
-  };
-
-  return {
-    getSnapshot: () => snapshot,
-    getRowSnapshot: (key) => [
-      state.isSelectionMode ? '1' : '0',
-      state.selectedKeys.has(key) ? '1' : '0',
-      state.focusedKey === key ? '1' : '0',
-    ].join(':'),
-    subscribe: (listener) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-    setVisibleRows: (params) => dispatch({
-      type: 'setVisibleOrder',
-      visibleOrderedKeys: params.visibleOrderedKeys,
-      eligibleKeys: params.eligibleKeys,
-    }),
-    updateScope: (params) => dispatch({
-      type: 'resetScope',
-      scopeKey: params.scopeKey,
-      visibleOrderedKeys: params.visibleOrderedKeys,
-      eligibleKeys: params.eligibleKeys,
-    }),
-    enter: (preselectKey) => dispatch({ type: 'enter', key: preselectKey }),
-    exit: () => dispatch({ type: 'exit' }),
-    clear: () => dispatch({ type: 'clear' }),
-    replaceWith: (key) => dispatch({ type: 'replace', key }),
-    toggle: (key) => dispatch({ type: 'toggle', key }),
-    selectRange: (targetKey) => dispatch({ type: 'selectRange', targetKey }),
-    addRange: (targetKey) => dispatch({ type: 'selectRange', targetKey, add: true }),
-    selectAllVisible: () => dispatch({ type: 'selectAllVisible' }),
-    setSelectedKeys: (keys) => dispatch({ type: 'setSelectedKeys', keys }),
-    setFocusedKey: (key) => dispatch({ type: 'setFocusedKey', key }),
-    isSelected: (key) => state.selectedKeys.has(key),
-  };
 }
 
 /**

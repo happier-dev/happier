@@ -125,6 +125,41 @@ export {
   type HappierRovingEntry,
   type HappierSelectableRole,
 } from './collection/semantics.js';
+/**
+ * The one keyed multi-selection state machine and its subscribable store.
+ *
+ * Exported here — beside the collection semantics rather than from the author
+ * component layer — because `apps/ui`'s sessions list binds it with its own list
+ * implementation and must not pull the plugin component barrel to do so.
+ */
+export {
+  HAPPIER_LIST_MULTI_SELECTION_INERT_ROW_SNAPSHOT,
+  HAPPIER_LIST_MULTI_SELECTION_INERT_SNAPSHOT,
+  createHappierListMultiSelectionStore,
+  createInitialHappierListMultiSelectionState,
+  readHappierPointerModifiers,
+  reduceHappierListMultiSelection,
+  resolveHappierListMultiSelectionKeyboardIntent,
+  resolveHappierListMultiSelectionPointerAction,
+  resolveHappierListMultiSelectionRange,
+  resolveHappierPointerPlatform,
+  toHappierListMultiSelectionSnapshot,
+  type CreateHappierListMultiSelectionStateInput,
+  type HappierListMultiSelectionAction,
+  type HappierListMultiSelectionActions,
+  type HappierListMultiSelectionKey,
+  type HappierListMultiSelectionKeyboardInput,
+  type HappierListMultiSelectionKeyboardIntent,
+  type HappierListMultiSelectionPointerAction,
+  type HappierListMultiSelectionPointerInput,
+  type HappierListMultiSelectionRangeInput,
+  type HappierListMultiSelectionRowsInput,
+  type HappierListMultiSelectionSnapshot,
+  type HappierListMultiSelectionState,
+  type HappierListMultiSelectionStore,
+  type HappierPointerModifiers,
+  type HappierPointerPlatform,
+} from './collection/multiSelection.js';
 export {
   HappierSurface,
   type HappierSurfaceProps,

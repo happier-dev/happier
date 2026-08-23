@@ -36,7 +36,7 @@ import {
  * `startEntrySession` was complete and unit-tested, and no user could reach a
  * single line of it: a mounted surface holds Actions, not Account storage and
  * not the canonical creator, so without a registered Action the common header's
- * Ask and Fix controls could only ever call something in-process. These cases
+ * configured action controls could only ever call something in-process. These cases
  * exercise the seam through `activate` and the declared manifest, because a
  * handler nothing registers — or one declared on a surface the mounted caller is
  * not — is exactly the defect this proves is gone.
@@ -150,15 +150,14 @@ describe('the Session-start Action a mounted header can actually press', () => {
         }
     });
 
-    it('creates one Session, links it and opens it for an Ask on a new destination', async () => {
+    it('creates one Session, links it and opens it for a reference-only action on a new destination', async () => {
         const { collections } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
         const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
         const handler = registeredHandler(TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1);
 
         const result = await handler({
             ...START_INPUT_BASE,
-            intent: 'ask',
-            workflowSubject: 'pullRequest',
+            workspaceMode: 'reference_only',
             destination: NEW_DESTINATION,
         }, createContext(collections, invoker));
 
@@ -178,8 +177,10 @@ describe('the Session-start Action a mounted header can actually press', () => {
         // the caller's own — this Action mints neither.
         expect(spawn.directory).toBe('/workspaces/example');
         expect(spawn.creationKey).toBe('creation-key-1');
-        // A Triage start carries no prose: a rejoined Session keeps whatever the
-        // user had typed, and nothing is sent on their behalf.
+        // Nothing was authored on the reader's behalf: this Action's wire carries
+        // no title at all, and the only admitted `initialMessage` producer is a
+        // configured action's own resolved prompt invocation (`PLAN.md` §0a A4),
+        // which this start did not carry.
         expect(Object.keys(spawn)).not.toContain('initialMessage');
         expect(Object.keys(spawn)).not.toContain('title');
 
@@ -188,7 +189,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
         expect(rows[0]?.displayPathAtLink).toBe('example/repository #17');
     });
 
-    it('refuses a Fix into an existing Session before it creates, links or opens anything', async () => {
+    it('refuses a repository action into an existing Session before it creates, links or opens anything', async () => {
         const { collections } = createTestkitCorpusCollections();
         const handler = registeredHandler(TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1);
         // No invoker at all: any host Action call here throws rather than being
@@ -197,13 +198,12 @@ describe('the Session-start Action a mounted header can actually press', () => {
 
         expect(await handler({
             ...START_INPUT_BASE,
-            intent: 'fix',
-            workflowSubject: 'issue',
+            workspaceMode: 'repository',
             destination: { kind: 'existing', sessionId: 'session-a' },
         }, context)).toEqual({
             v: 1,
             type: 'rejected',
-            reason: 'existingSessionNotOfferedForFix',
+            reason: 'existingSessionRequiresReferenceOnlyMode',
         });
         expect(await readLinkRows(collections, 'session-a')).toEqual([]);
     });
@@ -217,8 +217,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
 
         expect(await handler({
             ...START_INPUT_BASE,
-            intent: 'ask',
-            workflowSubject: 'issue',
+            workspaceMode: 'reference_only',
             destination: NEW_DESTINATION,
         }, createContext(collections, invoker))).toEqual({
             v: 1,
@@ -237,8 +236,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
 
         const result = await handler({
             ...START_INPUT_BASE,
-            intent: 'ask',
-            workflowSubject: 'issue',
+            workspaceMode: 'reference_only',
             destination: NEW_DESTINATION,
         }, createContext({
             ...collections,
@@ -281,8 +279,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
         await handler({
             ...START_INPUT_BASE,
             entryRef,
-            intent: 'ask',
-            workflowSubject: 'issue',
+            workspaceMode: 'reference_only',
             destination: NEW_DESTINATION,
         }, createContext({
             ...collections,
@@ -344,7 +341,7 @@ describe('the explicit unlink Action', () => {
 
 describe('the Session-start wire', () => {
     /**
-     * The pull-request Fix materialization is deliberately unreachable from this
+     * The pull-request materialization is deliberately unreachable from this
      * Action: preparing one needs the selected source's admitted
      * `prepareReviewWorkspace` operation, and no shipped source binds it. A wire
      * that accepted the request would put a control in the product that always
@@ -353,8 +350,7 @@ describe('the Session-start wire', () => {
     it('cannot carry a review-workspace request while nothing can prepare one', () => {
         expect(TriageStartEntrySessionInputV1Schema.safeParse({
             ...START_INPUT_BASE,
-            intent: 'fix',
-            workflowSubject: 'pullRequest',
+            workspaceMode: 'pull_request',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-1',
@@ -364,14 +360,16 @@ describe('the Session-start wire', () => {
         }).success).toBe(false);
     });
 
-    it('cannot carry prose into the Session it creates', () => {
-        // The no-auto-send rule is structural here, not a stripping step: the
-        // spawn members a caller may choose are closed, so an initial message
-        // cannot even be transmitted.
+    it('cannot carry a caller\'s own prose into the Session it creates', () => {
+        // Structural, not a stripping step: the spawn members a caller may
+        // choose are closed, so a caller cannot smuggle prose of its own into
+        // the creation. `PLAN.md` §0a A4 admits a prompt body only as the
+        // resolution of a configured action's own Prompt Library invocation —
+        // a producer this wire does not yet have — and never as a free-form
+        // member an arbitrary caller may set.
         expect(TriageStartEntrySessionInputV1Schema.safeParse({
             ...START_INPUT_BASE,
-            intent: 'ask',
-            workflowSubject: 'issue',
+            workspaceMode: 'reference_only',
             destination: {
                 ...NEW_DESTINATION,
                 spawn: { ...TESTKIT_SPAWN_REQUEST, initialMessage: 'review this' },

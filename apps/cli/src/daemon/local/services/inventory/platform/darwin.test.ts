@@ -85,16 +85,7 @@ describe('parseDarwinLsofTcpListenOutput', () => {
             }
             if (command === 'ps') {
                 return {
-                    stdout: '  123    99 npm run dev -- --token raw-secret\n',
-                };
-            }
-            if (command === 'lsof' && args.includes('txt')) {
-                return {
-                    stdout: [
-                        'p123',
-                        'ftxt',
-                        'n/opt/happier/bin/happier',
-                    ].join('\n'),
+                    stdout: '  123    99   501 npm run dev -- --token raw-secret\n',
                 };
             }
             if (command === 'lsof' && args.includes('cwd')) {
@@ -108,7 +99,7 @@ describe('parseDarwinLsofTcpListenOutput', () => {
             throw new Error(`unexpected boundary call ${command} ${args.join(' ')}`);
         });
 
-        const result = await readDarwinLocalServiceListeners({ execFile });
+        const result = await readDarwinLocalServiceListeners({ execFile, daemonUserId: '501' });
         const processes = (result as { processes?: ReadonlyMap<number, LocalServiceProcessFact> }).processes;
         const snapshot = normalizeLocalServiceScan({
             machineId: 'machine-a',
@@ -122,8 +113,8 @@ describe('parseDarwinLsofTcpListenOutput', () => {
         expect(processes?.get(123)).toMatchObject({
             pid: 123,
             ppid: 99,
-            executablePath: '/opt/happier/bin/happier',
             cwd: '/Users/lee/repo/app',
+            processOwnership: 'self',
         });
         expect(snapshot.entries[0]).toMatchObject({
             workspaceAssociationConfidence: 'high',
@@ -156,7 +147,7 @@ describe('parseDarwinLsofTcpListenOutput', () => {
             }
             if (command === 'ps') {
                 return {
-                    stdout: '  123    99 Mon Jun 30 12:34:56 2025 npm run dev\n',
+                    stdout: '  123    99   501 Mon Jun 30 12:34:56 2025 npm run dev\n',
                 };
             }
             if (command === 'lsof' && args.includes('cwd')) {
@@ -165,13 +156,59 @@ describe('parseDarwinLsofTcpListenOutput', () => {
             throw new Error(`unexpected boundary call ${command} ${args.join(' ')}`);
         });
 
-        const result = await readDarwinLocalServiceListeners({ execFile });
+        const result = await readDarwinLocalServiceListeners({ execFile, daemonUserId: '501' });
 
         expect(result.processes.get(123)?.processStartTimeMs).toBe(startedAt);
-        expect(execFile).toHaveBeenCalledWith('ps', ['-o', 'pid=,ppid=,lstart=,command=', '-p', '123'], {
+        expect(execFile).toHaveBeenCalledWith('ps', ['-o', 'pid=,ppid=,uid=,lstart=,command=', '-p', '123'], {
             timeout: 2_000,
             maxBuffer: 1024 * 1024,
         });
+    });
+
+    it('marks a listener owned by another OS user as not the daemon\'s to control', async () => {
+        const execFile = vi.fn(async (command: string, args: readonly string[]) => {
+            if (command === 'lsof' && args.includes('-iTCP')) {
+                return {
+                    stdout: ['p123', 'cpostgres', 'nTCP 127.0.0.1:5432 (LISTEN)'].join('\n');
+                };
+            }
+            if (command === 'ps') {
+                return { stdout: '  123     1     0 Mon Jun 30 12:34:56 2025 /usr/sbin/systemd-resolved\n' };
+            }
+            return { stdout: '' };
+        });
+
+        const result = await readDarwinLocalServiceListeners({ execFile, daemonUserId: '501' });
+
+        expect(result.processes.get(123)?.processOwnership).toBe('other');
+    });
+
+    it('recovers the listener list when lsof exits non-zero but still printed it', async () => {
+        // `lsof` exits non-zero whenever any single file is inaccessible; discarding that stdout
+        // turned a degraded scan into an authoritative "no services are running".
+        const execFile = vi.fn(async (command: string, args: readonly string[]) => {
+            if (command === 'lsof' && args.includes('-iTCP')) {
+                throw Object.assign(new Error('lsof: WARNING: raw-secret'), {
+                    stdout: ['p123', 'cnode', 'nTCP 127.0.0.1:5173 (LISTEN)'].join('\n'),
+                });
+            }
+            if (command === 'ps') {
+                return { stdout: '  123    99   501 npm run dev\n' };
+            }
+            return { stdout: '' };
+        });
+
+        const result = await readDarwinLocalServiceListeners({ execFile, daemonUserId: '501' });
+
+        expect(result.listeners).toEqual([
+            { address: '127.0.0.1', port: 5173, protocol: 'tcp', pid: 123 },
+        ]);
+        expect(result.diagnostics).toEqual([{
+            code: 'darwin_lsof_scan_partial',
+            severity: 'warning',
+            message: 'Darwin local-service listener scan was incomplete; recovered partial output.',
+        }]);
+        expect(JSON.stringify(result.diagnostics)).not.toContain('raw-secret');
     });
 
     it('collects listener ancestor facts so terminal registry attribution works by lineage on Darwin', async () => {

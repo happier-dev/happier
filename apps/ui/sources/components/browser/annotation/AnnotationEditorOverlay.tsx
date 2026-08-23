@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { PanResponder, Platform, Pressable, View } from 'react-native';
 import type { GestureResponderEvent, PanResponderGestureState } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { DrawnLinePath } from '@/components/instrument';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -74,33 +75,38 @@ const stylesheet = StyleSheet.create((theme) => ({
     visualLayer: {
         ...StyleSheet.absoluteFillObject,
     },
+    // Marks are drawn over ARBITRARY page content, so no single ink can be guaranteed legible.
+    // Every mark is therefore cased: a light hairline just outside a dark line. One of the two
+    // always separates from whatever is underneath, which is how a map draws a road over terrain,
+    // and it is what makes SC 1.4.11 satisfiable here at all — the marks are the only indication
+    // that a region is selected.
     rectMark: {
         position: 'absolute',
         borderWidth: 2,
         borderRadius: 4,
+        borderColor: theme.colors.button.primary.background,
         backgroundColor: 'transparent',
     },
+    rectMarkCasing: {
+        ...StyleSheet.absoluteFillObject,
+        margin: -3,
+        borderWidth: 1,
+        borderRadius: 6,
+        borderColor: theme.colors.surface.base,
+    },
+    // Element vs region is a difference of LINE STYLE, not of hue: a user who cannot separate the
+    // theme's amber from its ink still sees solid against dashed.
     elementMark: {
-        borderColor: theme.colors.button.primary.background,
+        borderStyle: 'solid',
     },
     regionMark: {
-        borderColor: theme.colors.state.warning.foreground,
+        borderStyle: 'dashed',
     },
     strokeMark: {
         position: 'absolute',
-        minWidth: 8,
-        minHeight: 8,
-        borderWidth: 1,
-        borderStyle: 'dashed',
-        borderColor: theme.colors.state.warning.foreground,
-        borderRadius: 4,
     },
-    strokePoint: {
-        position: 'absolute',
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: theme.colors.state.warning.foreground,
+    strokeLayer: {
+        ...StyleSheet.absoluteFillObject,
     },
     panel: {
         gap: 8,
@@ -342,6 +348,65 @@ function resolveStrokeBounds(points: readonly AnnotationGesturePoint[]): Browser
     };
 }
 
+/**
+ * The freehand stroke, as ONE path.
+ *
+ * It used to be a dashed box containing one 6×6 `View` per sampled point — up to 512 of them for a
+ * single mark, and a shape that showed the stroke's bounding box rather than the line the user
+ * drew. This is the line, through the kit's {@link DrawnLinePath}, which is the canonical owner of
+ * "a path that draws itself in": Skia path-trim at the `full` motion level, the shared opacity
+ * entrance elsewhere and on web, and no motion at all under reduce-motion. It is also the product's
+ * most distinctive interaction finally looking like itself — the mark draws in over ~440ms on
+ * commit instead of appearing as dots.
+ *
+ * Two paths, not one: a `surface.base` casing under the ink, so the stroke stays visible over page
+ * content of any colour (see the `rectMark` note above).
+ */
+function AnnotationStrokeMark(props: Readonly<{
+    testID: string;
+    draftId: string;
+    points: readonly AnnotationGesturePoint[];
+}>): React.ReactElement | null {
+    const { theme } = useUnistyles();
+    const bounds = resolveStrokeBounds(props.points);
+    if (!bounds) return null;
+
+    // Path coordinates are relative to the mark's own box so the SVG viewBox stays at the origin.
+    const path = props.points
+        .map((point, index) => `${index === 0 ? 'M' : 'L'}${(point.x - bounds.x).toFixed(2)} ${(point.y - bounds.y).toFixed(2)}`)
+        .join(' ');
+
+    return (
+        <View
+            testID={`${props.testID}-mark-${props.draftId}`}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={[stylesheet.strokeMark, rectStyle(bounds)]}
+        >
+            <View style={stylesheet.strokeLayer}>
+                <DrawnLinePath
+                    testID={`${props.testID}-mark-${props.draftId}-casing`}
+                    path={path}
+                    width={bounds.width}
+                    height={bounds.height}
+                    color={theme.colors.surface.base}
+                    strokeWidth={5}
+                />
+            </View>
+            <View style={stylesheet.strokeLayer}>
+                <DrawnLinePath
+                    testID={`${props.testID}-mark-${props.draftId}-path`}
+                    path={path}
+                    width={bounds.width}
+                    height={bounds.height}
+                    color={theme.colors.button.primary.background}
+                    strokeWidth={2.5}
+                />
+            </View>
+        </View>
+    );
+}
+
 function AnnotationVisualMarks(props: Readonly<{
     testID: string;
     marks: readonly AnnotationEditorMark[];
@@ -356,32 +421,13 @@ function AnnotationVisualMarks(props: Readonly<{
         <View testID={`${props.testID}-marks`} pointerEvents="none" style={stylesheet.visualLayer}>
             {visibleMarks.map((mark) => {
                 if (mark.kind === 'stroke') {
-                    const points = mark.points ?? [];
-                    const bounds = resolveStrokeBounds(points);
-                    if (!bounds) return null;
                     return (
-                        <View
+                        <AnnotationStrokeMark
                             key={mark.draftId}
-                            testID={`${props.testID}-mark-${mark.draftId}`}
-                            accessibilityElementsHidden
-                            importantForAccessibility="no-hide-descendants"
-                            style={[stylesheet.strokeMark, rectStyle(bounds)]}
-                        >
-                            {points.map((point, index) => (
-                                <View
-                                    // Points are stable inside an immutable draft stroke.
-                                    key={`${point.x}:${point.y}:${index}`}
-                                    testID={`${props.testID}-mark-${mark.draftId}-point-${index}`}
-                                    style={[
-                                        stylesheet.strokePoint,
-                                        {
-                                            left: point.x - bounds.x - 3,
-                                            top: point.y - bounds.y - 3,
-                                        },
-                                    ]}
-                                />
-                            ))}
-                        </View>
+                            testID={props.testID}
+                            draftId={mark.draftId}
+                            points={mark.points ?? []}
+                        />
                     );
                 }
                 if (!mark.rect) return null;
@@ -396,7 +442,9 @@ function AnnotationVisualMarks(props: Readonly<{
                             mark.kind === 'element' ? stylesheet.elementMark : stylesheet.regionMark,
                             rectStyle(mark.rect),
                         ]}
-                    />
+                    >
+                        <View style={stylesheet.rectMarkCasing} />
+                    </View>
                 );
             })}
         </View>

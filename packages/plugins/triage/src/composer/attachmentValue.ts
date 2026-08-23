@@ -2,10 +2,15 @@ import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/plugin-sdk';
 import { defineProtocolLiteral, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 import {
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+    TriageEntryLocatorV1Schema,
     TriageEntryRefV1Schema,
     TriageSourceInstanceRefV1Schema,
 } from '@happier-dev/triage-protocol/v1';
-import type { TriageEntryRefV1, TriageSourceInstanceRefV1 } from '@happier-dev/triage-protocol/v1';
+import type {
+    TriageEntryLocatorV1,
+    TriageEntryRefV1,
+    TriageSourceInstanceRefV1,
+} from '@happier-dev/triage-protocol/v1';
 
 import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
 
@@ -53,6 +58,7 @@ export type TriageComposerEntryAttachmentValueV1 = Readonly<{
     v: 1;
     entryRef: TriageEntryRefV1;
     sourceInstance: TriageSourceInstanceRefV1;
+    lastKnownLocator?: TriageEntryLocatorV1;
 }>;
 
 /**
@@ -65,11 +71,25 @@ export type TriageComposerEntryAttachmentValueV1 = Readonly<{
  * expressible in a closed object shape, so it lives one layer up in
  * `parseTriageComposerEntryAttachmentValue`, which is the only reader of a
  * persisted value and the gate every write passes through before it is planned.
+ *
+ * `lastKnownLocator` is the one routing HINT the record carries, and it is
+ * exactly the canonical published locator — bounded by the source contract, not
+ * by a second grammar spelled here. It exists because `get` is defined over an
+ * exact configured connection plus a local ref, and an ACCOUNT-WIDE connection
+ * names no provider scope at all: without the last locator the target observed
+ * for this entry, a perfectly valid attachment resolves `unresolved` on every
+ * dispatch, forever. It grants no authority and decides nothing — the source is
+ * still the only parser of its own opaque `routingToken`, still reauthorizes the
+ * exact attached account, and the resolver still refuses any answer whose
+ * immutable identity is not the one that was attached. A stale hint therefore
+ * produces a refusal the reader can act on, never an operation against another
+ * entry that happens to occupy the same route.
  */
 export const TriageComposerEntryAttachmentValueV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     entryRef: TriageEntryRefV1Schema,
     sourceInstance: TriageSourceInstanceRefV1Schema,
+    lastKnownLocator: TriageEntryLocatorV1Schema.optional(),
 }, { policy: 'closed' });
 
 export type TriageComposerEntryAttachmentParseResultV1 =
@@ -88,10 +108,11 @@ export type TriageComposerEntryAttachmentParseResultV1 =
  * 512 code-point attachment-key ceiling — while the digest is always 43
  * characters.
  *
- * The configured instance is deliberately not an input. One entry attached
- * twice, through two connections, is one attachment: the qualified identity plus
- * this key is what makes the repeat update in place instead of adding a second
- * selection of the same entry.
+ * The configured instance is deliberately not an input, and neither is the
+ * routing hint. One entry attached twice, through two connections or after its
+ * repository moved, is one attachment: the qualified identity plus this key is
+ * what makes the repeat update in place instead of adding a second selection of
+ * the same entry. Routing is mutable; identity is not, and only identity keys.
  */
 export function deriveTriageComposerEntryAttachmentKey(entryRef: TriageEntryRefV1): string {
     return computeCanonicalDomainSeparatedDigest(TRIAGE_ENTRY_ATTACHMENT_KEY_DOMAIN_V1, [

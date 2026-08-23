@@ -511,6 +511,43 @@ describe('core e2e: local service preview over production PMS relay', () => {
       context: 'local preview HTTP request through daemon PMS relay',
     });
 
+    // S-1 (lane C1): live, cross-process proof that a public/private preview URL cannot splice a
+    // second HTTP request into the traffic delivered to the user's own localhost service.
+    //
+    // The payload is PERCENT-ENCODED on the wire on purpose: Fastify's router decodes `%0d%0a`
+    // into a real CRLF before any handler sees it, and the preview proxy then hand-writes an
+    // HTTP/1.1 request line onto the tunnel. This asserts against the REAL upstream app, so it
+    // fails if the guard is absent anywhere along router -> route -> adapter -> relay -> socket.
+    // The private preview is used because it reaches the identical sink over plain HTTP and its
+    // required session access level is only `view`.
+    const smuggledCookie = httpResponse.current?.cookie;
+    if (!smuggledCookie) {
+      throw new Error('Missing preview cookie for the CRLF smuggling probe');
+    }
+    const requestsBeforeSmugglingProbe = previewApp.requests.length;
+    const smugglingUrl = new URL(registration.data.accessUrl);
+    smugglingUrl.search = '';
+    smugglingUrl.pathname = `/v1/local-services/preview/${encodeURIComponent(previewId)}`;
+    const smugglingResponse = await fetch(
+      `${smugglingUrl.toString()}/foo%0d%0aX-Injected:%20yes%0d%0a%0d%0aGET%20/admin%20HTTP/1.1`,
+      { headers: { cookie: smuggledCookie }, redirect: 'manual' },
+    );
+    await smugglingResponse.text();
+    for (const [name, value] of smugglingResponse.headers.entries()) {
+      expect(`${name}: ${value}`).not.toMatch(/[\r\n]/u);
+    }
+
+    await waitFor(() => previewApp!.requests.length > requestsBeforeSmugglingProbe, {
+      timeoutMs: 20_000,
+      context: 'CRLF smuggling probe reaches the upstream preview app',
+    });
+    const smugglingProbeRequests = previewApp.requests.slice(requestsBeforeSmugglingProbe);
+    // Exactly ONE upstream request, and no second `GET /admin` spliced in behind it.
+    expect(smugglingProbeRequests).toHaveLength(1);
+    expect(smugglingProbeRequests[0]).not.toContain('\r');
+    expect(smugglingProbeRequests[0]).not.toContain('\n');
+    expect(previewApp.requests.some((entry) => entry.startsWith('/admin'))).toBe(false);
+
     const hmrUrl = new URL(registration.data.accessUrl);
     hmrUrl.pathname = `/v1/local-services/preview/${encodeURIComponent(previewId)}/@vite/client`;
     hmrUrl.searchParams.delete('previewToken');

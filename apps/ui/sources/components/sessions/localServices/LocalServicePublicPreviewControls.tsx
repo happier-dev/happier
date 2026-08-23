@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import type {
     LocalServiceLaunchTargetV1,
+    LocalServicePublicExposureModeV1,
     LocalServicePublicExposureV1,
 } from '@happier-dev/protocol';
 
@@ -11,8 +12,13 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
-import type { LocalServicePublicPreviewActions } from '@/components/sessions/localServices/publicPreviewActions';
 import {
+    DEFAULT_LOCAL_SERVICE_PUBLIC_PREVIEW_TTL_MS,
+    type LocalServicePublicPreviewActions,
+    type LocalServicePublicPreviewCreateOptions,
+} from '@/components/sessions/localServices/publicPreviewActions';
+import {
+    selectLocalServicePublicExposureExpiry,
     selectLocalServicePublicPreviewRows,
     selectLocalServicePublicPreviewRowsForPreview,
     type LocalServicePublicPreviewState,
@@ -92,8 +98,90 @@ function activeExposuresForTarget(
     return hasPreviewId(target) ? activeExposuresForPreview(state, target.previewId) : [];
 }
 
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+/** The lifetimes offered at create time, narrowed by the server's `maxTtlMs`. */
+const PUBLIC_PREVIEW_TTL_CHOICES_MS: readonly number[] = [
+    10 * MINUTE_MS,
+    HOUR_MS,
+    8 * HOUR_MS,
+    24 * HOUR_MS,
+];
+
+const PUBLIC_PREVIEW_MODE_LABEL_KEYS = {
+    secret_link: 'localServices.publicPreview.secretLinkMode',
+    authenticated: 'localServices.publicPreview.authenticatedMode',
+    public: 'localServices.publicPreview.publicMode',
+} as const satisfies Record<LocalServicePublicExposureModeV1, string>;
+
+function modeLabel(mode: LocalServicePublicExposureModeV1): string {
+    return t(PUBLIC_PREVIEW_MODE_LABEL_KEYS[mode]);
+}
+
+function ttlChoiceLabel(ttlMs: number): string {
+    if (ttlMs >= DAY_MS) return t('localServices.publicPreview.ttlOptionDays', { count: Math.round(ttlMs / DAY_MS) });
+    if (ttlMs >= HOUR_MS) return t('localServices.publicPreview.ttlOptionHours', { count: Math.round(ttlMs / HOUR_MS) });
+    return t('localServices.publicPreview.ttlOptionMinutes', { count: Math.round(ttlMs / MINUTE_MS) });
+}
+
+/**
+ * Remaining lifetime as plain text (G15).
+ *
+ * Deliberately not a ticking countdown: lane F0 owns the live, second-granular treatment. This is
+ * the honest data — recomputed on every render the daemon watch triggers — so the link stops
+ * claiming to be usable after its deadline even before F0's motion lands.
+ */
+function expiresInLabel(remainingMs: number): string {
+    if (remainingMs >= DAY_MS) {
+        return t('localServices.publicPreview.expiresInDays', { count: Math.floor(remainingMs / DAY_MS) });
+    }
+    if (remainingMs >= HOUR_MS) {
+        return t('localServices.publicPreview.expiresInHours', { count: Math.floor(remainingMs / HOUR_MS) });
+    }
+    return t('localServices.publicPreview.expiresInMinutes', { count: Math.floor(remainingMs / MINUTE_MS) });
+}
+
+function resolveTtlChoices(maxTtlMs: number | undefined): readonly number[] {
+    const withinPolicy = typeof maxTtlMs === 'number'
+        ? PUBLIC_PREVIEW_TTL_CHOICES_MS.filter((choice) => choice <= maxTtlMs)
+        : PUBLIC_PREVIEW_TTL_CHOICES_MS;
+    // A policy tighter than the shortest offer still gets one honest option: its own ceiling.
+    if (withinPolicy.length > 0) return withinPolicy;
+    return [typeof maxTtlMs === 'number' && maxTtlMs > 0 ? maxTtlMs : DEFAULT_LOCAL_SERVICE_PUBLIC_PREVIEW_TTL_MS];
+}
+
+/**
+ * One bounded choice through the canonical modal owner. Resolves to the picked value, or `null`
+ * when the user backs out — cancelling anywhere in the flow creates nothing.
+ */
+async function pickOne<TValue>(input: Readonly<{
+    title: string;
+    message?: string;
+    choices: readonly Readonly<{ value: TValue; label: string }>[];
+}>): Promise<TValue | null> {
+    return await new Promise<TValue | null>((resolve) => {
+        let picked: TValue | null = null;
+        void Modal.alertAsync(
+            input.title,
+            input.message,
+            [
+                ...input.choices.map((choice) => ({
+                    text: choice.label,
+                    onPress: () => {
+                        picked = choice.value;
+                    },
+                })),
+                { text: t('common.cancel'), style: 'cancel' as const },
+            ],
+        ).then(() => resolve(picked));
+    });
+}
+
 function ExposureActions(props: Readonly<{
     exposure: LocalServicePublicExposureV1;
+    expired: boolean;
     actions: LocalServicePublicPreviewActions;
     testID: string;
 }>): React.ReactElement {

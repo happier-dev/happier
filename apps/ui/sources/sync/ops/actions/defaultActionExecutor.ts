@@ -7,6 +7,7 @@ import {
   isApprovalRequiredByActionsSettings,
   SessionModelTransitionRequestV1Schema,
   SessionModelTransitionResultV1Schema,
+  type ActionExecutorContext,
   type ActionExecutorDeps,
   type ActionDefinitionV1,
   type ActionId,
@@ -914,8 +915,18 @@ function projectSessionInteractionRpcResult(result: unknown): unknown {
 
   const executor = createActionExecutor(deps);
 
+  // Surface attribution is owned by the host that constructs the executor, mirroring
+  // `apps/cli/src/session/actions/createCliActionExecutor.ts` (`?? 'cli'`). This factory is the
+  // app client's entrypoint, so an unattributed caller is a `ui` caller — a `voice` or `plugin`
+  // caller stamps its own surface and still wins. Without this the surface reaches the catalog
+  // gate nullish, which now fails closed (INV-1 / DEC-2).
+  const resolveContext = (context: Parameters<typeof executor.execute>[2]): ActionExecutorContext => ({
+    ...(context ?? {}),
+    surface: context?.surface ?? 'ui',
+  });
+
   return {
-    prepare: async (actionId, input, context) => await executor.prepare(actionId, input, context),
-    execute: async (actionId, input, context) => await executor.execute(actionId, input, context),
+    prepare: async (actionId, input, context) => await executor.prepare(actionId, input, resolveContext(context)),
+    execute: async (actionId, input, context) => await executor.execute(actionId, input, resolveContext(context)),
   };
 }
