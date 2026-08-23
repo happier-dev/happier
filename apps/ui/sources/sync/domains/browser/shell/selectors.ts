@@ -7,6 +7,20 @@ export type BrowserToolbarModel = Readonly<{
     canReload: boolean;
     canStop: boolean;
     isLoading: boolean;
+    /**
+     * Whether the engine can EVER report back/forward history, as opposed to whether history is
+     * available right now. A permanently-disabled control is a lie about the product: a sandboxed
+     * cross-origin iframe cannot read its guest's history, and the Wry desktop child view has
+     * neither a history producer nor a forward dispatcher. Those engines hide the pair; an engine
+     * that reports history (the RN `WebView`, a daemon-authoritative streamed surface) shows it and
+     * enables it from `canGoBack`/`canGoForward`.
+     *
+     * The decision lives here, in the capability layer the chrome consumes, so the toolbar never
+     * re-derives per-engine truth.
+     */
+    showBackForward: boolean;
+    /** Whether reload/stop exist at all on this engine (they share one toggling control). */
+    showReloadStop: boolean;
 }>;
 
 /**
@@ -51,14 +65,19 @@ export function selectBrowserToolbarModel(view: BrowserControlViewState | null):
             canReload: false,
             canStop: false,
             isLoading: false,
+            showBackForward: false,
+            showReloadStop: false,
         };
     }
+    const navigation = view.adapterCapabilities.navigation;
     return {
-        canNavigate: view.adapterCapabilities.navigation.canNavigate,
-        canGoBack: view.adapterCapabilities.navigation.canGoBack && view.canGoBack,
-        canGoForward: view.adapterCapabilities.navigation.canGoForward && view.canGoForward,
-        canReload: view.adapterCapabilities.navigation.canReload,
-        canStop: view.adapterCapabilities.navigation.canStop && view.loadingState === 'loading',
+        canNavigate: navigation.canNavigate,
+        canGoBack: navigation.canGoBack && view.canGoBack,
+        canGoForward: navigation.canGoForward && view.canGoForward,
+        canReload: navigation.canReload,
+        canStop: navigation.canStop && view.loadingState === 'loading',
         isLoading: view.loadingState === 'loading',
+        showBackForward: navigation.canGoBack || navigation.canGoForward,
+        showReloadStop: navigation.canReload || navigation.canStop,
     };
 }

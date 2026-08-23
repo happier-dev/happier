@@ -14,6 +14,7 @@ import {
     redactLocalServicePublicPreviewCreateResponseForAgentEgress,
     redactLocalServicePublicPreviewRevokeResponseForAgentEgress,
     redactLocalServicePublicPreviewSnapshotForAgentEgress,
+    requiresAgentEgressRedaction,
     resolveLocalServiceActionKindForRuntimeActionId,
     resolveRuntimeActionExecutionFamily,
     type RuntimeActionExecute,
@@ -86,10 +87,6 @@ function readField(input: unknown, key: string): string | undefined {
     if (typeof value !== 'string') return undefined;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function isAgentSurface(args: RuntimeActionExecuteArgs): boolean {
-    return readField(args.context, 'surface') === 'agent';
 }
 
 function buildPreviewOpenOrCreateRequest(input: unknown): Record<string, unknown> {
@@ -319,7 +316,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             const request = DaemonLocalServicePublicPreviewStatusRequestV1Schema.safeParse(parsed.input);
             if (!request.success) return invalidParametersResult;
             const snapshot = await routes.getStatus(request.data);
-            return isAgentSurface(args)
+            return requiresAgentEgressRedaction(args.context)
                 ? redactLocalServicePublicPreviewSnapshotForAgentEgress(snapshot)
                 : snapshot;
         }
@@ -337,7 +334,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
                 return disabledResult('local_services_public_preview_confirmation_required');
             }
             const response = await routes.createExposure(request.data);
-            return isAgentSurface(args)
+            return requiresAgentEgressRedaction(args.context)
                 ? redactLocalServicePublicPreviewCreateResponseForAgentEgress(response)
                 : response;
         }
@@ -350,7 +347,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             const request = DaemonLocalServicePublicPreviewRevokeRequestV1Schema.safeParse(parsed.input);
             if (!request.success) return invalidParametersResult;
             const response = await routes.revokeExposure(request.data);
-            return isAgentSurface(args)
+            return requiresAgentEgressRedaction(args.context)
                 ? redactLocalServicePublicPreviewRevokeResponseForAgentEgress(response)
                 : response;
         }

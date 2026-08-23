@@ -1,5 +1,6 @@
 import { classifyLocalServiceProcess } from './classification';
 import type { LocalServiceInventoryStoredLabel } from './labels';
+import type { LocalServiceProcessOwnership } from './platform/processOwnership';
 import {
     LOCAL_SERVICE_PROCESS_LINEAGE_MAX_DEPTH,
     matchTerminalRegistration,
@@ -79,6 +80,33 @@ export type NormalizedLocalServiceInventorySnapshot = Readonly<{
     entries: readonly NormalizedLocalServiceInventoryEntry[];
     diagnostics: readonly LocalServiceInventoryDiagnostic[];
 }>;
+
+/**
+ * `processOwnershipConfidence` is the only input to the `terminate_detected` eligibility gate,
+ * and it used to be `listener.pid ? 'medium' : 'low'`. Because provenance exists only when the
+ * listener has a pid, that made the whole ladder a restatement of "the listener has a pid": the
+ * gate could not refuse anything, and on Windows it left a system service terminable.
+ *
+ * `high` now means the daemon can actually attribute the process to itself:
+ *  - a **terminal-registry match** on the listener or a lineage pid — the daemon spawned the
+ *    terminal this process descends from, which is deterministic provenance; or
+ *  - the platform established that the process runs under the daemon's own OS identity
+ *    (`platform/processOwnership.ts`).
+ *
+ * `medium` means "a pid, but we could not establish who owns it" — unproven, and the gate
+ * refuses it. `low` is no pid at all, or a process owned by a *different* OS user.
+ */
+export function resolveProcessOwnershipConfidence(input: Readonly<{
+    hasListenerPid: boolean;
+    terminalRegistryMatched: boolean;
+    processOwnership: LocalServiceProcessOwnership | undefined;
+}>): 'high' | 'medium' | 'low' {
+    if (!input.hasListenerPid) return 'low';
+    if (input.terminalRegistryMatched) return 'high';
+    if (input.processOwnership === 'self') return 'high';
+    if (input.processOwnership === 'other') return 'low';
+    return 'medium';
+}
 
 function classifyAddress(host: string): NormalizedLocalServiceInventoryEntry['address'] {
     const normalized = host.toLowerCase();
@@ -213,7 +241,11 @@ export function normalizeLocalServiceScan(input: Readonly<{
             presentation,
             labels: [],
             confidence: listener.pid ? 'high' : 'medium',
-            processOwnershipConfidence: listener.pid ? 'medium' : 'low',
+            processOwnershipConfidence: resolveProcessOwnershipConfidence({
+                hasListenerPid: Boolean(listener.pid),
+                terminalRegistryMatched: Boolean(terminalMatch.workspace),
+                processOwnership: listenerProcess?.processOwnership,
+            }),
             workspaceAssociationConfidence: workspaceMatch.workspaceAssociationConfidence,
             diagnostics: [],
         });

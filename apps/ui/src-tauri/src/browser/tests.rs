@@ -275,9 +275,12 @@ fn assert_native_child_view_available(
         availability.supports.native_devtools,
         native_devtools_supported()
     );
+    // Back/forward has no producer and no dispatcher in the vendored Wry fork (no `go_forward`, no
+    // `can_go_*` accessor), so it stays off. Reload/stop ride the same `evaluate_script` primitive
+    // as the already-available in-page diagnostics, so they are on wherever the child view is.
     assert!(!availability.supports.go_back_forward);
-    assert!(!availability.supports.reload);
-    assert!(!availability.supports.stop);
+    assert!(availability.supports.reload);
+    assert!(availability.supports.stop);
     assert!(availability.supports.page_info_diagnostics);
     assert_eq!(availability.supports.capture, capture_supported);
     assert!(!availability.supports.recording);
@@ -2121,8 +2124,8 @@ fn availability_for_native_platforms_advertises_only_implemented_browser_familie
         assert!(!availability.supports.recording);
         assert!(!availability.supports.automation);
         assert!(!availability.supports.go_back_forward);
-        assert!(!availability.supports.reload);
-        assert!(!availability.supports.stop);
+        assert!(availability.supports.reload);
+        assert!(availability.supports.stop);
     }
 
     let wayland = resolve_desktop_browser_strategy(DesktopBrowserPlatform::LinuxWayland);

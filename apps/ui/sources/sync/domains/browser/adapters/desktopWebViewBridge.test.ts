@@ -312,7 +312,7 @@ describe('desktop WebView native bridge', () => {
                     recording: false,
                     automation: false,
                 },
-                disabledReasons: ['desktop_webview_child_view_unimplemented'],
+                disabledReasons: ['desktop_webview_child_view_unverified'],
             },
         };
         invokeDesktopHostMock.mockResolvedValue(unavailableResult);

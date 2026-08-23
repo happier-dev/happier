@@ -57,6 +57,7 @@ export {
 export {
   isAgentInitiatedApprovalRequiredByDefault,
   isApprovalRequiredByActionsSettings,
+  requiresAgentEgressRedaction,
   resolveActionApprovalRouting,
   AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_IDS,
   EGRESS_SENSITIVE_AGENT_FLOOR,

@@ -121,6 +121,24 @@ fn native_child_view_availability(
         primitive,
         DesktopBrowserSupport {
             navigation: true,
+            // Reload/stop ride `desktop_browser_dispatch_navigation`, which derives a FIXED
+            // `location.reload()` / `window.stop()` script from its kind and pushes it through
+            // `WebView::evaluate_script`. That is the SAME primitive the in-page diagnostics eval
+            // REPL and element picker already ship on every platform this function returns
+            // available for (`page_info_diagnostics: true` below gates a strictly LARGER injection
+            // surface — arbitrary caller-supplied script — than these two fixed ones). So the
+            // pending "does Wry honour injection here" question these bits waited on is already
+            // answered affirmatively by a shipped capability on the identical code path; keeping
+            // them false only disabled two buttons whose seam works.
+            reload: true,
+            stop: true,
+            // Back/forward stays false: the vendored Wry fork exposes `go_back()` but has NO
+            // `go_forward()` and no public `can_go_back()`/`can_go_forward()` accessor, and the
+            // only `canGoBack` observer in this shell is macOS-only KVO on the hosted-Artifact
+            // view. There is therefore no producer AND no dispatcher for forward on any desktop
+            // platform; advertising the pair would enable two buttons with nothing behind them.
+            // The toolbar hides them rather than shipping them permanently disabled.
+            go_back_forward: false,
             page_info_diagnostics: true,
             native_devtools: native_devtools_supported(),
             capture: native_capture_supported(platform),

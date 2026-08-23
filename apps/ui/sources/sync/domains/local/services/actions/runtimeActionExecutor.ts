@@ -11,6 +11,7 @@ import {
     redactLocalServicePublicPreviewCreateResponseForAgentEgress,
     redactLocalServicePublicPreviewRevokeResponseForAgentEgress,
     redactLocalServicePublicPreviewSnapshotForAgentEgress,
+    requiresAgentEgressRedaction,
     resolveLocalServiceActionKindForRuntimeActionId,
     resolveRuntimeActionExecutionFamily,
     type LocalServicePreviewSnapshotV1,
@@ -239,10 +240,6 @@ function readPreviewIdFromInput(input: unknown): string | null {
 
 function readExposureIdFromInput(input: unknown): string | null {
     return isRecord(input) ? normalizeNonEmptyString(input.exposureId) : null;
-}
-
-function isAgentSurface(args: RuntimeActionExecuteArgs): boolean {
-    return normalizeNonEmptyString(args.context.surface) === 'agent';
 }
 
 function previewLifecycleFailureResult(reason: LocalServicePreviewLifecycleFailureReason) {
@@ -523,7 +520,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 exposureId: request.data.exposureId,
                 snapshot: result.snapshot,
             });
-            return isAgentSurface(args)
+            return requiresAgentEgressRedaction(args.context)
                 ? redactLocalServicePublicPreviewSnapshotForAgentEgress(result.snapshot)
                 : result.snapshot;
         }
@@ -549,7 +546,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 previewId: request.data.previewId,
                 snapshot: result.response.snapshot,
             });
-            return isAgentSurface(args)
+            return requiresAgentEgressRedaction(args.context)
                 ? redactLocalServicePublicPreviewCreateResponseForAgentEgress(result.response)
                 : result.response;
         }
@@ -576,7 +573,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 exposureId: request.data.exposureId,
                 snapshot: result.response.snapshot,
             });
-            return isAgentSurface(args)
+            return requiresAgentEgressRedaction(args.context)
                 ? redactLocalServicePublicPreviewRevokeResponseForAgentEgress(result.response)
                 : result.response;
         }
