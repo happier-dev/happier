@@ -700,6 +700,8 @@ async function copyWithSafePublication({
     await assertSameRegularFile('source', sourcePath, sourceIdentity);
     await beforeAccept?.();
 
+    await assertSameDirectory('disposable root', output.root);
+    await assertSameDirectory('output parent', output.outputParent);
     await assertSameRegularFile('published SQLite output', output.outputPath, publishedIdentity);
     const finalPublished = await inspectFinalDatabase(output.outputPath);
     if (!hasIdentity(await lstat(output.outputPath), publishedIdentity)) {
