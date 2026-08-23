@@ -492,15 +492,16 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     });
 
     try {
-      await waitUntil(() => injectUserPrompt.mock.calls.length === 1);
+      await waitUntil(() => typeof subscribedHook === 'function', 10_000);
       const hook = subscribedHook;
-      if (!hook) throw new Error('Claude session hook subscription was not registered before injection');
+      if (!hook) throw new Error('Claude session hook subscription was not registered before resume activation');
       hook({
         hook_event_name: 'SessionStart',
         session_id: claudeSessionId,
         transcript_path: transcriptPath,
         source: 'resume',
       });
+      await waitUntil(() => injectUserPrompt.mock.calls.length === 1, 10_000);
       hook({
         hook_event_name: 'UserPromptSubmit',
         session_id: claudeSessionId,
@@ -521,7 +522,12 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
       })}\n`);
       await waitUntil(() => onPromptAcceptedByProvider.mock.calls.length === 1);
       await waitUntil(() => injectUserPrompt.mock.calls.length === 2);
-      expect(onTerminalInjectionFailure).not.toHaveBeenCalled();
+      expect(onTerminalInjectionFailure).toHaveBeenCalledOnce();
+      expect(onTerminalInjectionFailure).toHaveBeenCalledWith(expect.objectContaining({
+        failureState: 'failed_ambiguous',
+        phase: 'after_write_before_enter',
+        userMessageLocalIds: ['late-exact-pending-local'],
+      }));
       expect(onPromptAcceptedByProvider).toHaveBeenCalledWith({
         message: prompt,
         maxUserMessageSeq: null,
