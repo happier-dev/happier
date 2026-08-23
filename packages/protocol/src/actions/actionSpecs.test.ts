@@ -9,7 +9,7 @@ import {
   SessionUsageLimitWaitResumeEnableRequestV1Schema,
 } from '../sessionWorkState/sessionWorkStateRpc.js';
 import { serializeActionSpec } from './actionCatalog.js';
-import { ActionApprovalSchema, ActionSpecSchema, ActionSurfaceSchema, getActionSpec, isActionSpecSurfacedOn, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, resolveActionApprovalFlow } from './actionSpecs.js';
+import { ActionApprovalSchema, ActionOperationDeclarationV1Schema, ActionSpecSchema, ActionSurfaceSchema, getActionSpec, isActionSpecSurfacedOn, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, resolveActionApprovalFlow } from './actionSpecs.js';
 
 const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'action.spec.search',
@@ -172,6 +172,49 @@ describe('Action Spec Registry', () => {
         session_agent: 'hidden',
       },
     }).success).toBe(false);
+  });
+
+  it('accepts only the exact v1 tracked-operation declaration', () => {
+    expect(ActionOperationDeclarationV1Schema.parse({
+      version: 1,
+      visibility: 'activity',
+      progress: 'reported',
+    })).toEqual({
+      version: 1,
+      visibility: 'activity',
+      progress: 'reported',
+    });
+    expect(ActionOperationDeclarationV1Schema.safeParse({
+      version: 1,
+      visibility: 'activity',
+      progress: 'indeterminate',
+    }).success).toBe(true);
+
+    for (const malformed of [
+      { version: 2, visibility: 'activity', progress: 'reported' },
+      { version: 1, visibility: 'private', progress: 'reported' },
+      { version: 1, visibility: 'activity', progress: 'synthetic' },
+      { version: 1, visibility: 'activity', progress: 'reported', terminalize: true },
+    ]) {
+      expect(ActionOperationDeclarationV1Schema.safeParse(malformed).success).toBe(false);
+    }
+  });
+
+  it('declares and serializes the tracked core session actions', () => {
+    const expected = {
+      'session.fork': { version: 1, visibility: 'activity', progress: 'indeterminate' },
+      'session.spawn_new': { version: 1, visibility: 'activity', progress: 'reported' },
+      'session.handoff': { version: 1, visibility: 'activity', progress: 'reported' },
+    } as const;
+
+    for (const [actionId, operation] of Object.entries(expected)) {
+      const spec = getActionSpec(actionId as keyof typeof expected);
+      expect(spec.operation).toEqual(operation);
+      expect(serializeActionSpec(spec).operation).toEqual(operation);
+    }
+
+    expect(getActionSpec('session.rollback').operation).toBeUndefined();
+    expect(serializeActionSpec(getActionSpec('session.rollback')).operation).toBeNull();
   });
 
   it('declares approval result metadata for every action spec', () => {
@@ -696,21 +739,21 @@ describe('Action Spec Registry', () => {
     expect(spec.inputSchema.safeParse({ permissionMode: 'surprise-me' }).success).toBe(false);
   });
 
-  it('rejects daemon-internal session.spawn_new plumbing fields', () => {
+  it('rejects daemon authority and outer-workflow session.spawn_new fields', () => {
     const spec = getActionSpec('session.spawn_new');
     const internalFields = [
-      'spawnNonce',
       'accountSettingsVersionHint',
       'sessionId',
       'existingSessionId',
       'existingSessionAttachPayload',
       'initialTranscriptAfterSeq',
       'initialGoal',
-      'resume',
+      'executionAuthorization',
       'attachMetadataIdentityPolicy',
       'connectedServiceMaterializationIdentityV1',
       'materializationDiagnostics',
-      'approvedNewDirectoryCreation',
+      'attachments',
+      'afterCreated',
     ] as const;
 
     for (const field of internalFields) {
@@ -834,6 +877,29 @@ describe('Action Spec Registry', () => {
     expect(spec.id).toBe('session.fork');
     expect(spec.surfaces.ui_button).toBe(true);
     expect(spec.placements).toContain('session_action_menu');
+  });
+
+  it('validates the canonical optional session fork recipe while preserving legacy input', () => {
+    const schema = getActionSpec('session.fork').inputSchema;
+    expect(schema.safeParse({ sessionId: 'parent-session' }).success).toBe(true);
+    expect(schema.safeParse({
+      sessionId: 'parent-session',
+      forkPoint: { type: 'seq', upToSeqInclusive: 42 },
+      strategy: 'replay',
+      replaySummaryRunner: {
+        v: 1,
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        modelId: 'default',
+        permissionMode: 'no_tools',
+      },
+      replayMaxSeedChars: 40_000,
+      requestId: 'fork-request-1',
+    }).success).toBe(true);
+    expect(schema.safeParse({ sessionId: 'parent-session', strategy: 'invented' }).success).toBe(false);
+    expect(schema.safeParse({
+      sessionId: 'parent-session',
+      forkPoint: { type: 'seq', upToSeqInclusive: -1 },
+    }).success).toBe(false);
   });
 
   it('exposes session rollback action spec', () => {

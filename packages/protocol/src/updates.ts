@@ -15,6 +15,7 @@ import {
   SessionRuntimeActivityActiveCountSchema,
   SessionRuntimeActivityStateSchema,
 } from './sessionRuntimeActivity/projection.js';
+import { ActionOperationRevisionEphemeralV1Schema } from './actions/operations/actionOperationV1.js';
 
 const TimestampMsSchema = z.number().int().min(0);
 const Base64Schema = z.string();
@@ -372,6 +373,7 @@ export const DirectSessionTranscriptDeltaEphemeralSchema = z.object({
 });
 
 export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
+  ActionOperationRevisionEphemeralV1Schema,
   // Hottest live event first: delta ticks stream at the live cadence (~25Hz per active segment).
   z.object({
     type: z.literal('transcript-stream-segment-delta'),

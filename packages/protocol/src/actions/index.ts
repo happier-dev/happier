@@ -1,4 +1,5 @@
 export { ACTION_IDS, ActionIdSchema, type ActionId } from './actionIds.js';
+export * from './operations/index.js';
 export { ACTION_UI_PLACEMENTS, ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 export {
   ACTION_SETTINGS_OPT_IN_PLACEMENTS,
@@ -31,6 +32,8 @@ export {
   ActionToolExposureSchema,
   ActionToolExposureSurfaceSchema,
   SessionEventsGetInputSchema,
+  SessionForkActionInputSchema,
+  SessionSpawnNewInputSchema,
   SessionTranscriptGetInputSchema,
   ActionInputFieldHintSchema,
   ActionInputHintsSchema,
@@ -58,6 +61,8 @@ export {
   type SessionEventsGetInput,
   type SessionEventsGetItem,
   type SessionEventsGetOutput,
+  type SessionForkActionInput,
+  type SessionSpawnNewInput,
   type SessionTranscriptGetInput,
   type SessionTranscriptGetItem,
   type SessionTranscriptGetOutput,
@@ -93,6 +98,10 @@ export {
   type ActionExecuteResult,
   type ActionExecutorContext,
   type ActionExecutorDeps,
+  type ActionPreparedInvocation,
+  type ActionPrepareResult,
+  type SessionForkActionExecutionInput,
+  type SessionSpawnNewActionExecutionInput,
 } from './actionExecutor.js';
 
 export { resolveEffectiveActionInputFields, type EffectiveActionInputField } from './actionInputHintsRuntime.js';

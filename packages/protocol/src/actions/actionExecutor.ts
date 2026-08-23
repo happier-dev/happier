@@ -8,7 +8,14 @@ import {
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { resolveActionOptionSourceRoute } from './actionOptionSources.js';
 import { resolveRequestedSessionModeId } from './sessionModeIds.js';
-import { ActionSurfaceSchema, getActionSpec, type ActionSpec, type ActionSurfaces, type SessionSpawnNewInput } from './actionSpecs.js';
+import {
+  ActionSurfaceSchema,
+  getActionSpec,
+  type ActionSpec,
+  type ActionSurfaces,
+  type SessionForkActionInput,
+  type SessionSpawnNewInput,
+} from './actionSpecs.js';
 import { resolveActionSurfaceAvailability, type ActionSurfaceAvailability } from './actionSurfaceAvailability.js';
 import { resolveActionApprovalFlow } from './actionApprovalMetadata.js';
 import type { ActionId } from './actionIds.js';
@@ -79,6 +86,34 @@ export type ActionExecuteResult =
   | Readonly<{ ok: true; result: unknown }>
   | Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
 
+export type ActionPreparedInvocation = Readonly<{
+  run: (options?: Readonly<{ signal?: AbortSignal }>) => Promise<ActionExecuteResult>;
+}>;
+
+export type ActionPrepareResult =
+  | Readonly<{ kind: 'ready'; invocation: ActionPreparedInvocation }>
+  | Readonly<{ kind: 'settled'; result: ActionExecuteResult }>;
+
+export type SessionForkActionExecutionInput = Readonly<{
+  sessionId: string;
+  serverId?: string | null;
+  forkPoint?: SessionForkActionInput['forkPoint'];
+  strategy?: SessionForkActionInput['strategy'];
+  replaySummaryRunner?: SessionForkActionInput['replaySummaryRunner'];
+  replayMaxSeedChars?: SessionForkActionInput['replayMaxSeedChars'];
+  requestId?: SessionForkActionInput['requestId'];
+  signal?: AbortSignal;
+}>;
+
+export type SessionSpawnNewActionExecutionInput = Readonly<SessionSpawnNewInput & {
+  surface?: keyof ActionSurfaces | null;
+  callerSurface?: keyof ActionSurfaces | null;
+  callerPermissionMode?: string | null;
+  actionRequestId?: string | null;
+  resumeActionRequest?: boolean;
+  signal?: AbortSignal;
+}>;
+
 export type ActionExecutorContext = Readonly<{
   /**
    * Used when ActionSpec input permits an optional sessionId and the caller
@@ -136,6 +171,9 @@ export type ActionExecutorContext = Readonly<{
 
   /** Resolve the existing action attempt without repeating its outward write. */
   resumeActionRequest?: boolean;
+
+  /** Invocation-owned cooperative cancellation for tracked host Actions. */
+  signal?: AbortSignal;
 }>;
 
 type SessionStopActionDependencyResult = Readonly<{
@@ -172,56 +210,18 @@ export type ActionExecutorDeps = Readonly<{
 
   // Session navigation/spawn (client-side)
   sessionOpen: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
-  sessionFork: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionFork: (args: SessionForkActionExecutionInput) => Promise<unknown>;
   sessionRollback: (args: Readonly<{ sessionId: string; serverId?: string | null; target?: SessionRollbackTarget }>) => Promise<unknown>;
   sessionHandoffStart?: (args: Readonly<{
     sessionId: string;
     targetMachineId: string;
+    requestId?: string;
     targetSessionStorageMode?: 'direct' | 'persisted';
     workspaceTransfer?: SessionHandoffWorkspaceTransfer;
     serverId?: string | null;
+    signal?: AbortSignal;
   }>) => Promise<unknown>;
-  sessionSpawnNew: (args: Readonly<{
-    tag?: string;
-    tags?: readonly string[];
-    agentId?: string;
-    backend?: string;
-    target?: string;
-    modelId?: string;
-    backendTargetKey?: string;
-    backendTarget?: BackendTargetRefV1;
-    title?: string;
-    path?: string;
-    directory?: string;
-    host?: string;
-    machineId?: string;
-    prompt?: string;
-    initialPrompt?: string;
-    initialMessage?: string;
-    permissionMode?: string;
-    agentModeId?: string;
-    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
-    configOptions?: Record<string, string | number | boolean | null>;
-    profileId?: string;
-    environmentVariables?: Record<string, string>;
-    connectedServices?: ConnectedServiceBindingsV1;
-    connectedServicesUpdatedAt?: number;
-    mcpSelection?: SessionMcpSelectionV1;
-    transcriptStorage?: 'persisted' | 'direct';
-    terminal?: SessionSpawnNewInput['terminal'];
-    windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console';
-    windowsRemoteSessionConsole?: 'hidden' | 'visible';
-    windowsTerminalWindowName?: string;
-    codexBackendMode?: SessionSpawnNewInput['codexBackendMode'];
-    agentRuntimeDescriptorV1?: SessionSpawnNewInput['agentRuntimeDescriptorV1'];
-    /** Typed source recipe for a Replay-seeded child; required semantics when present. */
-    sourceContext?: SessionSpawnNewInput['sourceContext'];
-    surface?: keyof ActionSurfaces | null;
-    callerSurface?: keyof ActionSurfaces | null;
-    callerPermissionMode?: string | null;
-    actionRequestId?: string | null;
-    resumeActionRequest?: boolean;
-  }>) => Promise<unknown>;
+  sessionSpawnNew: (args: SessionSpawnNewActionExecutionInput) => Promise<unknown>;
   sessionSpawnPicker: (args: Readonly<{ tag?: string; agentId?: string; modelId?: string; initialMessage?: string }>) => Promise<unknown>;
 
   // Local inventory + discovery (voice)
@@ -1196,6 +1196,7 @@ function readActionExecuteFailure(result: unknown): Readonly<{ errorCode: string
 }
 
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
+  prepare: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionPrepareResult>;
   execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }> {
   const liveBlockingApprovalArtifactIds = new Set<string>();
@@ -1220,6 +1221,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     request: ApprovalRequestV1;
     ctx: ActionExecutorContext;
     effectiveServerId: string | null;
+    runApprovedAction?: () => Promise<ActionExecuteResult>;
   }>): Promise<
     | Readonly<{ ok: true; request: ApprovalRequestV1; exec: ActionExecuteResult }>
     | Readonly<{ ok: false; errorCode: string; error: string }>
@@ -1242,14 +1244,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ?? resolveApprovalRequestExecutionSurface(args.request.createdBy.surface);
     const requestDefaultSessionId = typeof args.request.createdBy.sessionId === 'string' ? args.request.createdBy.sessionId.trim() : '';
     const exec = requestSurface
-      ? await execute(args.request.actionId, args.request.actionArgs, {
-          ...args.ctx,
-          ...(args.effectiveServerId ? { serverId: args.effectiveServerId } : {}),
-          ...(requestDefaultSessionId ? { defaultSessionId: requestDefaultSessionId } : {}),
-          surface: requestSurface,
-          placement: null,
-          bypassApprovals: true,
-        })
+      ? args.runApprovedAction
+        ? await args.runApprovedAction()
+        : await execute(args.request.actionId, args.request.actionArgs, {
+            ...args.ctx,
+            ...(args.effectiveServerId ? { serverId: args.effectiveServerId } : {}),
+            ...(requestDefaultSessionId ? { defaultSessionId: requestDefaultSessionId } : {}),
+            surface: requestSurface,
+            placement: null,
+            bypassApprovals: true,
+          })
       : { ok: false as const, errorCode: 'approval_execution_surface_invalid', error: 'approval_execution_surface_invalid' };
     const executedAtMs = Date.now();
     const nextExecuted: ApprovalRequestV1 = {
@@ -1282,26 +1286,82 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     return liveBlockingApprovalArtifactIds.has(args.artifactId) || resolved?.resolved === true;
   }
 
-  const execute = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult> => {
-    const ctx: ActionExecutorContext = context ?? {};
+  type PreparedAdmission = Readonly<{
+    spec: ActionSpec;
+    input: unknown;
+    context: ActionExecutorContext;
+  }>;
 
-    const spec = getActionSpec(actionId);
-    const availability = resolveAvailability(spec, ctx);
-    if (!availability.available) return actionDisabled(availability);
-    const approvalRouting = resolveActionApprovalRouting({
-      actionId,
-      spec,
-      context: ctx,
-      requiredByPolicy: ctx.bypassApprovals ? false : deps.isActionApprovalRequired?.(actionId, ctx) === true,
+  type InvocationRunOptions = Readonly<{ signal?: AbortSignal }>;
+
+  const createOneShotInvocation = (
+    runOnce: (options?: InvocationRunOptions) => Promise<ActionExecuteResult>,
+  ): ActionPreparedInvocation => {
+    let resultPromise: Promise<ActionExecuteResult> | null = null;
+    return Object.freeze({
+      run: (options) => {
+        resultPromise ??= Promise.resolve().then(() => runOnce(options));
+        return resultPromise;
+      },
     });
+  };
+
+  const executeOrPrepare = async (
+    actionId: ActionId,
+    input: unknown,
+    context?: ActionExecutorContext,
+    options?: Readonly<{ prepareOnly?: boolean; prepared?: PreparedAdmission }>,
+  ): Promise<ActionExecuteResult | ActionPrepareResult> => {
+    const existingAdmission = options?.prepared;
+    const ctx: ActionExecutorContext = existingAdmission?.context ?? context ?? {};
+    const spec = existingAdmission?.spec ?? getActionSpec(actionId);
+    if (!existingAdmission) {
+      const availability = resolveAvailability(spec, ctx);
+      if (!availability.available) return actionDisabled(availability);
+    }
+    const approvalRouting = existingAdmission
+      ? null
+      : resolveActionApprovalRouting({
+          actionId,
+          spec,
+          context: ctx,
+          requiredByPolicy: ctx.bypassApprovals ? false : deps.isActionApprovalRequired?.(actionId, ctx) === true,
+        });
     const isApprovalAction = isApprovalActionId(actionId);
-    const parsed = (spec.inputSchema as any).safeParse(input ?? {});
+    const parsed = existingAdmission
+      ? { success: true as const, data: existingAdmission.input }
+      : (spec.inputSchema as any).safeParse(input ?? {});
     if (!parsed.success) {
       return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     }
 
+    const admission: PreparedAdmission = existingAdmission ?? { spec, input: parsed.data, context: ctx };
+    const runPreparedAdmission = async (
+      prepared: PreparedAdmission,
+      runOptions?: InvocationRunOptions,
+    ): Promise<ActionExecuteResult> => {
+      const executionAdmission = runOptions?.signal
+        ? { ...prepared, context: { ...prepared.context, signal: runOptions.signal } }
+        : prepared;
+      const result = await executeOrPrepare(
+        actionId,
+        executionAdmission.input,
+        executionAdmission.context,
+        { prepared: executionAdmission },
+      );
+      if ('kind' in result) throw new Error('Prepared Action invocation unexpectedly prepared twice');
+      return result;
+    };
+    const ready = (
+      prepared: PreparedAdmission,
+      runOnce: (options?: InvocationRunOptions) => Promise<ActionExecuteResult> = (options) => runPreparedAdmission(prepared, options),
+    ): ActionPrepareResult => ({
+      kind: 'ready',
+      invocation: createOneShotInvocation(runOnce),
+    });
+
     try {
-      if (approvalRouting.required && !isApprovalAction) {
+      if (approvalRouting?.required && !isApprovalAction) {
         if (!deps.approvalsCreate) {
           return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
         }
@@ -1316,6 +1376,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ...(requestingSessionId ? { sessionId: requestingSessionId } : {}),
         } as const;
 
+        // A prepared invocation has a live custodian waiting to own the
+        // mutation. Convert the Action's ordinary deferred presentation into
+        // the existing blocking decision handoff so approval cannot later
+        // execute outside that custodian. Direct execute() retains the Action's
+        // declared deferred behavior.
+        const approvalFlow = options?.prepareOnly ? 'blocking' : approvalRouting.flow;
         const request: ApprovalRequestV1 = {
           v: 1,
           status: 'open',
@@ -1326,7 +1392,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           actionId,
           actionArgs: parsed.data,
           approval: {
-            flow: approvalRouting.flow,
+            flow: approvalFlow,
             result: approvalRouting.result,
           },
           ...(approvalOrigin ? { origin: approvalOrigin } : {}),
@@ -1336,13 +1402,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         };
 
         const res = await deps.approvalsCreate({ request, serverId: normalizeId(ctx.serverId) || null });
-        if (approvalRouting.flow === 'blocking') {
+        if (approvalFlow === 'blocking') {
           if (!deps.approvalsWaitForDecision || !deps.approvalsUpdate) {
             return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
           }
 
           const artifactId = (res as any)?.artifactId;
           const effectiveServerId = normalizeId(ctx.serverId) || null;
+          let releaseBlockingOwnershipOnPrepareReturn = true;
           liveBlockingApprovalArtifactIds.add(artifactId);
           try {
             const decision = await deps.approvalsWaitForDecision({
@@ -1384,6 +1451,40 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               const approved = await deps.approvalsUpdate({ artifactId, request: approvedRequest, serverId: effectiveServerId });
               if ((approved as any)?.ok === false) return { ok: false, errorCode: (approved as any).errorCode, error: (approved as any).error };
             }
+            if (options?.prepareOnly) {
+              releaseBlockingOwnershipOnPrepareReturn = false;
+              const requestSurface = parseActionSurfaceKey((approvedRequest as any).requestedSurface)
+                ?? resolveApprovalRequestExecutionSurface(approvedRequest.createdBy.surface);
+              const requestDefaultSessionId = typeof approvedRequest.createdBy.sessionId === 'string'
+                ? approvedRequest.createdBy.sessionId.trim()
+                : '';
+              const approvedAdmission: PreparedAdmission = {
+                spec,
+                input: parsed.data,
+                context: {
+                  ...ctx,
+                  ...(effectiveServerId ? { serverId: effectiveServerId } : {}),
+                  ...(requestDefaultSessionId ? { defaultSessionId: requestDefaultSessionId } : {}),
+                  ...(requestSurface ? { surface: requestSurface } : {}),
+                  placement: null,
+                  bypassApprovals: true,
+                },
+              };
+              return ready(approvedAdmission, async (runOptions) => {
+                try {
+                  const executed = await executeApprovedActionForRequest({
+                    artifactId,
+                    request: approvedRequest,
+                    ctx,
+                    effectiveServerId,
+                    runApprovedAction: () => runPreparedAdmission(approvedAdmission, runOptions),
+                  });
+                  return executed.ok ? executed.exec : executed;
+                } finally {
+                  liveBlockingApprovalArtifactIds.delete(artifactId);
+                }
+              });
+            }
             const executed = await executeApprovedActionForRequest({
               artifactId,
               request: approvedRequest,
@@ -1392,7 +1493,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             });
             return executed.ok ? executed.exec : executed;
           } finally {
-            liveBlockingApprovalArtifactIds.delete(artifactId);
+            if (releaseBlockingOwnershipOnPrepareReturn) {
+              liveBlockingApprovalArtifactIds.delete(artifactId);
+            }
           }
         }
 
@@ -1405,6 +1508,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           },
         };
       }
+
+      if (options?.prepareOnly) return ready(admission);
 
       // Switch by actionId; keep substrate generic.
       if (actionId === 'review.start') {
@@ -1809,7 +1914,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
-          const res = await deps.sessionFork({ sessionId, ...(serverId ? { serverId } : {}) });
+          const forkInput = parsed.data as SessionForkActionInput;
+          const contextRequestId = normalizeId(ctx.actionRequestId);
+          const requestId = forkInput.requestId ?? (contextRequestId || undefined);
+          const res = await deps.sessionFork({
+            sessionId,
+            ...(serverId ? { serverId } : {}),
+            ...(forkInput.forkPoint !== undefined ? { forkPoint: forkInput.forkPoint } : {}),
+            ...(forkInput.strategy !== undefined ? { strategy: forkInput.strategy } : {}),
+            ...(forkInput.replaySummaryRunner !== undefined ? { replaySummaryRunner: forkInput.replaySummaryRunner } : {}),
+            ...(forkInput.replayMaxSeedChars !== undefined ? { replayMaxSeedChars: forkInput.replayMaxSeedChars } : {}),
+            ...(requestId !== undefined ? { requestId } : {}),
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
+          });
           return { ok: true, result: res };
         }
 
@@ -1838,12 +1955,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               : undefined;
           const workspaceTransferParsed = SessionHandoffWorkspaceTransferSchema.safeParse((parsed.data as any).workspaceTransfer);
           const workspaceTransfer = workspaceTransferParsed.success ? workspaceTransferParsed.data : undefined;
+          const requestId = normalizeId(ctx.actionRequestId);
           const res = await deps.sessionHandoffStart({
             sessionId,
             targetMachineId,
+            ...(requestId ? { requestId } : {}),
             ...(targetSessionStorageMode ? { targetSessionStorageMode } : {}),
             ...(workspaceTransfer ? { workspaceTransfer } : {}),
             ...(serverId ? { serverId } : {}),
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
           return { ok: true, result: res };
         }
@@ -1864,6 +1984,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             surface: ctx.surface ?? null,
             ...(ctx.actionRequestId ? { actionRequestId: ctx.actionRequestId } : {}),
             ...(ctx.resumeActionRequest === true ? { resumeActionRequest: true } : {}),
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
             ...(isSessionAgentCaller(ctx)
               ? { callerSurface: 'session_agent' as const, callerPermissionMode: ctx.callerPermissionMode ?? null }
               : {}),
@@ -2879,6 +3000,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
       return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
     } catch (error) {
+      if (ctx.signal?.aborted && error instanceof Error && error.name === 'AbortError') {
+        throw error;
+      }
       const normalized = normalizeActionExecutorThrownError(error);
       return {
         ok: false,
@@ -2889,7 +3013,27 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
   };
 
+  const prepare = async (
+    actionId: ActionId,
+    input: unknown,
+    context?: ActionExecutorContext,
+  ): Promise<ActionPrepareResult> => {
+    const result = await executeOrPrepare(actionId, input, context, { prepareOnly: true });
+    return 'kind' in result ? result : { kind: 'settled', result };
+  };
+
+  const execute = async (
+    actionId: ActionId,
+    input: unknown,
+    context?: ActionExecutorContext,
+  ): Promise<ActionExecuteResult> => {
+    const result = await executeOrPrepare(actionId, input, context);
+    if ('kind' in result) throw new Error('Direct Action execution unexpectedly returned a prepared invocation');
+    return result;
+  };
+
   return {
+    prepare,
     execute,
   };
 }

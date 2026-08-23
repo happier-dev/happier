@@ -12,6 +12,8 @@ import { BackendTargetKeySchema, BackendTargetRefSchema, buildBackendTargetKey, 
 import { ExecutionRunListRequestSchema } from '../executionRunListRequest.js';
 import { ExecutionRunStartRequestSchema } from '../executionRunStartRequest.js';
 import { SessionRollbackTargetSchema } from '../sessionRollback.js';
+import { SessionForkRpcParamsSchema } from '../sessionFork.js';
+import { PendingFirstInputV1Schema } from '../spawnSession.js';
 import { SessionSpawnSourceContextV1Schema } from '../sessionSpawnSourceContextV1.js';
 import { SessionHandoffWorkspaceTransferSchema } from '../sessionControl/handoff/handoffSchemas.js';
 import { ActionApprovalSchema, type ActionApproval } from './actionApprovalMetadata.js';
@@ -40,6 +42,10 @@ import {
   EXECUTION_RUN_ACTION_PERMISSION_MODE_DESCRIPTION,
   ExecutionRunActionPermissionModeSchema,
 } from './executionRunActionPermissionMode.js';
+import {
+  ActionOperationDeclarationV1Schema,
+  type ActionOperationDeclarationV1,
+} from './operations/actionOperationDeclarationV1.js';
 
 export {
   ActionApprovalFlowSchema,
@@ -50,6 +56,10 @@ export {
   type ActionApprovalFlow,
   type ActionApprovalResult,
 } from './actionApprovalMetadata.js';
+export {
+  ActionOperationDeclarationV1Schema,
+  type ActionOperationDeclarationV1,
+} from './operations/actionOperationDeclarationV1.js';
 
 const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
   if (!value || typeof value !== 'object') return false;
@@ -208,6 +218,7 @@ export const ActionSpecSchema = z.object({
     .passthrough()
     .optional(),
   prompting: ActionPromptingSchema.optional(),
+  operation: ActionOperationDeclarationV1Schema.optional(),
   toolExposure: ActionToolExposureSchema.optional(),
   approval: ActionApprovalSchema,
   surfaces: ActionSurfaceSchema,
@@ -217,6 +228,7 @@ export const ActionSpecSchema = z.object({
 
 export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
   placements: readonly ActionUiPlacement[];
+  operation?: ActionOperationDeclarationV1;
 }>;
 
 const EmptyObjectSchema = z.object({}).strict();
@@ -504,9 +516,17 @@ const SessionOpenInputSchema = z.object({
   }
 });
 
-const SessionForkInputSchema = z.object({
-  sessionId: z.string().min(1).optional(),
-}).passthrough();
+/**
+ * Action-facing fork recipe. The transport's parent session id is resolved from
+ * the action input/context, while legacy callers may continue to omit a fork
+ * point and let their host adapter apply its existing default.
+ */
+export const SessionForkActionInputSchema = SessionForkRpcParamsSchema
+  .omit({ v: true, parentSessionId: true })
+  .partial()
+  .extend({ sessionId: z.string().min(1).optional() })
+  .passthrough();
+export type SessionForkActionInput = z.infer<typeof SessionForkActionInputSchema>;
 
 const SessionRollbackInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
@@ -535,7 +555,11 @@ function normalizeSpawnTargetAlias(value: string): string {
   return trimmed === 'customAcp' ? trimmed : `agent:${trimmed}`;
 }
 
-const SessionSpawnNewInputSchema = z.object({
+const SessionSpawnAttemptIdentifierSchema = z.string().refine((value) => value.trim().length > 0, {
+  message: 'Spawn attempt identifier must not be blank',
+});
+
+export const SessionSpawnNewInputSchema = z.object({
   tag: z.string().min(1).optional(),
   tags: z.array(z.string().min(1)).optional(),
   agentId: z.string().trim().min(1).optional(),
@@ -547,16 +571,26 @@ const SessionSpawnNewInputSchema = z.object({
   title: z.string().min(1).optional(),
   path: z.string().min(1).optional(),
   directory: z.string().min(1).optional(),
+  approvedNewDirectoryCreation: z.boolean().optional(),
   host: z.string().min(1).optional(),
   machineId: z.string().min(1).optional(),
+  spawnNonce: SessionSpawnAttemptIdentifierSchema.optional(),
+  userAttemptId: SessionSpawnAttemptIdentifierSchema.optional(),
+  firstTurnLocalId: SessionSpawnAttemptIdentifierSchema.optional(),
+  attachmentMessageLocalId: SessionSpawnAttemptIdentifierSchema.optional(),
+  pendingFirstInput: PendingFirstInputV1Schema.optional(),
   prompt: z.string().min(1).optional(),
   initialPrompt: z.string().min(1).optional(),
   initialMessage: z.string().min(1).optional(),
   permissionMode: SessionPermissionModeInputSchema.optional(),
+  permissionModeUpdatedAt: z.number().int().optional(),
   agentModeId: z.string().min(1).optional(),
+  agentModeUpdatedAt: z.number().int().optional(),
+  modelUpdatedAt: z.number().int().optional(),
   sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
   configOptions: z.record(z.string().min(1), SpawnConfigOptionValueSchema).optional(),
   profileId: z.string().min(1).optional(),
+  resume: z.string().trim().min(1).optional(),
   environmentVariables: z.record(z.string().min(1), z.string()).optional(),
   connectedServices: ConnectedServiceBindingsV1Schema.optional(),
   connectedServicesUpdatedAt: z.number().int().optional(),
@@ -566,6 +600,7 @@ const SessionSpawnNewInputSchema = z.object({
   windowsRemoteSessionLaunchMode: z.enum(['hidden', 'windows_terminal', 'console']).optional(),
   windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
   windowsTerminalWindowName: z.string().min(1).optional(),
+  experimentalCodexAcp: z.boolean().optional(),
   codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
   agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
   /**
@@ -1696,6 +1731,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Fork session',
     description: 'Create a new session from the latest state of the selected session.',
     safety: 'safe',
+    operation: { version: 1, visibility: 'activity', progress: 'indeterminate' },
     approval: APPROVAL_RESULT_OPTIONAL_DEFERRED,
     placements: ['session_action_menu', 'session_info', 'command_palette', 'slash_command', 'voice_panel', 'agent_input_chips'],
     slash: { tokens: ['fork'] },
@@ -1717,7 +1753,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       description: 'Forks from the latest message in the session.',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text' }],
     },
-    inputSchema: SessionForkInputSchema,
+    inputSchema: SessionForkActionInputSchema,
   },
   {
     id: 'session.rollback',
@@ -1747,6 +1783,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Hand off session',
     description: 'Move the current session to another machine while keeping the same session id.',
     safety: 'safe',
+    operation: { version: 1, visibility: 'activity', progress: 'reported' },
     approval: APPROVAL_RESULT_OPTIONAL_DEFERRED,
     placements: ['session_action_menu', 'session_info'],
     examples: {
@@ -1775,6 +1812,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     id: 'session.spawn_new',
     title: 'Create session',
     safety: 'safe',
+    operation: { version: 1, visibility: 'activity', progress: 'reported' },
     approval: APPROVAL_RESULT_OPTIONAL_DEFERRED,
     placements: ['command_palette', 'session_info', 'voice_panel'],
     prompting: { voiceHotPath: true },

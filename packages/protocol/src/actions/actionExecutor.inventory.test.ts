@@ -344,13 +344,13 @@ describe('createActionExecutor (inventory/discovery)', () => {
     }));
   });
 
-  it('rejects internal or unknown session.spawn_new input before deps.sessionSpawnNew runs', async () => {
+  it('rejects authority or unknown session.spawn_new input before deps.sessionSpawnNew runs', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
     const internal = await executor.execute('session.spawn_new', {
       initialMessage: 'Hello',
-      spawnNonce: 'nonce-public-bypass',
+      accountSettingsVersionHint: 123,
     });
     const unknown = await executor.execute('session.spawn_new', {
       initialMessage: 'Hello',
