@@ -924,12 +924,18 @@ export type CreateSessionMessageResult =
         message: SessionMessageWriteRow;
         participantCursors: [];
       }
-    | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal"; code?: EncryptionPolicyRejectionCode };
+    | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal"; code?: EncryptionPolicyRejectionCode }
+    | { ok: false; error: "local-id-conflict" };
 
 type CreateSessionMessageParamsBase = Readonly<{
     actorUserId: string;
     sessionId: string;
     localId?: string | null;
+    /**
+     * A reserved local-ID operation may opt out of ordinary content correction:
+     * only an exact stored message is replayable; every difference is refused.
+     */
+    localIdConflictPolicy?: "identical-or-conflict";
     sidechainId?: string | null;
     messageRole?: unknown;
     trustedSessionEventType?: "ready";
@@ -1011,11 +1017,30 @@ export async function createSessionMessage(
         attentionImpact: SessionMessageAttentionImpact;
     }>): Promise<CreateSessionMessageResult> => {
         const { tx, existing, resolvedRole, attentionImpact } = args;
+        const requiresIdenticalLocalId = params.localIdConflictPolicy === "identical-or-conflict";
+        const existingHasObservationProvenance = existing.transcriptObservationProvenance != null;
+        const incomingHasObservationProvenance = params.trustedTranscriptObservationProvenance !== undefined;
+        if (requiresIdenticalLocalId) {
+            const isExactStoredMessage = (existing.sidechainId ?? null) === sidechainId
+                && isDeepStrictEqual(existing.content, content)
+                && existing.messageRole === resolvedRole
+                && isDeepStrictEqual(existing.transcriptObservationProvenance, params.trustedTranscriptObservationProvenance ?? null)
+                && (existing.sourceCreatedAt?.getTime() ?? null) === (sourceCreatedAt?.getTime() ?? null)
+                && (existing.sourceUpdatedAt?.getTime() ?? null) === (sourceUpdatedAt?.getTime() ?? null);
+            return isExactStoredMessage
+                ? {
+                    ok: true,
+                    didWrite: false,
+                    didUpdate: false,
+                    badgeAttentionChanged: false,
+                    message: toSessionMessageWriteRow(existing),
+                    participantCursors: [],
+                }
+                : { ok: false, error: "local-id-conflict" };
+        }
         if ((existing.sidechainId ?? null) !== sidechainId) {
             return { ok: false, error: "invalid-params" };
         }
-        const existingHasObservationProvenance = existing.transcriptObservationProvenance != null;
-        const incomingHasObservationProvenance = params.trustedTranscriptObservationProvenance !== undefined;
         if (existingHasObservationProvenance !== incomingHasObservationProvenance) {
             // A current runner can rediscover a deterministic transcript row that a
             // pre-provenance writer already committed without observation metadata.

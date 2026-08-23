@@ -1596,6 +1596,111 @@ describe("sessionWriteService", () => {
             );
         });
 
+        it("replays an exact immutable divider P2002 winner without rewriting it", async () => {
+            const winner = {
+                id: "m-immutable-divider-winner",
+                seq: 9,
+                localId: "agent-transition:submitted-1",
+                sidechainId: null,
+                messageRole: "event",
+                content: { t: "encrypted" as const, c: "same" },
+                transcriptObservationProvenance: null,
+                createdAt: new Date(1),
+                updatedAt: new Date(1),
+            };
+            currentTx.sessionMessage.findUnique
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce(winner);
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.sessionMessage.create.mockRejectedValue({
+                code: "P2002",
+                meta: { target: ["sessionId", "localId"] },
+            });
+
+            dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue(winner);
+
+            const result = await createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "same",
+                localId: winner.localId,
+                messageRole: "event",
+                localIdConflictPolicy: "identical-or-conflict",
+            });
+
+            expect(result).toEqual({
+                ok: true,
+                didWrite: false,
+                didUpdate: false,
+                badgeAttentionChanged: false,
+                message: {
+                    id: winner.id,
+                    seq: winner.seq,
+                    localId: winner.localId,
+                    sidechainId: null,
+                    messageRole: "event",
+                    content: winner.content,
+                    createdAt: winner.createdAt,
+                    updatedAt: winner.updatedAt,
+                },
+                participantCursors: [],
+            });
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+        });
+
+        it("returns an immutable local-ID conflict instead of correcting a P2002 winner", async () => {
+            const winner = {
+                id: "m-immutable-winner",
+                seq: 9,
+                localId: "immutable-local-id",
+                sidechainId: null,
+                messageRole: "event",
+                content: { t: "encrypted" as const, c: "winner" },
+                createdAt: new Date(1),
+                updatedAt: new Date(1),
+            };
+            currentTx.sessionMessage.findUnique
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce(winner);
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.sessionMessage.create.mockRejectedValue({
+                code: "P2002",
+                meta: { target: ["sessionId", "localId"] },
+            });
+            currentTx.sessionMessage.update.mockResolvedValue({
+                ...winner,
+                content: { t: "encrypted", c: "loser" },
+                updatedAt: new Date(2),
+            });
+
+            dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue(winner);
+            getSessionParticipantUserIds.mockResolvedValue(["u1", "u2"]);
+            markAccountChanged.mockResolvedValueOnce(101).mockResolvedValueOnce(102);
+
+            const params = {
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "loser",
+                localId: winner.localId,
+                messageRole: "event",
+                localIdConflictPolicy: "identical-or-conflict" as const,
+            } as Parameters<typeof createSessionMessage>[0] & Readonly<{
+                localIdConflictPolicy: "identical-or-conflict";
+            }>;
+            const result = await createSessionMessage(params);
+
+            expect(result).toEqual({ ok: false, error: "local-id-conflict" });
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+        });
+
         it("rejects encrypted writes when the session encryptionMode is plain (with a stable code)", async () => {
             const createdAt = new Date("2020-01-01T00:00:00.000Z");
             storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");

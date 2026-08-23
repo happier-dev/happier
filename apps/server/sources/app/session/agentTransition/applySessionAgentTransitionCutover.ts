@@ -40,20 +40,17 @@ import {
  * The accepted consequence is one narrow crash window: current view committed,
  * divider absent. That is reported honestly as
  * `effect: 'current_view_committed'` and surfaces to the client as
- * `partially_applied` / `divider_missing`. No marker, receipt or phase row is
+ * `partially_applied` / `divider_unavailable`. No marker, receipt or phase row is
  * persisted to close it.
  *
- * Idempotency of the divider is the message owner's localId reconciliation, which
- * runs on the NON-trusted path too: the owner catches the `(sessionId, localId)`
- * unique violation and reconciles either way. This write has no trusted provenance
- * and cannot acquire any — that path is gated on
+ * Idempotency of the divider is the message owner's localId reconciliation. This
+ * non-trusted write explicitly requests its `identical-or-conflict` policy: an
+ * exact stored message replays at its existing sequence, while a difference is
+ * refused without revising or republishing the winner. This write cannot acquire
+ * trusted provenance — that path is gated on
  * `trustedTranscriptObservationProvenance`, not on actor-is-owner plus role
  * `event`, and its fence is against a current publisher that no longer exists
  * after the planned stop.
- * The owner overwrites a same-localId row whose content differs, so this service
- * refuses that case itself: divider content is a pure function of the committed
- * target view, so differing content at the reserved localId means a conflicting
- * or stale operation, never a content correction.
  */
 export type SessionAgentTransitionDividerWriteV1 = Readonly<{
     localId: string;
@@ -119,25 +116,16 @@ export async function applySessionAgentTransitionCutover(
         participantCursors: committed.participantCursors,
     } as const;
 
-    // Refuse a conflicting boundary BEFORE calling the message owner. The owner
-    // overwrites a same-localId row whose content differs — that is its
-    // documented reconciliation behavior — so inspecting its result afterwards
-    // would only observe damage already done. Divider content is a pure
-    // function of the committed target view, so a differing payload at the
-    // reserved localId is a conflicting or stale operation, never a correction.
+    // Report a conflicting boundary early when it already exists. This read is
+    // not the race authority: a competing divider can commit after it returns
+    // absent, and the canonical writer's immutable local-ID policy below then
+    // returns the same conflict without mutating the winner.
     //
-    // The read/write gap is not fenced: the reserved localId namespace is
-    // rejected on every generic ingress, so this command is its only producer
-    // and the daemon issues one transition per Session at a time.
-    //
-    // Comparing the STORED BYTES is sound in BOTH encryption modes here, and
-    // that is a property of this tree specifically: the daemon seals the
-    // divider with `encryptSessionPayload({ …, idempotencyKey: dividerLocalId })`,
-    // whose derived nonce makes a re-seal of the same payload byte-identical.
-    // Do not port a "the server cannot decide opaque ciphertext" arm from the
-    // successor tree, which seals dividers with a random nonce and therefore
-    // has to defer the comparison to the daemon; here that arm would add a
-    // decision-maker for a question this comparison already answers.
+    // Comparing the stored bytes is sound in both encryption modes: the daemon
+    // seals the divider with `encryptSessionPayload({ …,
+    // idempotencyKey: dividerLocalId })`, whose derived nonce makes a re-seal
+    // of the same payload byte-identical. The server therefore keeps one
+    // opaque comparator rather than a second decryption decision path.
     const existingDivider = await db.sessionMessage.findUnique({
         where: { sessionId_localId: { sessionId: params.sessionId, localId: dividerLocalId } },
         select: { content: true },
@@ -155,6 +143,7 @@ export async function applySessionAgentTransitionCutover(
         actorUserId: params.actorUserId,
         sessionId: params.sessionId,
         localId: dividerLocalId,
+        localIdConflictPolicy: "identical-or-conflict",
         messageRole: "event",
         content: params.divider.content,
         trustedAttentionImpact: SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT,
@@ -164,7 +153,9 @@ export async function applySessionAgentTransitionCutover(
         return {
             ok: false,
             effect: "current_view_committed",
-            error: divider.error === "internal" ? "internal" : "divider-rejected",
+            error: divider.error === "local-id-conflict"
+                ? "divider-conflict"
+                : divider.error === "internal" ? "internal" : "divider-rejected",
             ...committedEffect,
         };
     }
