@@ -851,14 +851,18 @@ test('late output-parent replacement rejects success and leaves only private una
     await mkdir(outputParent, { recursive: true });
     createDatabase(sourcePath, { large: true });
 
-    const pending = createSqliteSnapshot({ sourcePath, outputPath, disposableRoot });
+    const pending = createSqliteSnapshot({ sourcePath, outputPath, disposableRoot }).then(
+      () => null,
+      (error) => error,
+    );
     await waitForManifestPartial(outputParent);
     await rename(outputParent, movedParent);
     await mkdir(outputParent, { mode: 0o700 });
 
-    await assert.rejects(
-      pending,
-      /output parent.*replaced|output parent.*changed|manifest partial.*replaced|manifest partial.*removed/i,
+    const failure = await pending;
+    assert.match(
+      String(failure),
+      /output parent.*replaced|output parent.*changed|manifest partial.*replaced|manifest partial.*removed|snapshot manifest.*replaced|snapshot manifest.*removed/i,
     );
     await assertMissing(outputPath);
     await assertMissing(`${outputPath}.manifest.json`);

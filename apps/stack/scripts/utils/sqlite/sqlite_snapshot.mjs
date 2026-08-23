@@ -573,7 +573,9 @@ async function writePrivateManifest(path, manifest) {
 }
 
 async function readManifest(path, expectedIdentity = null) {
-  const metadata = await requireRegularFile('snapshot manifest', path);
+  const metadata = expectedIdentity
+    ? await assertSameRegularFile('snapshot manifest', path, expectedIdentity)
+    : await requireRegularFile('snapshot manifest', path);
   const identity = expectedIdentity ?? identityOf(metadata);
   if (!hasIdentity(metadata, identity)) {
     throw new Error(`snapshot manifest identity changed or was replaced: ${path}`);
