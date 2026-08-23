@@ -4,20 +4,15 @@ import {
     type NewSessionCheckoutChipModel,
 } from '@/components/sessions/new/modules/newSessionCheckoutChipModel';
 import {
-    readPersistedNewSessionCheckoutDraft,
+    resolveNewSessionCheckoutSelection,
     type NewSessionCheckoutCreationDraft,
 } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { generateWorktreeName } from '@/utils/worktree/generateWorktreeName';
 
-type HydratedCheckoutAuthoringDraft = Readonly<{
-    checkoutCreationDraft?: NewSessionCheckoutCreationDraft | null;
-}>;
-
 export function useNewSessionCheckoutSelectionState(params: Readonly<{
     persistedDraft: unknown;
-    hydratedTempAuthoringDraft: HydratedCheckoutAuthoringDraft | null;
-    hydratedPersistedAuthoringDraft: HydratedCheckoutAuthoringDraft | null;
+    tempSessionData?: unknown;
     selectedMachineId: string | null;
     selectedPath: string;
     repoScmSnapshot: ScmWorkingSnapshot | null;
@@ -26,6 +21,7 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
 }>): Readonly<{
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
     setCheckoutCreationDraft: React.Dispatch<React.SetStateAction<NewSessionCheckoutCreationDraft | null>>;
+    checkoutSelectionExplicit: boolean;
     checkoutPickerOpen: boolean;
     setCheckoutPickerOpen: React.Dispatch<React.SetStateAction<boolean>>;
     pendingGitWorktreeBaseRefRef: React.MutableRefObject<string | null>;
@@ -33,35 +29,25 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
     shouldReconcileInitialHydratedCheckoutCreationDraftRef: React.MutableRefObject<boolean>;
     checkoutChipModel: NewSessionCheckoutChipModel;
 }> {
-    const persistedDraftRecord = React.useMemo<Record<string, unknown>>(() => {
-        return params.persistedDraft && typeof params.persistedDraft === 'object' && !Array.isArray(params.persistedDraft)
-            ? params.persistedDraft as Record<string, unknown>
-            : {};
-    }, [params.persistedDraft]);
-
-    const initialCheckoutDraft = React.useMemo(() => {
-        const checkoutDraft = readPersistedNewSessionCheckoutDraft({
-            ...persistedDraftRecord,
-            checkoutCreationDraft: params.hydratedTempAuthoringDraft?.checkoutCreationDraft ?? params.hydratedPersistedAuthoringDraft?.checkoutCreationDraft,
-        });
-        return checkoutDraft;
-    }, [
-        params.hydratedPersistedAuthoringDraft?.checkoutCreationDraft,
-        params.hydratedTempAuthoringDraft?.checkoutCreationDraft,
-        persistedDraftRecord,
-    ]);
+    const initialCheckoutSelection = React.useMemo(() => (
+        resolveNewSessionCheckoutSelection(params.tempSessionData, params.persistedDraft)
+    ), [params.persistedDraft, params.tempSessionData]);
 
     const [checkoutCreationDraft, setCheckoutCreationDraft] = React.useState<NewSessionCheckoutCreationDraft | null>(() => {
-        return initialCheckoutDraft.checkoutCreationDraft;
+        return initialCheckoutSelection.checkoutCreationDraft;
     });
+    const [checkoutSelectionExplicit, setCheckoutSelectionExplicit] = React.useState(initialCheckoutSelection.explicit);
+    const setExplicitCheckoutCreationDraft = React.useCallback<React.Dispatch<React.SetStateAction<NewSessionCheckoutCreationDraft | null>>>((next) => {
+        setCheckoutSelectionExplicit(true);
+        setCheckoutCreationDraft(next);
+    }, []);
     const hasAppliedCheckoutDraftEffectRef = React.useRef(false);
-    const shouldReconcileInitialHydratedCheckoutCreationDraftRef = React.useRef(initialCheckoutDraft.checkoutCreationDraft !== null);
+    const shouldReconcileInitialHydratedCheckoutCreationDraftRef = React.useRef(initialCheckoutSelection.checkoutCreationDraft !== null);
     const [checkoutPickerOpen, setCheckoutPickerOpen] = React.useState(false);
     const pendingGitWorktreeBaseRefRef = React.useRef<string | null>(null);
     const pendingGitWorktreeSourceKindRef = React.useRef<'current' | 'local' | 'remote'>('current');
     const previousSelectionKeyRef = React.useRef<string | null>(null);
     const lastAutoOpenWorktreePickerKeyRef = React.useRef<string | null>(null);
-    const defaultAppliedSelectionKeysRef = React.useRef(new Set<string>());
     const defaultWorktreeNameRef = React.useRef(generateWorktreeName());
 
     React.useEffect(() => {
@@ -70,9 +56,11 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
             return;
         }
         shouldReconcileInitialHydratedCheckoutCreationDraftRef.current = false;
-        setCheckoutCreationDraft(initialCheckoutDraft.checkoutCreationDraft);
+        setCheckoutCreationDraft(initialCheckoutSelection.checkoutCreationDraft);
+        setCheckoutSelectionExplicit(initialCheckoutSelection.explicit);
     }, [
-        initialCheckoutDraft.checkoutCreationDraft,
+        initialCheckoutSelection.checkoutCreationDraft,
+        initialCheckoutSelection.explicit,
     ]);
 
     const checkoutChipModel = React.useMemo(() => {
@@ -129,11 +117,7 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
     }, [checkoutCreationDraft, params.selectedMachineId, params.selectedPath]);
 
     React.useEffect(() => {
-        const selectionKey = `${params.selectedMachineId ?? ''}\n${params.selectedPath}`;
-        if (defaultAppliedSelectionKeysRef.current.has(selectionKey)) return;
-        if (params.repoScmSnapshot === null || checkoutCreationDraft !== null) return;
-
-        defaultAppliedSelectionKeysRef.current.add(selectionKey);
+        if (checkoutSelectionExplicit || params.repoScmSnapshot === null || checkoutCreationDraft !== null) return;
         if (
             params.defaultCheckoutMode !== 'git_worktree'
             || params.repoScmSnapshot.repo.isRepo !== true
@@ -150,6 +134,7 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
         });
     }, [
         checkoutCreationDraft,
+        checkoutSelectionExplicit,
         params.defaultCheckoutMode,
         params.repoScmSnapshot,
         params.selectedMachineId,
@@ -173,7 +158,8 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
 
     return {
         checkoutCreationDraft,
-        setCheckoutCreationDraft,
+        setCheckoutCreationDraft: setExplicitCheckoutCreationDraft,
+        checkoutSelectionExplicit,
         checkoutPickerOpen,
         setCheckoutPickerOpen,
         pendingGitWorktreeBaseRefRef,

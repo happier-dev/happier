@@ -802,6 +802,26 @@ describe('persistence', () => {
     });
 
     describe('new session draft', () => {
+        it('roundtrips an explicit current-path checkout selection as null', () => {
+            const draft = {
+                input: '',
+                selectedMachineId: 'machine-a',
+                selectedPath: '/repo',
+                checkoutCreationDraft: null,
+                selectedProfileId: null,
+                selectedSecretId: null,
+                agentType: 'claude' as const,
+                permissionMode: 'default' as const,
+                modelMode: 'default' as const,
+                acpSessionModeId: null,
+                updatedAt: Date.now(),
+            };
+
+            saveNewSessionDraft(draft);
+
+            expect(loadNewSessionDraft()).toHaveProperty('checkoutCreationDraft', null);
+        });
+
         it('rehydrates only a non-empty opaque launch user-attempt id', () => {
             const base = {
                 input: 'prompt',

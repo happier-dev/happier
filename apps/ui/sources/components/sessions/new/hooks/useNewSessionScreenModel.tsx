@@ -728,6 +728,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const {
         checkoutCreationDraft,
         setCheckoutCreationDraft,
+        checkoutSelectionExplicit,
         checkoutPickerOpen,
         setCheckoutPickerOpen,
         pendingGitWorktreeBaseRefRef,
@@ -736,8 +737,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         checkoutChipModel,
     } = useNewSessionCheckoutSelectionState({
         persistedDraft,
-        hydratedTempAuthoringDraft,
-        hydratedPersistedAuthoringDraft,
+        tempSessionData,
         selectedMachineId,
         selectedPath,
         repoScmSnapshot,
@@ -1653,6 +1653,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineSpawnReadiness,
         selectedPath,
         checkoutCreationDraft,
+        checkoutSelectionExplicit,
         promptStore,
         agentType,
         backendTarget,

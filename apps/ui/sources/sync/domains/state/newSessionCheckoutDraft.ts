@@ -9,6 +9,10 @@ export interface NewSessionCheckoutDraft {
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
 }
 
+export interface NewSessionCheckoutSelection extends NewSessionCheckoutDraft {
+    explicit: boolean;
+}
+
 function normalizeNullableString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
@@ -43,6 +47,30 @@ export function parseNewSessionCheckoutDraft(value: unknown): NewSessionCheckout
 
     return {
         checkoutCreationDraft: parseCheckoutCreationDraft(record.checkoutCreationDraft),
+    };
+}
+
+export function hasExplicitNewSessionCheckoutSelection(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    if (!Object.prototype.hasOwnProperty.call(record, 'checkoutCreationDraft')) return false;
+    return record.checkoutCreationDraft === null || parseCheckoutCreationDraft(record.checkoutCreationDraft) !== null;
+}
+
+export function resolveNewSessionCheckoutSelection(
+    ...sources: readonly unknown[]
+): NewSessionCheckoutSelection {
+    for (const source of sources) {
+        if (!hasExplicitNewSessionCheckoutSelection(source)) continue;
+        return {
+            checkoutCreationDraft: parseNewSessionCheckoutDraft(source).checkoutCreationDraft,
+            explicit: true,
+        };
+    }
+
+    return {
+        checkoutCreationDraft: null,
+        explicit: false,
     };
 }
 
