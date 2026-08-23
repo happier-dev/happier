@@ -143,6 +143,7 @@ export type StandardAcpProviderConfig = {
     pendingQueueDrainMaxPopPerWake?: number;
     providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
     turnAssistantPreviewTracker: TurnAssistantPreviewTracker;
+    resolveSystemPromptBeforeSpawn?: () => Promise<string>;
     startupOverrides?: {
       mode?: { modeId: string; updatedAt?: number } | null;
       model?: { modelId: string; updatedAt?: number } | null;
@@ -159,6 +160,7 @@ export type StandardAcpProviderConfig = {
   onDispose?: (params: { session: ApiSessionClient; runtime: RuntimeForLoop }) => void | Promise<void>;
   startRuntimeBeforeFirstPrompt?: boolean;
   failClosedOnResumeFailure?: boolean;
+  deliversSystemPromptAtSpawn?: boolean;
   onTerminalDisplayControllerReady?: (controller: TerminalDisplayController) => void;
   shouldRenderTerminalDisplay?: (params: { opts: StandardAcpProviderRunOptions; session: ApiSessionClient; metadata: Metadata }) => boolean;
   resolveKeepAliveMode?: () => KeepAliveMode;
@@ -468,6 +470,27 @@ export async function runStandardAcpProvider(
     })
     : { happierMcpServer: { url: '', stop: () => {} }, mcpServers: {} };
   const memoryRecallGuidanceEnabled = await resolveCliMemoryRecallGuidanceEnabled();
+  const resolveToolDeliverySessionId = (): string | null => toolDelivery === 'shell_bridge'
+    ? session.sessionId
+    : runtimeForInFlightSteer?.getSessionId() ?? null;
+  const resolveEffectiveSessionSystemPrompt = async (baseOverride?: string | null): Promise<string> =>
+    await resolveEffectiveCodingPromptText({
+      credentials: opts.credentials,
+      settings: opts.accountSettingsContext?.settings ?? null,
+      profileId: session.getMetadataSnapshot()?.profileId ?? null,
+      baseOverride,
+      executionRunsFeatureEnabled: resolveCliFeatureDecision({
+        featureId: 'execution.runs',
+        env: process.env,
+      }).state === 'enabled',
+      providerId: policyAgentId,
+      toolDelivery,
+      toolDeliverySessionId: resolveToolDeliverySessionId(),
+      toolDeliveryDirectory: runtimeDirectory,
+      memoryMachineId: machineId,
+      memoryRecallGuidanceEnabled,
+      cache: promptArtifactBodyCache,
+    });
   const providerInputConsumer = createSessionProviderInputConsumerFn({
     messageQueue,
     session,
@@ -498,6 +521,9 @@ export async function runStandardAcpProvider(
     pendingQueueDrainMaxPopPerWake,
     providerInputConsumer: providerInputConsumer as SessionProviderInputConsumer<unknown, unknown>,
     turnAssistantPreviewTracker,
+    ...(config.deliversSystemPromptAtSpawn === true
+      ? { resolveSystemPromptBeforeSpawn: () => resolveEffectiveSessionSystemPrompt() }
+      : {}),
   });
   runtime.drainPendingAfterStartOrLoad = async () => {
     await providerInputConsumer.drainPending({ reason: 'standard-acp-start-or-load' });
@@ -641,10 +667,6 @@ export async function runStandardAcpProvider(
        ),
       })
     : null;
-  const toolDeliverySessionId = toolDelivery === 'shell_bridge'
-    ? session.sessionId
-    : runtime.getSessionId();
-
   try {
     // A local native return removes only its own prior projection before the
     // strict provider-open path. Ordinary resumes retain their existing id.
@@ -687,24 +709,12 @@ export async function runStandardAcpProvider(
         : undefined,
       failClosedOnResumeFailure: config.failClosedOnResumeFailure === true,
       startRuntimeBeforeFirstPrompt: config.startRuntimeBeforeFirstPrompt === true,
-      resolveFreshSessionSystemPrompt: async ({ baseOverride }) =>
-        await resolveEffectiveCodingPromptText({
-          credentials: opts.credentials,
-          settings: opts.accountSettingsContext?.settings ?? null,
-          profileId: session.getMetadataSnapshot()?.profileId ?? null,
-          baseOverride,
-          executionRunsFeatureEnabled: resolveCliFeatureDecision({
-            featureId: 'execution.runs',
-            env: process.env,
-          }).state === 'enabled',
-          providerId: policyAgentId,
-          toolDelivery,
-          toolDeliverySessionId,
-          toolDeliveryDirectory: runtimeDirectory,
-          memoryMachineId: machineId,
-          memoryRecallGuidanceEnabled,
-          cache: promptArtifactBodyCache,
-        }),
+      resolveFreshSessionSystemPrompt: async ({ baseOverride }) => {
+        if (config.deliversSystemPromptAtSpawn === true) {
+          return typeof baseOverride === 'string' ? baseOverride.trim() : '';
+        }
+        return await resolveEffectiveSessionSystemPrompt(baseOverride);
+      },
       onAfterStart: config.onAfterStart ? () => config.onAfterStart?.({ session, runtime }) : undefined,
       onAfterReset: config.onAfterReset ? () => config.onAfterReset?.({ session, runtime }) : undefined,
       formatPromptErrorMessage: config.formatPromptErrorMessage,

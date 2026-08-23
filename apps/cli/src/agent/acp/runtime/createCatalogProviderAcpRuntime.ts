@@ -25,6 +25,9 @@ export type CatalogProviderSessionIdentityPublication =
   | Readonly<{ kind: 'external-owner' }>
   | Readonly<{ kind: 'runtime-only'; reason: 'vendor-resume-unsupported' }>;
 
+type CatalogBackendOptionsBeforeSpawn<TBackendOptions extends object> =
+  Partial<Omit<TBackendOptions, 'cwd' | 'mcpServers' | 'permissionHandler' | 'permissionMode' | 'happierSessionId'>>;
+
 type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
   provider: Parameters<typeof createCatalogAcpBackend>[0];
   loggerLabel: string;
@@ -37,6 +40,9 @@ type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
   onThinkingChange: (thinking: boolean) => void;
   getSessionOpenAbortSignal?: () => AbortSignal | undefined;
   backendOptions?: Omit<TBackendOptions, 'cwd' | 'mcpServers' | 'permissionHandler' | 'permissionMode' | 'happierSessionId'>;
+  resolveBackendOptionsBeforeSpawn?: (context: Readonly<{
+    session: ApiSessionClient;
+  }>) => Promise<CatalogBackendOptionsBeforeSpawn<TBackendOptions>>;
   getPermissionMode?: () => PermissionMode | null | undefined;
   resolvePermissionMode?: (args: {
     getPermissionMode?: () => PermissionMode | null | undefined;
@@ -162,10 +168,14 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
         : params.getPermissionMode?.();
       const permissionMode = typeof permissionModeRaw === 'string' ? permissionModeRaw : undefined;
 
+      const resolvedBackendOptions = params.resolveBackendOptionsBeforeSpawn
+        ? await params.resolveBackendOptionsBeforeSpawn({ session: params.session })
+        : {};
       const created = await createCatalogAcpBackend<TBackendOptions>(params.provider, {
+        ...(params.backendOptions ?? {}),
+        ...resolvedBackendOptions,
         cwd: params.directory,
         mcpServers: params.mcpServers,
-        ...(params.backendOptions ?? {}),
         permissionHandler: params.permissionHandler,
         permissionMode,
         happierSessionId: params.session.sessionId,

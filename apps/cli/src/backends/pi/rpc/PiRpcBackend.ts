@@ -18,6 +18,10 @@ import {
   type AcpPromptSubmissionEvidence,
 } from '@/agent/acp/AcpBackend';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
+import {
+  materializeProtectedTempTextArtifact,
+  type ProtectedTempTextArtifact,
+} from '@/utils/fs/protectedTempTextArtifact';
 import { logger } from '@/ui/logger';
 import {
   HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY,
@@ -574,6 +578,7 @@ export type PiRpcSpawnOptions = {
   args: string[];
   env?: Record<string, string>;
   happierSessionId?: string | null;
+  appendSystemPromptText?: string | null;
 };
 
 export class PiRpcBackend implements AgentBackend {
@@ -583,9 +588,11 @@ export class PiRpcBackend implements AgentBackend {
     args: string[];
     env: Record<string, string>;
     happierSessionId: string | null;
+    appendSystemPromptText: string | null;
   }>;
 
   private process: ChildProcessWithoutNullStreams | null = null;
+  private appendSystemPromptArtifact: ProtectedTempTextArtifact | null = null;
   private readonly availableCommandNames = new Set<string>();
   private stdoutLineReader: PiRpcJsonlLineReader | null = null;
   private stderrLineReader: PiRpcJsonlLineReader | null = null;
@@ -626,6 +633,7 @@ export class PiRpcBackend implements AgentBackend {
       args: [...options.args],
       env: { ...(options.env ?? {}) },
       happierSessionId: asNonEmptyString(options.happierSessionId) ?? null,
+      appendSystemPromptText: asNonEmptyString(options.appendSystemPromptText) ?? null,
     };
   }
 
@@ -1172,9 +1180,15 @@ export class PiRpcBackend implements AgentBackend {
 
     const child = this.process;
     this.process = null;
-    if (!child) return;
+    const artifact = this.appendSystemPromptArtifact;
+    this.appendSystemPromptArtifact = null;
+    if (!child) {
+      await artifact?.cleanup();
+      return;
+    }
 
     await stopPiRpcProcess(child);
+    await artifact?.cleanup();
   }
 
   private async ensureProcess(): Promise<void> {
@@ -1192,7 +1206,19 @@ export class PiRpcBackend implements AgentBackend {
       return;
     }
 
-    this.spawnRpcProcess({ args: this.options.args });
+    this.spawnRpcProcess({
+      args: [...this.options.args, ...(await this.resolveAppendSystemPromptArgs())],
+    });
+  }
+
+  private async resolveAppendSystemPromptArgs(): Promise<string[]> {
+    const text = this.options.appendSystemPromptText;
+    if (!text) return [];
+    this.appendSystemPromptArtifact ??= await materializeProtectedTempTextArtifact({
+      prefix: 'happier-pi-append-system-prompt-',
+      contents: text,
+    });
+    return ['--append-system-prompt', this.appendSystemPromptArtifact.path];
   }
 
   private spawnRpcProcess(params: Readonly<{ args: string[] }>): void {
@@ -1450,7 +1476,14 @@ export class PiRpcBackend implements AgentBackend {
     lifecycle?: PiRpcSessionOpenLifecycle;
   }>): Promise<PiRpcStateData> {
     await this.stopRpcProcessForRestart();
-    this.spawnRpcProcess({ args: [...this.options.args, '--session', params.sessionArg] });
+    this.spawnRpcProcess({
+      args: [
+        ...this.options.args,
+        ...(await this.resolveAppendSystemPromptArgs()),
+        '--session',
+        params.sessionArg,
+      ],
+    });
 
     try {
       const lifecycle = params.lifecycle ?? this.createSessionOpenLifecycle();

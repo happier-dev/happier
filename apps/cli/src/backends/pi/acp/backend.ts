@@ -15,6 +15,7 @@ export interface PiBackendOptions extends AgentFactoryOptions {
   mcpServers?: Record<string, McpServerConfig>;
   permissionMode?: PermissionMode;
   happierSessionId?: string | null;
+  appendSystemPromptText?: string;
 }
 
 // `null` means Happier must not override Pi's native tool catalog. Passing
@@ -119,6 +120,7 @@ export function createPiBackend(options: PiBackendOptions): AgentBackend {
       ...buildPiRpcArgs({ permissionMode: options.permissionMode, thinkingLevel }),
     ],
     happierSessionId: options.happierSessionId ?? null,
+    appendSystemPromptText: options.appendSystemPromptText ?? null,
     env: {
       ...env,
       NODE_ENV: 'production',
