@@ -3,11 +3,10 @@ import type {
   BackendTargetRefV1,
   ConnectedServiceBindingsV1,
   SessionMcpSelectionV1,
+  SessionSpawnSourceContextV1,
 } from '@happier-dev/protocol';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { createConnectedServiceMaterializationIdentity } from '@/daemon/connectedServices/materialize/createConnectedServiceMaterializationIdentity';
-import { shouldResolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import { createPendingFirstInput } from '@/daemon/spawn/pendingFirstInput';
 
 import { resolveDaemonSpawnSessionByNonce, spawnDaemonSession } from '@/daemon/controlClient';
@@ -22,6 +21,10 @@ import { delay } from '@/utils/time';
 import { abandonSpawnedSessionBestEffort, awaitSpawnedSessionId, type SpawnSessionNonceResolver } from './awaitSpawnedSessionId';
 import { requestSessionStop } from './requestSessionStop';
 import { archiveSessionByIdBestEffort } from './setSessionArchivedState';
+import {
+  createConnectedServiceChildLaunchContext,
+  type ConnectedServiceChildLaunchContext,
+} from '@/session/fork/connectedServiceForkLaunchContext';
 
 /**
  * In-process spawn transport for an ingress that already runs inside the
@@ -107,16 +110,33 @@ export type CreateSpawnedSessionParams = Readonly<{
   approvedNewDirectoryCreation?: boolean;
   /** Stable caller-owned identity for one launch attempt. */
   spawnNonce?: string;
+  /** Caller-owned pending first-input custody; preserved exactly when supplied. */
+  pendingFirstInput?: SpawnDaemonSessionRequest['pendingFirstInput'];
+  resume?: string;
+  experimentalCodexAcp?: boolean;
+  /**
+   * Raw source intent retained only for canonical existing-row and settled-child
+   * validation. It is Action-private creator input, not a new RPC field.
+   */
+  sourceContext?: SessionSpawnSourceContextV1;
   /**
    * Commit the Session row here, seeded from a resolved Replay recipe, and
    * attach the launched runner to it. Absent for ordinary authoring, where the
    * runner bootstrap creates the row.
    */
   replaySeededCreation?: ReplaySeededSessionCreationV1;
+  /**
+   * A fork's already-minted child launch projection. The fork and the
+   * replay-seeded creator share this one projection so the committed row and
+   * the direct spawn attach to it with the same identity.
+   */
+  connectedServiceChildLaunch?: ConnectedServiceChildLaunchContext;
   /** Resolve an already-submitted launch attempt without sending another spawn. */
   resumeOnly?: boolean;
   /** In-daemon transport for an ingress that must not self-call over HTTP. */
   directTransport?: DirectSpawnedSessionTransport;
+  /** Tracked-operation cooperative cancellation; never kills a spawned process. */
+  signal?: AbortSignal;
 }>;
 
 const DEFAULT_SPAWNED_SESSION_FETCH_TIMEOUT_MS = 10_000;
@@ -124,6 +144,22 @@ const DEFAULT_SPAWNED_SESSION_FETCH_POLL_INTERVAL_MS = 200;
 const SPAWN_TRANSIENT_ERROR_MARKERS = [
   'Request failed: /spawn-session, The socket connection was closed unexpectedly',
 ] as const;
+
+// This is deliberately the creator's *cleanup* projection, not a second
+// daemon outcome model. The daemon's nonce registry owns accepted attempts;
+// there is no protocol-level phase bit for an error response. Keep this list
+// limited to codes whose current daemon producers return before a child is
+// admitted. Unknown, legacy, transport, and post-admission codes must retain
+// the fresh row because they can still name a live child.
+const DEFINITE_REPLAY_SEEDED_PRE_ADMISSION_ERROR_CODES = new Set<string>([
+  SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+  SPAWN_SESSION_ERROR_CODES.INVALID_ENVIRONMENT_VARIABLES,
+  SPAWN_SESSION_ERROR_CODES.AUTH_ENV_UNEXPANDED,
+  SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
+  SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
+  SPAWN_SESSION_ERROR_CODES.DIRECTORY_CREATE_FAILED,
+  SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+]);
 
 function resolvePositiveIntFromEnv(key: string, fallback: number): number {
   const raw = String(process.env[key] ?? '').trim();
@@ -138,17 +174,46 @@ async function waitForSpawnedSessionVisibility(params: Readonly<{
   sessionId: string;
   timeoutMs: number;
   pollIntervalMs: number;
+  signal?: AbortSignal;
 }>): Promise<Awaited<ReturnType<typeof fetchSessionById>> | null> {
   const deadlineMs = Date.now() + params.timeoutMs;
   let attempt = 0;
   while (true) {
+    throwIfActionOperationAborted(params.signal);
     attempt += 1;
     const session = await fetchSessionById({ token: params.token, sessionId: params.sessionId });
+    throwIfActionOperationAborted(params.signal);
     if (session) return session;
     if (Date.now() >= deadlineMs) return null;
     // Avoid tight loops when callers set absurdly low env overrides.
-    await delay(Math.max(25, params.pollIntervalMs));
+    await waitForDelayOrAbort(Math.max(25, params.pollIntervalMs), params.signal);
   }
+}
+
+function throwIfActionOperationAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error('Action operation cancelled');
+  error.name = 'AbortError';
+  throw error;
+}
+
+async function waitForDelayOrAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return await delay(ms);
+  throwIfActionOperationAborted(signal);
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      const error = new Error('Action operation cancelled');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    signal.addEventListener('abort', onAbort, { once: true });
+    void delay(ms).then(
+      () => { cleanup(); resolve(); },
+      (error: unknown) => { cleanup(); reject(error); },
+    );
+  });
 }
 
 function isTransientSpawnFailure(spawnResponse: unknown): boolean {
@@ -194,6 +259,11 @@ function readFiniteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function isDefiniteReplaySeededPreAdmissionRejection(errorCode: unknown): boolean {
+  return typeof errorCode === 'string'
+    && DEFINITE_REPLAY_SEEDED_PRE_ADMISSION_ERROR_CODES.has(errorCode);
+}
+
 export function readPersistedReplaySeedSourceRecipe(
   ownerMetadata: Readonly<Record<string, unknown>> | null | undefined,
 ): ReplaySeededCreationSourceRecipe | null {
@@ -221,9 +291,16 @@ export function readPersistedReplaySeedSourceRecipe(
 
 export function replaySeedSourceRecipeConflicts(
   persisted: ReplaySeededCreationSourceRecipe | null,
-  requested: ReplaySeededCreationSourceRecipe,
+  requested: ReplaySeededCreationSourceRecipe | SessionSpawnSourceContextV1,
 ): boolean {
   if (!persisted) return false;
+  if ('forkPoint' in requested) {
+    if (persisted.sourceSessionId !== requested.sourceSessionId) return true;
+    // `latest` names the first attempt's immutable stored snapshot. A rejoin
+    // authenticates source without reinterpreting it against a newer head.
+    return requested.forkPoint.type === 'seq'
+      && persisted.cutoffSeqInclusive !== requested.forkPoint.upToSeqInclusive;
+  }
   return persisted.sourceSessionId !== requested.sourceSessionId
     || persisted.cutoffSeqInclusive !== requested.cutoffSeqInclusive;
 }
@@ -232,10 +309,9 @@ export function replaySeedSourceRecipeConflicts(
  * Replay-seeded creation, owned by the canonical creator.
  *
  * The row is committed here from the already-resolved recipe, the launched
- * runner attaches to it through `existingSessionId`, and one orphan settlement
- * covers a launch failure. This tree's `getOrCreateSessionByTag` returns no
- * `created` flag, so the returned row must prove the requested source lineage
- * itself — correct for both the create and the rejoin outcome.
+ * runner attaches to it through `existingSessionId`, and cleanup only applies
+ * to a fresh row after a definite pre-admission rejection. The returned row
+ * always proves the requested source lineage before a runner attaches.
  */
 async function createReplaySeededSpawnedSession(args: Readonly<{
   params: CreateSpawnedSessionParams;
@@ -244,28 +320,23 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
   dispatchSpawnRequest: (request: SpawnDaemonSessionRequest) => Promise<unknown>;
 }>): Promise<Readonly<{ created: true; sessionId: string; session: SessionSummary }>> {
   const { params, replaySeededCreation } = args;
+  throwIfActionOperationAborted(params.signal);
   const tag = replaySeededCreation.tag.trim();
   if (!tag) {
     throw createCodedError('Missing tag', SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST);
   }
 
   // The launch below attaches the runner to this brand-new row through
-  // `existingSessionId`, and the daemon refuses an existing-Session spawn that carries
-  // connected bindings with no materialization identity (`missing_identity_and_resume_state`).
-  // That refusal is meant for a Session whose earlier conversation cannot be carried over to
-  // the selected account; a row committed here has no earlier conversation at all. So the row
-  // is created carrying the fresh identity its materialized credential home needs — the same
-  // thing fork mints for its child — and the daemon reads it back off this metadata when it
-  // resolves the attach. The need is decided by the daemon's own predicate, so the two cannot
-  // disagree about which spawns require an identity.
-  const connectedServiceMaterializationIdentity = shouldResolveConnectedServiceAuthForSpawn({
-    directory: params.directory,
-    connectedServices: params.connectedServices,
-  })
-    ? { connectedServiceMaterializationIdentityV1: createConnectedServiceMaterializationIdentity() }
-    : {};
+  // `existingSessionId`. Its child row and that attach request must therefore
+  // receive one identity from the shared child-launch owner; metadata alone is
+  // not an input the daemon can consume while it resolves this new attachment.
+  const connectedServiceChildLaunch = params.connectedServiceChildLaunch
+    ?? createConnectedServiceChildLaunchContext({
+      spawn: args.spawnRequestInput,
+      metadata: replaySeededCreation.metadata,
+    });
 
-  const { session } = await getOrCreateSessionByTag({
+  const created = await getOrCreateSessionByTag({
     credentials: params.credentials,
     tag,
     metadata: {
@@ -274,12 +345,12 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
       host: os.hostname(),
       flavor: replaySeededCreation.agentId,
       ...replaySeededCreation.metadata,
-      ...connectedServiceMaterializationIdentity,
+      ...connectedServiceChildLaunch.metadata,
     },
     agentState: null,
   });
 
-  const sessionId = readNonBlankString((session as { id?: unknown } | null)?.id) ?? '';
+  const sessionId = readNonBlankString((created.session as { id?: unknown } | null)?.id) ?? '';
   if (!sessionId) {
     throw createCodedError(
       'Failed to create replay-seeded session (missing id)',
@@ -290,8 +361,7 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
   // A creation identity must be answered by a row that PROVES the requested
   // lineage — positive evidence, not merely the absence of a contradiction.
   //
-  // This tree's `getOrCreateSessionByTag` returns no `created` flag, so the row
-  // this call gets back may be one it never created, and the check runs
+  // The row this call gets back may be one it never created, and the check runs
   // unconditionally. That is why absence is not innocent: a row whose metadata
   // will not decode, or that carries no source recipe at all, contradicts
   // nothing — the recipe reader returns null and the conflict check answers
@@ -302,7 +372,7 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
   // always carries the recipe it just encoded, so it always proves its own
   // lineage. Consumption keeps these fields (it blanks `seedText` and spreads
   // the rest), so an exact retry after the child has already run still rejoins.
-  const ownerMetadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: session });
+  const ownerMetadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: created.session });
   const persistedSourceRecipe = readPersistedReplaySeedSourceRecipe(
     ownerMetadata as Readonly<Record<string, unknown>> | null,
   );
@@ -313,7 +383,10 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
       { sessionId },
     );
   }
-  if (replaySeedSourceRecipeConflicts(persistedSourceRecipe, replaySeededCreation.sourceRecipe)) {
+  if (replaySeedSourceRecipeConflicts(
+    persistedSourceRecipe,
+    params.sourceContext ?? replaySeededCreation.sourceRecipe,
+  )) {
     throw createCodedError(
       'Existing Session was created from a different source recipe',
       'creation_conflict',
@@ -321,36 +394,45 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
     );
   }
 
-  // Once the row exists, EVERY launch failure has to settle it — a rejected
-  // envelope and a throwing transport orphan the row identically, so the
-  // settlement covers both rather than only the returned-error path.
+  // A row can be rejoined from an earlier attempt, and a throw or timeout after
+  // dispatch may hide a live child. Archive only a row this call created and
+  // only when the daemon positively reports a pre-admission rejection.
   let spawnResponse: unknown;
   try {
     spawnResponse = await args.dispatchSpawnRequest(
       SpawnDaemonSessionRequestSchema.parse({
         ...args.spawnRequestInput,
+        ...connectedServiceChildLaunch.spawn,
         existingSessionId: sessionId,
       }),
     );
+    throwIfActionOperationAborted(params.signal);
   } catch (error) {
-    await archiveSessionByIdBestEffort({ token: params.credentials.token, sessionId });
+    if (error instanceof Error && error.name === 'AbortError') throw error;
+    const errorCode = readNonBlankExactString((error as { code?: unknown } | null)?.code)
+      ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED;
+    if (created.created && isDefiniteReplaySeededPreAdmissionRejection(errorCode)) {
+      await archiveSessionByIdBestEffort({ token: params.credentials.token, sessionId });
+    }
     throw createCodedError(
       error instanceof Error && error.message.trim().length > 0 ? error.message : 'Failed to spawn session',
-      readNonBlankExactString((error as { code?: unknown } | null)?.code)
-        ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+      errorCode,
       { sessionId, spawnResponse: null, spawnDispatchThrew: true },
     );
   }
   const spawnResponseRecord = readSpawnResponseRecord(spawnResponse);
   const spawnSucceeded = spawnResponseRecord?.type === 'success' || spawnResponseRecord?.success === true;
   if (!spawnSucceeded) {
-    // The single orphan settlement every Replay ingress used to duplicate.
-    await archiveSessionByIdBestEffort({ token: params.credentials.token, sessionId });
+    const errorCode = readNonBlankExactString(spawnResponseRecord?.errorCode)
+      ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED;
+    if (created.created && isDefiniteReplaySeededPreAdmissionRejection(errorCode)) {
+      await archiveSessionByIdBestEffort({ token: params.credentials.token, sessionId });
+    }
     throw createCodedError(
       readNonBlankExactString(spawnResponseRecord?.errorMessage)
         ?? readNonBlankExactString(spawnResponseRecord?.error)
         ?? 'Failed to spawn session',
-      readNonBlankExactString(spawnResponseRecord?.errorCode) ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+      errorCode,
       { sessionId, spawnResponse: spawnResponse ?? null },
     );
   }
@@ -364,7 +446,7 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
       token: params.credentials.token,
       credentials: params.credentials,
       sessionId,
-      rawSession: session,
+      rawSession: created.session,
       updater: (metadata) => ({
         ...metadata,
         summary: { text: normalizedTitle, updatedAt: Date.now() },
@@ -375,7 +457,7 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
   return {
     created: true,
     sessionId,
-    session: summarizeSessionRecord({ credentials: params.credentials, session }),
+    session: summarizeSessionRecord({ credentials: params.credentials, session: created.session }),
   };
 }
 
@@ -389,6 +471,7 @@ function isAcceptedPendingSpawn(spawnResponse: unknown): boolean {
 export async function createSpawnedSession(
   params: CreateSpawnedSessionParams,
 ): Promise<Readonly<{ created: true; sessionId: string; session: SessionSummary }>> {
+  throwIfActionOperationAborted(params.signal);
   const callerOwnedSpawnNonce = typeof params.spawnNonce === 'string' && params.spawnNonce.trim().length > 0
     ? params.spawnNonce.trim()
     : null;
@@ -420,9 +503,11 @@ export async function createSpawnedSession(
         }
       : {}),
     ...(params.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: params.sessionConfigOptionOverrides } : {}),
-    ...(typeof params.initialMessage === 'string' && params.initialMessage.trim().length > 0
-      ? { pendingFirstInput: createPendingFirstInput({ text: params.initialMessage, spawnNonce }) }
-      : {}),
+    ...(params.pendingFirstInput
+      ? { pendingFirstInput: params.pendingFirstInput }
+      : typeof params.initialMessage === 'string' && params.initialMessage.trim().length > 0
+        ? { pendingFirstInput: createPendingFirstInput({ text: params.initialMessage, spawnNonce }) }
+        : {}),
     ...(params.profileId ? { profileId: params.profileId } : {}),
     ...(params.environmentVariables ? { environmentVariables: params.environmentVariables } : {}),
     ...(params.connectedServices ? { connectedServices: params.connectedServices } : {}),
@@ -437,6 +522,10 @@ export async function createSpawnedSession(
     ...(params.windowsTerminalWindowName ? { windowsTerminalWindowName: params.windowsTerminalWindowName } : {}),
     ...(params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : {}),
     ...(params.agentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1: params.agentRuntimeDescriptorV1 } : {}),
+    ...(params.resume ? { resume: params.resume } : {}),
+    ...(typeof params.experimentalCodexAcp === 'boolean'
+      ? { experimentalCodexAcp: params.experimentalCodexAcp }
+      : {}),
     ...(typeof params.approvedNewDirectoryCreation === 'boolean'
       ? { approvedNewDirectoryCreation: params.approvedNewDirectoryCreation }
       : {}),
@@ -455,6 +544,7 @@ export async function createSpawnedSession(
   const spawnResponse: unknown = params.resumeOnly === true
     ? { success: true as const, status: 'pending' as const, sessionIdStatus: 'pending' as const, spawnNonce }
     : await dispatchSpawnRequest(spawnRequest);
+  throwIfActionOperationAborted(params.signal);
   const spawnResponseRecord = readSpawnResponseRecord(spawnResponse);
   const acceptedWithoutSessionId = isAcceptedPendingSpawn(spawnResponse) || isTransientSpawnFailure(spawnResponse);
   const hasDirectSessionId = spawnResponseRecord?.success === true
@@ -476,6 +566,7 @@ export async function createSpawnedSession(
       ? { type: 'success', sessionIdStatus: 'pending', spawnNonce }
       : spawnResponse,
     resolveSpawnSessionByNonce: resolveSpawnSessionByNonce,
+    ...(params.signal ? { signal: params.signal } : {}),
   });
   if (settledSpawn.type === 'error') {
     if (
@@ -521,12 +612,34 @@ export async function createSpawnedSession(
     sessionId,
     timeoutMs: fetchTimeoutMs,
     pollIntervalMs,
+    ...(params.signal ? { signal: params.signal } : {}),
   });
   if (!rawSession) {
     const error = new Error(`Timed out waiting for spawned session ${sessionId} to appear on the server`);
     (error as { code?: string }).code = 'timeout';
     (error as { details?: unknown }).details = { sessionId, timeoutMs: fetchTimeoutMs };
     throw error;
+  }
+
+  if (params.sourceContext) {
+    const ownerMetadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession });
+    const persistedSourceRecipe = readPersistedReplaySeedSourceRecipe(
+      ownerMetadata as Readonly<Record<string, unknown>> | null,
+    );
+    if (!persistedSourceRecipe) {
+      throw createCodedError(
+        'Settled Session source lineage could not be authenticated',
+        'creation_conflict',
+        { sessionId },
+      );
+    }
+    if (replaySeedSourceRecipeConflicts(persistedSourceRecipe, params.sourceContext)) {
+      throw createCodedError(
+        'Settled Session was created from a different source recipe',
+        'creation_conflict',
+        { sessionId },
+      );
+    }
   }
 
   const normalizedTitle = typeof params.title === 'string' ? params.title.trim() : '';
@@ -556,6 +669,7 @@ export async function createSpawnedSession(
       sessionId,
       timeoutMs: fetchTimeoutMs,
       pollIntervalMs,
+      ...(params.signal ? { signal: params.signal } : {}),
     });
     if (!rawSession) {
       const error = new Error(`Timed out waiting for spawned session ${sessionId} after metadata update`);

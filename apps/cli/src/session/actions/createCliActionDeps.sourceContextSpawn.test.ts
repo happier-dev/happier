@@ -159,6 +159,66 @@ describe('createCliActionDeps session.spawn_new sourceContext', () => {
     expect(mocks.createSpawnedSession).not.toHaveBeenCalled();
   });
 
+  it('releases a pre-spawn source-context attempt so the same request can create on retry', async () => {
+    mocks.resolveReplaySeedDraft
+      .mockResolvedValueOnce({ status: 'unavailable' })
+      .mockResolvedValueOnce({
+        status: 'seeded',
+        seedDraft: 'replayed dialog',
+        dialog: [],
+        summaryText: null,
+        sourceCutoffSeqInclusive: 12,
+      });
+    const deps = createDeps();
+    const request = {
+      directory: '/repo',
+      agentId: 'claude',
+      sourceContext: SOURCE_CONTEXT,
+      actionRequestId: 'source-context-pre-spawn-retry',
+    } as const;
+
+    await expect(deps.sessionSpawnNew(request as any)).resolves.toMatchObject({ type: 'error' });
+    await expect(deps.sessionSpawnNew(request as any)).resolves.toMatchObject({
+      type: 'success',
+      sessionId: 'sess_child',
+    });
+
+    expect(mocks.createSpawnedSession).toHaveBeenCalledTimes(1);
+    const createParams = mocks.createSpawnedSession.mock.calls[0]![0];
+    expect(createParams).toMatchObject({
+      spawnNonce: 'session.spawn_new:sess_1:source-context-pre-spawn-retry',
+    });
+    expect(createParams).not.toHaveProperty('resumeOnly');
+    expect(createParams.replaySeededCreation).toBeDefined();
+  });
+
+  it('rejoins a source-context Action attempt before rebuilding its latest recipe', async () => {
+    const deps = createDeps();
+    const latestSourceContext = {
+      v: 1,
+      kind: 'session_replay',
+      sourceSessionId: 'sess_source',
+      forkPoint: { type: 'latest' },
+    } as const;
+
+    const result = await deps.sessionSpawnNew({
+      directory: '/repo',
+      agentId: 'claude',
+      sourceContext: latestSourceContext,
+      actionRequestId: 'stable-latest-action-attempt',
+      resumeActionRequest: true,
+    } as any);
+
+    expect(result).toMatchObject({ type: 'success', sessionId: 'sess_child' });
+    expect(mocks.resolveReplaySeedDraft).not.toHaveBeenCalled();
+    expect(mocks.createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
+      spawnNonce: 'session.spawn_new:sess_1:stable-latest-action-attempt',
+      resumeOnly: true,
+      sourceContext: latestSourceContext,
+    }));
+    expect(mocks.createSpawnedSession.mock.calls[0]![0]).not.toHaveProperty('replaySeededCreation');
+  });
+
   it('refuses a shared sourceContext before it creates a child Session', async () => {
     mocks.fetchSessionByIdCompat.mockResolvedValue({
       share: { accessLevel: 'edit', canApprovePermissions: false },

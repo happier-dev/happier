@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DirectSessionTranscriptDeltaEphemeral } from '@happier-dev/protocol';
+import { openAccountScopedBlobCiphertext, type DirectSessionTranscriptDeltaEphemeral } from '@happier-dev/protocol';
 
 import {
   bindApiSessionSocketMock,
@@ -68,6 +68,8 @@ vi.mock('./rpc/RpcHandlerManager', () => ({
       rpcHandlerConfigs.push(config);
     }
     registerHandler() {}
+    hasHandler() { return true; }
+    async waitForRegisteredHandlers() { return { status: 'ready' as const }; }
     onSocketConnect() {}
     onSocketDisconnect() {}
     async handleRequest() {
@@ -353,6 +355,40 @@ describe('ApiMachineClient transports', () => {
         expect.objectContaining({ id: 'a2' }),
       ]),
     }));
+  });
+
+  it('emits operation revisions as opaque account-scoped ciphertext', async () => {
+    const machineSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(mockIo, machineSocket);
+    const mod = await import('./apiMachine');
+    const secret = new Uint8Array(32).fill(7);
+    const machine: Machine = {
+      id: 'test-machine', encryptionKey: secret, encryptionVariant: 'legacy',
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+    };
+    const client = new mod.ApiMachineClient('fake-token', machine);
+    client.connect();
+    const snapshot = {
+      version: 1 as const, operationId: 'operation-1', requestId: 'request-1', revision: 1,
+      actionId: 'session.spawn_new', state: 'accepted' as const,
+      scope: { accountId: 'account-1', machineId: 'test-machine' },
+      title: 'Create session', createdAt: 1, cancellation: 'supported' as const,
+    };
+
+    client.emitActionOperationRevision(snapshot);
+
+    const emission = machineSocket.emit.mock.calls.find(([event]) => event === 'action-operation-updated');
+    expect(emission?.[1]).toEqual({
+      type: 'action-operation-updated',
+      machineId: 'test-machine',
+      content: { t: 'encrypted', c: expect.any(String) },
+    });
+    const ciphertext = (emission?.[1] as { content: { c: string } }).content.c;
+    expect(openAccountScopedBlobCiphertext({
+      kind: 'action_operation_snapshot',
+      material: { type: 'legacy', secret },
+      ciphertext,
+    })?.value).toEqual(snapshot);
   });
 
   it('keeps exact daemon terminal custody queued in the suffixed journal when delivery fails', async () => {

@@ -35,6 +35,31 @@ describe('createSpawnedSession retry custody', () => {
     fetchSessionById.mockReset();
   });
 
+  it('acknowledges tracked-operation cancellation after dispatch without killing or redispatching the child', async () => {
+    const controller = new AbortController();
+    spawnDaemonSession.mockImplementation(async () => {
+      controller.abort();
+      return {
+        success: true,
+        status: 'pending',
+        sessionIdStatus: 'pending',
+        spawnNonce: 'tracked-spawn-cancel',
+      };
+    });
+
+    await expect(createSpawnedSession({
+      credentials,
+      directory: '/repo',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      spawnNonce: 'tracked-spawn-cancel',
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(spawnDaemonSession).toHaveBeenCalledOnce();
+    expect(resolveDaemonSpawnSessionByNonce).not.toHaveBeenCalled();
+    expect(fetchSessionById).not.toHaveBeenCalled();
+  });
+
   it('resumes a caller-owned ambiguous nonce without sending a second spawn', async () => {
     spawnDaemonSession.mockResolvedValue({
       success: true,
@@ -75,7 +100,74 @@ describe('createSpawnedSession retry custody', () => {
     expect(spawnDaemonSession).toHaveBeenCalledWith(expect.objectContaining({
       spawnNonce: stableAttempt.spawnNonce,
     }));
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenNthCalledWith(1, stableAttempt.spawnNonce);
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenNthCalledWith(2, stableAttempt.spawnNonce);
+    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenNthCalledWith(
+      1,
+      stableAttempt.spawnNonce,
+      expect.any(Number),
+    );
+    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenNthCalledWith(
+      2,
+      stableAttempt.spawnNonce,
+      expect.any(Number),
+    );
+  });
+
+  it('refuses a settled source-context retry whose persisted child has different lineage', async () => {
+    resolveDaemonSpawnSessionByNonce.mockResolvedValue({
+      status: 'success',
+      sessionId: 'session-from-original-attempt',
+    });
+    fetchSessionById.mockResolvedValue({
+      id: 'session-from-original-attempt',
+      createdAt: 1,
+      updatedAt: 1,
+      active: true,
+      activeAt: 1,
+      pendingCount: 0,
+      metadataVersion: 1,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        replaySeedV1: {
+          v: 1,
+          seedText: '',
+          sourceSessionId: 'sess_original_source',
+          sourceCutoffSeqInclusive: 12,
+          createdAtMs: 1,
+        },
+      }),
+    });
+    const stableAttempt = {
+      credentials,
+      directory: '/repo',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      spawnNonce: 'action-request:session-1:source-context-retry',
+      resumeOnly: true,
+    } satisfies CreateSpawnedSessionParams & Readonly<{ spawnNonce: string; resumeOnly: true }>;
+
+    await expect(createSpawnedSession({
+      ...stableAttempt,
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'sess_different_source',
+        forkPoint: { type: 'latest' },
+      },
+    })).rejects.toMatchObject({
+      code: 'creation_conflict',
+    });
+
+    await expect(createSpawnedSession({
+      ...stableAttempt,
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'sess_original_source',
+        forkPoint: { type: 'seq', upToSeqInclusive: 11 },
+      },
+    })).rejects.toMatchObject({
+      code: 'creation_conflict',
+    });
+
+    expect(spawnDaemonSession).not.toHaveBeenCalled();
   });
 });

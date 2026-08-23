@@ -61,13 +61,14 @@ describe('buildReplaySeededSpawnRecipe', () => {
       source: { sourceSessionId: 'sess_parent', forkPoint: { type: 'latest' } },
       providerHintAgentId: 'claude',
       strategy: 'recent_messages',
+      requestId: 'fork-request-1',
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.recipe.cutoffSeqInclusive).toBe(SOURCE_HEAD_SEQ);
     expect(result.recipe.metadata).toMatchObject({
-      forkV1: { parentCutoffSeqInclusive: SOURCE_HEAD_SEQ },
+      forkV1: { parentCutoffSeqInclusive: SOURCE_HEAD_SEQ, requestId: 'fork-request-1' },
       replaySeedV1: { sourceCutoffSeqInclusive: SOURCE_HEAD_SEQ },
     });
   });

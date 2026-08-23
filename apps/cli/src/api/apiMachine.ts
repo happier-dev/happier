@@ -18,7 +18,7 @@ import {
     type FilesystemAccessPolicy,
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { ScmConnectedAccountCredentialResolver } from '@/scm/types';
-import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
+import { encodeBase64, decodeBase64, encrypt, decrypt, getRandomBytes } from './encryption';
 import { backoff } from '@/utils/time';
 import { createConnectedServicesProjectionRetryScheduler } from './connectedServices/connectedServicesProjectionRetryScheduler';
 import { isConnectedServiceGenerationReconciliationNotAcknowledgeableError } from '@/daemon/connectedServices/accountGroups/generation/reconcileConnectedServiceAuthGroupGenerations';
@@ -26,6 +26,8 @@ import { RpcHandlerManager, type RpcHandlerRegistrationReadiness } from './rpc/R
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
+    sealAccountScopedBlobCiphertext,
+    type ActionOperationSnapshotV1,
     type DirectSessionTranscriptDeltaEphemeral,
     type MachineTransferReceiveEnvelope,
     type MachineTransferSendEnvelope,
@@ -398,6 +400,7 @@ export class ApiMachineClient {
         spawnSession,
         spawnSessionForHandoff,
         resolveSpawnSessionByNonce,
+        abandonSpawnSessionByNonce,
         stopSession,
         isSessionActive,
         loadLocalSessionMetadata,
@@ -413,6 +416,7 @@ export class ApiMachineClient {
                 spawnSession,
                 ...(spawnSessionForHandoff ? { spawnSessionForHandoff } : {}),
                 ...(resolveSpawnSessionByNonce ? { resolveSpawnSessionByNonce } : {}),
+                ...(abandonSpawnSessionByNonce ? { abandonSpawnSessionByNonce } : {}),
                 stopSession,
                 ...(isSessionActive ? { isSessionActive } : {}),
                 ...(loadLocalSessionMetadata ? { loadLocalSessionMetadata } : {}),
@@ -429,6 +433,12 @@ export class ApiMachineClient {
                 emitDirectSessionTranscriptUpdate:
                     deps?.emitDirectSessionTranscriptUpdate
                     ?? ((payload) => this.emitDirectSessionTranscriptUpdate(payload)),
+                emitActionOperationRevision: (snapshot) => this.emitActionOperationRevision(snapshot),
+                getActionOperationScope: async () => {
+                    const accountId = await this.getAccountId();
+                    if (!accountId) throw new Error('Action operation account scope is unavailable');
+                    return { accountId, machineId: this.machine.id };
+                },
             },
         });
         this.rpcLifecycleRegistrations.push(machineRpcLifecycleRegistration);
@@ -551,6 +561,26 @@ export class ApiMachineClient {
     emitDirectSessionTranscriptUpdate(payload: DirectSessionTranscriptDeltaEphemeral): void {
         if (!this.socket) return;
         this.socket.emit('direct-session-transcript-delta', payload);
+    }
+
+    emitActionOperationRevision(snapshot: ActionOperationSnapshotV1): void {
+        if (!this.socket) return;
+        const material = this.machine.encryptionVariant === 'dataKey'
+            ? { type: 'dataKey' as const, machineKey: this.machine.encryptionKey }
+            : { type: 'legacy' as const, secret: this.machine.encryptionKey };
+        this.socket.emit('action-operation-updated', {
+            type: 'action-operation-updated',
+            machineId: this.machine.id,
+            content: {
+                t: 'encrypted',
+                c: sealAccountScopedBlobCiphertext({
+                    kind: 'action_operation_snapshot',
+                    material,
+                    payload: snapshot,
+                    randomBytes: getRandomBytes,
+                }),
+            },
+        });
     }
 
     private dispatchUpdate(update: Update): boolean {

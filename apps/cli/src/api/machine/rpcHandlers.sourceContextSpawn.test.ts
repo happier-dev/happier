@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import {
+  ConnectedServiceMaterializationIdentityV1Schema,
+  SPAWN_SESSION_ERROR_CODES,
+} from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 
 /**
@@ -86,7 +89,10 @@ const SOURCE_CONTEXT = {
   forkPoint: { type: 'seq', upToSeqInclusive: REQUESTED_CUTOFF },
 } as const;
 
-function registerSpawnHandler(spawnSession: ReturnType<typeof vi.fn>) {
+function registerSpawnHandler(
+  spawnSession: ReturnType<typeof vi.fn>,
+  resolveSpawnSessionByNonce?: ReturnType<typeof vi.fn>,
+) {
   const registered = new Map<string, (params: any) => Promise<any>>();
   registerMachineRpcHandlers({
     rpcHandlerManager: {
@@ -96,6 +102,7 @@ function registerSpawnHandler(spawnSession: ReturnType<typeof vi.fn>) {
     } as any,
     handlers: {
       spawnSession: spawnSession as any,
+      ...(resolveSpawnSessionByNonce ? { resolveSpawnSessionByNonce: resolveSpawnSessionByNonce as any } : {}),
       stopSession: async () => true,
       requestShutdown: () => {},
     },
@@ -143,6 +150,7 @@ function primeSource(): void {
       agentStateVersion: 0,
       dataEncryptionKey: null,
     },
+    created: true,
   }));
 }
 
@@ -179,7 +187,18 @@ describe('SPAWN_HAPPY_SESSION sourceContext ingress', () => {
     const spawnSession = vi.fn(async (_options: Record<string, unknown>) => ({ type: 'success', sessionId: 'sess_child' } as const));
     const handler = registerSpawnHandler(spawnSession);
 
-    const result = await handler(spawnRequest());
+    const result = await handler(spawnRequest({
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'claude-subscription': {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'profile-1',
+          },
+        },
+      },
+    }));
 
     expect(result).toMatchObject({ type: 'success', sessionId: 'sess_child' });
 
@@ -204,12 +223,18 @@ describe('SPAWN_HAPPY_SESSION sourceContext ingress', () => {
     });
     expect(String((creation.metadata.replaySeedV1 as { seedText?: unknown }).seedText ?? ''))
       .toContain('source question');
+    const persistedIdentity = ConnectedServiceMaterializationIdentityV1Schema.parse(
+      creation.metadata.connectedServiceMaterializationIdentityV1,
+    );
 
     // The runner attaches to that exact row — never a plain blank spawn.
     expect(spawnSession).toHaveBeenCalledTimes(1);
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       existingSessionId: 'sess_child',
     }));
+    expect(ConnectedServiceMaterializationIdentityV1Schema.parse(
+      (spawnSession.mock.calls[0]![0] as Record<string, unknown>).connectedServiceMaterializationIdentityV1,
+    )).toEqual(persistedIdentity);
     expect(spawnSession).not.toHaveBeenCalledWith(expect.objectContaining({ sessionId: undefined, existingSessionId: undefined }));
     expect(spawnDaemonSession).not.toHaveBeenCalled();
   });
@@ -311,7 +336,7 @@ describe('SPAWN_HAPPY_SESSION sourceContext ingress', () => {
   it('settles the orphaned row once when the launch is rejected', async () => {
     const spawnSession = vi.fn(async () => ({
       type: 'error',
-      errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
       errorMessage: 'spawn failed',
     } as const));
     const handler = registerSpawnHandler(spawnSession);
@@ -321,6 +346,198 @@ describe('SPAWN_HAPPY_SESSION sourceContext ingress', () => {
     expect(result).toMatchObject({ type: 'error', errorMessage: 'spawn failed' });
     expect(archiveSessionByIdBestEffort).toHaveBeenCalledTimes(1);
     expect(archiveSessionByIdBestEffort).toHaveBeenCalledWith({ token: 'token-1', sessionId: 'sess_child' });
+  });
+
+  it('rejoins a stable latest attempt before resolving the source again after a lost response', async () => {
+    const latestSourceContext = {
+      v: 1,
+      kind: 'session_replay',
+      sourceSessionId: 'sess_source',
+      forkPoint: { type: 'latest' },
+    } as const;
+    let sourceHeadSeq = SOURCE_HEAD_SEQ;
+    let persistedMetadata: Record<string, unknown> | null = null;
+    fetchSessionByIdCompat.mockImplementation(async ({ sessionId }: { sessionId: string }) => {
+      if (sessionId === 'sess_source') {
+        return {
+          id: 'sess_source',
+          seq: sourceHeadSeq,
+          createdAt: 1,
+          updatedAt: 2,
+          active: true,
+          activeAt: 2,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify({ path: '/repo', flavor: 'claude' }),
+          metadataVersion: 0,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+          share: null,
+        };
+      }
+      return persistedMetadata === null
+        ? null
+        : {
+          id: 'sess_child',
+          seq: 0,
+          createdAt: 10,
+          updatedAt: 10,
+          active: false,
+          activeAt: 0,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify(persistedMetadata),
+          metadataVersion: 0,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        };
+    });
+    getOrCreateSessionByTag.mockImplementation(async (request: { metadata: Record<string, unknown> }) => {
+      const created = persistedMetadata === null;
+      persistedMetadata ??= request.metadata;
+      return {
+        session: {
+          id: 'sess_child',
+          seq: 0,
+          createdAt: 10,
+          updatedAt: 10,
+          active: false,
+          activeAt: 0,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify(persistedMetadata),
+          metadataVersion: 0,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        },
+        created,
+      };
+    });
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const resolveSpawnSessionByNonce = vi.fn()
+      .mockResolvedValueOnce({ status: 'not_found' as const })
+      .mockResolvedValueOnce({ status: 'success' as const, sessionId: 'sess_child' });
+    const handler = registerSpawnHandler(spawnSession, resolveSpawnSessionByNonce);
+    const request = spawnRequest({ sourceContext: latestSourceContext, spawnNonce: 'latest-lost-response-attempt' });
+
+    await expect(handler(request)).resolves.toMatchObject({ type: 'success', sessionId: 'sess_child' });
+    sourceHeadSeq += 1;
+    await expect(handler(request)).resolves.toMatchObject({ type: 'success', sessionId: 'sess_child' });
+
+    expect(resolveSpawnSessionByNonce).toHaveBeenCalledTimes(2);
+    expect(resolveSpawnSessionByNonce).toHaveBeenNthCalledWith(1, 'latest-lost-response-attempt');
+    expect(resolveSpawnSessionByNonce).toHaveBeenNthCalledWith(2, 'latest-lost-response-attempt');
+    expect(getOrCreateSessionByTag).toHaveBeenCalledTimes(1);
+    // The first create reads the source once for ownership and once to hydrate
+    // its seed. The retry validates the persisted child directly, so a moved
+    // source head cannot mint a new recipe.
+    expect(fetchSessionByIdCompat.mock.calls.map(([request]) => (
+      request as { sessionId: string }
+    ).sessionId)).toEqual(['sess_source', 'sess_source', 'sess_child']);
+    expect(fetchEncryptedTranscriptMessages).toHaveBeenCalledTimes(1);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses raw latest intent when atomic create-or-rejoin finds the child', async () => {
+    // A nonce registry can have no record while get-or-create still finds the
+    // child from the first attempt. Its stored cutoff is immutable; a later
+    // latest source head must not turn that row into a conflict.
+    const latestSourceContext = {
+      v: 1,
+      kind: 'session_replay',
+      sourceSessionId: 'sess_source',
+      forkPoint: { type: 'latest' },
+    } as const;
+    getOrCreateSessionByTag.mockResolvedValue({
+      session: {
+        id: 'sess_child',
+        seq: 0,
+        createdAt: 10,
+        updatedAt: 10,
+        active: false,
+        activeAt: 0,
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({
+          replaySeedV1: {
+            v: 1,
+            seedText: '',
+            sourceSessionId: 'sess_source',
+            sourceCutoffSeqInclusive: REQUESTED_CUTOFF,
+            createdAtMs: 1,
+          },
+        }),
+        metadataVersion: 0,
+        agentState: null,
+        agentStateVersion: 0,
+        dataEncryptionKey: null,
+      },
+      created: false,
+    });
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const resolveSpawnSessionByNonce = vi.fn(async () => ({ status: 'not_found' as const }));
+    const handler = registerSpawnHandler(spawnSession, resolveSpawnSessionByNonce);
+
+    await expect(handler(spawnRequest({
+      sourceContext: latestSourceContext,
+      spawnNonce: 'unregistered-latest-race',
+    }))).resolves.toMatchObject({ type: 'success', sessionId: 'sess_child' });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ existingSessionId: 'sess_child' }));
+  });
+
+  it('refuses a resolved nonce whose child lineage contradicts the requested source context', async () => {
+    fetchSessionByIdCompat.mockImplementation(async ({ sessionId }: { sessionId: string }) => {
+      if (sessionId === 'sess_source') {
+        return {
+          id: 'sess_source',
+          seq: SOURCE_HEAD_SEQ,
+          createdAt: 1,
+          updatedAt: 2,
+          active: true,
+          activeAt: 2,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify({ path: '/repo', flavor: 'claude' }),
+          metadataVersion: 0,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+          share: null,
+        };
+      }
+      return {
+        id: 'sess_child',
+        seq: 0,
+        createdAt: 10,
+        updatedAt: 10,
+        active: false,
+        activeAt: 0,
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({
+          replaySeedV1: {
+            v: 1,
+            seedText: '',
+            sourceSessionId: 'different-source',
+            sourceCutoffSeqInclusive: REQUESTED_CUTOFF,
+            createdAtMs: 1,
+          },
+        }),
+        metadataVersion: 0,
+        agentState: null,
+        agentStateVersion: 0,
+        dataEncryptionKey: null,
+      };
+    });
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const resolveSpawnSessionByNonce = vi.fn(async () => ({ status: 'success' as const, sessionId: 'sess_child' }));
+    const handler = registerSpawnHandler(spawnSession, resolveSpawnSessionByNonce);
+
+    await expect(handler(spawnRequest({ spawnNonce: 'conflicting-source-retry' }))).resolves.toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    });
+
+    expect(getOrCreateSessionByTag).not.toHaveBeenCalled();
+    expect(spawnSession).not.toHaveBeenCalled();
   });
 
   it('leaves an ordinary spawn without a recipe on the plain creation path', async () => {

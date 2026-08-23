@@ -35,6 +35,7 @@ import {
   type WorkspaceManifest,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { RpcHandler } from '../rpc/types';
 
 import {
   registerServerRoutedTransferResponder,
@@ -308,6 +309,16 @@ function resolveDirectPeerPrepareAvailability(input: Readonly<{
 
 function isMachineTransferTimeoutErrorMessage(message: string): boolean {
   return message.startsWith('Timed out waiting for machine transfer ');
+}
+
+function resolvePrepareTargetFailureCode(message: string): string | undefined {
+  if (message === directPeerTransferUnavailable().error) {
+    return directPeerTransferUnavailable().errorCode;
+  }
+  if (message === missingHandoffMetadataV2().error) {
+    return missingHandoffMetadataV2().errorCode;
+  }
+  return undefined;
 }
 
 function buildPrepareJobId(handoffId: string): string {
@@ -1297,6 +1308,7 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
 
 export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
+  wrapStartHandler?: (handler: RpcHandler<unknown, unknown>) => RpcHandler<unknown, unknown>;
   loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
   loadSessionMetadata?: (sessionId: string) => Promise<Record<string, unknown> | null>;
   stopSessionForHandoff?: (sessionId: string) => Promise<'stopped' | 'already_inactive' | 'failed'>;
@@ -1915,7 +1927,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     });
   }
 
-	  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_START, async (raw: unknown) => {
+	  const startHandler: RpcHandler<unknown, unknown> = async (raw: unknown) => {
 	    const parsed = SessionHandoffStartRequestSchema.safeParse(raw);
 	    if (!parsed.success) return invalidRequest();
 
@@ -2533,9 +2545,9 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
         error: errorMessage,
         handoffId,
         status,
-      } as const;
+	      } as const;
 	    }
-  });
+  };
 
   const handlePrepareTargetRaw = async (raw: unknown) => {
     const parsed = SessionHandoffPrepareTargetRequestSchema.safeParse(raw);
@@ -3010,6 +3022,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
         } catch (error) {
           const failedAtMs = Date.now();
           const currentJob = await prepareJobStore.read(jobId);
+          const lastErrorMessage = error instanceof Error ? error.message : 'Failed to prepare handoff target';
+          const lastErrorCode = resolvePrepareTargetFailureCode(lastErrorMessage);
           const failedStatus: SessionHandoffStatus = {
             ...(currentJob?.status ?? pendingStatus),
             status: currentJob?.cancelRequestedAtMs ? 'aborted' : 'awaiting_recovery',
@@ -3020,7 +3034,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             createdAtMs,
             updatedAtMs: failedAtMs,
             ...(currentJob?.cancelRequestedAtMs ? { cancelRequestedAtMs: currentJob.cancelRequestedAtMs, abortedAtMs: failedAtMs } : { failedAtMs }),
-            lastErrorMessage: error instanceof Error ? error.message : 'Failed to prepare handoff target',
+            ...(lastErrorCode ? { lastErrorCode } : {}),
+            lastErrorMessage,
             status: failedStatus,
           }));
         }
@@ -3542,4 +3557,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 	    }
 	    return { ok: false, errorCode: 'not_found' } as const;
 	  });
+  rpcHandlerManager.registerHandler(
+    RPC_METHODS.DAEMON_SESSION_HANDOFF_START,
+    params.wrapStartHandler ? params.wrapStartHandler(startHandler) : startHandler,
+  );
 }

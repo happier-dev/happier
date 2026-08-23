@@ -178,6 +178,7 @@ describe('session.fork replay branch — canonical creation delegation', () => {
       parentSessionId: 'sess_parent',
       forkPoint: { type: 'latest' },
       strategy: 'replay',
+      requestId: 'fork-request-1',
     });
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
@@ -189,10 +190,9 @@ describe('session.fork replay branch — canonical creation delegation', () => {
       metadata: Record<string, unknown>;
     };
 
-    // The branch keeps its existing per-attempt tag form.
-    expect(creation.tag).toMatch(
-      new RegExp(`^fork:sess_parent:${PARENT_HEAD_SEQ}:[0-9a-f-]{36}$`),
-    );
+    // The caller-provided id is the retry identity and the durable lineage
+    // correlation key for this exact fork attempt.
+    expect(creation.tag).toBe('fork:sess_parent:fork-request-1');
 
     // Persisted lineage names the fork point this lifecycle admitted, NOT the
     // cutoff seed retrieval resolved for itself.
@@ -203,6 +203,7 @@ describe('session.fork replay branch — canonical creation delegation', () => {
         parentSessionId: 'sess_parent',
         parentCutoffSeqInclusive: PARENT_HEAD_SEQ,
         strategy: 'replay',
+        requestId: 'fork-request-1',
         providerHint: { providerId: 'claude' },
       },
       replaySeedV1: {
@@ -304,7 +305,7 @@ describe('session.fork replay branch — canonical creation delegation', () => {
     }));
   });
 
-  it('settles the orphaned child once and reports the launch envelope when spawn fails', async () => {
+  it('retains a possibly admitted child and reports the launch envelope when spawn outcome is unexpected', async () => {
     const spawnSession = vi.fn(async () => ({
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
@@ -324,8 +325,10 @@ describe('session.fork replay branch — canonical creation delegation', () => {
       errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
       errorMessage: 'spawn failed',
     });
-    expect(archiveSessionByIdBestEffort).toHaveBeenCalledTimes(1);
-    expect(archiveSessionByIdBestEffort).toHaveBeenCalledWith({ token: 'token-1', sessionId: 'sess_child' });
+    // `UNEXPECTED` may be a lost response after the daemon admitted the
+    // runner. The canonical creator may archive only definite pre-admission
+    // rejections, otherwise this retry could delete a live child.
+    expect(archiveSessionByIdBestEffort).not.toHaveBeenCalled();
   });
 
   // The caller's `requestId` is the identity of ONE fork attempt, and it is the
@@ -377,6 +380,34 @@ describe('session.fork replay branch — canonical creation delegation', () => {
     // Retry is the user's only recovery. A cached failure makes the button inert
     // for as long as the entry lives, with nothing on screen saying so.
     await expect(handler(request)).resolves.toMatchObject({ ok: true, childSessionId: 'sess_child' });
+  });
+
+  it('coalesces concurrent retries for one request id before creating another child', async () => {
+    let resolveSpawn!: (result: { type: 'success'; sessionId: string }) => void;
+    const spawnSession = vi.fn(() => new Promise<{ type: 'success'; sessionId: string }>((resolve) => {
+      resolveSpawn = resolve;
+    }));
+    const handler = registerForkHandler(spawnSession);
+    const request = {
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'replay',
+      requestId: 'attempt-9',
+    };
+
+    const first = handler(request);
+    await vi.waitFor(() => expect(spawnSession).toHaveBeenCalledTimes(1));
+
+    const second = handler(request);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+    expect(getOrCreateSessionByTag).toHaveBeenCalledTimes(1);
+
+    resolveSpawn({ type: 'success', sessionId: 'sess_child' });
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { ok: true, childSessionId: 'sess_child' },
+      { ok: true, childSessionId: 'sess_child' },
+    ]);
   });
 
   it('creates no child when the source seed cannot be resolved', async () => {

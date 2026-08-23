@@ -33,8 +33,10 @@ import {
   SessionMcpSelectionV1Schema,
   SessionRunnerStatusGetRequestV1Schema,
   SessionSpawnSourceContextV1Schema,
+  getActionSpec,
   type ConnectedServiceBindingsV1,
   type SessionForkRpcResult,
+  type SessionHandoffStartRequest,
   type SessionSpawnSourceContextV1,
 } from '@happier-dev/protocol';
 import { isPermissionMode } from '@/api/types';
@@ -47,7 +49,11 @@ import { inspectSessionContinuation } from '@/session/agentTransition/sessionCon
 import { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
 import { resolveReplaySourceContextAuthority } from '@/session/replay/resolveReplaySourceContextAuthority';
 import { readReplaySeededCreationFailure } from '@/session/replay/replaySeededCreationFailure';
-import { createSpawnedSession } from '@/session/services/createSpawnedSession';
+import {
+  createSpawnedSession,
+  readPersistedReplaySeedSourceRecipe,
+  replaySeedSourceRecipeConflicts,
+} from '@/session/services/createSpawnedSession';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveForkCutoffSeqInclusive } from '@/session/fork/resolveForkCutoffSeqInclusive';
@@ -105,6 +111,7 @@ import { isAcpForkEligibleForProvider } from '@/agent/acp/acpForkEligibility';
 import type {
   AccountPetCreateRequestV1,
   AccountPetCreateResponseV1,
+  ActionOperationSnapshotV1,
   DirectSessionTranscriptDeltaEphemeral,
   MachineTransferReceiveEnvelope,
   MachineTransferSendEnvelope,
@@ -117,11 +124,24 @@ import {
 } from '@/backends/opencode/utils/opencodeSessionAffinity';
 import { inferAgentIdFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import { getAcpForkContinuationHandler } from '@/backends/catalog';
-import { isProviderNativeForkIndeterminateError } from '@/backends/forking/providerNativeForkHandler';
+import {
+  isProviderNativeForkFailedBeforeDispatchError,
+  isProviderNativeForkIndeterminateError,
+} from '@/backends/forking/providerNativeForkHandler';
 import { dispatchProviderNativeFork } from '@/session/fork/providerNativeForkDispatch';
 import { abandonSpawnedSessionBestEffort, awaitSpawnedSessionId, normalizeDaemonSpawnSessionEnvelope } from '@/session/services/awaitSpawnedSessionId';
 import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
 import { createPromptRegistryAdapterRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
+import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
+import { createTrackedSessionHandoffStart } from '@/daemon/actionOperations/trackedSessionHandoffStart';
+import { registerActionOperationRpcHandlers } from '@/daemon/actionOperations/actionOperationRpcHandlers';
+import {
+  projectCoreActionOperationDomainRef,
+} from '@/daemon/actionOperations/coreActionOperationProjection';
+import { createSessionHandoffCoordinator } from '@/session/handoff/orchestration/sessionHandoffCoordinator';
+import { bindSessionHandoffTarget } from '@/session/handoff/orchestration/sessionHandoffTargetBinding';
+import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import {
   normalizeSpawnSessionDirectory,
   SpawnSessionExecutionAuthorizationSchema,
@@ -147,6 +167,36 @@ import { isAuthenticationError } from '@/api/client/httpStatusError';
 // that at all, and caching a FAILURE additionally made Retry inert for as long
 // as the entry lived, with nothing on screen saying so.
 const inFlightSessionForks = new Map<string, Promise<SessionForkRpcResult>>();
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function resolveEstablishedForkLineageCutoff(params: Readonly<{
+  metadata: Readonly<Record<string, unknown>>;
+  parentSessionId: string;
+  requestId: string;
+  fallbackCutoffSeqInclusive: number;
+}>): number {
+  const forkV1 = params.metadata.forkV1;
+  const cutoff = isRecord(forkV1) ? forkV1.parentCutoffSeqInclusive : null;
+  if (
+    !isRecord(forkV1)
+    || forkV1.v !== 1
+    || forkV1.parentSessionId !== params.parentSessionId
+    || forkV1.requestId !== params.requestId
+    || typeof cutoff !== 'number'
+    || !Number.isInteger(cutoff)
+    || cutoff < 0
+  ) {
+    return params.fallbackCutoffSeqInclusive;
+  }
+
+  // requestId is a durable logical-attempt identity. Retrying a latest fork
+  // may observe a newer parent head, but must not alter the child lineage that
+  // this same request already established.
+  return cutoff;
+}
 
 
 function parseSessionConnectedServiceAuthSwitchRpcParams(raw: unknown): Readonly<{
@@ -204,6 +254,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   machineRpcWorkingDirectory?: string;
   filesystemAccessPolicy?: FilesystemAccessPolicy;
   emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
+  emitActionOperationRevision?: (snapshot: ActionOperationSnapshotV1) => void;
   createAccountPet?: (request: AccountPetCreateRequestV1) => Promise<AccountPetCreateResponseV1>;
   resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
   scheduleInactiveSessionUsageLimitRecoveryCheck?: ScheduleInactiveSessionUsageLimitRecoveryCheck;
@@ -211,6 +262,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   cancelConnectedServiceRuntimeAuthRecovery?: CancelConnectedServiceRuntimeAuthRecovery;
   notifyConnectedServiceRuntimeAuthFailure?: NotifyConnectedServiceRuntimeAuthFailure;
   retryTemporaryThrottleNow?: RetryTemporaryThrottleNow;
+  getActionOperationScope?: () => Promise<Readonly<{ accountId: string; machineId: string }>>;
 }>;
 
 export type MachineRpcLifecycleRegistration = Readonly<{
@@ -224,14 +276,17 @@ async function fetchForkChildSessionOrThrow(params: Readonly<{
   sessionId: string;
   attempts?: number;
   delayMs?: number;
+  signal?: AbortSignal;
 }>): Promise<NonNullable<Awaited<ReturnType<typeof fetchSessionByIdCompat>>>> {
   const attempts = typeof params.attempts === 'number' && params.attempts >= 1 ? Math.floor(params.attempts) : 6;
   const delayMs = typeof params.delayMs === 'number' && params.delayMs >= 0 ? Math.floor(params.delayMs) : 250;
   let lastError: unknown = null;
 
   for (let index = 0; index < attempts; index += 1) {
+    throwIfTrackedActionAborted(params.signal);
     try {
       const raw = await fetchSessionByIdCompat({ token: params.token, sessionId: params.sessionId });
+      throwIfTrackedActionAborted(params.signal);
       if (raw) return raw;
       lastError = new Error('Session fetch returned empty response');
     } catch (error) {
@@ -239,11 +294,47 @@ async function fetchForkChildSessionOrThrow(params: Readonly<{
       lastError = error;
     }
     if (index < attempts - 1 && delayMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await waitForTrackedActionDelay(delayMs, params.signal);
     }
   }
 
   throw lastError instanceof Error ? lastError : new Error(`Failed to load forked child session ${params.sessionId}`);
+}
+
+function throwIfTrackedActionAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error('Action operation cancelled');
+  error.name = 'AbortError';
+  throw error;
+}
+
+function isTrackedActionAbort(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+async function waitForTrackedActionDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+    return;
+  }
+  throwIfTrackedActionAborted(signal);
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      cleanup();
+      const error = new Error('Action operation cancelled');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 async function cleanupForkChildBestEffort(stopSession: (sessionId: string) => Promise<boolean>, sessionId: string): Promise<void> {
@@ -295,7 +386,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
   deps?: MachineRpcHandlerDeps;
 }>): MachineRpcLifecycleRegistration {
   const { rpcHandlerManager, handlers } = params;
-  const { spawnSession, stopSession, requestShutdown, resolveSpawnSessionByNonce } = handlers;
+  const { spawnSession, stopSession, requestShutdown, resolveSpawnSessionByNonce, abandonSpawnSessionByNonce } = handlers;
   const stopSessionConfirmed = async (sessionId: string): Promise<boolean> => (
     normalizeMachineStopSessionResult(await stopSession(sessionId)).status === 'stopped'
   );
@@ -309,6 +400,27 @@ export function registerMachineRpcHandlers(params: Readonly<{
         accessPolicy,
       })
       : machineRpcWorkingDirectory;
+  let actionOperationRuntime: Readonly<{
+    runner: ReturnType<typeof createActionOperationRunner>;
+    getScope: NonNullable<MachineRpcHandlerDeps['getActionOperationScope']>;
+  }> | null = null;
+
+  if (params.deps?.getActionOperationScope) {
+    const actionOperationStore = createActionOperationStore({
+      onRevision: params.deps.emitActionOperationRevision,
+    });
+    const actionOperationRunner = createActionOperationRunner({ store: actionOperationStore });
+    registerActionOperationRpcHandlers({
+      rpcHandlerManager,
+      store: actionOperationStore,
+      runner: actionOperationRunner,
+      getScope: params.deps.getActionOperationScope,
+    });
+    actionOperationRuntime = {
+      runner: actionOperationRunner,
+      getScope: params.deps.getActionOperationScope,
+    };
+  }
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH, async (raw: unknown) => {
     const parsed = parseSessionConnectedServiceAuthSwitchRpcParams(raw);
@@ -381,6 +493,84 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
+    const validateResolvedSourceContextChild = async (sessionId: string): Promise<SpawnSessionResult> => {
+      let child: Awaited<ReturnType<typeof fetchSessionByIdCompat>>;
+      try {
+        child = await fetchSessionByIdCompat({ token: credentials.token, sessionId });
+      } catch (error) {
+        if (isAuthenticationError(error)) throw error;
+        return {
+          type: 'error',
+          errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+          errorMessage: 'The earlier source-context Session could not be authenticated yet',
+        };
+      }
+      if (!child) {
+        return {
+          type: 'error',
+          errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+          errorMessage: 'The earlier source-context Session could not be authenticated yet',
+        };
+      }
+      const ownerMetadata = tryDecryptSessionMetadata({ credentials, rawSession: child });
+      const persistedSourceRecipe = readPersistedReplaySeedSourceRecipe(
+        ownerMetadata as Readonly<Record<string, unknown>> | null,
+      );
+      if (!persistedSourceRecipe) {
+        return {
+          type: 'error',
+          errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+          errorMessage: 'The earlier source-context Session could not be authenticated yet',
+        };
+      }
+      if (replaySeedSourceRecipeConflicts(persistedSourceRecipe, args.sourceContext)) {
+        // The predecessor SpawnSessionResult has no creation_conflict arm. Keep
+        // its stable invalid-request projection while refusing before child use;
+        // this ingress delegates comparison to the creator-owned helper.
+        return {
+          type: 'error',
+          errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+          errorMessage: 'Existing Session was created from a different source recipe',
+        };
+      }
+      return { type: 'success', sessionId };
+    };
+
+    // The caller-owned nonce is the existing creation identity. Resolve it
+    // before rebuilding a latest source recipe: a lost response may already
+    // have a child whose original cutoff must remain authoritative.
+    if (args.spawnNonce && resolveSpawnSessionByNonce) {
+      try {
+        const resolved = await resolveSpawnSessionByNonce(args.spawnNonce);
+        if (resolved.status === 'success') {
+          return await validateResolvedSourceContextChild(resolved.sessionId);
+        }
+        if (resolved.status === 'pending') {
+          return { type: 'success', spawnNonce: args.spawnNonce, sessionIdStatus: 'pending' };
+        }
+        if (resolved.status === 'error') {
+          return {
+            type: 'error',
+            errorCode: resolved.errorCode,
+            errorMessage: resolved.errorMessage,
+            ...(resolved.errorDetail ? { errorDetail: resolved.errorDetail } : {}),
+          };
+        }
+        // `not_found` and `unsupported` have no child evidence. Continue through
+        // the canonical create-or-rejoin owner with the same stable tag.
+      } catch (error) {
+        if (isAuthenticationError(error)) throw error;
+        return {
+          type: 'error',
+          errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+          errorMessage: 'The earlier source-context session launch could not be resolved',
+        };
+      }
+    }
+
+    // No resolved child exists only on this creation path. Validate current
+    // source ownership before composing the recipe; retry/rejoin above instead
+    // validates the persisted child lineage without rereading the source head.
     const sourceAuthority = await resolveReplaySourceContextAuthority({
       credentials,
       sourceSessionId: args.sourceContext.sourceSessionId,
@@ -435,6 +625,10 @@ export function registerMachineRpcHandlers(params: Readonly<{
         backendTarget: args.backendTarget,
         ...(connectedServices.success ? { connectedServices: connectedServices.data } : {}),
         ...(args.spawnNonce ? { spawnNonce: args.spawnNonce } : {}),
+        // The public RPC already parsed this input. Keep it host-private below
+        // the ingress so the canonical creator can validate an atomic rejoin
+        // against original `latest` semantics without widening any wire shape.
+        sourceContext: args.sourceContext,
         replaySeededCreation: {
           tag: creationTag,
           agentId,
@@ -448,6 +642,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
           spawn: async (request) => await spawnSession({
             ...args.baseSpawnOptions,
             existingSessionId: request.existingSessionId,
+            ...(request.connectedServiceMaterializationIdentityV1
+              ? { connectedServiceMaterializationIdentityV1: request.connectedServiceMaterializationIdentityV1 }
+              : {}),
             approvedNewDirectoryCreation: args.approvedNewDirectoryCreation as boolean | undefined,
           } satisfies SpawnSessionOptions),
         },
@@ -791,12 +988,68 @@ export function registerMachineRpcHandlers(params: Readonly<{
     }
   };
 
+  const handleTrackedSpawnHappySession = async (raw: unknown) => {
+    const record = raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? raw as Readonly<Record<string, unknown>>
+      : null;
+    const requestId = readNonBlankOpaqueIdentifier(record?.spawnNonce);
+    if (!actionOperationRuntime || !requestId) return await handleSpawnHappySession(raw);
+
+    let receiptSettled = false;
+    let resolveReceipt!: (value: Awaited<ReturnType<typeof handleSpawnHappySession>>) => void;
+    let rejectReceipt!: (error: unknown) => void;
+    const receipt = new Promise<Awaited<ReturnType<typeof handleSpawnHappySession>>>((resolve, reject) => {
+      resolveReceipt = (value) => { receiptSettled = true; resolve(value); };
+      rejectReceipt = (error) => { receiptSettled = true; reject(error); };
+    });
+    const scope = await actionOperationRuntime.getScope();
+    void actionOperationRuntime.runner.executeHistorical({
+      request: { actionId: 'session.spawn_new', input: {}, requestId, scope: {} },
+      scope,
+      title: getActionSpec('session.spawn_new').title,
+      cancellation: abandonSpawnSessionByNonce ? 'supported' : 'unsupported',
+      domainRef: { kind: 'spawnAttempt', id: requestId },
+      execute: async ({ signal, update }) => {
+        update({ progress: { kind: 'phase', phase: 'creating', label: 'Creating session' } });
+        const initial = await handleSpawnHappySession(raw);
+        resolveReceipt(initial);
+        if (initial.type !== 'success' || initial.sessionId) return initial;
+        try {
+          const settled = await awaitSpawnedSessionId({
+            result: initial,
+            resolveSpawnSessionByNonce,
+            signal,
+          });
+          if (settled.type === 'success') {
+            update({ progress: { kind: 'phase', phase: 'custody_confirmed', label: 'Session custody confirmed' } });
+          }
+          return settled;
+        } catch (error) {
+          if (!signal.aborted || !isTrackedActionAbort(error) || !abandonSpawnSessionByNonce) throw error;
+          const cancellation = await abandonSpawnSessionByNonce(requestId);
+          if (cancellation.status === 'completed') throw error;
+          throw new Error('Spawn cancellation was not acknowledged');
+        }
+      },
+      projectResult: (result) => {
+        if (result.type === 'success' && result.sessionId) return { ok: true, result };
+        if (result.type === 'error') {
+          return { ok: false, errorCode: result.errorCode, error: result.errorMessage };
+        }
+        return { ok: false, errorCode: 'spawn_custody_unresolved', error: 'Spawn custody did not resolve to a session' };
+      },
+    }).catch((error) => {
+      if (!receiptSettled) rejectReceipt(error);
+    });
+    return await receipt;
+  };
+
   rpcHandlerManager.registerHandler(
     RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
-    handleSpawnHappySession,
+    handleTrackedSpawnHappySession,
   );
   rpcHandlerManager.registerHandler(RPC_METHODS.SPAWN_HAPPY_SESSION, async (params: any) => {
-    const result = await handleSpawnHappySession(params);
+    const result = await handleTrackedSpawnHappySession(params);
     if (result.type !== 'success' || result.sessionId) {
       return result;
     }
@@ -928,6 +1181,74 @@ export function registerMachineRpcHandlers(params: Readonly<{
   });
   registerMachineSessionHandoffRpcHandlers({
     rpcHandlerManager,
+    ...(actionOperationRuntime ? {
+      wrapStartHandler: (startUntracked) => createTrackedSessionHandoffStart({
+        runner: actionOperationRuntime.runner,
+        getScope: actionOperationRuntime.getScope,
+        startUntracked: async (request) => await startUntracked(request),
+        coordinate: async (request, context, startSource) => {
+          const scope = await actionOperationRuntime.getScope();
+          if (request.sourceMachineId !== scope.machineId) {
+            return {
+              ok: false,
+              errorCode: 'machine_mismatch',
+              error: 'Session handoff source does not match this daemon',
+            };
+          }
+          const credentials = await readCredentials().catch(() => null);
+          if (!credentials) {
+            return { ok: false, errorCode: 'not_authenticated', error: 'Authentication is required' };
+          }
+          const rawSession = await fetchSessionByIdCompat({
+            token: credentials.token,
+            sessionId: request.sessionId,
+          }).catch(() => null);
+          const sourceMetadata = rawSession
+            ? tryDecryptSessionMetadata({ credentials, rawSession }) as Record<string, unknown> | null
+            : null;
+          const connectedServices = sourceMetadata
+            && Object.prototype.hasOwnProperty.call(sourceMetadata, 'connectedServices')
+            ? sourceMetadata.connectedServices
+            : undefined;
+          const targetRpc = async (method: string, payload: unknown): Promise<unknown> => await callMachineRpc({
+            credentials,
+            machineId: request.targetMachineId,
+            method,
+            request: payload,
+          });
+          const coordinator = createSessionHandoffCoordinator({
+            transportStrategy: request.negotiatedTransportStrategy
+              ?? (request.preferredTransportStrategies.includes('direct_peer') ? 'direct_peer' : 'server_routed_stream'),
+            probeTargetCapability: async () => await targetRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET, {}),
+            startSource,
+            prepareTarget: async (payload) => await targetRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V2, payload),
+            getTargetPrepareResult: async (payload) => await targetRpc(
+              RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V2,
+              payload,
+            ),
+            getTargetStatus: async (payload) => await targetRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET, payload),
+            resumeTarget: async (payload) => await targetRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_TARGET_RESUME_V2, payload),
+            confirmTarget: async (payload) => await targetRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_TARGET_CONFIRM_V2, payload),
+            bindTarget: async (input) => await bindSessionHandoffTarget({ credentials, ...input }),
+            commitTarget: async (payload) => await targetRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V2, payload),
+            cleanupSource: async (payload) => await rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT, payload),
+            abortTarget: async (payload) => await targetRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V2, payload),
+            abortSource: async (payload) => await rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT, payload),
+            wait: async (signal) => await waitForTrackedActionDelay(250, signal),
+          });
+          const admitted = await coordinator.admit({
+            sessionId: request.sessionId,
+            sourceMachineId: request.sourceMachineId,
+            targetMachineId: request.targetMachineId,
+            sessionStorageMode: request.sessionStorageMode,
+            ...(request.targetSessionStorageMode ? { targetSessionStorageMode: request.targetSessionStorageMode } : {}),
+            ...(request.workspaceTransfer ? { workspaceTransfer: request.workspaceTransfer } : {}),
+            ...(connectedServices !== undefined ? { connectedServices } : {}),
+          });
+          return await admitted.execute(context);
+        },
+      }),
+    } : {}),
     ...(handlers.spawnSessionForHandoff ? { spawnSessionForHandoff: handlers.spawnSessionForHandoff } : {}),
     stopSessionForHandoff: async (sessionId) => {
       const isActive = await handlers.isSessionActive?.(sessionId) ?? false;
@@ -1087,7 +1408,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
     }
   });
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_FORK, async (raw: unknown) => {
+  const executeSessionForkRpcUntracked = async (raw: unknown, signal?: AbortSignal): Promise<SessionForkRpcResult> => {
+    throwIfTrackedActionAborted(signal);
     const parsed = SessionForkRpcParamsSchema.safeParse(raw);
     if (!parsed.success) {
       return {
@@ -1116,6 +1438,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
     const forkRequestId = readNonBlankOpaqueIdentifier(parsed.data.requestId) ?? '';
     const executeSessionFork = async (): Promise<SessionForkRpcResult> => {
 
+    throwIfTrackedActionAborted(signal);
+
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) {
       return {
@@ -1128,7 +1452,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
     let parentSession: Awaited<ReturnType<typeof fetchSessionByIdCompat>> | null = null;
     try {
       parentSession = await fetchSessionByIdCompat({ token: credentials.token, sessionId: parentSessionId });
+      throwIfTrackedActionAborted(signal);
     } catch (error) {
+      if (isTrackedActionAbort(error)) throw error;
       if (isAuthenticationError(error)) throw error;
       return {
         ok: false,
@@ -1287,7 +1613,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
             ? { type: 'seq', upToSeqInclusive: targetSeqInclusive }
             : { type: 'latest' },
           targetSeqInclusive,
+          ...(signal ? { signal } : {}),
         });
+        throwIfTrackedActionAborted(signal);
 
         if (nativeFork) {
           const result = await spawnSession({
@@ -1298,6 +1626,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
             ...nativeFork.spawn,
             ...inheritedForkSpawnOverrides,
           } satisfies SpawnSessionOptions);
+          throwIfTrackedActionAborted(signal);
 
           // The provider-native fork already created a new vendor thread. Falling through to
           // another strategy here would orphan that thread (and any spawned child) while silently
@@ -1306,6 +1635,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
           const resolvedSpawn = await awaitSpawnedSessionId({
             result,
             ...(resolveSpawnSessionByNonce ? { resolveSpawnSessionByNonce } : {}),
+            // A provider-native fork has already mutated provider state. Keep
+            // its child under daemon lifecycle custody until terminal nonce
+            // evidence arrives; a generic 90-second deadline must not abandon it.
+            timeoutMs: null,
+            ...(signal ? { signal } : {}),
           });
           if (resolvedSpawn.type !== 'success') {
             abandonAcceptedForkSpawnBestEffort({
@@ -1325,7 +1659,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
               return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Fork spawn returned parent session id' };
             }
             try {
-              const childRaw = await fetchForkChildSessionOrThrow({ token: credentials.token, sessionId: childSessionId });
+              const childRaw = await fetchForkChildSessionOrThrow({
+                token: credentials.token,
+                sessionId: childSessionId,
+                ...(signal ? { signal } : {}),
+              });
               await updateSessionMetadataWithRetry({
                 token: credentials.token,
                 credentials,
@@ -1339,15 +1677,24 @@ export function registerMachineRpcHandlers(params: Readonly<{
                   forkV1: {
                     v: 1,
                     parentSessionId,
-                    parentCutoffSeqInclusive: effectiveCutoffSeqInclusive,
+                    parentCutoffSeqInclusive: forkRequestId
+                      ? resolveEstablishedForkLineageCutoff({
+                        metadata,
+                        parentSessionId,
+                        requestId: forkRequestId,
+                        fallbackCutoffSeqInclusive: effectiveCutoffSeqInclusive,
+                      })
+                      : effectiveCutoffSeqInclusive,
                     createdAtMs: Date.now(),
                     strategy: 'provider_native',
+                    ...(forkRequestId ? { requestId: forkRequestId } : {}),
                     providerHint: nativeFork.providerHint,
                   },
                 }),
                 maxAttempts: 6,
               });
             } catch (error) {
+              if (isTrackedActionAbort(error)) throw error;
               if (isAuthenticationError(error)) throw error;
               await cleanupForkChildBestEffort(stopSessionConfirmed, childSessionId);
               await archiveSessionBestEffort(credentials.token, childSessionId);
@@ -1361,11 +1708,19 @@ export function registerMachineRpcHandlers(params: Readonly<{
           }
         }
       } catch (error) {
+        if (isTrackedActionAbort(error)) throw error;
         if (isAuthenticationError(error)) throw error;
         if (isProviderNativeForkIndeterminateError(error)) {
           return {
             ok: false,
             errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+            errorMessage: error.message,
+          };
+        }
+        if (isProviderNativeForkFailedBeforeDispatchError(error)) {
+          return {
+            ok: false,
+            errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
             errorMessage: error.message,
           };
         }
@@ -1405,9 +1760,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
           try {
             if (typeof created.backend.loadSession === 'function' && typeof (created.backend as any).forkSession === 'function') {
               await created.backend.loadSession(vendorSessionIdRaw as any);
+              throwIfTrackedActionAborted(signal);
               const forked = await (created.backend as any).forkSession({
                 sessionId: vendorSessionIdRaw,
               });
+              throwIfTrackedActionAborted(signal);
               const forkedSessionId = typeof forked?.sessionId === 'string' ? String(forked.sessionId).trim() : '';
               if (forkedSessionId) {
                 acpForkCommitted = true;
@@ -1429,6 +1786,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
                   ...(continuationShape?.spawn ?? {}),
                   ...inheritedForkSpawnOverrides,
                 } satisfies SpawnSessionOptions);
+                throwIfTrackedActionAborted(signal);
 
                 // The ACP fork already created a forked vendor session; degrading to replay after a
                 // spawn failure would orphan it. Resolve pending accept-then-async spawns by nonce
@@ -1436,6 +1794,10 @@ export function registerMachineRpcHandlers(params: Readonly<{
                 const resolvedSpawn = await awaitSpawnedSessionId({
                   result,
                   ...(resolveSpawnSessionByNonce ? { resolveSpawnSessionByNonce } : {}),
+                  // ACP session/fork has the same provider-owned completion
+                  // custody as provider-native fork above.
+                  timeoutMs: null,
+                  ...(signal ? { signal } : {}),
                 });
                 if (resolvedSpawn.type !== 'success') {
                   abandonAcceptedForkSpawnBestEffort({
@@ -1455,7 +1817,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
                     return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Fork spawn returned parent session id' };
                   }
                   try {
-                    const childRaw = await fetchForkChildSessionOrThrow({ token: credentials.token, sessionId: childSessionId });
+                    const childRaw = await fetchForkChildSessionOrThrow({
+                      token: credentials.token,
+                      sessionId: childSessionId,
+                      ...(signal ? { signal } : {}),
+                    });
                     await updateSessionMetadataWithRetry({
                       token: credentials.token,
                       credentials,
@@ -1469,9 +1835,17 @@ export function registerMachineRpcHandlers(params: Readonly<{
                         forkV1: {
                           v: 1,
                           parentSessionId,
-                          parentCutoffSeqInclusive: effectiveCutoffSeqInclusive,
+                          parentCutoffSeqInclusive: forkRequestId
+                            ? resolveEstablishedForkLineageCutoff({
+                              metadata,
+                              parentSessionId,
+                              requestId: forkRequestId,
+                              fallbackCutoffSeqInclusive: effectiveCutoffSeqInclusive,
+                            })
+                            : effectiveCutoffSeqInclusive,
                           createdAtMs: Date.now(),
                           strategy: 'acp_fork_latest',
+                          ...(forkRequestId ? { requestId: forkRequestId } : {}),
                           providerHint: continuationShape?.providerHint ?? {
                             providerId: agentRaw,
                             vendorSessionId: forkedSessionId,
@@ -1481,6 +1855,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
                         maxAttempts: 6,
                       });
                   } catch (error) {
+                    if (isTrackedActionAbort(error)) throw error;
                     if (isAuthenticationError(error)) throw error;
                     await cleanupForkChildBestEffort(stopSessionConfirmed, childSessionId);
                     await archiveSessionBestEffort(credentials.token, childSessionId);
@@ -1499,6 +1874,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
           }
         }
       } catch (error) {
+        if (isTrackedActionAbort(error)) throw error;
         if (isAuthenticationError(error)) throw error;
         // Once the ACP fork committed a forked vendor session, falling back to
         // replay would orphan it — surface the failure instead.
@@ -1540,6 +1916,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       // already admitted, which for a `latest` fork is not the cutoff seed
       // retrieval resolves for itself.
       lineageCutoffSeqInclusive: effectiveCutoffSeqInclusive,
+      requestId: forkRequestId || null,
       strategy: replaySummaryRunner ? 'summary_plus_recent' : 'recent_messages',
       // No count bound: the seed is bounded by CHARACTERS. Passing the page-size
       // knob here as a message count is what capped the window at 500 turns in
@@ -1565,6 +1942,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
           : {}),
       },
     });
+    throwIfTrackedActionAborted(signal);
     if (!recipe.ok) {
       return {
         ok: false,
@@ -1595,6 +1973,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
             cutoffSeqInclusive: effectiveCutoffSeqInclusive,
           },
         },
+        connectedServiceChildLaunch: connectedServiceForkLaunchContext,
         // In-daemon ingress: launch through the in-process spawn handler and
         // merge this ingress's own spawn options here.
         directTransport: {
@@ -1616,9 +1995,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
             ...inheritedForkSpawnOverrides,
           } satisfies SpawnSessionOptions),
         },
+        ...(signal ? { signal } : {}),
       });
       childSessionId = created.sessionId;
     } catch (error) {
+      if (isTrackedActionAbort(error)) throw error;
       if (isAuthenticationError(error)) throw error;
       const failure = readReplaySeededCreationFailure(error);
       if (failure.stage === 'spawn') {
@@ -1664,6 +2045,31 @@ export function registerMachineRpcHandlers(params: Readonly<{
         inFlightSessionForks.delete(forkRequestKey);
       }
     }
+  };
+  rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_FORK, async (raw: unknown) => {
+    const parsed = SessionForkRpcParamsSchema.safeParse(raw);
+    const requestId = parsed.success ? readNonBlankOpaqueIdentifier(parsed.data.requestId) : null;
+    if (!actionOperationRuntime || !parsed.success || !requestId) {
+      return await executeSessionForkRpcUntracked(raw);
+    }
+    const scope = await actionOperationRuntime.getScope();
+    return await actionOperationRuntime.runner.executeHistorical({
+      request: {
+        actionId: 'session.fork',
+        input: parsed.data,
+        requestId,
+        scope: { sessionId: parsed.data.parentSessionId },
+      },
+      scope,
+      title: getActionSpec('session.fork').title,
+      cancellation: 'supported',
+      scopeSessionId: parsed.data.parentSessionId,
+      domainRef: projectCoreActionOperationDomainRef('session.fork', requestId, parsed.data),
+      execute: async ({ signal }) => await executeSessionForkRpcUntracked(parsed.data, signal),
+      projectResult: (result) => result.ok
+        ? { ok: true, result }
+        : { ok: false, errorCode: result.errorCode, error: result.errorMessage },
+    });
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, async () => {

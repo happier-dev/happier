@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   AcpConfigOptionOverridesV1Schema,
   AgentRuntimeDescriptorV1Schema,
+  ConnectedServiceMaterializationIdentityV1Schema,
   PendingFirstInputV1Schema,
   SessionInitialGoalRequestV1Schema,
   SessionAttachMetadataIdentityPolicySchema,
@@ -81,6 +82,7 @@ const SpawnDaemonSessionRequestCompatSchema = z.object({
   environmentVariables: z.record(z.string(), z.string()).optional(),
   connectedServices: z.unknown().optional(),
   connectedServicesUpdatedAt: z.number().int().optional(),
+  connectedServiceMaterializationIdentityV1: ConnectedServiceMaterializationIdentityV1Schema.optional(),
   mcpSelection: SessionMcpSelectionV1Schema.optional(),
   transcriptStorage: z.enum(['persisted', 'direct']).optional(),
   /**
@@ -159,6 +161,7 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'environmentVariables',
   'connectedServices',
   'connectedServicesUpdatedAt',
+  'connectedServiceMaterializationIdentityV1',
   'materializationDiagnostics',
   'mcpSelection',
   'transcriptStorage',

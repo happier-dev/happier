@@ -14,6 +14,13 @@ const CONNECTED_SERVICES = {
   },
 } as const;
 
+const NATIVE_SERVICES = {
+  v: 1,
+  bindingsByServiceId: {
+    'openai-codex': { source: 'native' },
+  },
+} as const;
+
 describe('createConnectedServiceForkLaunchContext', () => {
   it('mints the same deterministic fresh child materialization identity for spawn and metadata', () => {
     const parentIdentity = {
@@ -72,5 +79,26 @@ describe('createConnectedServiceForkLaunchContext', () => {
       spawn: {},
       metadata: {},
     });
+  });
+
+  it('does not mint an identity for native bindings the daemon will not materialize', () => {
+    const randomBytes = vi.fn((length: number) => new Uint8Array(length).fill(0xab));
+
+    const result = createConnectedServiceForkLaunchContext({
+      inherited: {
+        spawn: { connectedServices: NATIVE_SERVICES },
+        metadata: { connectedServices: NATIVE_SERVICES },
+      },
+      nowMs: () => 777,
+      randomBytes,
+    });
+
+    expect(result).toEqual({
+      hasConnectedServices: true,
+      materializationIdentity: null,
+      spawn: {},
+      metadata: {},
+    });
+    expect(randomBytes).not.toHaveBeenCalled();
   });
 });

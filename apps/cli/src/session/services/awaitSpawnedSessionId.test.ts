@@ -3,6 +3,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { abandonSpawnedSessionUntilCompleted, awaitSpawnedSessionId } from './awaitSpawnedSessionId';
 
 describe('awaitSpawnedSessionId', () => {
+  it('acknowledges cancellation while waiting for daemon custody without stopping the spawned process', async () => {
+    const controller = new AbortController();
+    const pending = awaitSpawnedSessionId({
+      result: { type: 'success', sessionIdStatus: 'pending', spawnNonce: 'nonce-cancel' },
+      resolveSpawnSessionByNonce: async () => ({ status: 'pending' }),
+      pollIntervalMs: 60_000,
+      signal: controller.signal,
+    });
+
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
   it('returns the session id directly when the spawn result already carries one', async () => {
     const result = await awaitSpawnedSessionId({
       result: { type: 'success', sessionId: 'sess_direct' },
@@ -50,6 +63,54 @@ describe('awaitSpawnedSessionId', () => {
     expect(result).toMatchObject({ type: 'error', errorCode: 'SESSION_WEBHOOK_TIMEOUT' });
   });
 
+  it('keeps a generic pending spawn bounded by the default 90-second deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const resolver = vi.fn(async () => ({ status: 'pending' as const }));
+      const result = awaitSpawnedSessionId({
+        result: { type: 'success', sessionIdStatus: 'pending', spawnNonce: 'nonce-generic-timeout' },
+        resolveSpawnSessionByNonce: resolver,
+        pollIntervalMs: 250,
+      });
+
+      await vi.advanceTimersByTimeAsync(90_000);
+
+      await expect(result).resolves.toMatchObject({
+        type: 'error',
+        errorCode: 'SESSION_WEBHOOK_TIMEOUT',
+      });
+      expect(resolver).toHaveBeenCalledTimes(360);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a native-owned accepted spawn alive through a long not-found run until terminal nonce evidence arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      let probes = 0;
+      const resolver = vi.fn(async () => {
+        probes += 1;
+        return probes >= 70
+          ? { status: 'success' as const, sessionId: 'sess_slow_native' }
+          : { status: 'not_found' as const };
+      });
+      const result = awaitSpawnedSessionId({
+        result: { type: 'success', sessionIdStatus: 'pending', spawnNonce: 'nonce-slow-native' },
+        resolveSpawnSessionByNonce: resolver,
+        timeoutMs: null,
+        pollIntervalMs: 250,
+      });
+
+      await vi.advanceTimersByTimeAsync(18_000);
+
+      await expect(result).resolves.toEqual({ type: 'success', sessionId: 'sess_slow_native' });
+      expect(resolver).toHaveBeenCalledTimes(70);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('fails fast when the daemon does not support nonce resolution', async () => {
     const resolver = vi.fn(async () => ({ status: 'unsupported' as const }));
     const result = await awaitSpawnedSessionId({
@@ -61,7 +122,7 @@ describe('awaitSpawnedSessionId', () => {
     expect(result).toMatchObject({ type: 'error', errorCode: 'UNEXPECTED' });
   });
 
-  it('passes a terminal nonce resolution error through unchanged', async () => {
+  it('passes a terminal native-owned nonce resolution error through unchanged', async () => {
     const result = await awaitSpawnedSessionId({
       result: { type: 'success', sessionIdStatus: 'pending', spawnNonce: 'nonce-child-exit' },
       resolveSpawnSessionByNonce: async () => ({
@@ -69,7 +130,7 @@ describe('awaitSpawnedSessionId', () => {
         errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK',
         errorMessage: 'Child process exited before session webhook',
       }),
-      timeoutMs: 2_000,
+      timeoutMs: null,
       pollIntervalMs: 25,
     });
     expect(result).toEqual({

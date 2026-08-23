@@ -66,6 +66,8 @@ export type BuildReplaySeededSpawnRecipeParams = Readonly<{
   strategy: HappierReplayStrategy;
   /** Extra creation metadata merged UNDER the canonical envelopes. */
   extraMetadata?: Record<string, unknown>;
+  /** Caller identity retained in the existing fork lineage for reconciliation. */
+  requestId?: string | null;
   /**
    * Released count bound. Absent means the character budget is the only content
    * bound; `null` says so explicitly.
@@ -139,6 +141,9 @@ export async function buildReplaySeededSpawnRecipe(
     ? params.lineageCutoffSeqInclusive
     : resolvedSeed.sourceCutoffSeqInclusive;
   const nowMs = typeof params.nowMs === 'number' ? params.nowMs : Date.now();
+  const requestId = typeof params.requestId === 'string' && params.requestId.trim().length > 0
+    ? params.requestId.trim()
+    : null;
 
   return {
     ok: true,
@@ -153,6 +158,7 @@ export async function buildReplaySeededSpawnRecipe(
           parentCutoffSeqInclusive: cutoffSeqInclusive,
           createdAtMs: nowMs,
           strategy: 'replay',
+          ...(requestId ? { requestId } : {}),
           providerHint: { providerId: params.providerHintAgentId },
         },
         replaySeedV1: {

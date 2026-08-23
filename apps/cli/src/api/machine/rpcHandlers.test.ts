@@ -929,12 +929,22 @@ describe('registerMachineRpcHandlers', () => {
       spawnNonce: 'spawn-nonce-pending-ack',
       sessionIdStatus: 'pending' as const,
     }));
+    const emitActionOperationRevision = vi.fn();
+    const resolveSpawnSessionByNonce = vi.fn(async () => ({
+      status: 'success' as const,
+      sessionId: 'session-from-custody',
+    }));
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
         spawnSession,
+        resolveSpawnSessionByNonce,
         stopSession: async () => true,
         requestShutdown: () => {},
+      },
+      deps: {
+        getActionOperationScope: async () => ({ accountId: 'account-1', machineId: 'machine-1' }),
+        emitActionOperationRevision,
       },
     });
 
@@ -949,6 +959,12 @@ describe('registerMachineRpcHandlers', () => {
       spawnNonce: 'spawn-nonce-pending-ack',
       sessionIdStatus: 'pending',
     });
+    await vi.waitFor(() => expect(emitActionOperationRevision).toHaveBeenLastCalledWith(expect.objectContaining({
+      requestId: 'spawn-nonce-pending-ack',
+      state: 'succeeded',
+      result: { type: 'success', sessionId: 'session-from-custody' },
+    })));
+    expect(emitActionOperationRevision.mock.calls.map(([snapshot]) => snapshot.revision)).toEqual([1, 2, 3, 4, 5]);
   });
 
   it('resolves accepted spawn identity before returning success on the released legacy RPC', async () => {
@@ -1817,7 +1833,7 @@ describe('registerMachineRpcHandlers', () => {
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).not.toContain('User: one one one');
   });
 
-  it('archives replay-seeded sessions when spawning the continuation fails', async () => {
+  it('retains a replay-seeded session when the spawn outcome may have admitted the child', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
@@ -1912,8 +1928,7 @@ describe('registerMachineRpcHandlers', () => {
             dataEncryptionKey: null,
           },
         },
-      }) as any)
-      .mockResolvedValueOnce({ status: 200, data: { success: true, archivedAt: 11 } } as any);
+      }) as any);
 
     const result = await handler!({
       directory: '/repo',
@@ -1932,12 +1947,9 @@ describe('registerMachineRpcHandlers', () => {
       errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
       errorMessage: 'spawn failed',
     });
-    expect(postSpy).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining('/v2/sessions/sess_new/archive'),
-      {},
-      expect.any(Object),
-    );
+    // An unexpected envelope can be a lost response after admission, so the
+    // canonical creator retains the fresh row rather than orphaning a live child.
+    expect(postSpy).toHaveBeenCalledTimes(1);
   });
 
   it('propagates replay session creation auth failures from continue-with-replay RPC', async () => {
@@ -2362,6 +2374,7 @@ describe('registerMachineRpcHandlers', () => {
     const resolveSpawnSessionByNonce = vi.fn()
       .mockResolvedValueOnce({ status: 'pending' })
       .mockResolvedValueOnce({ status: 'success', sessionId: 'sess_child' });
+    const emitActionOperationRevision = vi.fn();
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
@@ -2369,6 +2382,10 @@ describe('registerMachineRpcHandlers', () => {
         resolveSpawnSessionByNonce,
         stopSession: async () => true,
         requestShutdown: () => {},
+      },
+      deps: {
+        getActionOperationScope: async () => ({ accountId: 'account-1', machineId: 'machine-1' }),
+        emitActionOperationRevision,
       },
     } as any);
 
@@ -2437,22 +2454,48 @@ describe('registerMachineRpcHandlers', () => {
       parentSessionId: 'sess_parent',
       forkPoint: { type: 'latest' },
       strategy: 'auto',
+      requestId: 'fork-request-1',
     });
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(emitActionOperationRevision).toHaveBeenLastCalledWith(expect.objectContaining({
+      actionId: 'session.fork',
+      requestId: 'fork-request-1',
+      state: 'succeeded',
+      result,
+    }));
     expect(resolveSpawnSessionByNonce).toHaveBeenCalledWith(
       'nonce-abc',
-      expect.any(Number),
+      // Provider-native fork has no generic deadline; only terminal daemon
+      // resolution can end custody of the already-created vendor child.
+      undefined,
     );
     expect(spawnSession).toHaveBeenCalledTimes(1);
     // No replay fall-through: the replay path would create a fresh session via POST.
     expect(postSpy).not.toHaveBeenCalled();
     const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
-    const updated = updater({ path: '/repo', flavor: 'codex' });
+    const updated = updater({
+      path: '/repo',
+      flavor: 'codex',
+      forkV1: {
+        v: 1,
+        parentSessionId: 'sess_parent',
+        parentCutoffSeqInclusive: 3,
+        createdAtMs: 1,
+        strategy: 'provider_native',
+        requestId: 'fork-request-1',
+      },
+    });
     expect(updated.forkV1).toMatchObject({ strategy: 'provider_native' });
+    // Reusing a durable request identity must keep the lineage cutoff already
+    // recorded on the child, rather than rewrite it to the later latest head.
+    expect(updated.forkV1).toMatchObject({
+      parentCutoffSeqInclusive: 3,
+      requestId: 'fork-request-1',
+    });
   });
 
-  it('fails the fork instead of degrading to replay when a pending provider-native spawn never resolves', async () => {
+  it('fails the fork instead of degrading to replay when a pending provider-native spawn reaches terminal failure', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
@@ -2465,7 +2508,11 @@ describe('registerMachineRpcHandlers', () => {
       sessionIdStatus: 'pending',
       spawnNonce: 'nonce-stuck',
     } as const));
-    const resolveSpawnSessionByNonce = vi.fn(async () => ({ status: 'pending' as const }));
+    const resolveSpawnSessionByNonce = vi.fn(async () => ({
+      status: 'error' as const,
+      errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+      errorMessage: 'Child process exited before session webhook',
+    }));
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
@@ -2513,29 +2560,21 @@ describe('registerMachineRpcHandlers', () => {
       },
     } as any);
 
-    const previousTimeout = process.env.HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS;
-    const previousPoll = process.env.HAPPIER_SPAWN_SESSION_ID_RESOLVE_POLL_INTERVAL_MS;
-    process.env.HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS = '150';
-    process.env.HAPPIER_SPAWN_SESSION_ID_RESOLVE_POLL_INTERVAL_MS = '25';
-    try {
-      const result = await handler!({
-        v: 1,
-        parentSessionId: 'sess_parent',
-        forkPoint: { type: 'latest' },
-        strategy: 'auto',
-      });
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'auto',
+    });
 
-      expect(result).toMatchObject({ ok: false, errorCode: 'SESSION_WEBHOOK_TIMEOUT' });
-      expect(spawnSession).toHaveBeenCalledTimes(1);
-      // Provider state was already mutated by the native fork; degrading to replay would
-      // orphan the spawned child. The replay path must never run.
-      expect(postSpy).not.toHaveBeenCalled();
-    } finally {
-      if (previousTimeout === undefined) delete process.env.HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS;
-      else process.env.HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS = previousTimeout;
-      if (previousPoll === undefined) delete process.env.HAPPIER_SPAWN_SESSION_ID_RESOLVE_POLL_INTERVAL_MS;
-      else process.env.HAPPIER_SPAWN_SESSION_ID_RESOLVE_POLL_INTERVAL_MS = previousPoll;
-    }
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+    });
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+    // Provider state was already mutated by the native fork; degrading to replay would
+    // orphan the spawned child. The replay path must never run.
+    expect(postSpy).not.toHaveBeenCalled();
   });
 
   it('forks a session with an on-demand summary when no cached summary exists', async () => {
@@ -3659,11 +3698,20 @@ describe('registerMachineRpcHandlers', () => {
       },
     } as any;
 
-    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const spawnSession = vi.fn(async (_opts: any) => ({
+      type: 'success',
+      sessionIdStatus: 'pending',
+      spawnNonce: 'nonce-acp',
+    } as const));
+    const resolveSpawnSessionByNonce = vi.fn(async () => ({
+      status: 'success' as const,
+      sessionId: 'sess_child',
+    }));
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
         spawnSession,
+        resolveSpawnSessionByNonce,
         stopSession: async () => true,
         requestShutdown: () => {},
       },
@@ -3810,6 +3858,7 @@ describe('registerMachineRpcHandlers', () => {
     );
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(resolveSpawnSessionByNonce).toHaveBeenCalledWith('nonce-acp', undefined);
     const spawnOptions = (spawnSession as any).mock.calls[0]?.[0] as any;
     expect(spawnOptions.connectedServiceMaterializationIdentityV1).toEqual(expect.objectContaining({ v: 1 }));
     expect(spawnOptions.connectedServiceMaterializationIdentityV1.id).not.toBe('csm_parent_acp_identity');
@@ -5522,7 +5571,7 @@ describe('registerMachineRpcHandlers', () => {
 
       expect(result).toEqual({
         ok: false,
-        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
         errorMessage: 'initialize rejected',
       });
       expect(spawnSession).not.toHaveBeenCalled();

@@ -14,6 +14,7 @@ export async function dispatchProviderNativeFork(params: Readonly<{
   directory: string;
   forkPoint: ProviderNativeForkPoint;
   targetSeqInclusive: number;
+  signal?: AbortSignal;
 }>): Promise<ProviderNativeForkDispatchResult | null> {
   const handler = await getProviderNativeForkHandler(params.agentId as any);
   return handler ? await handler(params) : null;

@@ -5,24 +5,27 @@ import {
 } from '@happier-dev/protocol';
 
 import { createConnectedServiceMaterializationIdentity } from '@/daemon/connectedServices/materialize/createConnectedServiceMaterializationIdentity';
+import { shouldResolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 
-type ConnectedServiceForkPatch = {
+export type ConnectedServiceChildLaunchPatch = Readonly<{
   connectedServices?: ConnectedServiceBindingsV1;
   connectedServicesUpdatedAt?: number;
   connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1;
-};
+}>;
 
 export type ConnectedServiceForkInheritedOverrides = Readonly<{
-  spawn: ConnectedServiceForkPatch;
-  metadata: ConnectedServiceForkPatch;
+  spawn: ConnectedServiceChildLaunchPatch;
+  metadata: ConnectedServiceChildLaunchPatch;
 }>;
 
-export type ConnectedServiceForkLaunchContext = Readonly<{
+export type ConnectedServiceChildLaunchContext = Readonly<{
   hasConnectedServices: boolean;
   materializationIdentity: ConnectedServiceMaterializationIdentityV1 | null;
-  spawn: ConnectedServiceForkPatch;
-  metadata: ConnectedServiceForkPatch;
+  spawn: ConnectedServiceChildLaunchPatch;
+  metadata: ConnectedServiceChildLaunchPatch;
 }>;
+
+export type ConnectedServiceForkLaunchContext = ConnectedServiceChildLaunchContext;
 
 function readNonEmptyConnectedServices(value: unknown): ConnectedServiceBindingsV1 | null {
   const parsed = ConnectedServiceBindingsV1Schema.safeParse(value);
@@ -30,17 +33,33 @@ function readNonEmptyConnectedServices(value: unknown): ConnectedServiceBindings
   return Object.keys(parsed.data.bindingsByServiceId).length > 0 ? parsed.data : null;
 }
 
-export function createConnectedServiceForkLaunchContext(params: Readonly<{
-  inherited: ConnectedServiceForkInheritedOverrides;
+/**
+ * The one child-creation projection for connected-service materialization.
+ *
+ * A child row and the spawn attaching its runner have to carry the same fresh
+ * identity. Forks and replay-seeded source-context creation are distinct
+ * ingress paths, but neither owns that identity decision.
+ */
+export function createConnectedServiceChildLaunchContext<TSpawn extends object, TMetadata extends object>(params: Readonly<{
+  spawn: TSpawn;
+  metadata: TMetadata;
   nowMs?: () => number;
   randomBytes?: (length: number) => Uint8Array;
-}>): ConnectedServiceForkLaunchContext {
+}>): ConnectedServiceChildLaunchContext {
   const inheritedConnectedServices =
-    readNonEmptyConnectedServices(params.inherited.spawn.connectedServices)
-    ?? readNonEmptyConnectedServices(params.inherited.metadata.connectedServices);
+    readNonEmptyConnectedServices((params.spawn as Readonly<{ connectedServices?: unknown }>).connectedServices)
+    ?? readNonEmptyConnectedServices((params.metadata as Readonly<{ connectedServices?: unknown }>).connectedServices);
   if (!inheritedConnectedServices) {
     return {
       hasConnectedServices: false,
+      materializationIdentity: null,
+      spawn: {},
+      metadata: {},
+    };
+  }
+  if (!shouldResolveConnectedServiceAuthForSpawn({ connectedServices: inheritedConnectedServices })) {
+    return {
+      hasConnectedServices: true,
       materializationIdentity: null,
       spawn: {},
       metadata: {},
@@ -62,4 +81,17 @@ export function createConnectedServiceForkLaunchContext(params: Readonly<{
       connectedServiceMaterializationIdentityV1: materializationIdentity,
     },
   };
+}
+
+export function createConnectedServiceForkLaunchContext(params: Readonly<{
+  inherited: ConnectedServiceForkInheritedOverrides;
+  nowMs?: () => number;
+  randomBytes?: (length: number) => Uint8Array;
+}>): ConnectedServiceForkLaunchContext {
+  return createConnectedServiceChildLaunchContext({
+    spawn: params.inherited.spawn,
+    metadata: params.inherited.metadata,
+    ...(params.nowMs ? { nowMs: params.nowMs } : {}),
+    ...(params.randomBytes ? { randomBytes: params.randomBytes } : {}),
+  });
 }

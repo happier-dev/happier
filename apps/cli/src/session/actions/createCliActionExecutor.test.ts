@@ -987,6 +987,66 @@ describe('createCliActionExecutor', () => {
     expectSingleSpawnWithPendingFirstInput('Rich spawn');
   });
 
+  it('uses the injected in-daemon spawn owner while preserving caller-owned spawn identity', async () => {
+    const directSpawn = vi.fn(async () => ({ success: true, sessionId: 'sess-direct' }));
+    const pendingFirstInput = createPendingFirstInput({
+      text: 'Caller-owned first input',
+      spawnNonce: 'caller-spawn-nonce',
+    });
+    const executor = createPlainExecutor({
+      directSpawnTransport: { spawn: directSpawn },
+      rawSession: {
+        metadata: {
+          machineId: 'machine-1',
+          path: '/repo/current',
+          host: 'local-host',
+        },
+      },
+    });
+    fetchSessionById.mockResolvedValue({
+      id: 'sess-direct',
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 2,
+      pendingCount: 0,
+      metadataVersion: 1,
+      metadata: { machineId: 'machine-1', path: '/repo/current', host: 'local-host' },
+    });
+
+    await expect(executor.execute('session.spawn_new', {
+      agentId: 'codex',
+      path: '/repo/current',
+      spawnNonce: 'caller-spawn-nonce',
+      pendingFirstInput,
+      approvedNewDirectoryCreation: true,
+      resume: 'provider-session-id',
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 101,
+      agentModeId: 'plan',
+      agentModeUpdatedAt: 102,
+      modelId: 'gpt-5',
+      modelUpdatedAt: 103,
+      codexBackendMode: 'acp',
+    }, {
+      surface: 'ui_button',
+      defaultSessionId: 'sess-1',
+      actionRequestId: 'tracked-request-id',
+    })).resolves.toMatchObject({ ok: true, result: { sessionId: 'sess-direct' } });
+
+    expect(directSpawn).toHaveBeenCalledWith(expect.objectContaining({
+      spawnNonce: 'caller-spawn-nonce',
+      pendingFirstInput,
+      approvedNewDirectoryCreation: true,
+      resume: 'provider-session-id',
+      permissionModeUpdatedAt: 101,
+      agentModeUpdatedAt: 102,
+      modelUpdatedAt: 103,
+      codexBackendMode: 'acp',
+    }));
+    expect(spawnDaemonSession).not.toHaveBeenCalled();
+  });
+
   it('inherits the current session backend target for session-agent spawn when no explicit target is provided', async () => {
     const executor = createPlainExecutor({
       rawSession: {
@@ -1468,7 +1528,7 @@ describe('createCliActionExecutor', () => {
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 
-  it('resumes an ambiguous action request by stable identity without submitting a second spawn', async () => {
+  it('resumes an ambiguous caller-owned spawn attempt without submitting a second spawn', async () => {
     const executor = createPlainExecutor({
       rawSession: { metadata: { machineId: 'machine-1', path: '/repo/current', host: 'leeroy-mbp' } },
     });
@@ -1497,10 +1557,12 @@ describe('createCliActionExecutor', () => {
     await expect(executor.execute('session.spawn_new', {
       path: '/repo/current',
       backendTargetKey: 'agent:codex',
+      spawnNonce: 'attempt-1',
     }, context)).resolves.toMatchObject({ ok: false });
     const resumed = await executor.execute('session.spawn_new', {
       path: '/repo/current',
       backendTargetKey: 'agent:codex',
+      spawnNonce: 'attempt-1',
     }, context);
     expect(resumed).toMatchObject({
       ok: true,
@@ -1510,7 +1572,7 @@ describe('createCliActionExecutor', () => {
     expect(spawnDaemonSession).toHaveBeenCalledTimes(1);
     expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledTimes(2);
     expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledWith(
-      'session.spawn_new:sess-1:attempt-1',
+      'attempt-1',
       expect.any(Number),
     );
   });
@@ -1832,6 +1894,32 @@ describe('createCliActionExecutor', () => {
       wait: false,
       timeoutMs: 10_000,
     }));
+  });
+
+  it('prepares without dispatch and preserves one-shot terminal execution through the CLI wrapper', async () => {
+    const executor = createPlainExecutor();
+    sendSessionMessage.mockResolvedValue({ ok: true, sessionId: 'sess-1', localId: 'local-1', waited: false });
+
+    const prepared = await executor.prepare(
+      'session.message.send',
+      { sessionId: 'sess-1', message: 'Hello later', wait: false, timeoutSeconds: 10 },
+      { surface: 'cli', defaultSessionId: 'sess-1' },
+    );
+
+    expect(prepared.kind).toBe('ready');
+    expect(sendSessionMessage).not.toHaveBeenCalled();
+    if (prepared.kind !== 'ready') throw new Error('expected prepared invocation');
+    const first = prepared.invocation.run();
+    const second = prepared.invocation.run();
+    await expect(first).resolves.toEqual({
+      ok: true,
+      result: { ok: true, sessionId: 'sess-1', localId: 'local-1', waited: false },
+    });
+    await expect(second).resolves.toEqual({
+      ok: true,
+      result: { ok: true, sessionId: 'sess-1', localId: 'local-1', waited: false },
+    });
+    expect(sendSessionMessage).toHaveBeenCalledTimes(1);
   });
 
   it('delivers a composer session reference to the referenced session from a session agent (D-21)', async () => {
