@@ -7120,7 +7120,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           status: 'offline',
           pid: process.pid,
           httpPort: controlPort,
-          startedAt: Date.now()
+          startedAt: Date.now(),
+          startedWithCliVersion: daemonStateCliVersion,
         };
 
       const restartOnAuthUpdate = parseBooleanEnv(

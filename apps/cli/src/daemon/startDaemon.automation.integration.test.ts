@@ -1534,6 +1534,11 @@ describe('startDaemon automation wiring (integration)', () => {
       );
 
       expect(writeDaemonState).toHaveBeenCalledTimes(1);
+      expect(ensureMachineRegistered).toHaveBeenCalledWith(expect.objectContaining({
+        daemonState: expect.objectContaining({
+          startedWithCliVersion: '0.2.10',
+        }),
+      }));
 
       harness.requestShutdown('happier-cli');
       await run;
