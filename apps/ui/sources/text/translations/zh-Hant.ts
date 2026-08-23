@@ -7074,7 +7074,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
           unavailable: {
             generic: '此頁面目前不可用。',
             desktopEngineUnavailable: '此裝置上的內建瀏覽器引擎不可用。',
-            desktopWebView: '此裝置上的內建瀏覽器引擎不可用。',
+            desktopWebView: '此裝置上的內建瀏覽器引擎不可用。你仍可在系統瀏覽器中開啟此頁面。',
             desktopWebViewUnsupportedPlatform: '此平台尚不支援內建瀏覽。',
             externalUrlPolicyDenied: '此網站已被你的安全性原則封鎖。',
             externalUrlUnavailable: '此網站無法在內建瀏覽器中開啟。',

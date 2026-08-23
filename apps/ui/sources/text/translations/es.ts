@@ -8761,7 +8761,7 @@ export const es = {
     unavailable: {
       generic: "Esta página no está disponible ahora mismo.",
       desktopEngineUnavailable: "El motor del navegador integrado no está disponible en este equipo.",
-      desktopWebView: "El motor del navegador integrado no está disponible en este equipo.",
+      desktopWebView: "El motor del navegador integrado no está disponible en este equipo. Aún puedes abrir esta página en el navegador del sistema.",
       desktopWebViewUnsupportedPlatform: "La navegación integrada aún no está disponible en esta plataforma.",
       externalUrlPolicyDenied: "Tu política de seguridad bloquea este sitio.",
       externalUrlUnavailable: "Este sitio no se puede abrir en el navegador integrado.",

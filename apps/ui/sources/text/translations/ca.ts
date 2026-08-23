@@ -7800,7 +7800,7 @@ deps: {
           unavailable: {
             generic: 'Aquesta pàgina no està disponible ara mateix.',
             desktopEngineUnavailable: 'El motor del navegador integrat no està disponible en aquest equip.',
-            desktopWebView: 'El motor del navegador integrat no està disponible en aquest equip.',
+            desktopWebView: 'El motor del navegador integrat no està disponible en aquest equip. Encara pots obrir aquesta pàgina al navegador del sistema.',
             desktopWebViewUnsupportedPlatform: 'La navegació integrada encara no està disponible en aquesta plataforma.',
             externalUrlPolicyDenied: 'La teva política de seguretat bloqueja aquest lloc.',
             externalUrlUnavailable: 'Aquest lloc no es pot obrir al navegador integrat.',

@@ -9099,7 +9099,7 @@ export const it = {
     unavailable: {
       generic: "Questa pagina non è disponibile al momento.",
       desktopEngineUnavailable: "Il motore del browser integrato non è disponibile su questo computer.",
-      desktopWebView: "Il motore del browser integrato non è disponibile su questo computer.",
+      desktopWebView: "Il motore del browser integrato non è disponibile su questo computer. Puoi comunque aprire questa pagina nel browser di sistema.",
       desktopWebViewUnsupportedPlatform: "La navigazione integrata non è ancora disponibile su questa piattaforma.",
       externalUrlPolicyDenied: "Questo sito è bloccato dai tuoi criteri di sicurezza.",
       externalUrlUnavailable: "Questo sito non può essere aperto nel browser integrato.",

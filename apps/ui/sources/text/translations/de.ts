@@ -8900,7 +8900,7 @@ export const de: TranslationStructure = {
         unavailable: {
             generic: 'Diese Seite ist gerade nicht verfügbar.',
             desktopEngineUnavailable: 'Die In-App-Browser-Engine ist auf diesem Rechner nicht verfügbar.',
-            desktopWebView: 'Die In-App-Browser-Engine ist auf diesem Rechner nicht verfügbar.',
+            desktopWebView: 'Die In-App-Browser-Engine ist auf diesem Rechner nicht verfügbar. Du kannst diese Seite weiterhin im System-Browser öffnen.',
             desktopWebViewUnsupportedPlatform: "Das Browsen in der App gibt es auf dieser Plattform noch nicht.",
             externalUrlPolicyDenied: 'Diese Website ist durch deine Sicherheitsrichtlinie blockiert.',
             externalUrlUnavailable: "Diese Website lässt sich nicht im In-App-Browser öffnen.",

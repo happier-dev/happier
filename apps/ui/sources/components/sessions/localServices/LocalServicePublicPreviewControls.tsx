@@ -202,6 +202,8 @@ function ExposureActions(props: Readonly<{
                 testID={`${props.testID}-copy`}
                 iconName="copy"
                 accessibilityLabel={t('common.copy')}
+                // Copying a link that has already expired hands someone a dead URL.
+                disabled={props.expired}
                 onPress={() => props.actions.copyUrl(props.exposure)}
             />
             <IconButton
@@ -268,17 +270,47 @@ export function LocalServicePublicPreviewControls(props: Readonly<{
 
     const testID = props.testID ?? 'local-service-public-preview-controls';
 
+    const allowedModes = state.policy?.allowedModes ?? [];
+    const ttlChoices = resolveTtlChoices(state.policy?.maxTtlMs);
+    const nowMs = Date.now();
+
     // UX-5: creating a public exposure makes the local service reachable on the internet, so it must
     // pass an explicit human confirmation before the (already daemon-enforced) create action fires.
+    // UB-4: the shape of that exposure is now the user's choice within the server policy instead of
+    // one hard-coded `secret_link` + 10 minutes, so the link's lifetime is something they picked and
+    // can therefore expect to end.
     const confirmAndCreate = async (target: PublicPreviewTarget): Promise<void> => {
         const confirmed = await Modal.confirm(
             t('localServices.publicPreview.confirmTitle'),
             t('localServices.publicPreview.confirmMessage', { service: target.title }),
             { confirmText: t('localServices.publicPreview.confirmCta'), destructive: true },
         );
-        if (confirmed) {
-            await actions.create(target.target);
+        if (!confirmed) {
+            return;
         }
+        // Only ask about the mode when the server actually allows more than one; a single-mode
+        // policy must not grow a decision the user cannot make.
+        const mode = allowedModes.length > 1
+            ? await pickOne<LocalServicePublicExposureModeV1>({
+                title: t('localServices.publicPreview.modePromptTitle'),
+                choices: allowedModes.map((allowed) => ({ value: allowed, label: modeLabel(allowed) })),
+            })
+            : allowedModes[0] ?? 'secret_link';
+        if (!mode) {
+            return;
+        }
+        const ttlMs = ttlChoices.length > 1
+            ? await pickOne<number>({
+                title: t('localServices.publicPreview.ttlPromptTitle'),
+                message: t('localServices.publicPreview.ttlPromptMessage', { service: target.title }),
+                choices: ttlChoices.map((choice) => ({ value: choice, label: ttlChoiceLabel(choice) })),
+            })
+            : ttlChoices[0];
+        if (!ttlMs) {
+            return;
+        }
+        const options: LocalServicePublicPreviewCreateOptions = { mode, ttlMs };
+        await actions.create(target.target, options);
     };
 
     return (

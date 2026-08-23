@@ -8894,7 +8894,7 @@ export const en = {
         unavailable: {
             generic: 'This page is unavailable right now.',
             desktopEngineUnavailable: 'The in-app browser engine is unavailable on this machine.',
-            desktopWebView: 'The in-app browser engine is unavailable on this machine.',
+            desktopWebView: 'The in-app browser engine is unavailable on this machine. You can still open this page in your system browser.',
             desktopWebViewUnsupportedPlatform: "In-app browsing isn't available on this platform yet.",
             externalUrlPolicyDenied: 'This site is blocked by your security policy.',
             externalUrlUnavailable: "This site can't be opened in the in-app browser.",

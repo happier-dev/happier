@@ -232,7 +232,7 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
       decision: 'reject',
       runtimeLeaf: async () => {
         leafCalls += 1;
-        return { ok: true as const, result: EXECUTOR_DRIVE_LEAF_RESULT };
+        return EXECUTOR_DRIVE_LEAF_RESULT;
       },
       onApprovalsCreate: () => { created += 1; },
       onApprovalsWait: () => { waited += 1; },
@@ -255,7 +255,7 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
       decision: 'reject',
       runtimeLeaf: async () => {
         leafCalls += 1;
-        return { ok: true as const, result: EXECUTOR_DRIVE_LEAF_RESULT };
+        return EXECUTOR_DRIVE_LEAF_RESULT;
       },
       onApprovalsCreate: () => { created += 1; },
       onApprovalsWait: () => {},
@@ -265,7 +265,9 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
 
     expect(created).toBe(0);
     expect(leafCalls).toBe(1);
-    expect(result).toMatchObject({ ok: true });
+    // The leaf's payload survives the executor's declared-output projection, so `ok:true` here means
+    // "the real launcher response reached the caller", not merely "no approval was demanded".
+    expect(result).toMatchObject({ ok: true, result: { status: 'succeeded', targetId: EXECUTOR_DRIVE_INPUT.targetId } });
   });
 
   it('runs the danger verb on agent once approval is granted', async () => {
@@ -276,7 +278,7 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
       decision: 'approve',
       runtimeLeaf: async () => {
         leafCalls += 1;
-        return { ok: true as const, result: EXECUTOR_DRIVE_LEAF_RESULT };
+        return EXECUTOR_DRIVE_LEAF_RESULT;
       },
       onApprovalsCreate: () => { created += 1; },
       onApprovalsWait: () => { waited += 1; },
@@ -288,6 +290,6 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
     expect(created).toBe(1);
     expect(waited).toBe(1);
     expect(leafCalls).toBe(1);
-    expect(result).toMatchObject({ ok: true });
+    expect(result).toMatchObject({ ok: true, result: { status: 'succeeded', targetId: EXECUTOR_DRIVE_INPUT.targetId } });
   });
 });

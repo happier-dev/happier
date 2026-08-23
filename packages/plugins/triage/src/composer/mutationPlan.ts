@@ -7,7 +7,11 @@ import type {
     ComposerSnapshotV1,
     ComposerTransactionV1,
 } from '@happier-dev/plugin-sdk/ui';
-import type { TriageEntryRefV1, TriageSourceInstanceRefV1 } from '@happier-dev/triage-protocol/v1';
+import type {
+    TriageEntryLocatorV1,
+    TriageEntryRefV1,
+    TriageSourceInstanceRefV1,
+} from '@happier-dev/triage-protocol/v1';
 
 import { findTriageAttachedEntry, selectTriageAttachedEntries } from './attachedEntries.js';
 import {
@@ -82,6 +86,13 @@ export type TriageEntryAttachmentMutationV1 = Readonly<{
         sourceInstance: TriageSourceInstanceRefV1;
         /** The bounded immutable fallback the host freezes; never fresh dispatch context. */
         presentation: ComposerAttachmentAuthorPresentationV1;
+        /**
+         * The locator the observation this row was built from carried, when one
+         * was observed. It is stored beside identity as the routing hint the
+         * dispatch read needs to reach an account-wide connection's entry, and
+         * it is absent — never an empty locator — when nothing observed one.
+         */
+        lastKnownLocator?: TriageEntryLocatorV1;
     }>
     | Readonly<{ intent: 'remove' }>
 );
@@ -117,8 +128,15 @@ export function planTriageEntryAttachmentMutation(
 
     // The value is validated by its one parser before it can be persisted, so a
     // mismatched source/instance pair is refused rather than silently attaching
-    // an entry under a connection that could never observe it.
-    const value = { v: 1 as const, entryRef, sourceInstance: input.sourceInstance };
+    // an entry under a connection that could never observe it. An absent hint
+    // stays absent: writing an empty locator would hand the source something to
+    // interpret in place of the nothing it actually has.
+    const value = {
+        v: 1 as const,
+        entryRef,
+        sourceInstance: input.sourceInstance,
+        ...(input.lastKnownLocator === undefined ? {} : { lastKnownLocator: input.lastKnownLocator }),
+    };
     if (parseTriageComposerEntryAttachmentValue(value).status !== 'valid') {
         return { status: 'refused', reason: 'invalidValue' };
     }

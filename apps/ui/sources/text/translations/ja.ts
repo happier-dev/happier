@@ -9008,7 +9008,7 @@ localTailscale: {
     unavailable: {
       generic: "このページは現在利用できません。",
       desktopEngineUnavailable: "このマシンでは組み込みブラウザーエンジンを利用できません。",
-      desktopWebView: "このマシンでは組み込みブラウザーエンジンを利用できません。",
+      desktopWebView: "このマシンでは組み込みブラウザーエンジンを利用できません。このページはシステムブラウザーで開けます。",
       desktopWebViewUnsupportedPlatform: "このプラットフォームでは組み込みブラウジングをまだ利用できません。",
       externalUrlPolicyDenied: "このサイトはセキュリティポリシーによってブロックされています。",
       externalUrlUnavailable: "このサイトは組み込みブラウザーで開けません。",

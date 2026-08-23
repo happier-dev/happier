@@ -8523,7 +8523,7 @@ export const zhHans = {
     unavailable: {
       generic: "此页面当前不可用。",
       desktopEngineUnavailable: "此设备上的内置浏览器引擎不可用。",
-      desktopWebView: "此设备上的内置浏览器引擎不可用。",
+      desktopWebView: "此设备上的内置浏览器引擎不可用。你仍可以在系统浏览器中打开此页面。",
       desktopWebViewUnsupportedPlatform: "此平台暂不支持内置浏览。",
       externalUrlPolicyDenied: "此网站已被你的安全策略屏蔽。",
       externalUrlUnavailable: "此网站无法在内置浏览器中打开。",

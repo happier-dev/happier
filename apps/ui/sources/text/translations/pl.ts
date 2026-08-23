@@ -8768,7 +8768,7 @@ export const pl = {
     unavailable: {
       generic: "Ta strona jest obecnie niedostępna.",
       desktopEngineUnavailable: "Wbudowany silnik przeglądarki jest niedostępny na tym komputerze.",
-      desktopWebView: "Wbudowany silnik przeglądarki jest niedostępny na tym komputerze.",
+      desktopWebView: "Wbudowany silnik przeglądarki jest niedostępny na tym komputerze. Nadal możesz otworzyć tę stronę w przeglądarce systemowej.",
       desktopWebViewUnsupportedPlatform: "Wbudowane przeglądanie nie jest jeszcze dostępne na tej platformie.",
       externalUrlPolicyDenied: "Ta witryna jest zablokowana przez Twoje zasady bezpieczeństwa.",
       externalUrlUnavailable: "Tej witryny nie można otworzyć we wbudowanej przeglądarce.",

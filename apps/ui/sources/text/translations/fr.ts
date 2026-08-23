@@ -8762,7 +8762,7 @@ export const fr = {
     unavailable: {
       generic: "Cette page est indisponible pour le moment.",
       desktopEngineUnavailable: "Le moteur de navigation intégré est indisponible sur cette machine.",
-      desktopWebView: "Le moteur de navigation intégré est indisponible sur cette machine.",
+      desktopWebView: "Le moteur de navigation intégré est indisponible sur cette machine. Vous pouvez toujours ouvrir cette page dans le navigateur système.",
       desktopWebViewUnsupportedPlatform: "La navigation intégrée n’est pas encore disponible sur cette plateforme.",
       externalUrlPolicyDenied: "Ce site est bloqué par ta politique de sécurité.",
       externalUrlUnavailable: "Ce site ne peut pas s’ouvrir dans le navigateur intégré.",

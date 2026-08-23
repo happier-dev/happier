@@ -169,7 +169,7 @@ describe('parseDarwinLsofTcpListenOutput', () => {
         const execFile = vi.fn(async (command: string, args: readonly string[]) => {
             if (command === 'lsof' && args.includes('-iTCP')) {
                 return {
-                    stdout: ['p123', 'cpostgres', 'nTCP 127.0.0.1:5432 (LISTEN)'].join('\n');
+                    stdout: ['p123', 'cpostgres', 'nTCP 127.0.0.1:5432 (LISTEN)'].join('\n'),
                 };
             }
             if (command === 'ps') {
@@ -226,8 +226,8 @@ describe('parseDarwinLsofTcpListenOutput', () => {
                 const pidArg = args[args.indexOf('-p') + 1] ?? '';
                 const pids = new Set(pidArg.split(','));
                 const rows: string[] = [];
-                if (pids.has('400')) rows.push('  400   300 node /repo/web/node_modules/vite/bin/vite.js');
-                if (pids.has('300')) rows.push('  300     1 npm run dev');
+                if (pids.has('400')) rows.push('  400   300   501 node /repo/web/node_modules/vite/bin/vite.js');
+                if (pids.has('300')) rows.push('  300     1   501 npm run dev');
                 return { stdout: rows.join('\n') };
             }
             if (command === 'lsof' && args.includes('cwd')) {
@@ -327,7 +327,7 @@ describe('parseDarwinLsofTcpListenOutput', () => {
             }
             if (command === 'ps') {
                 return {
-                    stdout: '  123    99 npm run dev\n',
+                    stdout: '  123    99   501 npm run dev\n',
                 };
             }
             if (command === 'lsof' && args.includes('cwd')) {
@@ -367,7 +367,7 @@ describe('parseDarwinLsofTcpListenOutput', () => {
             }
             if (command === 'ps') {
                 return {
-                    stdout: '  123    99 npm run dev\n',
+                    stdout: '  123    99   501 npm run dev\n',
                 };
             }
             if (command === 'lsof' && args.includes('cwd')) {

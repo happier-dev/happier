@@ -170,6 +170,7 @@ _.env.pipeline.production.local
 
 # Editor and mis-rooted generator scratch output
 **/*.tmp.[0-9]*.[0-9a-f]*
+**/*.q2bak
 /undefined/
 
 # Reproducible fixture compiler output and one-off migration tooling
