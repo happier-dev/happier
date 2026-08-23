@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { createTempFixture } from './temp_fixture.mjs';
+import { writeWorkspacePackageBuildOwnerStub } from './workspace_package_build_owner.mjs';
 
 export async function ensureMinimalMonorepoLayout(
   rootDir,
@@ -17,6 +18,7 @@ export async function ensureMinimalMonorepoLayout(
   await writeFile(join(uiDir, 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(serverDir, 'package.json'), '{}\n', 'utf-8');
+  await writeWorkspacePackageBuildOwnerStub(rootDir);
 
   if (writeGitDirMarker) {
     await writeFile(join(rootDir, '.git'), 'gitdir: dummy\n', 'utf-8');

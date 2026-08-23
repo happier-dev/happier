@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ensureCliBuilt, ensureDepsInstalled, pmExecBin } from './pm.mjs';
 import { withCliDistBuildLock } from './cliDistBuildLock.mjs';
+import { writeWorkspacePackageBuildOwnerProxy } from '../../testkit/core/workspace_package_build_owner.mjs';
 
 async function writeYarnEnvDumpStub({ binDir, outputPath }) {
   await mkdir(binDir, { recursive: true });
@@ -1981,6 +1982,7 @@ test('ensureCliBuilt refreshes shared workspace deps before trusting a cached cl
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
+  await writeWorkspacePackageBuildOwnerProxy(root);
 
   const cliDir = join(root, 'apps', 'cli');
   const agentsDir = join(root, 'packages', 'agents');
@@ -2066,6 +2068,7 @@ test('ensureCliBuilt rebuilds an auto-mode cli dist after repairing a stale work
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
+  await writeWorkspacePackageBuildOwnerProxy(root);
 
   const cliDir = join(root, 'apps', 'cli');
   const agentsDir = join(root, 'packages', 'agents');

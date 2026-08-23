@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import { ensureServerLightSchemaReady } from './startup.mjs';
 import { buildServerLightEnv, createServerLightFixture } from './startup_server_light_testkit.mjs';
+import { writeWorkspacePackageBuildOwnerProxy } from '../../testkit/core/workspace_package_build_owner.mjs';
 
 test('ensureServerLightSchemaReady runs migrate:sqlite:deploy by default when not best-effort', async (t) => {
   const { binDir, markerPath, root, serverDir } = await createServerLightFixture(t, {
@@ -51,6 +52,7 @@ test('ensureServerLightSchemaReady builds source server internal workspace deps 
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
+  await writeWorkspacePackageBuildOwnerProxy(root);
 
   const serverDir = join(root, 'apps', 'server');
   await mkdir(serverDir, { recursive: true });

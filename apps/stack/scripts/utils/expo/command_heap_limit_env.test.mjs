@@ -6,6 +6,7 @@ import { delimiter, join } from 'node:path';
 
 import { writeExpoShimPairCaptureInvocation } from '../../testkit/core/expo_command_shims.mjs';
 import { withPatchedProcessEnv } from '../../testkit/core/env_scope.mjs';
+import { writeWorkspacePackageBuildOwnerStub } from '../../testkit/core/workspace_package_build_owner.mjs';
 import { expoExec, expoSpawn } from './command.mjs';
 
 async function writeJson(path, value) {
@@ -97,6 +98,7 @@ async function writeMinimalRepo({ root }) {
   await writeJson(join(root, 'apps', 'ui', 'package.json'), { name: '@happier-dev/app', private: true });
   await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
   await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+  await writeWorkspacePackageBuildOwnerStub(root);
 }
 
 test('expoExec defaults Expo heap limit to 8192MB (unless overridden)', async (t) => {
