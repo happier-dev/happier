@@ -71,13 +71,18 @@ node scripts/pipeline/release/release-notes/project-release-notes.mjs \
   --component-version cli=<cli-semver> \
   --component-version stack=<stack-semver> \
   --component-version server=<server-semver> \
+  --component-version plugin_sdk=<lockstep-plugin-sdk-and-ui-semver> \
+  --component-version sdk=<sdk-semver> \
   --changelog apps/ui/CHANGELOG.md
 ```
 
 The v2 bundle records `{ id, sourceSha, components }`; it does not treat the UI
 version as a project-wide release identity. Workflow callers must pass the
 human-authored project ID, the candidate SHA they already verified, and every
-applicable component version, then validate the v2 bundle before use.
+applicable component version, then validate the v2 bundle before use. The
+`plugin_sdk` component is the one lockstep `@happier-dev/plugin-sdk` /
+`@happier-dev/plugin-ui` release pair, so record its shared version once; do
+not add a separate `plugin_ui` component.
 
 ## StoryDeck source and assets
 

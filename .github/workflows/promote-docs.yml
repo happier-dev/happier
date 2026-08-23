@@ -363,8 +363,16 @@ jobs:
           test -f apps/docs/out/index.html
           test -f apps/docs/out/404.html
           test -f apps/docs/out/_redirects
+          test -f apps/docs/out/robots.txt
+          test -s apps/docs/out/sitemap.xml
           test -s apps/docs/out/api/search
           test -s apps/docs/out/llms.txt
+          # The Markdown sources must have been MOVED to their public paths
+          # (scripts/exportMdxSources.mjs). If they are still staged under
+          # llms.mdx/, every <page>.mdx URL 404s — and nothing else notices,
+          # because the Worker no longer rewrites that prefix.
+          test -s apps/docs/out/agents.mdx
+          test ! -d apps/docs/out/llms.mdx
       - name: Publish to Cloudflare
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

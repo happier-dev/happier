@@ -59,6 +59,11 @@ commands.
 - Use the canonical `scripts/pipeline/release-validation/validate-release.mjs`
   path through `scripts/pipeline/run.mjs`; do not copy its suite selection into
   this skill.
+- When public package candidates are in scope, treat `plugin_sdk` as the one
+  lockstep plugin-sdk/plugin-ui pair and `sdk` as its independent component.
+  Route exact candidate tarballs through the canonical sandbox-pack and
+  existing consumer-fixture owners; do not mutate source manifests, add an
+  ad-hoc package matrix, or simulate npm publication.
 - Run only discriminating compatibility vectors or live flows for affected,
   reachable directions. Do not manufacture a component or platform matrix.
 - Do not write release notes, tags, GitHub releases, credentials, deploy

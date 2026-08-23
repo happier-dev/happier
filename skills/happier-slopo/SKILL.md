@@ -13,6 +13,11 @@ Slopo complements `skills/happier-review`. It does not replace source tracing,
 the canonical plans, tests, Graphify or another architecture graph, or loaded
 runtime evidence.
 
+Slopo 0.5.0's parser registry does not include TSX, JSX, MJS, CJS, Swift, shell,
+or SQL. In particular, a repository-root scan does not cover React component
+bodies merely because `apps/ui` is under `source_dir`; report those surfaces as
+unscanned rather than implying whole-language coverage.
+
 ## Before a scan
 
 1. Normalize the review target and intent through `skills/happier-review` when a
@@ -47,10 +52,16 @@ mkdir -p .slopo
 ./apps/stack/bin/hstack-exec --local -- slopo analyze
 ```
 
-`index` and `embed` are incremental when the configuration and local database are
-unchanged. Do not delete an existing database merely to obtain a clean-looking
-run. Rebuild it only when a configuration/model change makes its embeddings
-incomparable, and report that reset as discarded local derived data.
+Database updates and `embed` are incremental when the configuration and local
+database are unchanged, but Slopo 0.5.0 still recursively enumerates the source
+tree during `index`. A whole-repository pass can therefore remain quiet and
+CPU-bound for many minutes. Keep one monitored index process, do not relaunch it
+because it has not printed progress, and reserve this workflow for a substantive
+review boundary rather than an inner loop.
+
+Do not delete an existing database merely to obtain a clean-looking run. Rebuild
+it only when a configuration/model change makes its embeddings incomparable, and
+report that reset as discarded local derived data.
 
 For a deliberately narrower scan, create an isolated temporary source projection
 and temporary configuration outside the repository. Preserve package identities,

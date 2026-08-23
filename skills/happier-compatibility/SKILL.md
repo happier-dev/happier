@@ -39,6 +39,24 @@ Use [the canonical doctrine](../../docs/compatibility.md#sdk-protocol-evolution)
 for the normative rules. It also defines the direct-cut ruling: current `dev` →
 `remote-dev` rollback is not a supported SDK-author-contract direction.
 
+### SDK package SemVer
+
+Package SemVer is an independent compatibility axis from a wire epoch, the
+host/runtime ABI, and manifest schema versions. For a published SDK package or
+a release candidate, compare the exact candidate's generated public census and
+reachable declaration report with the previous published tarball; never infer
+history from source, Git, or a generator's previous output. The report supplies
+mechanical facts (`added`, `removed`, `changed`, `deprecated`, `unchanged`), and
+the release reviewer classifies their SemVer impact.
+
+A removed public declaration is breaking; any changed declaration block needs
+human review. A patch release must not intentionally break package API. An
+intentional breaking change to a `0.x` package uses a minor version, requires
+explicit human approval, and includes migration notes. This package decision
+does not by itself change a wire epoch or relax the separate host/runtime ABI
+contract. Unpublished workspace source establishes no released package
+compatibility obligation.
+
 ## 2. Establish evidence-backed baselines
 
 - Resolve active stable and preview baselines independently for every affected component. Record immutable version tag, commit, and artifact/deploy evidence; do not use a rolling tag alone as the final basis.

@@ -24,6 +24,8 @@ Classify published pages as task guide, concept, reference, troubleshooting, or 
 
 Search by the feature, command, setting, route, schema, provider/agent id, UI label, error, and reader phrasing before creating a page. Update, move, consolidate, or retire the canonical page instead of adding a parallel explanation. Map links, navigation, related pages, examples, and translations or screenshots that depend on the changed documentation contract.
 
+Placement is part of authorship, not cleanup afterwards. A published page belongs to exactly one section, is listed in that section's `meta.json` at the point a reader should meet it, and is linked from that section's `index.mdx`. A page missing from either is unreachable in a way that breaks no link and shows up in no diff. Moving a page is the same four edits in reverse. The section inventory is in `apps/docs/AGENTS.md`.
+
 ## 3. Establish product truth and release basis
 
 Documentation is a claim, not proof. For Happier behavior:
@@ -53,9 +55,11 @@ Before a substantial rewrite, inventory every material claim involving behavior,
 
 ## 5. Prefer generating over writing
 
-Before drafting a reference table, check whether the same list already exists as structured data — agent capabilities, feature flags, environment variables, CLI commands, keyboard shortcuts all do. Hand-maintained restatements of code are the single largest source of documentation drift in this repository, because nothing connects the data changing to the prose describing it.
+Before drafting a reference table, check whether the same list already exists as structured data. Agent capabilities, feature flags, keyboard shortcuts, rate limits, download links and — where the plugin platform is present — runtime events, bundled plugins and the SDK's public surface all do. `apps/docs/scripts/generateReference.mjs` is the registry of what is generated today. Hand-maintained restatements of code are the single largest source of documentation drift in this repository, because nothing connects the data changing to the prose describing it.
 
-Generate it, or link to the generated page. Reserve hand-written prose for what a generator cannot produce: the mental model, the reason the mechanism exists, the failure modes, the judgement calls.
+Generate it, or link to the generated page. A generated page is compared against a fresh render on every build, so drift fails instead of shipping. Reserve hand-written prose for what a generator cannot produce: the mental model, the reason the mechanism exists, the failure modes, the judgement calls.
+
+Two traps live inside the generators themselves. A hand-kept map of display names inside a generator drifts exactly like one inside a page — read the names from the source the app reads. And a declared field is not behaviour until you have found its consumer: publishing a flag whose value contradicts what the product does is worse than publishing nothing.
 
 Where a capability is gated — a server feature flag, an experimental toggle, the account-level Experiments switch, a platform, a channel — the gate is part of the claim. Read `uiFeatureRegistry.ts` and `features/catalog.ts` rather than assuming availability, and state the gate where the reader meets the feature.
 
@@ -80,7 +84,7 @@ Write like a thoughtful builder helping another developer: warm, direct, concret
 Run the narrowest checks that can falsify the edit:
 
 - inspect materially changed commands, links, examples, settings, defaults, and support statements;
-- run `yarn --cwd apps/docs check:content` — it resolves every internal link and every `#fragment`, and checks that each documented `Settings → …` path names strings the app actually renders. It runs inside the build too, so a broken link or a renamed label fails the build rather than shipping;
+- run `yarn --cwd apps/docs check:content` — it resolves every internal link and `#fragment`, verifies that each documented `Settings → …` path names strings the app renders, and enforces the structural rules a reader feels but no compiler sees: every page listed in a `meta.json`, every section hub linking the pages beneath it, no cross-reference written as an unclickable code span, and no code-derived list drifting from its source. It runs inside the build, so these fail rather than ship; `apps/docs/AGENTS.md` lists what each check rejects;
 - run `yarn --cwd apps/docs test` for the guardrails themselves;
 - run `yarn --cwd apps/docs types:check` for published MDX/schema/TypeScript/generated-content changes;
 - run `yarn --cwd apps/docs build` when routing, navigation, generation, rendering, or production build behavior can be affected;
@@ -88,6 +92,8 @@ Run the narrowest checks that can falsify the edit:
 - for substantial published UI instructions, use the risk-appropriate live product check when runnable and authorized.
 
 Do not add wording-policing tests. Validate parsing, generation, routing, links, commands, and factual behavior rather than exact prose.
+
+When you find a class of breakage that no check can see — not one broken page, but a shape of defect that could recur silently — add the check rather than only fixing the instances. Every check in `checkContent.mjs` exists because its defect shipped and then stayed shipped. Give the new check a hard failure when its own input goes missing from inside this package: a check that skips on a missing directory is indistinguishable from a check that passes, and will read green through the next rename.
 
 ## 8. Handoff
 
