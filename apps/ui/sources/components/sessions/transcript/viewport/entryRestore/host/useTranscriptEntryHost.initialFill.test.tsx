@@ -326,7 +326,7 @@ describe('useTranscriptEntryHost initial fill sufficiency (S-L/S-M)', () => {
             contentGrowthPerLoadPx: [250, 250],
             loadDurationMs: 700,
         });
-        // Another owner holds the loader: every call answers `in_flight` and adds no height.
+        // The loader never becomes available: every call answers `in_flight` and adds no height.
         harness.loadOlder.mockResolvedValue({ status: 'in_flight' as const, loaded: 0, hasMore: true });
 
         await renderHook(
@@ -338,8 +338,44 @@ describe('useTranscriptEntryHost initial fill sufficiency (S-L/S-M)', () => {
         });
         await new Promise((resolve) => setTimeout(resolve, 50));
 
-        // Yields on the first such answer rather than retrying to the no-progress bound.
-        expect(harness.loadOlder.mock.calls.length).toBe(1);
+        // Retries a bounded number of times, then stops — it never counts these against the
+        // no-progress budget, and it never holds on indefinitely.
+        expect(harness.loadOlder.mock.calls.length).toBeGreaterThan(1);
+        expect(harness.loadOlder.mock.calls.length).toBeLessThanOrEqual(8);
+    });
+
+    it('web post-settle fill RESUMES after a transient loader answer, rather than giving up', async () => {
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        // `not_ready` is what the loader answers while the older cursor has not been
+        // materialized — the normal state immediately after open, which is when this runs.
+        // Treating it as terminal meant the fill often never ran at all.
+        const harness = createFillHarness({
+            layoutHeightPx: 600,
+            initialContentHeightPx: 200,
+            // The harness indexes growth by call count, and the injected transient answer
+            // consumes the first slot, so the real page is the second entry.
+            contentGrowthPerLoadPx: [0, 500],
+            loadDurationMs: 10,
+        });
+        const realLoadOlder = harness.loadOlder.getMockImplementation()!;
+        let answered = false;
+        harness.loadOlder.mockImplementation(async (options?: unknown) => {
+            if (!answered) {
+                answered = true;
+                return { status: 'not_ready' as const, loaded: 0, hasMore: true };
+            }
+            return realLoadOlder(options as never);
+        });
+
+        await renderHook(
+            (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+            { initialProps: harness.deps },
+        );
+        await vi.waitFor(() => {
+            expect(harness.isScrollable()).toBe(true);
+        }, { timeout: 5000 });
+
+        expect(harness.loadOlder.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
 
     it('web still reaches a scrollable transcript, so the older pager can arm at all', async () => {

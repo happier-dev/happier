@@ -263,6 +263,16 @@ export type TranscriptEntryHost = Readonly<{
     verifyWebEntryRestoreTransaction(): void;
 }>;
 
+/**
+ * How long to wait before re-testing a loader that answered `in_flight` or `not_ready`, and
+ * how many times. This is a poll cadence for a condition owned elsewhere — the older cursor
+ * being materialized, or another owner's load finishing — not a limit on how much history may
+ * be loaded. A handful of short waits covers cursor materialization after open; past that the
+ * condition is not transient and the fill stops rather than holding the loader hostage.
+ */
+const WEB_FILL_TRANSIENT_RETRY_MS = 25;
+const WEB_FILL_MAX_TRANSIENT_RETRIES = 6;
+
 export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): TranscriptEntryHost {
     const requestSessionOpenInitialFillRef = React.useRef<() => void>(() => {});
     const hasObservedScrollSinceSessionEntry = React.useCallback((): boolean => {
@@ -1273,6 +1283,7 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
                 // guards that with an absolute ceiling; so must this one.
                 const absoluteFillDeadlineMs = startedAtMs + budgetMs * 5;
                 let loadsWithoutProgress = 0;
+                let transientRetries = 0;
                 let contentHeightBaselinePx = deps.listContentHeightRef.current;
                 while (!webFillSignal.aborted) {
                     if (deps.isScrollable() && deps.committedMessagesCount > 0) break;
@@ -1280,11 +1291,23 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
                     if (Date.now() >= absoluteFillDeadlineMs) break;
                     const result = await deps.loadOlder({ preservePrependViewport: true, showLoadingIndicator: false });
                     if (!result || result.status === 'no_more') break;
-                    // Someone else owns a load right now, or the loader is not ready. Neither is
-                    // this loop's no-progress condition — counting them would burn the budget on
-                    // another owner's work — and that other load will grow the transcript, after
-                    // which the pager arms normally. Yield rather than spin or miscount.
-                    if (result.status === 'in_flight' || result.status === 'not_ready') break;
+                    // Transient, and NOT this loop's failure. `not_ready` means the older cursor
+                    // has not been materialized yet — the common state immediately after open,
+                    // which is exactly when this runs — and `in_flight` means another owner holds
+                    // the loader. Counting either against the no-progress budget burns it on
+                    // someone else's work; giving up permanently leaves the underfilled transcript
+                    // this fill exists to prevent. So wait for the condition to clear and re-test.
+                    //
+                    // Bounded by an explicit count rather than the deadline alone: the deadline is
+                    // wall-clock, and a transient that never clears would otherwise spin against a
+                    // clock this loop does not advance.
+                    if (result.status === 'in_flight' || result.status === 'not_ready') {
+                        if (transientRetries >= WEB_FILL_MAX_TRANSIENT_RETRIES) break;
+                        transientRetries += 1;
+                        await new Promise((resolve) => setTimeout(resolve, WEB_FILL_TRANSIENT_RETRY_MS));
+                        continue;
+                    }
+                    transientRetries = 0;
                     await Promise.resolve();
                     await Promise.resolve();
                     const contentHeightPx = deps.listContentHeightRef.current;
