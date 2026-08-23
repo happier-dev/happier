@@ -1783,7 +1783,7 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.startOrLoad).toHaveBeenCalledWith({ resumeId: 'resume-id', importHistory: false });
   });
 
-  it('fails closed without masking the strict initial resume error', async () => {
+  it('falls back normally when an initial resume fails without a native identity mismatch', async () => {
     const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
@@ -1792,10 +1792,8 @@ describe('runPermissionModePromptLoop', () => {
         throw new Error('resume failed');
       }
     });
-    runtime.flushTurn = vi.fn(async () => {
-      throw new Error('flush failed');
-    });
     const messageBuffer = new MessageBuffer();
+    const onStrictInitialResumeFailure = vi.fn(async () => undefined);
     const permissionHandler = {
       setPermissionMode: vi.fn(),
       reset: vi.fn(),
@@ -1804,7 +1802,7 @@ describe('runPermissionModePromptLoop', () => {
     queue.push({ text: 'hello', localId: 'local-6' }, { permissionMode: 'default' });
 
     let shouldExit = false;
-    const error = await (runPermissionModePromptLoop as unknown as (params: any) => Promise<void>)({
+    await expect((runPermissionModePromptLoop as unknown as (params: any) => Promise<void>)({
       providerName: 'Test Provider',
       agentMessageType: 'qwen',
       explicitPermissionMode: undefined,
@@ -1826,18 +1824,65 @@ describe('runPermissionModePromptLoop', () => {
       setCurrentPermissionModeUpdatedAt: () => {},
       initialResumeId: 'resume-id',
       strictInitialResume: true,
+      onStrictInitialResumeFailure,
       formatPromptErrorMessage: (error: unknown) => `Error: ${String(error)}`,
+    })).resolves.toBeUndefined();
+
+    expect(runtime.startOrLoad).toHaveBeenCalledWith({ resumeId: 'resume-id', importHistory: false });
+    expect(runtime.startOrLoad).toHaveBeenCalledWith({});
+    expect(runtime.sendPrompt).toHaveBeenCalledWith('hello');
+    expect(runtime.reset).toHaveBeenCalledTimes(1);
+    expect(onStrictInitialResumeFailure).not.toHaveBeenCalled();
+  });
+
+  it('reports a provider-classified strict native identity mismatch to its record owner', async () => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const identityMismatch = Object.assign(
+      new Error('requested provider session did not resume'),
+      { happierNativeResumeIdentityMismatch: true },
+    );
+    runtime.startOrLoad = vi.fn(async () => {
+      throw identityMismatch;
+    });
+    const onStrictInitialResumeFailure = vi.fn(async () => undefined);
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+    queue.push({ text: 'hello', localId: 'local-strict-mismatch' }, { permissionMode: 'default' });
+
+    const error = await (runPermissionModePromptLoop as unknown as (params: any) => Promise<void>)({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => false,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {},
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      initialResumeId: 'resume-id',
+      strictInitialResume: true,
+      onStrictInitialResumeFailure,
+      formatPromptErrorMessage: (cause: unknown) => `Error: ${String(cause)}`,
     }).catch((caught: unknown) => caught as Error);
 
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).name).toBe('StrictInitialResumeError');
-    expect((error as Error).message).toContain('Strict initial resume failed');
-    expect((error as Error & { cause?: unknown }).cause).toBeInstanceOf(Error);
-    expect(((error as Error & { cause?: Error }).cause as Error).message).toBe('resume failed');
-    expect(runtime.startOrLoad).toHaveBeenCalledWith({ resumeId: 'resume-id', importHistory: false });
-    expect(runtime.sendPrompt).not.toHaveBeenCalled();
-    expect(runtime.reset).toHaveBeenCalledTimes(1);
-    expect(runtime.flushTurn).toHaveBeenCalledTimes(1);
+    expect(error).toMatchObject({ name: 'StrictInitialResumeError', cause: identityMismatch });
+    expect(onStrictInitialResumeFailure).toHaveBeenCalledWith({
+      resumeId: 'resume-id',
+      error: identityMismatch,
+    });
   });
 
   it('fails closed on resume failure when the provider requires non-silent resume', async () => {

@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   captureDepartingAgentNativeResumeRecord,
+  clearMatchingAgentNativeReturnMetadata,
+  hasMatchingAgentNativeReturnIdentity,
+  invalidateFailedAgentNativeReturnIdentity,
   resolveAgentNativeReturnIdentity,
   type LocalAgentNativeResumeRecordStore,
 } from './agentNativeReturn';
@@ -159,22 +162,16 @@ describe('captureDepartingAgentNativeResumeRecord — accepted-context boundary 
     expect(writes).toEqual([]);
   });
 
-  it('invalidates the offered identity when a native return never reached acceptance', async () => {
-    // The identity currently in the view is the one THIS machine restored from
-    // the record, and it produced no accepted context: the strict native resume
-    // failed. Leaving it recorded would let the next departure re-offer it as
-    // valid and fail the same way forever.
+  it('does not make a pending replay seed into a second native-resume decision', async () => {
+    // Strict native failure is invalidated by the strict-resume owner before
+    // capture runs. Replay-seed retirement proves context custody only; it
+    // cannot prove that the requested native identity resumed.
     const writes = await captureClaudeDeparture({
       metadata: claudeMetadata({ replaySeedV1: PENDING_ACTIVATION_SEED }),
       seeded: { identity: CLAUDE_IDENTITY, departureSeqInclusive: 30 },
     });
 
-    expect(writes).toEqual([{
-      happierSessionId: SESSION_ID,
-      agentId: 'claude',
-      identity: null,
-      departureSeqInclusive: 30,
-    }]);
+    expect(writes).toEqual([]);
   });
 
   it('removes a stale record when the departing Agent has no native id at all', async () => {
@@ -186,6 +183,76 @@ describe('captureDepartingAgentNativeResumeRecord — accepted-context boundary 
     });
 
     expect(writes[0]?.identity).toBeNull();
+  });
+});
+
+describe('invalidateFailedAgentNativeReturnIdentity', () => {
+  it('removes only the exact locally offered identity before a later departure can recapture it', async () => {
+    const { store, writes } = createRecordStoreDouble({
+      identity: CLAUDE_IDENTITY,
+      departureSeqInclusive: 30,
+    });
+
+    await invalidateFailedAgentNativeReturnIdentity({
+      store,
+      sessionId: SESSION_ID,
+      targetAgentId: 'claude',
+      vendorResumeId: 'claude-1',
+    });
+
+    expect(writes).toEqual([{
+      happierSessionId: SESSION_ID,
+      agentId: 'claude',
+      identity: null,
+      departureSeqInclusive: 30,
+    }]);
+  });
+
+  it('does not remove a record replaced by a newer native identity', async () => {
+    const { store, writes } = createRecordStoreDouble({
+      identity: { v: 1, vendorResumeId: 'claude-newer' },
+      departureSeqInclusive: 40,
+    });
+
+    await invalidateFailedAgentNativeReturnIdentity({
+      store,
+      sessionId: SESSION_ID,
+      targetAgentId: 'claude',
+      vendorResumeId: 'claude-1',
+    });
+
+    expect(writes).toEqual([]);
+  });
+});
+
+describe('tracked native-return identity helpers', () => {
+  it('recognizes only the exact local identity and clears only its matched metadata pair', async () => {
+    const { store } = createRecordStoreDouble({
+      identity: CLAUDE_IDENTITY,
+      departureSeqInclusive: 30,
+    });
+
+    await expect(hasMatchingAgentNativeReturnIdentity({
+      store,
+      sessionId: SESSION_ID,
+      targetAgentId: 'claude',
+      vendorResumeId: 'claude-1',
+    })).resolves.toBe(true);
+    await expect(hasMatchingAgentNativeReturnIdentity({
+      store,
+      sessionId: SESSION_ID,
+      targetAgentId: 'claude',
+      vendorResumeId: 'claude-other',
+    })).resolves.toBe(false);
+
+    expect(clearMatchingAgentNativeReturnMetadata({
+      claudeSessionId: 'claude-1',
+      claudeTranscriptPath: '/tmp/claude-1.jsonl',
+      codexSessionId: 'codex-1',
+    }, {
+      targetAgentId: 'claude',
+      vendorResumeId: 'claude-1',
+    })).toEqual({ codexSessionId: 'codex-1' });
   });
 });
 

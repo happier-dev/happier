@@ -15,6 +15,7 @@ import { resolveProviderPromptForDispatch } from '@/agent/runtime/prompt/resolve
 import { normalizePendingDeliveryLocalIds } from '@/agent/runtime/session/pendingDelivery/undeliverableProviderPrompt';
 import { isAbortLikeError } from '@/agent/executionRuns/runtime/turnDelivery';
 import { configuration } from '@/configuration';
+import { isAgentNativeResumeIdentityMismatchError } from '@/session/agentTransition/agentNativeReturn';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import { readPendingLocalId } from '@happier-dev/protocol';
 import { readNewestSessionModelsMetadataStateV1 } from '@happier-dev/agents';
@@ -120,6 +121,14 @@ export async function runPermissionModePromptLoop(opts: {
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
   initialResumeId?: string;
   strictInitialResume?: boolean;
+  /**
+   * The host removes a failed requested native identity before a later
+   * departure capture can treat it as a successful return.
+   */
+  onStrictInitialResumeFailure?: ((params: Readonly<{
+    resumeId: string;
+    error: unknown;
+  }>) => void | Promise<void>) | null;
   failClosedOnResumeFailure?: boolean;
   startRuntimeBeforeFirstPrompt?: boolean;
   onAfterStart?: (() => void | Promise<void>) | null;
@@ -251,10 +260,21 @@ export async function runPermissionModePromptLoop(opts: {
         await opts.runtime.startOrLoad(buildStartOrLoadOptions({ resumeId, importHistory: false }));
       } catch (error) {
         if (opts.shouldExit()) return { startedFreshSessionForTurn };
+        // A requested native id is only disproven by the provider's typed
+        // identity-mismatch fact. Ordinary startup failures (quota, overload,
+        // auth, transport) retain the normal resume fallback unless this
+        // provider independently requires a fail-closed resume contract.
+        const strictNativeIdentityMismatch =
+          opts.strictInitialResume === true
+          && resume?.origin === 'initial'
+          && isAgentNativeResumeIdentityMismatchError(error);
         const shouldFailClosed =
           opts.failClosedOnResumeFailure === true ||
-          (opts.strictInitialResume === true && resume?.origin === 'initial');
+          strictNativeIdentityMismatch;
         if (shouldFailClosed) {
+          if (strictNativeIdentityMismatch) {
+            await opts.onStrictInitialResumeFailure?.({ resumeId, error });
+          }
           const formatted = opts.formatPromptErrorMessage(error);
           opts.messageBuffer.addMessage(`Resume failed; cannot continue: ${formatted}`, 'status');
           opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: `Resume failed; cannot continue: ${formatted}` });
@@ -264,7 +284,7 @@ export async function runPermissionModePromptLoop(opts: {
             // ignore cleanup failure
           }
           if (opts.shouldExit()) return { startedFreshSessionForTurn };
-          strictAbort = opts.strictInitialResume === true && resume?.origin === 'initial'
+          strictAbort = strictNativeIdentityMismatch
             ? new StrictInitialResumeError('Strict initial resume failed', error)
             : new ResumeFailClosedError('Resume failed closed', error);
         } else {

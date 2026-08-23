@@ -38,11 +38,14 @@ type AcpSessionIdentityBindingErrorCode =
 
 export class AcpSessionIdentityBindingError extends Error {
   readonly code: AcpSessionIdentityBindingErrorCode;
+  /** Only an explicit different id disproves a requested native return. */
+  readonly happierNativeResumeIdentityMismatch: boolean;
 
   constructor(code: AcpSessionIdentityBindingErrorCode, message: string) {
     super(message);
     this.name = 'AcpSessionIdentityBindingError';
     this.code = code;
+    this.happierNativeResumeIdentityMismatch = code === 'ACP_SESSION_IDENTITY_RESUME_MISMATCH';
   }
 }
 

@@ -82,7 +82,10 @@ describe('createAcpSessionIdentityBinding', () => {
     await expect(mismatchedResume.open({
       intent: { kind: 'resume', expectedVendorSessionId: 'expected-1' },
       openSession: async () => ({ sessionId: 'replacement-1' }),
-    })).rejects.toMatchObject({ code: 'ACP_SESSION_IDENTITY_RESUME_MISMATCH' });
+    })).rejects.toMatchObject({
+      code: 'ACP_SESSION_IDENTITY_RESUME_MISMATCH',
+      happierNativeResumeIdentityMismatch: true,
+    });
     expect(persistBound).not.toHaveBeenCalled();
   });
 

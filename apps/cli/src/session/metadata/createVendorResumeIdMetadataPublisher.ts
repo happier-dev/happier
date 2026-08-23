@@ -3,7 +3,8 @@ import { AGENTS_CORE, type AgentId } from '@happier-dev/agents';
 import type { AcpBoundSessionIdentity } from '@/agent/acp/runtime/sessionIdentityBinding';
 import type { Metadata } from '@/api/types';
 
-function resolveVendorResumeIdField(agentId: AgentId): string {
+/** The manifest-owned metadata slot for this Agent's native resume identity. */
+export function resolveVendorResumeIdMetadataField(agentId: AgentId): string {
   const resume = AGENTS_CORE[agentId].resume;
   const field = 'vendorResumeIdField' in resume && typeof resume.vendorResumeIdField === 'string'
     ? resume.vendorResumeIdField.trim()
@@ -19,7 +20,7 @@ export function createVendorResumeIdMetadataPublisher(params: Readonly<{
   getMetadataSnapshot: () => Metadata | null;
   updateMetadata: (updater: (metadata: Metadata) => Metadata) => Promise<void> | void;
 }>) {
-  const metadataField = resolveVendorResumeIdField(params.agentId);
+  const metadataField = resolveVendorResumeIdMetadataField(params.agentId);
   let published: Readonly<{ generation: number; vendorSessionId: string }> | null = null;
   let inFlight: Readonly<{
     generation: number;

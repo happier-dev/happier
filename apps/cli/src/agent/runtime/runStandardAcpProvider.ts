@@ -51,6 +51,10 @@ import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/re
 import type { AgentToolsDeliveryAvailabilityResolver } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttachedRunRuntimeContext';
 import { configuration } from '@/configuration';
+import {
+  createLocalAgentNativeResumeRecordStore,
+  prepareAgentNativeReturnStrictResume,
+} from '@/session/agentTransition/agentNativeReturn';
 
 type RuntimeForLoop = {
   beginTurn: () => void;
@@ -174,6 +178,8 @@ type StandardAcpProviderDeps = {
   registerKillSessionHandlerFn?: typeof registerKillSessionHandler;
   cleanupBackendRunResourcesFn?: typeof cleanupBackendRunResources;
   renderFn?: typeof render;
+  /** Protected local handoff storage is the only mocked runtime boundary here. */
+  createLocalAgentNativeResumeRecordStoreFn?: typeof createLocalAgentNativeResumeRecordStore;
 };
 
 export async function runStandardAcpProvider(
@@ -193,6 +199,8 @@ export async function runStandardAcpProvider(
   const registerKillSessionHandlerFn = deps.registerKillSessionHandlerFn ?? registerKillSessionHandler;
   const cleanupBackendRunResourcesFn = deps.cleanupBackendRunResourcesFn ?? cleanupBackendRunResources;
   const renderFn = deps.renderFn ?? render;
+  const createLocalAgentNativeResumeRecordStoreFn =
+    deps.createLocalAgentNativeResumeRecordStoreFn ?? createLocalAgentNativeResumeRecordStore;
 
   const sessionTag = randomUUID();
   const explicitPermissionMode = opts.permissionMode;
@@ -619,11 +627,28 @@ export async function runStandardAcpProvider(
     });
 
   const initialResumeId = typeof opts.resume === 'string' ? opts.resume.trim() : '';
+  const nativeReturnRecordStore = initialResumeId
+    ? createLocalAgentNativeResumeRecordStoreFn()
+    : null;
+  const trackedNativeReturn = nativeReturnRecordStore !== null
+    ? await prepareAgentNativeReturnStrictResume({
+      store: nativeReturnRecordStore,
+      sessionId: session.sessionId,
+      targetAgentId: policyAgentId,
+      vendorResumeId: initialResumeId,
+       updateMetadata: async (updater) => await session.updateMetadata((metadata) =>
+         updater(metadata as Record<string, unknown>) as typeof metadata,
+       ),
+      })
+    : null;
   const toolDeliverySessionId = toolDelivery === 'shell_bridge'
     ? session.sessionId
     : runtime.getSessionId();
 
   try {
+    // A local native return removes only its own prior projection before the
+    // strict provider-open path. Ordinary resumes retain their existing id.
+    await trackedNativeReturn?.clearBeforeProviderOpen();
     await runPermissionModePromptLoopFn({
       providerName: config.providerName,
       providerId: policyAgentId,
@@ -655,6 +680,11 @@ export async function runStandardAcpProvider(
       setCurrentPermissionModeUpdatedAt: permissionModeState.setCurrentPermissionModeUpdatedAt,
       initialResumeId: initialResumeId || undefined,
       strictInitialResume: initialResumeId.length > 0,
+      onStrictInitialResumeFailure: trackedNativeReturn?.isTracked
+        ? async () => {
+          await trackedNativeReturn.invalidateOnMismatch();
+        }
+        : undefined,
       failClosedOnResumeFailure: config.failClosedOnResumeFailure === true,
       startRuntimeBeforeFirstPrompt: config.startRuntimeBeforeFirstPrompt === true,
       resolveFreshSessionSystemPrompt: async ({ baseOverride }) =>
