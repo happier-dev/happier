@@ -11,6 +11,10 @@ import {
     type TriageWorkspaceMaterializationV1,
 } from './entrySessionOrchestrator.js';
 import {
+    TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1,
+    type TriageWorkspaceModeV1,
+} from './entrySessionWorkspace.js';
+import {
     createTestkitActionInvoker,
     createTestkitPrepareReviewWorkspace,
     spawnSuccess,
@@ -71,8 +75,17 @@ function deps(
     };
 }
 
+/**
+ * The pressed action's declared `workspaceMode` is the gate's ONE input
+ * (`PLAN.md` §0a A3). It replaced the `ask | fix` intent union, which the gate
+ * had to re-read together with the entry's workflow subject to work out what a
+ * press meant. The three approved pairings are unchanged and are exercised
+ * literally below — a reference-only action never materializes a workspace, a
+ * pull-request action demands the source-prepared review workspace, and every
+ * repository action runs in the project the reader selected.
+ */
 describe('startEntrySession', () => {
-    it('creates one reference-only Ask Session, links it and opens it without touching SCM', async () => {
+    it('creates one reference-only Session, links it and opens it without touching SCM', async () => {
         const fixture = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
         const entryRef = testkitEntryRef();
         const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
@@ -80,8 +93,7 @@ describe('startEntrySession', () => {
         const result = await startEntrySession(deps(fixture, invoker), {
             entryRef,
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'pullRequest',
-            intent: 'ask',
+            workspaceMode: 'reference_only',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -106,7 +118,8 @@ describe('startEntrySession', () => {
             directory: '/projects/example',
             creationKey: 'creation-key-a',
         });
-        // No auto-send: a start never seeds or sends a Message.
+        // Nothing was composed here: the caller supplied no prompt body, and
+        // this module never synthesizes one from the entry's own words.
         expect(spawn && 'initialMessage' in spawn).toBe(false);
         expect(invoker.callsFor('session.open')[0]?.input).toEqual({ sessionId: 'session-a' });
 
@@ -123,7 +136,7 @@ describe('startEntrySession', () => {
         });
     });
 
-    it('never lets entry prose, a startup prompt or a second checkout reach the creation call', async () => {
+    it('never lets a title, a startup prompt or a second checkout reach the creation call', async () => {
         const fixture = createTestkitCorpusCollections();
         const entryRef = testkitEntryRef();
         const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
@@ -131,7 +144,6 @@ describe('startEntrySession', () => {
         // could produce from an unnarrowed value.
         const leakingSpawn = {
             ...TESTKIT_SPAWN_REQUEST,
-            initialMessage: 'Please fix this pull request',
             title: 'Replace the duplicated normalizer',
             agentSessionStartupInstructionsV1: { instructions: 'review it', v: 1, id: 'i', revision: 1 },
             checkoutCreationDraft: { kind: 'git_worktree', displayName: 'pr-17', baseRef: null },
@@ -140,8 +152,7 @@ describe('startEntrySession', () => {
         await startEntrySession(deps(fixture, invoker), {
             entryRef,
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'pullRequest',
-            intent: 'ask',
+            workspaceMode: 'reference_only',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -152,7 +163,6 @@ describe('startEntrySession', () => {
 
         const spawn = invoker.callsFor('session.spawn_new')[0]?.input ?? {};
         for (const member of [
-            'initialMessage',
             'title',
             'agentSessionStartupInstructionsV1',
             'checkoutCreationDraft',
@@ -161,7 +171,46 @@ describe('startEntrySession', () => {
         }
     });
 
-    it('links and opens an existing Ask Session without creating or materializing anything', async () => {
+    /**
+     * `PLAN.md` §0a A4 narrowed the blanket prohibition: `initialMessage` is
+     * admissible, and its one admitted producer is the body resolved from the
+     * pressed action's own Prompt Library invocation. The invariant the blanket
+     * prohibition protected is unchanged and now stated positively — **Triage
+     * never stringifies provider prose into a prompt** — and it is enforced by
+     * this module never composing one, plus the wire's closed spawn shape
+     * (`actions/entrySessionProtocol.ts`) refusing a caller-supplied one.
+     *
+     * So the structural fact this pins is the narrow one: the stripper no
+     * longer deletes a resolved prompt body on its way to the creator, which is
+     * what would silently drop the instruction a configured action exists to
+     * send.
+     */
+    it('carries a resolved prompt body through to the creation call unchanged', async () => {
+        const fixture = createTestkitCorpusCollections();
+        const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
+        const withPrompt = {
+            ...TESTKIT_SPAWN_REQUEST,
+            initialMessage: 'Summarize what changed and propose the smallest fix.',
+        } as unknown as typeof TESTKIT_SPAWN_REQUEST;
+
+        await startEntrySession(deps(fixture, invoker), {
+            entryRef: testkitEntryRef(),
+            display: TESTKIT_LINK_DISPLAY,
+            workspaceMode: 'reference_only',
+            destination: {
+                kind: 'new',
+                creationKey: 'creation-key-a',
+                spawn: withPrompt,
+                materialization: { kind: 'referenceOnly', directory: '/projects/example' },
+            },
+        });
+
+        expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({
+            initialMessage: 'Summarize what changed and propose the smallest fix.',
+        });
+    });
+
+    it('links and opens an existing Session for a reference-only action without materializing anything', async () => {
         const fixture = createTestkitCorpusCollections();
         const entryRef = testkitEntryRef();
         const invoker = createTestkitActionInvoker();
@@ -169,8 +218,7 @@ describe('startEntrySession', () => {
         const result = await startEntrySession(deps(fixture, invoker), {
             entryRef,
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'issue',
-            intent: 'ask',
+            workspaceMode: 'reference_only',
             destination: { kind: 'existing', sessionId: 'session-existing' },
         });
 
@@ -217,8 +265,7 @@ describe('startEntrySession', () => {
         const result = await startEntrySession(deps(fixture, invoker), {
             entryRef,
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'pullRequest',
-            intent: 'ask',
+            workspaceMode: 'reference_only',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -239,8 +286,7 @@ describe('startEntrySession', () => {
         const result = await startEntrySession(deps(fixture, invoker), {
             entryRef,
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'pullRequest',
-            intent: 'fix',
+            workspaceMode: 'pull_request',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -264,8 +310,7 @@ describe('startEntrySession', () => {
         const result = await startEntrySession(deps(fixture, invoker), {
             entryRef,
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'errorIssue',
-            intent: 'fix',
+            workspaceMode: 'repository',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -289,8 +334,7 @@ describe('startEntrySession', () => {
         const result = await startEntrySession(deps(fixture, invoker), {
             entryRef,
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'errorIssue',
-            intent: 'fix',
+            workspaceMode: 'repository',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -319,8 +363,7 @@ describe('startEntrySession', () => {
         const result = await startEntrySession(deps(fixture, invoker, source), {
             entryRef,
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'pullRequest',
-            intent: 'fix',
+            workspaceMode: 'pull_request',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -352,8 +395,7 @@ describe('startEntrySession', () => {
         const result = await startEntrySession(deps(fixture, invoker, source), {
             entryRef,
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'pullRequest',
-            intent: 'fix',
+            workspaceMode: 'pull_request',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -382,8 +424,7 @@ describe('startEntrySession', () => {
         expect(await startEntrySession(deps(fixture, invoker, source), {
             entryRef: testkitEntryRef(),
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'pullRequest',
-            intent: 'fix',
+            workspaceMode: 'pull_request',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -412,8 +453,7 @@ describe('startEntrySession', () => {
         const result = await startEntrySession(deps(fixture, invoker, source), {
             entryRef: testkitEntryRef(),
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'pullRequest',
-            intent: 'fix',
+            workspaceMode: 'pull_request',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -440,8 +480,7 @@ describe('startEntrySession', () => {
         expect(await startEntrySession(deps(fixture, invoker), {
             entryRef: testkitEntryRef(),
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'pullRequest',
-            intent: 'fix',
+            workspaceMode: 'pull_request',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -464,8 +503,7 @@ describe('startEntrySession', () => {
         const request: TriageEntrySessionStartRequestV1 = {
             entryRef,
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'pullRequest',
-            intent: 'ask',
+            workspaceMode: 'reference_only',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -502,8 +540,7 @@ describe('startEntrySession', () => {
         const result = await startEntrySession(deps(fixture, invoker), {
             entryRef,
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'pullRequest',
-            intent: 'ask',
+            workspaceMode: 'reference_only',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -540,8 +577,7 @@ describe('startEntrySession', () => {
         const pending = await startEntrySession(failingDeps, {
             entryRef,
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'pullRequest',
-            intent: 'ask',
+            workspaceMode: 'reference_only',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
@@ -579,8 +615,7 @@ describe('startEntrySession', () => {
         const pending = await startEntrySession(deps(fixture, failing), {
             entryRef,
             display: TESTKIT_LINK_DISPLAY,
-            workflowSubject: 'pullRequest',
-            intent: 'ask',
+            workspaceMode: 'reference_only',
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
