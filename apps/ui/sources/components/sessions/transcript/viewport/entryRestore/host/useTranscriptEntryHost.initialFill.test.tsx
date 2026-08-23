@@ -265,6 +265,32 @@ describe('useTranscriptEntryHost initial fill sufficiency (S-L/S-M)', () => {
         expect(settleObservation.value!.atMs - openedAtMs).toBe(0);
     });
 
+    it('web post-settle fill does NOTHING when the first page already fills the viewport', async () => {
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        // The deletion test for the guard itself: at a first page that covers the viewport
+        // the transcript is already scrollable, the older pager can already arm, and the
+        // guard issues zero requests. Every load it ever makes is recovery from a first page
+        // too small to fill the viewport.
+        const harness = createFillHarness({
+            layoutHeightPx: 600,
+            initialContentHeightPx: 2400,
+            contentGrowthPerLoadPx: [250, 250],
+            loadDurationMs: 700,
+        });
+
+        await renderHook(
+            (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+            { initialProps: harness.deps },
+        );
+        await vi.waitFor(() => {
+            expect(harness.sessionOpenLatch.initialFillStatus()).toBe('done');
+        });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(harness.loadOlder).not.toHaveBeenCalled();
+        expect(harness.isScrollable()).toBe(true);
+    });
+
     it('web still reaches a scrollable transcript, so the older pager can arm at all', async () => {
         Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
         // The realistic tool-heavy tail: the newest page is collapsed tool calls and

@@ -5199,9 +5199,14 @@ class Sync {
                       sessionId,
                       sessionEncryptionMode,
                       afterSeq: cursor,
-                      limit: Platform.OS === 'web'
-                          ? WEB_INITIAL_SESSION_MESSAGES_PAGE_SIZE
-                          : this.getSessionMessagesPageSize(),
+                      // Deliberately the CONFIGURED page size on every platform, not the small
+                      // web first-paint page. This loop is bounded by
+                      // `messageMaxIncrementalPagesOnResume` (3), so the page size decides how
+                      // large a background gap can be absorbed incrementally: 3 x 150 = 450
+                      // messages, versus 3 x 12 = 36. Below that, a session that advanced while
+                      // backgrounded falls to `onIncrementalExhausted` -> `tail_reset_latest_page`,
+                      // which REPLACES transcript content instead of extending it.
+                      limit: this.getSessionMessagesPageSize(),
                       getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
                       isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
                       request: requestMessages,
@@ -6057,6 +6062,10 @@ class Sync {
                   sessionEncryptionMode,
                   scope: 'sidechain',
                   sidechainId: normalizedSidechainId,
+                  // The same configured page size the main initial fetch uses: this is the
+                  // sidechain's initial transcript load, so it must not silently keep the
+                  // server default when an account configures a different page size.
+                  limit: this.getSessionMessagesPageSize(),
                   getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
                   isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
                   request: requestMessages,
