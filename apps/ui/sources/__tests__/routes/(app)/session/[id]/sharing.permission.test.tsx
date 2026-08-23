@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
@@ -12,6 +12,7 @@ const getPublicShareSpy = vi.fn(async (..._args: any[]) => null);
 const getFriendsListSpy = vi.fn(async (..._args: any[]) => []);
 let routeHydrationState: 'available' | 'loading' | 'missing' = 'available';
 let mockServerId: string | undefined;
+let mockAccessLevel: 'edit' | 'admin' = 'edit';
 const hydrateSpy = vi.fn((sessionId: string, _tag: string, options?: { serverId?: string }) =>
     routeHydrationState === 'available'
         ? { kind: 'available', sessionId, serverId: options?.serverId }
@@ -40,8 +41,7 @@ installSessionRouteCommonModuleMocks({
             useIsDataReady: () => true,
             useSession: () => ({
                 id: 'session-1',
-                // Editors should not be allowed to manage sharing.
-                accessLevel: 'edit',
+                accessLevel: mockAccessLevel,
             }),
         });
     },
@@ -76,20 +76,20 @@ vi.mock('@/sync/api/social/apiSharing', () => ({
     deletePublicShare: vi.fn(),
 }));
 
-vi.mock('@/sync/api/social/apiFriends', () => ({
-    getFriendsList: (...args: any[]) => getFriendsListSpy(...args),
+vi.mock('@/sync/api/social/createSessionSocialRequest', () => ({
+    getSessionFriendsList: (...args: any[]) => getFriendsListSpy(...args),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: () => null,
+    Item: (props: Record<string, unknown>) => React.createElement('Item', props),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: () => null,
+    ItemGroup: ({ children }: { children?: React.ReactNode }) => React.createElement('ItemGroup', null, children),
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: () => null,
+    ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement('ItemList', null, children),
 }));
 
 vi.mock('@/components/sessions/sharing', () => ({
@@ -103,6 +103,17 @@ vi.mock('@/components/sessions/shell/SessionInvalidLinkFallback', () => ({
 }));
 
 describe('Session Sharing Screen permissions', () => {
+    beforeEach(() => {
+        routeHydrationState = 'available';
+        mockServerId = undefined;
+        mockAccessLevel = 'edit';
+        getSessionSharesSpy.mockClear();
+        getPublicShareSpy.mockClear();
+        getFriendsListSpy.mockReset();
+        getFriendsListSpy.mockResolvedValue([]);
+        hydrateSpy.mockClear();
+    });
+
     it('waits for session hydration before rendering sharing content', async () => {
         routeHydrationState = 'loading';
         mockServerId = 'server-b';
@@ -142,5 +153,19 @@ describe('Session Sharing Screen permissions', () => {
         expect(getSessionSharesSpy).not.toHaveBeenCalled();
         expect(getPublicShareSpy).not.toHaveBeenCalled();
         expect(getFriendsListSpy).not.toHaveBeenCalled();
+    });
+
+    it('shows a retryable error instead of an empty friend picker when sharing data fails to load', async () => {
+        mockAccessLevel = 'admin';
+        getFriendsListSpy.mockRejectedValue(new Error('friends unavailable'));
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const Screen = (await import('@/app/(app)/session/[id]/sharing')).default;
+
+        const screen = await renderScreen(<Screen />);
+        await act(async () => {});
+
+        expect(getFriendsListSpy).toHaveBeenCalledWith(expect.any(Object), 'session-1');
+        expect(screen.findByTestId('session-sharing-load-retry')).toBeTruthy();
+        consoleErrorSpy.mockRestore();
     });
 });

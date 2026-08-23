@@ -11,6 +11,8 @@ import {
 
 type RetryMode = 'default' | 'none';
 type RetryOptions = Readonly<{ retry?: RetryMode }>;
+type FriendsListRequest = (path: string, init?: RequestInit) => Promise<Response>;
+type FriendsListOptions = RetryOptions & Readonly<{ request?: FriendsListRequest }>;
 
 /**
  * Search for users by username (returns multiple results)
@@ -189,15 +191,18 @@ export async function sendFriendRequest(
  */
 export async function getFriendsList(
     credentials: AuthCredentials,
-    opts: RetryOptions = {},
+    opts: FriendsListOptions = {},
 ): Promise<UserProfile[]> {
     const run = async () => {
-        const response = await serverFetch('/v1/friends', {
+        const init: RequestInit = {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
             },
-        }, { includeAuth: false });
+        };
+        const response = opts.request
+            ? await opts.request('/v1/friends', init)
+            : await serverFetch('/v1/friends', init, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 404) {

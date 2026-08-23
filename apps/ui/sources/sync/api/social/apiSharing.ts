@@ -1,8 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
+import { createSessionSocialRequest } from '@/sync/api/social/createSessionSocialRequest';
 import { serverFetch } from '@/sync/http/client';
-import { createSessionRequestWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/createSessionRequestWithServerScope';
-import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import {
     SessionShare,
     SessionShareResponse,
@@ -18,20 +17,6 @@ import {
     ConsentRequiredError,
     SessionSharingError
 } from '@/sync/domains/social/sharingTypes';
-
-function createSessionSharingRequest(credentials: AuthCredentials, sessionId: string) {
-    return createSessionRequestWithServerScope({
-        serverId: resolvePreferredServerIdForSessionId(sessionId) ?? null,
-        activeRequest: (path, init) => {
-            const headers = new Headers(init?.headers);
-            headers.set('Authorization', `Bearer ${credentials.token}`);
-            return serverFetch(path, {
-                ...init,
-                headers,
-            }, { includeAuth: false });
-        },
-    });
-}
 
 /**
  * Get all shares for a session
@@ -52,7 +37,7 @@ export async function getSessionShares(
     sessionId: string
 ): Promise<SessionShare[]> {
     return await backoff(async () => {
-        const request = createSessionSharingRequest(credentials, sessionId);
+        const request = createSessionSocialRequest(credentials, sessionId);
         const response = await request(`/v1/sessions/${sessionId}/shares`, { method: 'GET' });
 
         if (!response.ok) {
@@ -91,7 +76,7 @@ export async function createSessionShare(
     request: CreateSessionShareRequest
 ): Promise<SessionShare> {
     return await backoff(async () => {
-        const scopedRequest = createSessionSharingRequest(credentials, sessionId);
+        const scopedRequest = createSessionSocialRequest(credentials, sessionId);
         const response = await scopedRequest(`/v1/sessions/${sessionId}/shares`, {
             method: 'POST',
             headers: {
@@ -139,7 +124,7 @@ export async function updateSessionShare(
     patch: { accessLevel?: 'view' | 'edit' | 'admin'; canApprovePermissions?: boolean }
 ): Promise<SessionShare> {
     return await backoff(async () => {
-        const request = createSessionSharingRequest(credentials, sessionId);
+        const request = createSessionSocialRequest(credentials, sessionId);
         const response = await request(`/v1/sessions/${sessionId}/shares/${shareId}`, {
             method: 'PATCH',
             headers: {
@@ -183,7 +168,7 @@ export async function deleteSessionShare(
     shareId: string
 ): Promise<void> {
     return await backoff(async () => {
-        const request = createSessionSharingRequest(credentials, sessionId);
+        const request = createSessionSocialRequest(credentials, sessionId);
         const response = await request(`/v1/sessions/${sessionId}/shares/${shareId}`, { method: 'DELETE' });
 
         if (!response.ok) {
@@ -221,7 +206,7 @@ export async function createPublicShare(
     request: CreatePublicShareRequest & { token: string }
 ): Promise<PublicSessionShare> {
     return await backoff(async () => {
-        const scopedRequest = createSessionSharingRequest(credentials, sessionId);
+        const scopedRequest = createSessionSocialRequest(credentials, sessionId);
         const response = await scopedRequest(`/v1/sessions/${sessionId}/public-share`, {
             method: 'POST',
             headers: {
@@ -250,7 +235,7 @@ export async function getPublicShare(
     sessionId: string
 ): Promise<PublicSessionShare | null> {
     return await backoff(async () => {
-        const request = createSessionSharingRequest(credentials, sessionId);
+        const request = createSessionSocialRequest(credentials, sessionId);
         const response = await request(`/v1/sessions/${sessionId}/public-share`, { method: 'GET' });
 
         if (!response.ok) {
@@ -273,7 +258,7 @@ export async function deletePublicShare(
     sessionId: string
 ): Promise<void> {
     return await backoff(async () => {
-        const request = createSessionSharingRequest(credentials, sessionId);
+        const request = createSessionSocialRequest(credentials, sessionId);
         const response = await request(`/v1/sessions/${sessionId}/public-share`, { method: 'DELETE' });
 
         if (!response.ok) {
@@ -365,7 +350,7 @@ export async function getPublicShareAccessLogs(
             ? `/v1/sessions/${sessionId}/public-share/access-logs?${query.toString()}`
             : `/v1/sessions/${sessionId}/public-share/access-logs`;
 
-        const request = createSessionSharingRequest(credentials, sessionId);
+        const request = createSessionSocialRequest(credentials, sessionId);
         const response = await request(requestPath, { method: 'GET' });
 
         if (!response.ok) {
