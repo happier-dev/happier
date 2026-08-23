@@ -953,11 +953,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(JSON.parse(await readFile(join(result!.env.CLAUDE_CONFIG_DIR!, '.credentials.json'), 'utf8'))).toEqual({
       claudeAiOauth: {
         accessToken: 'sk-ant-oat01-123',
-        scopes: [
-          'user:inference',
-          'user:profile',
-          'user:sessions:claude_code',
-        ],
+        scopes: ['user:inference'],
       },
     });
     expect('CLAUDE_CODE_OAUTH_TOKEN' in result!.env).toBe(false);
