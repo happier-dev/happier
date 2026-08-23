@@ -151,6 +151,7 @@ export type { AgentSessionOpenRequest } from '../../agentRuntime/projections.js'
 export type { AgentSessionPreAdmissionBuffer } from '../../agentRuntime/projections.js';
 export type { AgentSessionPreAdmissionBufferResult } from '../../agentRuntime/projections.js';
 export type { AgentSessionProviderBinding } from '../../agentRuntime/projections.js';
+export type { AgentSessionProviderBindingUpstream } from '../../agentRuntime/projections.js';
 export { AgentSessionProviderBindingV1Schema } from '../../agentRuntime/projections.js';
 export type { AgentSessionProviderCheckpoint } from '../../agentRuntime/projections.js';
 export type { AgentSessionProviderTranscriptPublishRequest } from '../../agentRuntime/projections.js';
@@ -231,6 +232,7 @@ export type { CheckpointRestoreAnchorV1 } from '../../agentRuntime/projections.j
 export type { CheckpointRestoreScopeV1 } from '../../agentRuntime/projections.js';
 export type { CheckpointSurface } from '../../agentRuntime/projections.js';
 export type { CheckpointTimingV1 } from '../../agentRuntime/projections.js';
+export type { ConnectedServicesProviderStateSharingPolicyV1 } from '../../agentRuntime/projections.js';
 export type { CreateCheckpointRequestV1 } from '../../agentRuntime/projections.js';
 export type { ForkAvailabilityRequestV1 } from '../../agentRuntime/projections.js';
 export type { ForkPointV1 } from '../../agentRuntime/projections.js';

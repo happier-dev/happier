@@ -52,6 +52,7 @@ export type {
     UiSurfaceSettingsPageDefinition,
 } from './ui/surface.js';
 export type {
+    ActionOperationDeclarationV1,
     ComposerAttachmentAuthorDeclaration,
     ComposerAttachmentAuthorDisplay,
     ComposerAttachmentAuthorPreview,
@@ -95,7 +96,11 @@ export { isPluginError, PluginError } from './errors.js';
 export type { PluginErrorData } from './errors.js';
 export type { PluginIdentity } from './identity.js';
 export type { PluginInvocationCaller } from './invocation.js';
-export type { PluginInvocationContext } from './invocation.js';
+export type {
+    PluginActionOperationContextV1,
+    PluginActionOperationProgressUpdateV1,
+    PluginInvocationContext,
+} from './invocation.js';
 export type { PluginInvocationContributionIdentity } from './identity.js';
 export type { PluginInvocationOriginSurface } from './invocation.js';
 export type { PluginJsonValueV2 } from './identity.js';

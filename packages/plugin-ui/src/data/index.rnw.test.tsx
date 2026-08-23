@@ -9,6 +9,7 @@ import {
   type PluginUiCollectionQuerySnapshot,
   type PluginUiDataClient,
 } from './index.js';
+import { createUnavailablePluginUiAccountKv } from './accountKv.js';
 import { PluginUiDataProviderInternal } from './context.js';
 import { mountThroughReactNativeWebAsync } from '../rnwMount.testSupport.js';
 
@@ -50,6 +51,7 @@ describe('Plugin UI data provider', () => {
         throw new Error('Collection mutation is outside this query-hook fixture.');
       },
       openCollectionQuery,
+      accountKv: createUnavailablePluginUiAccountKv(),
     });
 
     function QueryProbe() {
@@ -101,6 +103,7 @@ describe('Plugin UI data provider', () => {
         throw new Error('Collection mutation is outside this query-hook fixture.');
       },
       openCollectionQuery,
+      accountKv: createUnavailablePluginUiAccountKv(),
     });
 
     function QueryProbe() {
@@ -144,6 +147,7 @@ describe('Plugin UI data provider', () => {
         throw new Error('Collection mutation is outside this 200-row query fixture.');
       },
       openCollectionQuery,
+      accountKv: createUnavailablePluginUiAccountKv(),
     });
     const rowCommits: string[] = [];
 

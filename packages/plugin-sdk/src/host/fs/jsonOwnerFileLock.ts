@@ -12,6 +12,13 @@ type JsonOwnerFileLockOptions = Readonly<{
   timeoutMs: number;
   staleAfterMs: number;
   errorCode: string;
+  /**
+   * Admission fence for a caller that may walk away while it is still queued.
+   * Waiting for a lock is unbounded work on the caller's behalf, so a cancelled
+   * caller stops queueing instead of acquiring the lock and running its effect.
+   * It never interrupts an effect that already holds the lock.
+   */
+  signal?: AbortSignal;
   pollIntervalMs?: number;
   readQuarantinedRaw?: (path: string) => Promise<string>;
   readProcessStartedAtMs?: (pid: number) => Promise<number | null>;
@@ -637,6 +644,7 @@ async function withPredecessorCompatibleDirectoryLock<TResult>(
   const startedAtMs = Date.now();
   const pollIntervalMs = Math.max(1, Math.trunc(options.pollIntervalMs ?? 10));
   for (;;) {
+    throwIfLockAdmissionCancelled(options.signal);
     if (Date.now() - startedAtMs >= options.timeoutMs) throw new Error(options.errorCode);
     if (await inspectAndScavengeLockArtifacts(options.lockPath, options.staleAfterMs)) {
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
@@ -702,6 +710,13 @@ async function withPredecessorCompatibleDirectoryLock<TResult>(
   }
 }
 
+function throwIfLockAdmissionCancelled(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  const error = new Error('File-lock admission was cancelled');
+  error.name = 'AbortError';
+  throw error;
+}
+
 function serializeOwner(nowMs: number): string {
   return JSON.stringify({
     pid: process.pid,
@@ -727,6 +742,7 @@ export async function withJsonOwnerFileLock<TResult>(
 
   let ownRaw: string | null = null;
   for (;;) {
+    throwIfLockAdmissionCancelled(options.signal);
     if (Date.now() - startedAtMs >= options.timeoutMs) throw new Error(options.errorCode);
     if (await inspectAndScavengeLockArtifacts(options.lockPath, options.staleAfterMs)) {
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));

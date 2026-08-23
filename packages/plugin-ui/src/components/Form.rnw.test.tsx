@@ -464,3 +464,120 @@ describe('canonical Action Form presentation', () => {
     mount.unmount();
   });
 });
+
+describe('plugin-ui text entry behaviour', () => {
+  function mountTextField(element: React.ReactElement) {
+    return mountForm(element);
+  }
+
+  function fieldOf(mount: ReturnType<typeof mountForm>, testID: string) {
+    return mount.container.querySelector<HTMLInputElement>(`[data-testid="${testID}"]`);
+  }
+
+  it('keeps prose entry defaults for an ordinary field and quiet defaults for a secret', () => {
+    const mount = mountTextField(
+      <>
+        <Form.TextField label="Name" value="" onChange={() => undefined} testID="prose-field" />
+        <Form.TextField label="Token" value="" secure onChange={() => undefined} testID="secret-field" />
+      </>,
+    );
+
+    // The derived defaults are the protected behaviour: an author who declares
+    // nothing keeps prose capitalization, and a secret is never capitalized or
+    // corrected even when the author declares nothing either.
+    expect(fieldOf(mount, 'prose-field')?.getAttribute('autocapitalize')).toBe('sentences');
+    expect(fieldOf(mount, 'prose-field')?.getAttribute('autocorrect')).toBe('on');
+    expect(fieldOf(mount, 'secret-field')?.getAttribute('autocapitalize')).toBe('none');
+    expect(fieldOf(mount, 'secret-field')?.getAttribute('autocorrect')).toBe('off');
+    mount.unmount();
+  });
+
+  it('lets a search field own its capitalization and correction', () => {
+    const mount = mountTextField(
+      <Form.TextField
+        label="Search"
+        value=""
+        onChange={() => undefined}
+        autoCapitalize="none"
+        autoCorrect={false}
+        testID="search-field"
+      />,
+    );
+
+    expect(fieldOf(mount, 'search-field')?.getAttribute('autocapitalize')).toBe('none');
+    expect(fieldOf(mount, 'search-field')?.getAttribute('autocorrect')).toBe('off');
+    mount.unmount();
+  });
+
+  it('places the caret where the author says it is rather than at the end of the value', () => {
+    const mount = mountTextField(
+      <Form.TextField
+        label="Search"
+        value="happier"
+        onChange={() => undefined}
+        selection={{ start: 2, end: 5 }}
+        testID="search-field"
+      />,
+    );
+
+    const input = fieldOf(mount, 'search-field');
+    expect(input?.selectionStart).toBe(2);
+    expect(input?.selectionEnd).toBe(5);
+    mount.unmount();
+  });
+
+  it('submits a search on Enter but stays quiet while an IME composition is open', async () => {
+    const onSubmitEditing = vi.fn();
+    const mount = mountTextField(
+      <Form.TextField
+        label="Search"
+        value="happier"
+        onChange={() => undefined}
+        onSubmitEditing={onSubmitEditing}
+        testID="search-field"
+      />,
+    );
+    const input = fieldOf(mount, 'search-field');
+
+    await act(async () => {
+      input?.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter',
+        isComposing: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    expect(onSubmitEditing).not.toHaveBeenCalled();
+
+    await act(async () => {
+      input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    });
+    expect(onSubmitEditing).toHaveBeenCalledTimes(1);
+    mount.unmount();
+  });
+
+  it('reports the reader-moved caret as a portable selection, not a host event', async () => {
+    const onSelectionChange = vi.fn();
+    const mount = mountTextField(
+      <Form.TextField
+        label="Search"
+        value="happier"
+        onChange={() => undefined}
+        onSelectionChange={onSelectionChange}
+        testID="search-field"
+      />,
+    );
+    const input = fieldOf(mount, 'search-field');
+
+    await act(async () => {
+      input?.focus();
+      input?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      input?.setSelectionRange(1, 3);
+      input?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    });
+
+    // The author receives the caret itself; the platform's event never leaks.
+    expect(onSelectionChange).toHaveBeenCalledWith({ start: 1, end: 3 });
+    mount.unmount();
+  });
+});

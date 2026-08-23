@@ -10,6 +10,7 @@
  *   presentation → React/RN + environment only
  *   adapters     → presentation + plugin-sdk/ui
  */
+export type { HappierLayoutChangeEvent, HappierTextSelection } from './portableTypes.js';
 export {
   HappierText,
   HappierTextSelectabilityScope,

@@ -12,6 +12,9 @@ import {
     listVoiceSdkSafeToolActionSpecs as canonicalListVoiceSdkSafeToolActionSpecs,
 } from '@happier-dev/protocol/actions/actionSpecs';
 import {
+    buildVoiceClientToolAgentPrompt as canonicalBuildVoiceClientToolAgentPrompt,
+} from '@happier-dev/agents/voice';
+import {
     describeActionInputFieldForVoice as canonicalDescribeActionInputFieldForVoice,
 } from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
 import type {
@@ -54,6 +57,34 @@ export const isVoiceSdkSafeActionSpec: (spec: Pick<ActionSpec, 'sideEffectClass'
     canonicalIsVoiceSdkSafeActionSpec;
 export const listVoiceSdkSafeToolActionSpecs: () => readonly ActionSpec[] =
     canonicalListVoiceSdkSafeToolActionSpecs;
+
+export type VoiceClientToolAgentPromptOptions = Readonly<{
+    assistantName?: string;
+    verbosity?: 'short' | 'balanced';
+    /**
+     * Rendered verbatim as the conversation-context value. A provider that
+     * substitutes template variables passes its own syntax (for example
+     * `{{initialConversationContext}}`); omitting it drops the section.
+     */
+    initialConversationContextPlaceholder?: string;
+    /** Rendered verbatim as the active session id, same ownership as above. */
+    sessionIdPlaceholder?: string;
+    disabledActionIds?: readonly string[];
+    extraSystemAppendBlocks?: readonly string[];
+    actionSpecs?: readonly Pick<
+        ActionSpec,
+        'id' | 'title' | 'description' | 'bindings' | 'examples' | 'inputHints' | 'prompting'
+    >[];
+}>;
+
+/**
+ * The host's canonical system prompt for a realtime Voice provider that exposes
+ * Happier actions to the model as client tools. Provider template syntax stays
+ * with the provider: the placeholders are rendered verbatim.
+ */
+export const buildVoiceClientToolAgentPrompt: (
+    options?: VoiceClientToolAgentPromptOptions,
+) => string = canonicalBuildVoiceClientToolAgentPrompt;
 
 export const VoiceRealtimeJsonValueSchema: VoiceSchema<VoiceRealtimeJsonValue> =
     canonicalVoiceRealtimeJsonValueSchema;

@@ -1,4 +1,5 @@
 import { COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
+import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 
 import type { ActionContract, ActionHandler } from './actions/contracts.js';
 import type {
@@ -156,6 +157,16 @@ export type PluginActionExecutionV2 =
         platforms: readonly ('web' | 'ios' | 'android')[];
     }>;
 
+/** Host-owned tracked-operation behavior requested by one daemon Action. */
+export type ActionOperationDeclarationV1 = Readonly<{
+    version: 1;
+    visibility: 'activity';
+    progress: 'indeterminate' | 'reported';
+    presentation: Readonly<{
+        onStart: 'current' | 'detail' | 'activity';
+    }>;
+}>;
+
 /**
  * SDK-owned author projection of one Action declaration. Protocol remains the
  * parser and runtime manifest owner; this structural spelling keeps ordinary
@@ -180,6 +191,7 @@ type ActionContribution = Readonly<{
     )[];
     surfaces: readonly ('cli' | 'mcp' | 'agent' | 'ui' | 'plugin' | 'voice')[];
     execution: PluginActionExecutionV2;
+    operation?: ActionOperationDeclarationV1;
     placementBindings?: readonly PluginActionPlacement[];
     slash?: Readonly<{ tokens: readonly string[] }>;
     inputSchema?: PluginJsonSchema;
@@ -244,8 +256,16 @@ export type PluginActionDeclaration = Readonly<{
         confirmLabel?: PluginLocalizedStringV2;
     }>;
     metadata?: Readonly<Record<string, JsonValue>>;
-    execution: PluginActionExecutionV2;
-} & PluginActionAuthorDefaults>;
+} & PluginActionAuthorDefaults> & (
+    | Readonly<{
+        execution: Extract<PluginActionExecutionV2, Readonly<{ target: 'daemon' }>>;
+        operation?: ActionOperationDeclarationV1;
+    }>
+    | Readonly<{
+        execution: Extract<PluginActionExecutionV2, Readonly<{ target: 'client' }>>;
+        operation?: never;
+    }>
+);
 
 type PluginDaemonActionDeclaration = PluginActionDeclaration & Readonly<{
     execution: Extract<PluginActionExecutionV2, Readonly<{ target: 'daemon' }>>;
@@ -1082,15 +1102,19 @@ export interface DefinedPlugin<
 function projectProtocolSchema(value: PluginActionSchema | undefined): PluginJsonSchema | undefined {
     const composableSchema = readProtocolComposableSchema(value);
     if (composableSchema) return composableSchema.jsonSchema;
-    // `readProtocolComposableSchema` rejects parser-shaped partial values, so
-    // a remaining declared schema is the public JSON-schema arm of this union.
-    return value as PluginJsonSchema | undefined;
+    if (value === undefined) return undefined;
+    // Anything that is not the executable composable surface is the public
+    // JSON-schema arm of this union. Protocol's JSON Schema normalizer is the
+    // owner that admits or rejects it, so the SDK keeps no near-miss taxonomy
+    // of its own: an object that merely resembles a parser fails there as
+    // non-strict JSON, exactly as it would at manifest ingestion.
+    return normalizePluginJsonSchema(value as object) as PluginJsonSchema;
 }
 
 type DaemonPluginActionDefinition = Extract<
     PluginActionDefinition,
     Readonly<{ execution: Readonly<{ target: 'daemon' }> }>
->;
+> & Readonly<{ run: ActionHandler }>;
 
 function isDaemonPluginActionDefinition(
     definition: PluginActionDefinition,
@@ -1219,10 +1243,23 @@ function isPluginPromptAssetAdapterDefinition(
         && definition.adapter !== undefined;
 }
 
+/**
+ * Absent and explicitly empty stay distinguishable downstream, so only an
+ * omitted family projects nothing. A family key the author actually wrote with
+ * a non-record container is a malformed declaration, not an empty one: silently
+ * collapsing it to `[]` makes it indistinguishable from `{}` after projection,
+ * which no later parser can recover.
+ */
 function projectKeyedDeclarations(
+    authorKey: string,
     definitions: unknown,
 ): readonly Readonly<Record<string, unknown>>[] {
-    if (!definitions || typeof definitions !== 'object' || Array.isArray(definitions)) return [];
+    if (definitions === undefined) return [];
+    if (!isDefinePluginAuthorRecord(definitions)) {
+        throw new TypeError(
+            `Plugin contribution family '${authorKey}' must be an object keyed by contribution id`,
+        );
+    }
     return Object.entries(definitions).map(([localId, declaration]) => Object.freeze({
         ...(declaration as Readonly<Record<string, unknown>>),
         id: localId,
@@ -1645,7 +1682,7 @@ function descriptorFamilyAdapter<TFamily extends keyof PluginManifestContributes
         authorKey,
         project(input: Readonly<Record<string, unknown>>): DefinePluginFamilyProjection {
             return {
-                [authorKey]: projectKeyedDeclarations(input[authorKey]),
+                [authorKey]: projectKeyedDeclarations(authorKey, input[authorKey]),
             } as unknown as DefinePluginFamilyProjection;
         },
     });
@@ -1786,7 +1823,7 @@ const RESOURCES_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     authorKey: 'resources',
     project(input) {
         return {
-            resources: projectKeyedDeclarations(input.resources).map((declaration) => {
+            resources: projectKeyedDeclarations('resources', input.resources).map((declaration) => {
                 const { runtime: _runtime, ...rest } = declaration as Readonly<Record<string, unknown>> & {
                     runtime?: unknown;
                 };
@@ -2212,7 +2249,7 @@ const CONTRIBUTION_POINTS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     authorKey: 'contributionPoints',
     project(input) {
         return {
-            pluginContributionPoints: projectKeyedDeclarations(input.contributionPoints),
+            pluginContributionPoints: projectKeyedDeclarations('contributionPoints', input.contributionPoints),
         } as unknown as DefinePluginFamilyProjection;
     },
 });
@@ -2233,17 +2270,26 @@ const CONTRIBUTES_TO_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     authorKey: 'contributesTo',
     project(input) {
         const targets = input.contributesTo;
-        if (!targets || typeof targets !== 'object' || Array.isArray(targets)) {
+        if (targets === undefined) {
             return { targetedPluginContributions: [] } as unknown as DefinePluginFamilyProjection;
         }
-        const contributions = Object.entries(targets as Readonly<Record<string, unknown>>).flatMap(([
+        if (!isDefinePluginAuthorRecord(targets)) {
+            throw new TypeError(
+                "Plugin contribution family 'contributesTo' must be an object keyed by target plugin id",
+            );
+        }
+        const contributions = Object.entries(targets).flatMap(([
             targetPluginId,
             points,
         ]) => {
-            if (!points || typeof points !== 'object' || Array.isArray(points)) return [];
-            return Object.entries(points as Readonly<Record<string, unknown>>).flatMap(([pointId, definitions]) => {
-                if (!definitions || typeof definitions !== 'object' || Array.isArray(definitions)) return [];
-                return Object.entries(definitions as Readonly<Record<string, unknown>>).map(([
+            if (!isDefinePluginAuthorRecord(points)) {
+                throw new TypeError(`Targeted contribution target '${targetPluginId}' must be an object keyed by contribution point id`);
+            }
+            return Object.entries(points).flatMap(([pointId, definitions]) => {
+                if (!isDefinePluginAuthorRecord(definitions)) {
+                    throw new TypeError(`Targeted contribution point '${targetPluginId}/${pointId}' must be an object keyed by contribution id`);
+                }
+                return Object.entries(definitions).map(([
                     localId,
                     definition,
                 ]) => {

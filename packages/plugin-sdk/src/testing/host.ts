@@ -50,6 +50,10 @@ import type {
     TargetedContributionSnapshot,
     TargetedContributionsService,
 } from '../services/targetedContributions.js';
+import { decodeTargetedContributionPointSemantics } from '../targetedContributionAuthoring.js';
+import type {
+    TargetedContributionPointSemanticOperation,
+} from '../targetedContributionAuthoring.js';
 import type {
     PluginTestServicesFixture,
     PluginTestkit,
@@ -123,6 +127,13 @@ type TestkitAdmittedTargetedOperationBinding = Readonly<{
     contributorImmutableGenerationId: string;
     targetPluginId: string;
     targetImmutableGenerationId: string;
+    /**
+     * The exact target-owned parser pair for this operation role. Production
+     * carries the same pair on its opaque handle binding and parses around the
+     * incumbent Action invocation, so a testkit handle that dropped it would
+     * pass an author's test where production rejects.
+     */
+    targetProtocol: TargetedContributionPointSemanticOperation;
 }>;
 const admittedTargetedOperationBindings = new WeakMap<
     object,
@@ -133,6 +144,7 @@ type TestkitFixtureProtocol = Readonly<{
     id: string;
     version: number;
     operations: Readonly<Record<string, Readonly<{ required: boolean }>>>;
+    surfaces?: Readonly<Record<string, Readonly<{ presentation: string }>>>;
 }>;
 
 type TestkitFixturePoint = Readonly<{
@@ -301,6 +313,46 @@ function invalidAdmittedTargetedOperationHandle(): PluginError {
         code: 'plugin_admitted_targeted_operation_handle_invalid',
         message: 'Admitted targeted operation handle is invalid',
         actionHandlerInvocation: 'notStarted',
+    });
+}
+
+/**
+ * The target's own operation parsers run around the contributor invocation,
+ * exactly as the daemon Action executor runs them in production. A testkit
+ * that skipped them would let an author's contribution pass a test and then be
+ * rejected by the real target, so the codes and the not-started classification
+ * match the production owner.
+ */
+function parseAdmittedTargetedOperationInput(
+    targetProtocol: TargetedContributionPointSemanticOperation,
+    input: JsonValue,
+): JsonValue {
+    if (targetProtocol.input.kind === 'contributorDefined') return input;
+    try {
+        const parsed = targetProtocol.input.schema.safeParse(input);
+        if (parsed.success) return parsed.data;
+    } catch {
+        // A throwing target parser rejects before the contributor Action runs.
+    }
+    throw actionHandlerNotStartedError({
+        code: 'plugin_targeted_operation_input_invalid',
+        message: 'Targeted operation input does not match the target protocol',
+    });
+}
+
+function parseAdmittedTargetedOperationResult(
+    targetProtocol: TargetedContributionPointSemanticOperation,
+    result: JsonValue | null,
+): JsonValue {
+    try {
+        const parsed = targetProtocol.resultSchema.safeParse(result);
+        if (parsed.success) return parsed.data;
+    } catch {
+        // A throwing target parser cannot disclose a contributor result.
+    }
+    throw new PluginError({
+        code: 'plugin_targeted_operation_result_invalid',
+        message: 'Targeted operation result does not match the target protocol',
     });
 }
 
@@ -689,12 +741,35 @@ export async function createPluginTestkit(
         return Object.freeze({ declaration, protocol });
     }
 
+    /**
+     * Replays the target's own executable operation semantics for this point
+     * through the canonical decoder. The manifest carries only the structural
+     * declaration, so the parser pair has to come from the authored point
+     * reference — exactly as cold admission supplies it in production.
+     */
+    function readFixtureOperationSemantics(
+        point: TargetedContributionPointRef<unknown>,
+        protocol: TestkitFixtureProtocol,
+    ): ReadonlyMap<string, TargetedContributionPointSemanticOperation> {
+        const decoded = decodeTargetedContributionPointSemantics(point, {
+            protocol: { id: protocol.id, version: protocol.version },
+            operations: Object.keys(protocol.operations).map((role) => ({ role })),
+            surfaces: Object.entries(protocol.surfaces ?? {}).map(([role, surface]) => ({
+                role,
+                presentation: surface.presentation,
+            })),
+        });
+        if (!decoded.ok) throw fixtureUnavailable();
+        return new Map(decoded.projection.operations.map((operation) => [operation.role, operation]));
+    }
+
     function createFixtureOperationHandle(
         point: TargetedContributionPointRef<unknown>,
         declaration: TestkitFixtureContributionDeclaration,
         contributor: TestkitActionTarget,
         role: string,
         actionLocalId: PluginContributionLocalId,
+        targetProtocol: TargetedContributionPointSemanticOperation,
     ): AdmittedTargetedOperationExecutionHandle {
         const identity = Object.freeze({
             target: Object.freeze({ pluginId: manifest.id }),
@@ -721,6 +796,7 @@ export async function createPluginTestkit(
             contributorImmutableGenerationId: contributor.immutableGenerationId,
             targetPluginId: manifest.id,
             targetImmutableGenerationId: syntheticImmutableGenerationId,
+            targetProtocol,
         }));
         return handle;
     }
@@ -737,6 +813,7 @@ export async function createPluginTestkit(
     ): TargetedContributionSnapshot<TContribution> {
         assertFixtureCurrent(signal);
         const targetPoint = readFixturePoint(point);
+        const operationSemantics = readFixtureOperationSemantics(point, targetPoint.protocol);
         const contributions: unknown[] = [];
 
         for (const contributor of fixtureContributorTargets) {
@@ -773,10 +850,21 @@ export async function createPluginTestkit(
                 }
                 if (actionUnavailable) continue;
 
-                const operations = Object.freeze(Object.fromEntries(actionBindings.map(([role, actionLocalId]) => [
-                    role,
-                    createFixtureOperationHandle(point, declaration, contributor, role, actionLocalId),
-                ])));
+                const operations = Object.freeze(Object.fromEntries(actionBindings.map(([role, actionLocalId]) => {
+                    const targetProtocol = operationSemantics.get(role);
+                    if (!targetProtocol) throw fixtureUnavailable();
+                    return [
+                        role,
+                        createFixtureOperationHandle(
+                            point,
+                            declaration,
+                            contributor,
+                            role,
+                            actionLocalId,
+                            targetProtocol,
+                        ),
+                    ];
+                })));
                 contributions.push(Object.freeze({
                     contributor: Object.freeze({
                         pluginId: contributor.pluginId,
@@ -1049,7 +1137,7 @@ export async function createPluginTestkit(
             throwIfActionInvocationInactive(signal);
             const result = await executeContributed(
                 binding.action,
-                input,
+                parseAdmittedTargetedOperationInput(binding.targetProtocol, input),
                 signal,
                 false,
                 undefined,
@@ -1057,7 +1145,10 @@ export async function createPluginTestkit(
                     contributorImmutableGenerationId: binding.contributorImmutableGenerationId,
                 }),
             );
-            return result.value as TResult;
+            return parseAdmittedTargetedOperationResult(
+                binding.targetProtocol,
+                result.value,
+            ) as TResult;
         };
         const executeAdmittedTargetedOperationWithExecutionOrigin = async <
             TInput extends JsonValue,
@@ -1075,7 +1166,7 @@ export async function createPluginTestkit(
             throwIfActionInvocationInactive(signal);
             const result = await executeContributed(
                 binding.action,
-                input,
+                parseAdmittedTargetedOperationInput(binding.targetProtocol, input),
                 signal,
                 true,
                 readExpectedExecutionOrigin(options?.expectedExecutionOrigin),
@@ -1090,7 +1181,10 @@ export async function createPluginTestkit(
                 });
             }
             return Object.freeze({
-                result: result.value as TResult,
+                result: parseAdmittedTargetedOperationResult(
+                    binding.targetProtocol,
+                    result.value,
+                ) as TResult,
                 executionOrigin: result.executionOrigin,
             });
         };

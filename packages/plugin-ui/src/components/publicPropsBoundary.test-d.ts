@@ -1,9 +1,9 @@
 import type { ButtonProps, IconButtonProps } from './Button.js';
 import { usePluginUiFocusTarget } from '../index.js';
 import type { PluginTranslationValues, PluginUiFocusTarget } from '../index.js';
-import type { FormProps, SelectProps, TextFieldProps } from './Form.js';
+import type { FormProps, SelectProps, TextFieldProps, TextSelection } from './Form.js';
 import type { HeadingProps, MetadataEntry } from './Foundation.js';
-import type { RowProps, ScreenProps, StackProps } from './Layout.js';
+import type { LayoutChangeEvent, RowProps, ScreenProps, ScrollAreaProps, StackProps } from './Layout.js';
 import type {
   ItemGroupProps,
   ItemProps,
@@ -124,6 +124,9 @@ type _AuthorItemPropKeysAreCurated = Assert<IsEqual<keyof ItemProps,
   | 'density'
   | 'showDivider'
   | 'accessibilityLabel'
+  | 'accessibilityLabelKey'
+  | 'accessibilityHint'
+  | 'accessibilityHintKey'
   | 'testID'
   | 'style'
   | 'secondaryActions'
@@ -350,3 +353,81 @@ void privateSelectionRovingProjection;
 void privateSelectionFocusInjection;
 void authorFocusTarget;
 void leakedPhysicalFocusTarget;
+
+// Every public layout box reports its own measurement through the one public
+// event type, so an author can name the callback's argument without reaching
+// into the presentation layer for it.
+type _AuthorScreenReportsMeasurement = Assert<IsEqual<
+  ScreenProps['onLayout'],
+  ((event: LayoutChangeEvent) => void) | undefined
+>>;
+type _AuthorStackReportsMeasurement = Assert<IsEqual<
+  StackProps['onLayout'],
+  ((event: LayoutChangeEvent) => void) | undefined
+>>;
+type _AuthorRowReportsMeasurement = Assert<IsEqual<
+  RowProps['onLayout'],
+  ((event: LayoutChangeEvent) => void) | undefined
+>>;
+type _AuthorScrollAreaReportsMeasurement = Assert<IsEqual<
+  ScrollAreaProps['onLayout'],
+  ((event: LayoutChangeEvent) => void) | undefined
+>>;
+
+const authorMeasuredLayout: LayoutChangeEvent = {
+  nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 48 } },
+};
+
+// A row description is an author string or an author catalog key, exactly like
+// the row's name; neither replaces the other.
+//
+// Each member is NAMED through indexed access rather than shown to an `extends`
+// check against a sample props object. An excess property satisfies `extends`,
+// so a sample-object assertion keeps passing after the very member it is named
+// for is deleted from the public props; indexing a member that no longer exists
+// is an error, which is the only shape that fails when the capability goes.
+type _AuthorRowIsDescribedByAString = Assert<IsEqual<
+  ItemProps['accessibilityHint'],
+  string | undefined
+>>;
+type _AuthorRowDescriptionResolvesThroughTheCatalog = Assert<IsEqual<
+  ItemProps['accessibilityHintKey'],
+  string | undefined
+>>;
+type _AuthorRowNameResolvesThroughTheCatalog = Assert<IsEqual<
+  ItemProps['accessibilityLabelKey'],
+  string | undefined
+>>;
+
+// A search field owns its own capitalization, correction, caret and submit
+// behavior instead of inheriting prose-entry defaults it cannot override.
+type _AuthorSearchFieldOwnsCapitalization = Assert<IsEqual<
+  TextFieldProps['autoCapitalize'],
+  'none' | 'sentences' | 'words' | 'characters' | undefined
+>>;
+type _AuthorSearchFieldOwnsCorrection = Assert<IsEqual<
+  TextFieldProps['autoCorrect'],
+  boolean | undefined
+>>;
+type _AuthorSearchFieldOwnsItsCommitKey = Assert<IsEqual<
+  TextFieldProps['onSubmitEditing'],
+  (() => void) | undefined
+>>;
+
+void authorMeasuredLayout;
+
+// A caret is state the author holds between renders, so the type of that state
+// has a public name. Without it a search field can be written but the `useState`
+// behind it cannot be annotated except by restating the shape.
+type _AuthorNamesTheCaretItSets = Assert<IsEqual<
+  TextFieldProps['selection'],
+  TextSelection | undefined
+>>;
+type _AuthorNamesTheCaretItReceives = Assert<IsEqual<
+  TextFieldProps['onSelectionChange'],
+  ((selection: TextSelection) => void) | undefined
+>>;
+
+const authorHeldCaret: TextSelection = { start: 2, end: 5 };
+
+void authorHeldCaret;

@@ -157,6 +157,7 @@ export type {
   AgentSessionMcpLaunchConfig,
   AgentSessionOpenRequest,
   AgentSessionProviderBinding,
+  AgentSessionProviderBindingUpstream,
   AgentSessionRuntime,
   AgentSessionRuntimeAuthApplyRequest,
   AgentSessionRuntimeAuthApplyResult,
@@ -169,6 +170,7 @@ export type {
   AgentSessionStartupInstructions,
   TimestampedAgentValue,
 } from './session.js';
+export type { AgentConnectedServicesProviderStateSharingPolicy as ConnectedServicesProviderStateSharingPolicyV1 } from './session.js';
 export type {
   AgentRuntimeSurfaces,
   AgentRuntimeForkSurface,

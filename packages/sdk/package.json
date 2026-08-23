@@ -1,0 +1,69 @@
+{
+  "name": "@happier-dev/sdk",
+  "version": "0.0.0",
+  "description": "Typed client SDK for the Happier Action API.",
+  "private": true,
+  "license": "MIT",
+  "repository": "happier-dev/happier",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "examples/basic/package.json",
+    "examples/basic/README.md",
+    "examples/basic/index.ts",
+    "examples/basic/tsconfig.json",
+    "package.json",
+    "README.md",
+    "API.md",
+    "api-surface.json",
+    "api-declarations.md"
+  ],
+  "happier": {
+    "publicSdkRelease": {
+      "posture": "developer_preview",
+      "supportPolicy": "README.md#release-posture",
+      "externalPublicationRequiresApproval": true
+    }
+  },
+  "scripts": {
+    "generate:actions": "node --import tsx ./scripts/generateActions.ts --write",
+    "check:actions": "node --import tsx ./scripts/generateActions.ts --check",
+    "prepare:declarations": "yarn -s check:actions",
+    "prepare:api-governance": "yarn -s prepare:declarations && yarn -s build:compiled",
+    "api-governance": "yarn -s prepare:api-governance && node ../../scripts/api-governance/cli.mjs --profile sdk --write",
+    "check:api-governance": "yarn -s prepare:api-governance && node ../../scripts/api-governance/cli.mjs --profile sdk --check",
+    "check:api-governance:prepared": "node ../../scripts/api-governance/cli.mjs --profile sdk --check",
+    "prebuild": "yarn -s prepare:declarations",
+    "build:compiled": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "build": "yarn -s build:compiled",
+    "prepack": "yarn -s prepare:api-governance && yarn -s check:api-governance:prepared && node ./scripts/bundleWorkspaceDeps.mjs --artifact",
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "vitest run --config ./vitest.config.ts && node --import tsx --test ./scripts/*.test.mjs",
+    "test:external-consumer": "node ./scripts/validateNodeNextConsumer.mjs",
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "yarn -s check:api-governance && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json"
+  },
+  "bundledDependencies": [
+    "@happier-dev/agents",
+    "@happier-dev/protocol"
+  ],
+  "dependencies": {
+    "@happier-dev/agents": "0.0.0",
+    "@happier-dev/protocol": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

@@ -21,6 +21,21 @@ const MUTABLE_PROTOCOL_JSON_VALUE = /\bPluginJsonValueV2\b/gu;
 const FORBIDDEN_PUBLIC_VALIDATOR_REFERENCE = /(?:['"]zod(?:\/[^'"]*)?['"]|\bz\.[A-Za-z_$]|\bZod[A-Za-z0-9_]*\b|\$(?:brand|Zod[A-Za-z0-9_]*))/u;
 
 /**
+ * Recursive aliases which TypeScript intentionally keeps named while printing
+ * the canonical Action maps. The Action-owned aliases are public structural
+ * closures; shared SDK types are imported from their existing public entries.
+ * Generated SDK declarations must not depend on a private Protocol path or a
+ * validator-library alias.
+ */
+const PUBLIC_ACTION_TYPE_CLOSURE = [
+  'export type PluginAgentExternalSessionLinkDataArray = readonly PluginAgentExternalSessionLinkDataValue[];',
+  'export type PluginAgentExternalSessionLinkDataObject = { readonly [key: string]: PluginAgentExternalSessionLinkDataValue };',
+  'export type PluginAgentExternalSessionLinkDataValue = null | boolean | number | string | PluginAgentExternalSessionLinkDataArray | PluginAgentExternalSessionLinkDataObject;',
+  '',
+  'export type JSONType = string | number | boolean | null | JSONType[] | { [key: string]: JSONType };',
+];
+
+/**
  * These are type-only projections of one canonical Protocol Action catalog.
  * Their order supplies the few named helper types intentionally retained by
  * TypeScript's structural printer; all Action ids and map rows are derived.
@@ -150,6 +165,16 @@ export function renderActionTypeProjection(name, typeText) {
     : projected;
 }
 
+export async function writeFileIfChanged(path, content) {
+  try {
+    if (await readFile(path, 'utf8') === content) return false;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  await writeFile(path, content, 'utf8');
+  return true;
+}
+
 function mapKeys(checker, type, name) {
   const keys = checker.getPropertiesOfType(type).map((property) => property.name).sort();
   if (keys.length === 0) throw new Error(`${name} must retain at least one literal Action key.`);
@@ -272,6 +297,10 @@ function renderModule() {
     '// It contains type-only structural projections of the canonical Protocol Action catalog.',
     '',
     "import type { JsonValue, PluginJsonSchema, PluginJsonValueV2 } from '../identity.js';",
+    "import type { AgentExternalSessionTranscriptRawRecord } from '../externalSessions.js';",
+    "import type { PluginUiJsonValueV1 } from '../ui/publicContract.js';",
+    '',
+    ...PUBLIC_ACTION_TYPE_CLOSURE,
     '',
     'export type PluginJsonSchemaV2 = PluginJsonSchema;',
     '',
@@ -289,7 +318,7 @@ if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_PATH) {
   const output = renderModule();
 
   if (mode === '--write') {
-    await writeFile(OUTPUT_PATH, output, 'utf8');
+    await writeFileIfChanged(OUTPUT_PATH, output);
   } else {
     const current = await readFile(OUTPUT_PATH, 'utf8');
     if (current !== output) {

@@ -152,9 +152,11 @@ import type {
   AgentSessionModelsSnapshot,
   AgentSessionModelsSource,
   AgentSessionOpenRequest,
+  ConnectedServicesProviderStateSharingPolicyV1,
   AgentSessionPreAdmissionBuffer,
   AgentSessionPreAdmissionBufferResult,
   AgentSessionProviderBinding,
+  AgentSessionProviderBindingUpstream,
   AgentSessionProviderBindingV1Schema,
   AgentSessionProviderCheckpoint,
   AgentSessionProviderTranscriptPublishRequest,
@@ -374,6 +376,9 @@ type _TerminalHostLivenessIdentity = AssertTrue<
 >;
 type _AgentSessionRealtimeRuntimeIdentity = AssertTrue<
   Equal<AgentSessionRealtimeRuntime, ExperimentalAgentSessionRealtimeRuntime>
+>;
+type _AgentSessionProviderBindingUpstreamIdentity = AssertTrue<
+  Equal<AgentSessionProviderBinding['upstream'], AgentSessionProviderBindingUpstream>
 >;
 
 // Binding-plan negatives: these names belong to another domain or are replaced by

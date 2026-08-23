@@ -77,14 +77,35 @@ test('plugin-sdk declaration preparation reuses prerequisites admitted by the ca
 test('plugin-sdk keeps nonwriter source checks separate from declaration preparation', async () => {
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 
-  assert.equal(packageJson.scripts['check:api-surface'], 'node ./scripts/apiSurfaceCli.mjs --check');
+  assert.equal(
+    packageJson.scripts['api-governance'],
+    'yarn -s prepare:api-governance && node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --write',
+  );
+  assert.equal(
+    packageJson.scripts['check:api-governance'],
+    'yarn -s check:prepare:api-governance && node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --check',
+  );
+  assert.equal(
+    packageJson.scripts['check:api-governance:prepared'],
+    'node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --check',
+  );
+  assert.equal(packageJson.scripts['api-surface'], 'yarn -s api-governance');
+  assert.equal(packageJson.scripts['check:api-surface'], 'yarn -s check:api-governance');
+  assert.equal(
+    packageJson.scripts['prepare:api-governance'],
+    'yarn -s prepare:declarations && node ./scripts/apiSurfaceCli.mjs --materialize-source --write && yarn -s build:compiled',
+  );
+  assert.equal(
+    packageJson.scripts['check:prepare:api-governance'],
+    'yarn -s prepare:declarations && node ./scripts/apiSurfaceCli.mjs --materialize-source --check && yarn -s build:compiled',
+  );
   assert.equal(
     packageJson.scripts['prepare:declarations'],
     'yarn -s check:action-type-map && node ./scripts/bundleWorkspaceDeps.mjs --declarations',
   );
   assert.equal(
     packageJson.scripts.prebuild,
-    'yarn -s check:public-toolchain && yarn -s prepare:declarations',
+    'yarn -s prepare:declarations && yarn -s check:public-toolchain:prepared',
   );
   assert.doesNotMatch(packageJson.scripts['test:local'], /prepare:declarations/u);
   assert.doesNotMatch(packageJson.scripts['typecheck:local'], /prepare:declarations/u);
@@ -102,7 +123,7 @@ test('plugin-sdk keeps nonwriter source checks separate from declaration prepara
   );
   assert.equal(
     packageJson.scripts.prepack,
-    'yarn -s prepare:declarations && node ./scripts/bundleWorkspaceDeps.mjs --artifact && yarn -s check:api-surface && yarn -s check:public-toolchain:generated && yarn -s build:compiled',
+    'yarn -s prepare:declarations && yarn -s check:public-toolchain:prepared && node ./scripts/bundleWorkspaceDeps.mjs --artifact && node ./scripts/apiSurfaceCli.mjs --materialize-source --check && yarn -s build:compiled && yarn -s check:api-governance:prepared && yarn -s check:public-toolchain:generated',
   );
 });
 

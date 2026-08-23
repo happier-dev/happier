@@ -13,6 +13,13 @@ import {
 
 const GENERATOR_PATH = fileURLToPath(new URL('./generatePublicToolchainCompatibility.mjs', import.meta.url));
 
+test('consumes executable Protocol facts instead of parsing TypeScript source', async () => {
+  const source = await readFile(GENERATOR_PATH, 'utf8');
+  assert.doesNotMatch(source, /readProtocolNumber|readProtocolString|readBundlerDescriptor/u);
+  assert.doesNotMatch(source, /protocol\/src\/(?:plugins|installables)/u);
+  assert.match(source, /dist\/plugins\/publicToolchainFactsV1\.js/u);
+});
+
 async function writeJson(path, value) {
   await mkdir(join(path, '..'), { recursive: true });
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -137,6 +144,19 @@ async function createFixtureRoot() {
       '',
     ].join('\n'), 'utf8');
   });
+  await mkdir(join(root, 'packages', 'protocol', 'dist', 'plugins'), { recursive: true });
+  await writeFile(
+    join(root, 'packages', 'protocol', 'dist', 'plugins', 'publicToolchainFactsV1.js'),
+    [
+      'export const PUBLIC_TOOLCHAIN_PROTOCOL_FACTS_V1 = Object.freeze({',
+      '  runtimeApiVersion: 1,',
+      "  ui: Object.freeze({ artifactGrammarVersion: 1, hostApiVersion: '1.0.0' }),",
+      "  bundlers: Object.freeze({ vite: Object.freeze({ packageName: 'vite', executable: 'vite' }), repack: Object.freeze({ packageName: '@callstack/repack', executable: 'react-native' }) }),",
+      '});',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
   await writeFile(join(root, 'yarn.lock'), [
     'react-native@0.83.5:',
     '  version "0.83.5"',

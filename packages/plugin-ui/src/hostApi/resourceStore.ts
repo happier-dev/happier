@@ -5,6 +5,11 @@ import type {
   ResourceSubscriptionEvent,
 } from '@happier-dev/plugin-sdk/ui';
 
+import {
+  HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE,
+  materializeHappierRenderableImage,
+} from '../presentation/content/renderableImage.js';
+
 export type PluginUiResourceReference = Parameters<PluginUiHostApi['readResource']>[0];
 
 /**
@@ -369,6 +374,15 @@ export function createPluginUiResourceStore(input: Readonly<{
         // A new Uint8Array with the same canonical digest is not a semantic
         // Resource update. Preserve the LKG reference and avoid a rerender.
         const unchanged = previous.digest === value.digest && previous.value !== undefined;
+        // Admission, not render, is where a renderable image becomes a platform
+        // source. Encoding is linear in the byte length and the Resource
+        // ceiling is 16 MiB, so a render that derived it would block the UI for
+        // seconds. This resolution is already off the render path, and the
+        // image owner alone decides the renderable type and the product size
+        // and decode ceilings.
+        if (!unchanged && value.contentType === HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE) {
+          materializeHappierRenderableImage(value.bytes);
+        }
         publish(entry, {
           value: unchanged ? previous.value : value,
           digest: value.digest,

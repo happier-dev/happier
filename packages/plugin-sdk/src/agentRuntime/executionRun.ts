@@ -7,6 +7,7 @@ import type {
   AgentLaunchEnvironment,
   AgentSessionConfigurationSnapshot,
   AgentSessionInput,
+  AgentSessionOpenRequest,
   AgentSessionProviderBinding,
 } from './session.js';
 
@@ -19,6 +20,8 @@ export type AgentExecutionRunOpenRequest =
     modelSelection?: ProviderBoundModelRef;
     configuration?: AgentSessionConfigurationSnapshot;
     providerBinding?: AgentSessionProviderBinding;
+    /** Same host-resolved policy an Agent session open carries. */
+    stateSharing?: AgentSessionOpenRequest['stateSharing'];
   }> & (
     | Readonly<{
         kind: 'create';

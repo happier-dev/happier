@@ -1,8 +1,8 @@
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { assertCoherentPublicToolchainCompatibilityV1 } from '@happier-dev/protocol';
+import { assertCoherentPublicToolchainCompatibilityV1 } from '../../protocol/dist/plugins/publicToolchainCompatibilityV1.js';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_REPO_ROOT = resolve(dirname(SCRIPT_PATH), '../../..');
@@ -141,30 +141,46 @@ function expectSame(left, right, label) {
   }
 }
 
-function readProtocolNumber(source, symbol, label) {
-  const match = source.match(new RegExp(`${symbol}\\s*=\\s*(\\d+)`, 'u'));
-  if (!match) throw new Error(`${label} must export ${symbol}.`);
-  return Number(match[1]);
-}
-
-function readProtocolString(source, symbol, label) {
-  const match = source.match(new RegExp(`${symbol}\\s*=\\s*['\"]([^'\"]+)['\"]`, 'u'));
-  if (!match) throw new Error(`${label} must export ${symbol}.`);
-  return match[1];
-}
-
-function readBundlerDescriptor(source, descriptorName, label) {
-  const start = source.indexOf(`export const ${descriptorName}`);
-  if (start < 0) throw new Error(`${label} must export ${descriptorName}.`);
-  const remainder = source.slice(start);
-  const end = remainder.indexOf('});');
-  const declaration = end < 0 ? remainder : remainder.slice(0, end + 3);
-  const packageMatch = declaration.match(/packageName:\s*['"]([^'"]+)['"]/u);
-  const commandMatch = declaration.match(/commands:\s*\[\s*['"]([^'"]+)['"]\s*\]/u);
-  if (!packageMatch || !commandMatch) {
-    throw new Error(`${label} ${descriptorName} must declare exactly one packageName and command.`);
+async function readProtocolPublicToolchainFacts(repoRoot) {
+  const modulePath = resolve(repoRoot, 'packages/protocol/dist/plugins/publicToolchainFactsV1.js');
+  let imported;
+  try {
+    imported = await import(pathToFileURL(modulePath).href);
+  } catch (cause) {
+    throw new Error(
+      `Built Protocol public toolchain facts are unavailable at ${modulePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
   }
-  return Object.freeze({ packageName: packageMatch[1], executable: commandMatch[1] });
+  const facts = asRecord(imported.PUBLIC_TOOLCHAIN_PROTOCOL_FACTS_V1, 'Protocol public toolchain facts');
+  const ui = asRecord(facts.ui, 'Protocol public toolchain UI facts');
+  const bundlers = asRecord(facts.bundlers, 'Protocol public toolchain bundler facts');
+  const vite = asRecord(bundlers.vite, 'Protocol Vite bundler facts');
+  const repack = asRecord(bundlers.repack, 'Protocol Re.Pack bundler facts');
+  const runtimeApiVersion = Number(facts.runtimeApiVersion);
+  const artifactGrammarVersion = Number(ui.artifactGrammarVersion);
+  if (!Number.isInteger(runtimeApiVersion) || runtimeApiVersion < 1) {
+    throw new Error('Protocol runtimeApiVersion must be a positive integer.');
+  }
+  if (!Number.isInteger(artifactGrammarVersion) || artifactGrammarVersion < 1) {
+    throw new Error('Protocol artifactGrammarVersion must be a positive integer.');
+  }
+  return Object.freeze({
+    runtimeApiVersion,
+    ui: Object.freeze({
+      artifactGrammarVersion,
+      hostApiVersion: requiredString(ui.hostApiVersion, 'Protocol hostApiVersion'),
+    }),
+    bundlers: Object.freeze({
+      vite: Object.freeze({
+        packageName: requiredString(vite.packageName, 'Protocol Vite packageName'),
+        executable: requiredString(vite.executable, 'Protocol Vite executable'),
+      }),
+      repack: Object.freeze({
+        packageName: requiredString(repack.packageName, 'Protocol Re.Pack packageName'),
+        executable: requiredString(repack.executable, 'Protocol Re.Pack executable'),
+      }),
+    }),
+  });
 }
 
 function authoringDependency(packageName, dependencySpec, resolvedVersion) {
@@ -517,17 +533,14 @@ async function writeGeneratedDocumentationOutputs(repoRoot, packet) {
  */
 export async function derivePublicToolchainCompatibilityV1({ repoRoot = DEFAULT_REPO_ROOT } = {}) {
   const root = resolve(repoRoot);
-  const [rootPackage, cliPackage, appPackage, sdkPackage, uiPackage, lockSource, manifestSource, hostApiDefinitionSource, artifactSource, bundlerSource] = await Promise.all([
+  const [rootPackage, cliPackage, appPackage, sdkPackage, uiPackage, lockSource, protocolFacts] = await Promise.all([
     readJson(resolve(root, 'package.json'), 'root package manifest'),
     readJson(resolve(root, 'apps/cli/package.json'), 'CLI package manifest'),
     readJson(resolve(root, 'apps/ui/package.json'), 'host UI package manifest'),
     readJson(resolve(root, 'packages/plugin-sdk/package.json'), 'Plugin SDK package manifest'),
     readJson(resolve(root, 'packages/plugin-ui/package.json'), 'Plugin UI package manifest'),
     readSource(resolve(root, 'yarn.lock'), 'Yarn lock'),
-    readSource(resolve(root, 'packages/protocol/src/plugins/manifest/v2.ts'), 'Protocol runtime manifest facts'),
-    readSource(resolve(root, 'packages/protocol/src/plugins/ui/hostApiDefinition.ts'), 'Protocol host UI API definition facts'),
-    readSource(resolve(root, 'packages/protocol/src/plugins/ui/uiArtifactsManifest.ts'), 'Protocol UI artifact facts'),
-    readSource(resolve(root, 'packages/protocol/src/installables/definitions/pluginUiBundlers.ts'), 'managed bundler descriptors'),
+    readProtocolPublicToolchainFacts(root),
   ]);
   const lockEntries = readLockEntries(lockSource);
 
@@ -589,16 +602,8 @@ export async function derivePublicToolchainCompatibilityV1({ repoRoot = DEFAULT_
   const expoSpec = readDependency(appPackage, 'expo', 'host UI package manifest');
   const expoVersion = readResolvedVersion(lockEntries, 'expo', expoSpec, 'host UI package manifest');
 
-  const viteDescriptor = readBundlerDescriptor(
-    bundlerSource,
-    'PLUGIN_UI_BUNDLER_VITE_INSTALLABLE_DESCRIPTOR',
-    'managed bundler descriptors',
-  );
-  const repackDescriptor = readBundlerDescriptor(
-    bundlerSource,
-    'PLUGIN_UI_BUNDLER_REPACK_INSTALLABLE_DESCRIPTOR',
-    'managed bundler descriptors',
-  );
+  const viteDescriptor = protocolFacts.bundlers.vite;
+  const repackDescriptor = protocolFacts.bundlers.repack;
   expectSame(viteDescriptor.packageName, 'vite', 'Vite managed bundler package');
   expectSame(repackDescriptor.packageName, '@callstack/repack', 'Re.Pack managed bundler package');
 
@@ -621,21 +626,9 @@ export async function derivePublicToolchainCompatibilityV1({ repoRoot = DEFAULT_
   const viteReactPluginSpec = readDependency(sdkPackage, '@vitejs/plugin-react', 'Plugin SDK package manifest');
   const viteReactPluginVersion = readResolvedVersion(lockEntries, '@vitejs/plugin-react', viteReactPluginSpec, 'Plugin SDK package manifest');
 
-  const runtimeVersion = String(readProtocolNumber(
-    manifestSource,
-    'PLUGIN_RUNTIME_API_VERSION',
-    'Protocol runtime manifest facts',
-  ));
-  const hostApiVersion = readProtocolString(
-    hostApiDefinitionSource,
-    'PLUGIN_UI_HOST_API_VERSION_V1',
-    'Protocol host UI API definition facts',
-  );
-  const artifactGrammarVersion = readProtocolNumber(
-    artifactSource,
-    'PLUGIN_UI_ARTIFACT_GRAMMAR_VERSION_V1',
-    'Protocol UI artifact facts',
-  );
+  const runtimeVersion = String(protocolFacts.runtimeApiVersion);
+  const hostApiVersion = protocolFacts.ui.hostApiVersion;
+  const artifactGrammarVersion = protocolFacts.ui.artifactGrammarVersion;
 
   return Object.freeze({
     schemaVersion: 1,

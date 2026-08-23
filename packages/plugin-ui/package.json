@@ -47,6 +47,8 @@
     "dist",
     "package.json",
     "README.md",
+    "API.md",
+    "api-surface.json",
     "api-declarations.md"
   ],
   "happier": {
@@ -57,10 +59,15 @@
     }
   },
   "scripts": {
+    "prepare:declarations": "yarn --cwd ../plugin-sdk -s prepare:declarations",
+    "prepare:api-governance": "yarn -s prepare:declarations && yarn -s build",
+    "api-governance": "yarn -s prepare:api-governance && node ../../scripts/api-governance/cli.mjs --profile plugin-ui --write",
+    "check:api-governance": "yarn -s prepare:api-governance && node ../../scripts/api-governance/cli.mjs --profile plugin-ui --check",
+    "check:api-governance:prepared": "node ../../scripts/api-governance/cli.mjs --profile plugin-ui --check",
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "prebuild": "yarn --cwd ../plugin-sdk -s check:public-toolchain",
     "pretypecheck": "yarn --cwd ../plugin-sdk -s check:public-toolchain",
-    "prepack": "yarn -s build",
+    "prepack": "yarn -s prepare:api-governance && yarn -s check:api-governance:prepared",
     "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "test": "../../apps/stack/bin/hstack-exec --script=test:local",
     "test:local": "vitest run --config ./vitest.config.ts && yarn -s test:external-authoring",
@@ -68,8 +75,8 @@
     "test:external-authoring:tarballs": "node ./scripts/validateExternalAuthoringFixture.mjs",
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "node ../plugin-sdk/scripts/generatePublicToolchainCompatibility.mjs --check && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
-    "api-declarations": "node ./scripts/publicDeclarationReportCli.mjs --write",
-    "check:api-declarations": "node ./scripts/publicDeclarationReportCli.mjs --check"
+    "api-declarations": "yarn -s api-governance",
+    "check:api-declarations": "yarn -s check:api-governance"
   },
   "dependencies": {
     "@happier-dev/plugin-sdk": "0.0.0"

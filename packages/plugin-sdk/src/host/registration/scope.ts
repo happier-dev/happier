@@ -94,6 +94,15 @@ export type PluginRegistrationRight = Readonly<{
     promptAssetDescriptor?: PromptAssetTypeDescriptor;
     voiceProviderDeclaration?: VoiceProviderContribution;
     connectedAccountDescriptorDeclaration?: PluginConnectedAccountDescriptorContributionV2;
+    /**
+     * The complete arm composite the Provider contribution declares. A Provider
+     * may declare a managed runtime, contributed catalog formats, or both, and
+     * activation publishes only the exact declared set.
+     */
+    providerArms?: Readonly<{
+        managedRuntime: boolean;
+        catalogParserIds: readonly string[];
+    }>;
 }>;
 
 export type PluginRegistrationScopeTarget =
@@ -743,6 +752,14 @@ export function createPluginRegistrationScope(
             ...(right.promptAssetDescriptor
                 ? { promptAssetDescriptor: snapshotPromptAssetDescriptor(right.promptAssetDescriptor) }
                 : {}),
+            ...(right.providerArms
+                ? {
+                    providerArms: Object.freeze({
+                        managedRuntime: right.providerArms.managedRuntime === true,
+                        catalogParserIds: Object.freeze([...right.providerArms.catalogParserIds].sort()),
+                    }),
+                }
+                : {}),
         }));
     }
 
@@ -1244,6 +1261,28 @@ export function createPluginRegistrationScope(
                 }
                 if (right.requiredFields.includes('externalSessions') && value?.externalSessions === undefined) {
                     fail(`Plugin '${params.pluginId}' activation is missing Agent External Sessions contribution for 'agents/${right.localId}'`);
+                }
+            }
+            for (const right of rightsByKey.values()) {
+                if (right.family !== REGISTRATION_FAMILY.providers || !right.providerArms) continue;
+                const registration = capturedByKey.get(registrationKey(right.family, right.localId));
+                const value = registration?.family === REGISTRATION_FAMILY.providers
+                    ? registration.value as StagedProviderRuntimeRegistration
+                    : undefined;
+                if (right.providerArms.managedRuntime && value?.managedRuntime === undefined) {
+                    fail(`Plugin '${params.pluginId}' activation is missing managed Provider runtime for 'providers/${right.localId}'`);
+                }
+                if (!right.providerArms.managedRuntime && value?.managedRuntime !== undefined) {
+                    fail(`Plugin '${params.pluginId}' registered an undeclared managed Provider runtime for 'providers/${right.localId}'`);
+                }
+                const declaredFormats = right.providerArms.catalogParserIds;
+                const registeredFormats = Object.keys(value?.catalogParsers ?? {}).sort();
+                if (registeredFormats.length !== declaredFormats.length
+                    || registeredFormats.some((format, index) => format !== declaredFormats[index])) {
+                    fail(
+                        `Plugin '${params.pluginId}' does not implement declared Provider catalog formats for 'providers/${right.localId}': `
+                        + `declared [${declaredFormats.join(', ')}], registered [${registeredFormats.join(', ')}]`,
+                    );
                 }
             }
             for (const registration of capturedByKey.values()) {

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { isPluginError, PluginError } from './errors.js';
+import {
+    isPluginActionHandlerInvocationKnownNotStarted,
+    isPluginError,
+    PluginError,
+} from './errors.js';
 
 describe('isPluginError', () => {
     it('recognizes the public fields produced by PluginError construction', () => {
@@ -63,5 +67,53 @@ describe('PluginError', () => {
 
         expect(() => new RenamedPluginError()).toThrow(TypeError);
         expect(isPluginError(new PluginError({ code: 'renamed_subclass' }))).toBe(true);
+    });
+});
+
+describe('isPluginActionHandlerInvocationKnownNotStarted', () => {
+    it('proves the not-started claim only through the canonical PluginError contract', () => {
+        const canonical = new PluginError({
+            code: 'plugin_action_unavailable',
+            actionHandlerInvocation: 'notStarted',
+        });
+        // A plain object may name itself `PluginError` and claim the handler
+        // never ran. Believing it would let a retry duplicate an effect that
+        // did run, so recognition must go through the canonical contract.
+        const impostor = {
+            name: 'PluginError',
+            code: 'plugin_action_unavailable',
+            actionHandlerInvocation: 'notStarted',
+        };
+        const impostorError = Object.assign(new Error('plugin_action_unavailable'), {
+            name: 'PluginError',
+            code: 'plugin_action_unavailable',
+            // No `retryable`/`data` consistency: not the canonical contract.
+            actionHandlerInvocation: 'notStarted',
+        });
+        const startedCanonical = new PluginError({ code: 'plugin_action_unavailable' });
+
+        expect(isPluginActionHandlerInvocationKnownNotStarted(canonical)).toBe(true);
+        expect(isPluginActionHandlerInvocationKnownNotStarted(impostor)).toBe(false);
+        expect(isPluginActionHandlerInvocationKnownNotStarted(impostorError)).toBe(false);
+        expect(isPluginActionHandlerInvocationKnownNotStarted(startedCanonical)).toBe(false);
+        expect(isPluginActionHandlerInvocationKnownNotStarted(new Error('boom'))).toBe(false);
+    });
+
+    it('accepts a separately bundled SDK copy of the same canonical contract', () => {
+        const canonical = new PluginError({
+            code: 'plugin_action_unavailable',
+            actionHandlerInvocation: 'notStarted',
+        });
+        // A second SDK copy in the same realm produces the identical public
+        // shape without sharing this module's class identity.
+        const otherCopy = Object.assign(new Error(canonical.message), {
+            name: 'PluginError',
+            code: canonical.code,
+            retryable: canonical.retryable,
+            data: { ...canonical.data },
+        });
+
+        expect(isPluginError(otherCopy)).toBe(true);
+        expect(isPluginActionHandlerInvocationKnownNotStarted(otherCopy)).toBe(true);
     });
 });

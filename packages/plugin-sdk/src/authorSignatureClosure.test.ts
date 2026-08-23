@@ -32,6 +32,22 @@ describe('author signature closure source contract', () => {
         expect(actionPublicSource).toContain(
             "export type { PluginActionPlacement } from '../definePlugin.js';",
         );
+        for (const name of [
+            'PluginAgentExternalSessionLinkDataArray',
+            'PluginAgentExternalSessionLinkDataObject',
+            'PluginAgentExternalSessionLinkDataValue',
+            'JSONType',
+        ]) {
+            expect(actionPublicSource).toContain(
+                `export type { ${name} } from './actionTypeMap.generated.js';`,
+            );
+        }
+        expect(actionPublicSource).not.toContain(
+            "export type { AgentExternalSessionTranscriptRawRecord } from './actionTypeMap.generated.js';",
+        );
+        expect(actionPublicSource).not.toContain(
+            "export type { PluginUiJsonValueV1 } from './actionTypeMap.generated.js';",
+        );
         expect(agentPublicSource).toContain(
             "export type { PluginCustomAgentDeclaration } from '../definePlugin.js';",
         );
@@ -45,6 +61,7 @@ describe('author signature closure source contract', () => {
             ));
             return declaration?.type.getText(sourceFile) ?? '';
         };
+        expect(declarationText('PluginActionDeclaration')).not.toContain('PluginActionDeclarationBase');
         expect(declarationText('PluginCustomAgentDeclaration')).toContain('AgentContribution');
         expect(declarationText('PluginCustomAgentDeclaration')).not.toContain(
             'PluginAgentRuntimeCustomSessionDeclaration',

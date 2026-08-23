@@ -43,9 +43,13 @@ const ROWS = Object.freeze([
   }),
 ]);
 
-function contractSource({ timeoutOptional }) {
+function contractSource({ timeoutOptional, hiddenValueOptional = true }) {
   return [
     "import type { Nested } from './internal.js';",
+    '',
+    'class Hidden {',
+    `  value${hiddenValueOptional ? '?' : ''}: string;`,
+    '}',
     '',
     'export type RunOptions = Readonly<{',
     `  timeout${timeoutOptional ? '?' : ''}: number;`,
@@ -56,14 +60,14 @@ function contractSource({ timeoutOptional }) {
     '',
     "export const DEFAULTS = { timeout: 30, label: 'default' } as const;",
     '',
-    'export function run(options: RunOptions) {',
-    '  return options.label;',
+    'export function run(): Hidden {',
+    '  return new Hidden();',
     '}',
     '',
   ].join('\n');
 }
 
-async function createFixture({ timeoutOptional }) {
+async function createFixture({ timeoutOptional, hiddenValueOptional = true }) {
   const root = await mkdtemp(join(tmpdir(), 'happier-declaration-report-'));
   await mkdir(join(root, 'src'), { recursive: true });
   await writeFile(
@@ -72,7 +76,11 @@ async function createFixture({ timeoutOptional }) {
     'utf8',
   );
   await writeFile(join(root, INTERNAL_MODULE), 'export type Nested = Readonly<{ id: string }>;\n', 'utf8');
-  await writeFile(join(root, CONTRACT_MODULE), contractSource({ timeoutOptional }), 'utf8');
+  await writeFile(
+    join(root, CONTRACT_MODULE),
+    contractSource({ timeoutOptional, hiddenValueOptional }),
+    'utf8',
+  );
   return root;
 }
 
@@ -119,9 +127,9 @@ test('the declaration record materializes inferred value and return types', asyn
     // `DEFAULTS` has no annotation, so only the checker knows its published shape.
     assert.match(report, /const DEFAULTS: \{ readonly timeout: 30; readonly label: "default"; \};/u);
     // `run` has no explicit return type, so an inferred return change must still show.
-    assert.match(report, /function run\(options: RunOptions\): string;/u);
+    assert.match(report, /function run\(\): Hidden;/u);
     // Implementation bodies are never part of the published contract.
-    assert.doesNotMatch(report, /return options\.label/u);
+    assert.doesNotMatch(report, /return new Hidden/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -136,6 +144,26 @@ test('a package-owned type reached from a published signature is recorded even w
     assert.match(reachable, /type Nested = Readonly<\{\n\s+id: string;\n\}>;/u);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('an optional member of a returned hidden class changes the reachable declaration record', async () => {
+  const optionalRoot = await createFixture({ timeoutOptional: true, hiddenValueOptional: true });
+  const requiredRoot = await createFixture({ timeoutOptional: true, hiddenValueOptional: false });
+  try {
+    const optionalReport = projectFixtureReport(optionalRoot);
+    const requiredReport = projectFixtureReport(requiredRoot);
+    const optionalReachable = optionalReport.slice(optionalReport.indexOf('## Reachable package-owned declarations'));
+    const requiredReachable = requiredReport.slice(requiredReport.indexOf('## Reachable package-owned declarations'));
+
+    assert.match(optionalReport, /function run\(\): Hidden;/u);
+    assert.match(optionalReachable, /class Hidden \{\n\s+value\?: string;\n\}/u);
+    assert.match(requiredReachable, /class Hidden \{\n\s+value: string;\n\}/u);
+    assert.doesNotMatch(requiredReachable, /value\?: string;/u);
+    assert.notEqual(optionalReport, requiredReport);
+  } finally {
+    await rm(optionalRoot, { recursive: true, force: true });
+    await rm(requiredRoot, { recursive: true, force: true });
   }
 });
 

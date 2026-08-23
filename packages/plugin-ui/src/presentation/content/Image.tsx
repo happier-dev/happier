@@ -6,6 +6,7 @@ import type {
   HappierUiTheme,
 } from '../../environment/types.js';
 import { HappierText } from '../text/Text.js';
+import { readHappierRenderableImageSource } from './renderableImage.js';
 
 export type HappierImageSize = 'small' | 'medium' | 'large';
 
@@ -77,47 +78,6 @@ export function resolveHappierBrandFallback(displayName: string): string {
   return resolveBrandFallbackGrapheme(value).toLocaleUpperCase();
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let output = '';
-  for (let index = 0; index < bytes.length; index += 3) {
-    const first = bytes[index] ?? 0;
-    const second = bytes[index + 1];
-    const third = bytes[index + 2];
-    const chunk = (first << 16) | ((second ?? 0) << 8) | (third ?? 0);
-    output += alphabet[(chunk >>> 18) & 63];
-    output += alphabet[(chunk >>> 12) & 63];
-    output += second === undefined ? '=' : alphabet[(chunk >>> 6) & 63];
-    output += third === undefined ? '=' : alphabet[chunk & 63];
-  }
-  return output;
-}
-
-/**
- * One derived platform image source per admitted byte identity.
- *
- * `data:` encoding is pure, so it belongs to the bytes, not to a render. The
- * Resource store already collapses digest-equal reads onto one retained
- * `ResourceContent`, which makes the byte array itself the admitted identity;
- * keying the derivation on it weakly means an encoded source lives exactly as
- * long as the bytes some mounted surface still holds. That is a derivation
- * memo, not an image cache: it has no lifecycle, no eviction policy, no
- * capacity, and no ability to answer for bytes nobody is holding.
- *
- * The whole `source` object is retained rather than the URI string, because a
- * fresh `{ uri }` on every render re-enters the native image host's source
- * diff and defeats memoization on `react-native-web`.
- */
-const IMAGE_SOURCE_BY_ADMITTED_BYTES = new WeakMap<Uint8Array, Readonly<{ uri: string }>>();
-
-function resolveHappierImageSource(bytes: Uint8Array): Readonly<{ uri: string }> {
-  const derived = IMAGE_SOURCE_BY_ADMITTED_BYTES.get(bytes);
-  if (derived) return derived;
-  const source = Object.freeze({ uri: `data:image/png;base64,${bytesToBase64(bytes)}` });
-  IMAGE_SOURCE_BY_ADMITTED_BYTES.set(bytes, source);
-  return source;
-}
-
 /**
  * A brand mark is an explicit presentation variant of a bounded image. It
  * keeps opaque marks unchanged while giving transparent marks a semantic,
@@ -142,7 +102,15 @@ function resolveHappierBrandMarkBacking(
   };
 }
 
-/** One bounded PNG/fallback renderer; byte acquisition stays with its adapter. */
+/**
+ * One bounded PNG/fallback renderer.
+ *
+ * Byte acquisition AND materialization stay with the adapter that admits the
+ * bytes: `renderableImage.ts` records a source when an owner admits one, and
+ * this render can only read that record. Bytes no owner admitted — or that a
+ * product ceiling refused — take the same neutral fallback an absent mark does,
+ * so a render can never be made to pay for a conversion.
+ */
 export function HappierImage(props: Readonly<{
   bytes?: Uint8Array;
   size?: HappierImageSize;
@@ -162,10 +130,11 @@ export function HappierImage(props: Readonly<{
       borderRadius: props.theme.radii.control,
     }
     : undefined;
-  if (props.bytes && props.bytes.byteLength > 0) {
+  const source = readHappierRenderableImageSource(props.bytes);
+  if (source) {
     return (
       <ReactNativeImage
-        source={resolveHappierImageSource(props.bytes)}
+        source={source}
         accessibilityLabel={props.accessibilityLabel}
         accessible={Boolean(props.accessibilityLabel)}
         testID={props.testID}

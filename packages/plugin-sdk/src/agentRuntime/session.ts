@@ -385,8 +385,39 @@ export type AgentSessionMcpLaunchConfig = Readonly<{
  * Validation, materialization, and Provider lifecycle remain Protocol/host
  * responsibilities through the canonical schema binding.
  */
+/**
+ * The authorized upstream this binding points the Agent at, and whether the
+ * binding supplies its own runtime credential. An Agent runtime uses both to
+ * decide whether its inherited on-disk identity would otherwise answer for a
+ * route the user selected as a model source. `normalizedUrl` is null only for
+ * a managed-local deployment, which always mints its own runtime credential.
+ */
+export type AgentSessionProviderBindingUpstream = Readonly<{
+  /**
+   * The wire protocol the upstream speaks. Protocol keeps a bundled literal
+   * union purely for editor completion; the contract is deliberately open,
+   * because an installed Provider or Agent plugin contributes its own
+   * identifier, so the declaration-neutral projection is the string it admits.
+   */
+  protocol: string;
+  normalizedUrl: string | null;
+  credential: 'none' | 'apiKey';
+}>;
+
+/**
+ * Declaration-neutral structural projection of the Account's resolved provider
+ * sharing policy. `packages/protocol` remains the settings owner and validator;
+ * `projections.ts` republishes this exact shape under the canonical name and
+ * the projection test holds the two declarations equal.
+ */
+export type AgentConnectedServicesProviderStateSharingPolicy = Readonly<{
+  configMode: 'linked' | 'copied' | 'isolated';
+  stateMode: 'isolated' | 'shared';
+}>;
+
 export type AgentSessionProviderBinding = Readonly<{
   connectionId: string;
+  upstream: AgentSessionProviderBindingUpstream;
   model: Readonly<{
     id: string;
     name: string;
@@ -578,6 +609,16 @@ export type AgentSessionOpenRequest =
     connectedAccounts?: readonly AgentSessionConnectedAccountSelection[];
     mcpServers?: Readonly<Record<string, AgentSessionMcpLaunchConfig>>;
     providerBinding?: AgentSessionProviderBinding;
+    /**
+     * The account's resolved provider state-sharing policy for this Agent, as
+     * decided by the canonical settings owner
+     * (`resolveConnectedServicesProviderStateSharingPolicyV1`). An Agent that
+     * materializes its own launch-time home reads the user's choice here
+     * instead of deciding sharing for itself; the host resolves it, the
+     * Agent's `ConnectedServiceStateSharingDescriptor` says which entries the
+     * mode governs.
+     */
+    stateSharing?: AgentConnectedServicesProviderStateSharingPolicy;
   }> & (
     | Readonly<{
         kind: 'create';
@@ -586,6 +627,11 @@ export type AgentSessionOpenRequest =
     | Readonly<{
         kind: 'resume';
         providerSessionId: string;
+        /**
+         * The host found the exact machine-local cross-agent return record.
+         * The provider must not publish an alternate resumed identity.
+         */
+        strictNativeResumeIdentity?: boolean;
         startupInstructions?: AgentSessionStartupInstructions;
       }>
     | Readonly<{

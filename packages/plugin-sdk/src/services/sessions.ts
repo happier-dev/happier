@@ -74,7 +74,7 @@ export const SessionSpawnNewInputV2Schema: SessionSchema<SessionSpawnNewInputV2>
 
 export type SessionServerStartSpawnDraftV1 = Omit<
     SessionSpawnNewInputV2,
-    'creationKey' | 'initialMessage'
+    'creationKey' | 'initialMessage' | 'environmentVariables'
 >;
 /** Browser-safe server-start draft projected at the SDK author boundary. */
 export const SessionServerStartSpawnDraftV1Schema: SessionSchema<SessionServerStartSpawnDraftV1> = protocolSessionServerStartSpawnDraftV1Schema;

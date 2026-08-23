@@ -130,6 +130,42 @@ void undefined; /* @sdk-negative-type-case-end */
 void undefined; /* @sdk-negative-type-case-end */
 
 describe('definePlugin', () => {
+    it('makes tracked operation authoring impossible for client-targeted Actions', () => {
+        type ClientActionDeclaration = Extract<
+            PluginActionDeclaration,
+            Readonly<{ execution: Readonly<{ target: 'client' }> }>
+        >;
+
+        expectTypeOf<ClientActionDeclaration['operation']>().toEqualTypeOf<undefined>();
+    });
+
+    it('projects tracked daemon Action metadata for the invocation reporter', () => {
+        const plugin = definePlugin({
+            id: 'acme.tracked-action',
+            version: '1.0.0',
+            actions: {
+                rebuild: {
+                    title: 'Rebuild index',
+                    execution: { target: 'daemon' },
+                    surfaces: ['plugin'],
+                    operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
+                    async run(_input, context) {
+                        context.operation?.update({ phase: 'indexing', label: 'Indexing' });
+                        return {};
+                    },
+                },
+            },
+        });
+
+        expect(plugin.manifest.contributes.actions).toEqual([
+            expect.objectContaining({
+                id: 'rebuild',
+                execution: { target: 'daemon' },
+                operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
+            }),
+        ]);
+    });
+
     it('omits undeclared cold defaults while retaining explicit empty declarations', () => {
         const omitted = definePlugin({
             id: 'acme.omitted-cold-defaults',
@@ -1840,6 +1876,49 @@ describe('definePlugin', () => {
         } as unknown as Parameters<typeof definePlugin>[0])).toThrow(expected);
     });
 
+    it.each([
+        ['descriptor family array', { commands: [] }, /'commands'/u],
+        ['descriptor family null', { tools: null }, /'tools'/u],
+        ['descriptor family scalar', { resources: 'packaged' }, /'resources'/u],
+        ['contribution points scalar', { contributionPoints: 7 }, /'contributionPoints'/u],
+        ['targeted contributions array', { contributesTo: [] }, /'contributesTo'/u],
+        ['targeted point map scalar', { contributesTo: { 'other.plugin': 'panels' } }, /other\.plugin/u],
+        [
+            'targeted declaration map scalar',
+            { contributesTo: { 'other.plugin': { panels: 'main' } } },
+            /other\.plugin\/panels/u,
+        ],
+    ] as const)(
+        'rejects a present-but-malformed %s container instead of projecting an empty family',
+        (_label, extra, expected) => {
+            const define = () => definePlugin({
+                id: 'example.malformed-family-container',
+                version: '0.1.0',
+                ...extra,
+            } as unknown as Parameters<typeof definePlugin>[0]);
+            expect(define).toThrow(TypeError);
+            expect(define).toThrow(expected);
+        },
+    );
+
+    it('keeps an omitted family absent and an explicitly empty family declared', () => {
+        const omitted = definePlugin({
+            id: 'example.omitted-family',
+            version: '0.1.0',
+        }).manifest.contributes as Readonly<Record<string, unknown>>;
+        expect(omitted).not.toHaveProperty('commands');
+        expect(omitted).not.toHaveProperty('targetedPluginContributions');
+
+        const declaredEmpty = definePlugin({
+            id: 'example.empty-family',
+            version: '0.1.0',
+            commands: {},
+            contributesTo: {},
+        }).manifest.contributes as Readonly<Record<string, unknown>>;
+        expect(declaredEmpty.commands).toEqual([]);
+        expect(declaredEmpty.targetedPluginContributions).toEqual([]);
+    });
+
     it('ignores process-local symbol fields while retaining enumerable input validation', () => {
         const input = {
             id: 'example.symbol-sidecar',
@@ -2751,10 +2830,13 @@ void 0; /* @sdk-negative-type-case-end */
                     },
                 },
             });
-        }).toThrow(/protocol composable schema.*complete/i);
+        // A partial parser lookalike is simply not the executable surface;
+        // the executable-schema requirement rejects it without the SDK
+        // classifying near-misses on its own.
+        }).toThrow(/executable protocol schema/i);
     });
 
-    it('rejects incomplete action schema lookalikes before manifest projection', () => {
+    it('rejects incomplete action schema lookalikes at the canonical JSON Schema owner', () => {
         const incompleteComposableSchema = {
             jsonSchema: { type: 'string' },
             parse(value: unknown) {
@@ -2781,7 +2863,10 @@ void 0; /* @sdk-negative-type-case-end */
                     run: (input) => input,
                 },
             },
-        })).toThrow(/protocol composable schema.*complete/i);
+        // Not the executable surface, so it is the declared JSON Schema arm.
+        // Protocol's normalizer is the one owner that admits or rejects that
+        // arm, and executable members are not strict JSON.
+        })).toThrow(/Invalid plugin JSON Schema/i);
     });
 
     it('rejects malformed contribution protocol ids before authoring projects a manifest', () => {

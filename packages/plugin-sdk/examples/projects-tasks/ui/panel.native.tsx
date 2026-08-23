@@ -20,6 +20,7 @@ import {
 import {
     type PluginUiAccountCollectionForDefinition,
     type PluginUiCollectionQuerySnapshot,
+    usePluginAccountKv,
     usePluginCollectionQuery,
     usePluginUiDataClient,
 } from '@happier-dev/plugin-ui/data';
@@ -260,13 +261,61 @@ function OpenProjectTasksList({
     );
 }
 
+/**
+ * The last project the person opened is small, non-declarative plugin state
+ * that should follow them between devices, so it belongs in Account KV rather
+ * than in a Collection row or in local component state.
+ */
+const LAST_PROJECT_KEY = 'ui/lastProjectId';
+
 function ProjectsTasksPanel({ signal }: Readonly<{ signal: AbortSignal }>) {
     const dataClient = usePluginUiDataClient();
+    const accountKv = usePluginAccountKv();
     const tasks = React.useMemo(() => dataClient.collection(Tasks), [dataClient]);
     const [projectDraft, setProjectDraft] = React.useState<Record<string, unknown>>({ projectId: '' });
     const [selectedProjectId, setSelectedProjectId] = React.useState('');
     const [projectIssue, setProjectIssue] = React.useState<string | undefined>();
     const [completionNotice, setCompletionNotice] = React.useState<CompletionNotice | undefined>();
+
+    React.useEffect(() => {
+        let current = true;
+        void (async () => {
+            try {
+                const entry = await accountKv.get(LAST_PROJECT_KEY, { signal });
+                if (!current || !entry || 'deleted' in entry) return;
+                if (typeof entry.value !== 'string' || entry.value.length === 0) return;
+                setProjectDraft({ projectId: entry.value });
+                setSelectedProjectId(entry.value);
+            } catch {
+                // A remembered selection is a convenience: an unavailable
+                // Account simply starts the surface on the project chooser.
+            }
+        })();
+        return () => { current = false; };
+    }, [accountKv, signal]);
+
+    const rememberProject = React.useCallback(async (projectId: string) => {
+        // One bounded retry: another device may have advanced this key between
+        // the read and the conditional write.
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            const entry = await accountKv.get(LAST_PROJECT_KEY, { signal });
+            if (entry && !('deleted' in entry) && entry.value === projectId) return;
+            try {
+                await accountKv.set(LAST_PROJECT_KEY, projectId, {
+                    expectedVersion: entry ? entry.version : 'absent',
+                    signal,
+                });
+                return;
+            } catch (error) {
+                const conflict = typeof error === 'object'
+                    && error !== null
+                    && 'code' in error
+                    && error.code === 'plugin_account_kv_conflict';
+                if (!conflict) throw error;
+            }
+        }
+    }, [accountKv, signal]);
+
     const chooseProject = React.useCallback((value: Record<string, unknown>) => {
         const projectId = typeof value.projectId === 'string' ? value.projectId.trim() : '';
         if (projectId.length === 0) {
@@ -276,7 +325,10 @@ function ProjectsTasksPanel({ signal }: Readonly<{ signal: AbortSignal }>) {
         setProjectIssue(undefined);
         setCompletionNotice(undefined);
         setSelectedProjectId(projectId);
-    }, []);
+        void rememberProject(projectId).catch(() => {
+            // Remembering is best effort; the chosen project is already open.
+        });
+    }, [rememberProject]);
     const header = (
         <ProjectTasksHeader
             projectDraft={projectDraft}

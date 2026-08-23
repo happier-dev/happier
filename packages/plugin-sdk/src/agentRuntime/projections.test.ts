@@ -20,6 +20,7 @@ import type {
 } from '@happier-dev/agents';
 import type {
   AgentSessionProviderBinding as CanonicalAgentSessionProviderBinding,
+  ConnectedServicesProviderStateSharingPolicyV1 as CanonicalConnectedServicesProviderStateSharingPolicyV1,
   RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 import type {
@@ -30,6 +31,8 @@ import * as agentRuntimeProjection from './projections.js';
 import type {
   AgentSessionRuntimeEvent,
   AgentSessionProviderBinding,
+  AgentSessionProviderBindingUpstream,
+  ConnectedServicesProviderStateSharingPolicyV1,
   AgentTranscriptSessionEventPublisher,
   ForkAvailabilityRequestV1,
   ForkSessionMetadata,
@@ -406,6 +409,17 @@ describe('Agent runtime package-local publication projection', () => {
       .toBe(canonicalAgentSessionRuntimeEventSchema);
     expectTypeOf<ReturnType<typeof agentRuntimeProjection.AgentSessionProviderBindingV1Schema.parse>>()
       .toEqualTypeOf<AgentSessionProviderBinding>();
+    expectTypeOf<AgentSessionProviderBinding['upstream']>()
+      .toEqualTypeOf<AgentSessionProviderBindingUpstream>();
+    // The author declarations are structural copies so an emitted external
+    // closure never names the private Protocol package. They must stay exactly
+    // interchangeable with the canonical owners in both directions.
+    expectTypeOf<ConnectedServicesProviderStateSharingPolicyV1>()
+      .toEqualTypeOf<CanonicalConnectedServicesProviderStateSharingPolicyV1>();
+    expectTypeOf<AgentSessionProviderBindingUpstream>()
+      .toMatchTypeOf<CanonicalAgentSessionProviderBinding['upstream']>();
+    expectTypeOf<CanonicalAgentSessionProviderBinding['upstream']>()
+      .toMatchTypeOf<AgentSessionProviderBindingUpstream>();
     expectTypeOf<ReturnType<typeof agentRuntimeProjection.AgentSessionRuntimeEventSchema.parse>>()
       .toEqualTypeOf<AgentSessionRuntimeEvent>();
     expectTypeOf<CanonicalAgentSessionProviderBinding>()

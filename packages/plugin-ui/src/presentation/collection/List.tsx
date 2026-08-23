@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { View, type TextStyle, type ViewStyle } from 'react-native';
+import { useId, type ReactNode } from 'react';
+import { Platform, View, type TextStyle, type ViewStyle } from 'react-native';
 
 import { useOptionalHappierUiTheme } from '../../environment/context.js';
 import {
@@ -106,6 +106,18 @@ export type HappierListItemProps = Readonly<{
   hasSecondaryActions?: boolean;
   /** Overrides the row's accessible name without adding a second visible label. */
   accessibilityLabel?: string;
+  /**
+   * Describes what the row does or is, beside — never instead of — its name.
+   *
+   * Reached through the same accessibility identity the shared pressable owner
+   * already holds, so a described row keeps one accessible name and one
+   * description rather than folding the description into the name.
+   *
+   * React Native carries this as `accessibilityHint`. React Native Web has no
+   * mapping for that prop, so the web row additionally renders the description
+   * as a referenced-only node and points `aria-describedby` at it.
+   */
+  accessibilityHint?: string;
   testID?: string;
   style?: HappierStyleProp;
   /** @internal Assigned by HappierItemGroup's radio projection. */
@@ -240,6 +252,7 @@ export function HappierListItem({
   showDivider,
   hasSecondaryActions,
   accessibilityLabel,
+  accessibilityHint,
   testID,
   style,
   itemGroupRadioIndex,
@@ -248,6 +261,13 @@ export function HappierListItem({
 }: HappierListItemProps) {
   const environmentTheme = useOptionalHappierUiTheme();
   const nativeMinimumTouchTarget = useHappierNativeMinimumInteractiveTargetSize();
+  // React Native Web 0.21 drops `accessibilityHint` entirely and emits a
+  // description only from `aria-describedby`, so a web row needs a referenced
+  // node of its own. Native keeps the hint prop and needs no extra node.
+  const generatedRowDescriptionId = useId().replace(/[^a-zA-Z0-9_-]/gu, '');
+  const rowDescriptionId = accessibilityHint && Platform.OS === 'web'
+    ? `happier-list-item-description-${generatedRowDescriptionId}`
+    : undefined;
   const resolvedTheme = theme ?? environmentTheme;
   const hasSemanticContent = title !== undefined
     || subtitle !== undefined
@@ -360,6 +380,8 @@ export function HappierListItem({
       testID={testID}
       accessibilityRole={accessibilityRole ?? 'button'}
       accessibilityLabel={accessibilityLabel}
+      accessibilityHint={accessibilityHint}
+      describedById={rowDescriptionId}
       checked={accessibilityRole === 'radio' ? selected === true : undefined}
       selected={accessibilityRole === 'option' ? selected : undefined}
       expanded={accessibilityExpanded}
@@ -391,6 +413,8 @@ export function HappierListItem({
       aria-posinset={isInteractive ? undefined : accessibilityPositionInSet}
       aria-setsize={isInteractive ? undefined : accessibilitySetSize}
       {...(!isInteractive && accessibilityLabel ? { 'aria-label': accessibilityLabel, accessibilityLabel } : {})}
+      {...(!isInteractive && accessibilityHint ? { accessibilityHint } : {})}
+      {...(!isInteractive && rowDescriptionId ? { 'aria-describedby': rowDescriptionId } : {})}
       {...(!isInteractive && (disabled === true || busy === true)
         ? {
             'aria-disabled': true,
@@ -406,6 +430,14 @@ export function HappierListItem({
           {accessory}
         </View>
       ) : row}
+      {rowDescriptionId ? (
+        // Referenced only. `display: none` keeps it out of the row's visible
+        // layout and out of its name computation, while the accessible-name
+        // spec still reads a directly referenced hidden node for a description.
+        <HappierText nativeID={rowDescriptionId} style={{ display: 'none' }}>
+          {accessibilityHint}
+        </HappierText>
+      ) : null}
       {behavior.dividerVisible && resolvedTheme ? (
         <HappierDivider color={resolvedTheme.colors.border} />
       ) : null}

@@ -12,11 +12,11 @@ vi.mock('react-native', () => ({
 
 import { PluginUiPresentationHostProviderInternal } from '../presentationHost/context.js';
 import { HappierBrandMark, resolveHappierBrandFallback } from '../presentation/content/Image.js';
-import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
+import { createAdmittedBrandPngFixture, createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { BrandMark } from './Image.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 
-const TRANSPARENT_BRAND_BYTES = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+const TRANSPARENT_BRAND_BYTES = createAdmittedBrandPngFixture();
 
 let renderer: ReactTestRenderer | null = null;
 
@@ -116,7 +116,9 @@ describe('native BrandMark presentation', () => {
     });
 
     const image = renderer!.root.findByType('Image');
-    expect(image.props.source.uri).toContain('data:image/png;base64,iVBORw0KGgo=');
+    expect(image.props.source.uri).toBe(
+      `data:image/png;base64,${Buffer.from(TRANSPARENT_BRAND_BYTES).toString('base64')}`,
+    );
     expect(image.props.style).toMatchObject({
       backgroundColor: context.theme.colors.text,
       borderRadius: context.theme.radii.control,
@@ -127,8 +129,9 @@ describe('native BrandMark presentation', () => {
     const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
     const digest = `sha256:${'c'.repeat(64)}`;
     // A length divisible by three makes indexed reads exactly one per byte
-    // per conversion, with no read past the final triple.
-    const brandBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0]);
+    // per conversion, with no read past the final triple. Admission is left to
+    // the store below, which is the owner under test here.
+    const brandBytes = createAdmittedBrandPngFixture({ byteLength: 27, admit: false });
     let reads = 0;
     // Every read hands back a DISTINCT array with the same admitted digest,
     // which is what a real transport does. Counting indexed reads measures
@@ -170,7 +173,10 @@ describe('native BrandMark presentation', () => {
       await Promise.resolve();
     });
     const firstSource = renderer!.root.findByType('Image').props.source;
-    const conversionsAfterFirstMount = indexedReads / brandBytes.byteLength;
+    // The header probe reads a fixed 20 bytes before the conversion does its
+    // one pass, so a conversion is `byteLength + 20` indexed reads.
+    const readsPerConversion = brandBytes.byteLength + 20;
+    const conversionsAfterFirstMount = indexedReads / readsPerConversion;
 
     // Remount through the same provider: the store rereads canonically and the
     // reread lands on the same digest with a brand-new array.
@@ -186,7 +192,7 @@ describe('native BrandMark presentation', () => {
 
     expect(reads).toBeGreaterThan(1);
     expect(conversionsAfterFirstMount).toBe(1);
-    expect(indexedReads / brandBytes.byteLength).toBe(1);
+    expect(indexedReads / readsPerConversion).toBe(1);
     expect(renderer!.root.findByType('Image').props.source).toBe(firstSource);
   });
 });

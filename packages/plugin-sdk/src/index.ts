@@ -1,3 +1,4 @@
+export type { ActionOperationDeclarationV1 } from './definePlugin.js';
 export { COMPOSER_MEDIA_CONTENT_CAPABILITY_V1 } from './composer.js';
 export type { ComposerAttachmentAuthorDeclaration } from './definePlugin.js';
 export type { ComposerAttachmentAuthorDisplay } from './definePlugin.js';
@@ -44,6 +45,8 @@ export type { JsonValue } from './identity.js';
 export type { LoggerService } from './services/core.js';
 export type { MessageActionAvailableSnapshotV1 } from './invocation.js';
 export type { PluginAccountCollectionMigrationRuntimeProjection } from './definePlugin.js';
+export type { PluginActionOperationContextV1 } from './invocation.js';
+export type { PluginActionOperationProgressUpdateV1 } from './invocation.js';
 export type { PluginActivationModule } from './activation.js';
 export type { PluginApi } from './activation.js';
 export type { PluginCancellationOptions } from './lifecycle.js';

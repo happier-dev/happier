@@ -30,6 +30,7 @@ import {
     PluginUiSelectActionInputResultV1Schema,
     PluginUiSelectedActionInputCarrierV1Schema,
     PluginUiHostApiWireEnvelopeV1Schema,
+    pluginUiHostApiWireIdentitiesEqual,
     PluginUiResourceSubscriptionEventV1Schema,
     OpenableContentReadResultV1Schema,
     OpenableContentStatResultV1Schema,
@@ -110,7 +111,18 @@ export interface CreatePluginUiHostApiClientFromTransportOptions {
     readonly identity: PluginUiHostApiWireIdentityV1;
     readonly transport: PluginUiHostApiClientTransport;
     readonly apiRange?: string;
-    readonly timeoutMs?: number;
+    /**
+     * Bounds the OPENING HANDSHAKE only. A host that never answers `negotiate`
+     * would otherwise leave the client waiting forever with nothing to cancel
+     * it, because no caller yet holds a handle to abort.
+     *
+     * Ordinary operations are deliberately unbounded: `selectActionInput` is
+     * held open by a person filling a form, and a wall-clock deadline on it
+     * cancels valid work. Their lifetime is owned by the caller's
+     * `AbortSignal`, the mount retirement that aborts it, and the terminal
+     * disconnect that settles everything in flight.
+     */
+    readonly negotiationTimeoutMs?: number;
     readonly signal?: AbortSignal;
     readonly createRequestId?: () => string;
     readonly createSubscriptionId?: () => string;
@@ -146,7 +158,6 @@ type PendingRequest = Readonly<{
     method: CanonicalHostMethod;
     resolve(value: JsonValue | undefined): void;
     reject(error: PluginUiHostApiClientError): void;
-    timeout: ReturnType<typeof setTimeout>;
     abortCleanup?: () => void;
 }>;
 
@@ -213,11 +224,6 @@ let generatedId = 0;
 function defaultId(prefix: string): string {
     generatedId += 1;
     return `${prefix}-${Date.now()}-${generatedId}`;
-}
-function sameIdentity(expected: PluginUiHostApiWireIdentityV1, actual: PluginUiHostApiWireIdentityV1): boolean {
-    return expected.pluginId === actual.pluginId && expected.pluginVersion === actual.pluginVersion
-        && expected.viewId === actual.viewId && expected.generation === actual.generation
-        && expected.sessionId === actual.sessionId;
 }
 function isAdvertisableHostMethod(
     method: ProtocolPluginUiHostMethodV1,
@@ -427,7 +433,7 @@ export async function createPluginUiHostApiClientFromTransport(
 ): Promise<PluginUiHostApi> {
     const createRequestId = options.createRequestId ?? (() => defaultId('plugin-ui-request'));
     const createSubscriptionId = options.createSubscriptionId ?? (() => defaultId('plugin-ui-subscription'));
-    const timeoutMs = options.timeoutMs ?? 30_000;
+    const negotiationTimeoutMs = options.negotiationTimeoutMs ?? 30_000;
     const pending = new Map<string, PendingRequest>();
     const subscriptions = new Map<string, SubscriptionRecord>();
     const issuedInjectedRequestIds = options.createRequestId === undefined ? undefined : new Set<string>();
@@ -462,7 +468,6 @@ export async function createPluginUiHostApiClientFromTransport(
         const request = pending.get(id);
         if (!request) return;
         pending.delete(id);
-        clearTimeout(request.timeout);
         request.abortCleanup?.();
         action(request);
     }
@@ -495,7 +500,7 @@ export async function createPluginUiHostApiClientFromTransport(
     }
     transportSubscription = options.transport.subscribe((raw) => {
         const parsed = PluginUiHostApiWireEnvelopeV1Schema.safeParse(raw);
-        if (!parsed.success || !sameIdentity(options.identity, parsed.data.identity)) return;
+        if (!parsed.success || !pluginUiHostApiWireIdentitiesEqual(options.identity, parsed.data.identity)) return;
         const message = parsed.data;
         if (message.kind === 'negotiated') {
             if (negotiated) {
@@ -561,7 +566,7 @@ export async function createPluginUiHostApiClientFromTransport(
     });
     if (!online) disposeTransport();
 
-    negotiationTimeout = setTimeout(() => disconnect('negotiation_timeout'), timeoutMs);
+    negotiationTimeout = setTimeout(() => disconnect('negotiation_timeout'), negotiationTimeoutMs);
     if (options.signal?.aborted) disconnect('aborted');
     else options.signal?.addEventListener('abort', () => disconnect('aborted'), { once: true });
     await Promise.resolve(options.transport.send({ wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1, kind: 'negotiate', identity: options.identity, apiRange: requestedApiRange })).catch(() => disconnect('transport_unavailable'));
@@ -574,8 +579,15 @@ export async function createPluginUiHostApiClientFromTransport(
     }
     /**
      * The single settlement owner for anything the host answers by `requestId`:
-     * ordinary operations AND subscription establishment. Timeout, cancel,
-     * abort and duplicate-id behavior therefore cannot drift between the two.
+     * ordinary operations AND subscription establishment. Cancel, abort and
+     * duplicate-id behavior therefore cannot drift between the two.
+     *
+     * There is no wall-clock deadline here. The host answers every request it
+     * admits, and the operations behind them are open-ended by design — a
+     * `selectActionInput` form is held by a person. Abandonment is therefore
+     * caller-driven (`signal`) or terminal (`terminate` settles every pending
+     * request when the client goes offline), never a timer that guesses how
+     * long a human may take.
      */
     function settleWithHost(input: Readonly<{
         method: CanonicalHostMethod;
@@ -583,19 +595,14 @@ export async function createPluginUiHostApiClientFromTransport(
         signal?: AbortSignal;
         envelope: PluginUiHostApiWireEnvelopeV1;
         /**
-         * Fired when the CALLER abandons the operation (timeout or abort) rather
-         * than the host answering it. Establishment uses it to decide whether the
+         * Fired when the CALLER abandons the operation (an abort) rather than
+         * the host answering it. Establishment uses it to decide whether the
          * host may still admit — and therefore still owes a retirement.
          */
         onAbandon?: () => void;
     }>): Promise<JsonValue | undefined> {
         return new Promise((resolve, reject) => {
             const cancel = () => send({ wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1, kind: 'cancel', identity: options.identity, requestId: input.requestId });
-            const timeout = setTimeout(() => {
-                input.onAbandon?.();
-                settle(input.requestId, (entry) => entry.reject(new PluginUiHostApiClientError('timeout')));
-                cancel();
-            }, timeoutMs);
             const abort = () => {
                 input.onAbandon?.();
                 cancel();
@@ -606,7 +613,6 @@ export async function createPluginUiHostApiClientFromTransport(
                 method: input.method,
                 resolve,
                 reject,
-                timeout,
                 ...(input.signal ? { abortCleanup: () => input.signal?.removeEventListener('abort', abort) } : {}),
             });
             send(input.envelope);

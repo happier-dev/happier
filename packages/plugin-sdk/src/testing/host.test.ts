@@ -1028,6 +1028,121 @@ describe('createPluginTestkit', () => {
     }
   });
 
+  it('parses admitted targeted-operation input and result through the target protocol', async () => {
+    // C1 parity: production carries the target's parser pair on the opaque
+    // handle and parses around the incumbent Action invocation. A testkit that
+    // dropped them would pass an author's test where production rejects.
+    let contributorResult: unknown = { accepted: true };
+    const contributorHandler = vi.fn(async () => contributorResult);
+    // The contributor declares looser schemas than the target protocol, so
+    // only the target's own parser pair can reject a wrong input or result.
+    const contributorDefinition = definePlugin({
+      id: 'acme.testkit.contributor',
+      version: '1.0.0',
+      actions: {
+        'publish-provider': {
+          title: 'publish-provider',
+          execution: { target: 'daemon' },
+          scopes: ['global'],
+          surfaces: ['plugin'],
+          inputSchema: { type: 'object' },
+          resultSchema: { type: 'object' },
+          dangerLevel: 'safe',
+          run: async () => ({ accepted: true }),
+        },
+      },
+      contributesTo: {
+        'acme.testkit.target': {
+          providers: {
+            primary: testkitTargetedOperationProtocol.contribute({
+              operations: {
+                publish: testkitTargetedOperationProtocol.operations.publish.bind('publish-provider'),
+              },
+            }),
+          },
+        },
+      },
+    });
+    const contributor = await createPluginTestkit({
+      manifest: contributorDefinition.manifest,
+      module: {
+        activate(api) {
+          api.actions.register('publish-provider', contributorHandler as never);
+        },
+      },
+    });
+    const operation: TestkitTargetedOperationRef = { current: undefined };
+    const target = await createPluginTestkit({
+      manifest: testkitTargetedTargetDefinition.manifest,
+      targetedContributionContributors: [contributor],
+      module: {
+        activate(api: PluginApi) {
+          api.actions.register('capture', async (_input, context) => {
+            const observation = context.services.targetedContributions.observeForSelf(
+              testkitTargetedTargetDefinition.contributionPoints.providers,
+              { onInvalidated: () => {} },
+            );
+            try {
+              const snapshot = await observation.readCurrent({ signal: context.signal });
+              operation.current = snapshot.contributions[0]?.operations.publish;
+              return { count: snapshot.contributions.length };
+            } finally {
+              observation.dispose();
+            }
+          });
+          api.actions.register('send', async (input, context) => {
+            if (operation.current === undefined) throw new Error('No captured operation.');
+            try {
+              return {
+                ok: true,
+                result: await context.services.actions.executeAdmittedTargetedOperation(
+                  operation.current,
+                  input as never,
+                ),
+              };
+            } catch (error) {
+              return {
+                ok: false,
+                code: isPluginError(error) ? error.code : 'not_a_plugin_error',
+                notStarted: isPluginActionHandlerInvocationKnownNotStarted(error),
+              };
+            }
+          });
+        },
+      },
+    });
+
+    try {
+      await expect(target.invokeAction('capture', null)).resolves.toMatchObject({ count: 1 });
+
+      await expect(target.invokeAction('send', { title: 'Ready' })).resolves.toEqual({
+        ok: true,
+        result: { accepted: true },
+      });
+      expect(contributorHandler).toHaveBeenCalledOnce();
+
+      // Input the target protocol does not admit never reaches the contributor.
+      await expect(target.invokeAction('send', { title: 7 })).resolves.toEqual({
+        ok: false,
+        code: 'plugin_targeted_operation_input_invalid',
+        notStarted: true,
+      });
+      expect(contributorHandler).toHaveBeenCalledOnce();
+
+      // A contributor result the target protocol does not admit is not disclosed.
+      contributorResult = { accepted: 'yes' };
+      await expect(target.invokeAction('send', { title: 'Ready' })).resolves.toEqual({
+        ok: false,
+        code: 'plugin_targeted_operation_result_invalid',
+        notStarted: false,
+      });
+      expect(contributorHandler).toHaveBeenCalledTimes(2);
+    } finally {
+      await target.dispose();
+      await contributor.dispose();
+    }
+  });
+
   it('refuses an admitted targeted-operation shape instead of falling back to a generic Action ref', async () => {
     const targetHandler = vi.fn(async () => ({ accepted: true }));
     const beta = await createPluginTestkit({

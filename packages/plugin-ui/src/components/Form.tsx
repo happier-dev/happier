@@ -27,6 +27,7 @@ import {
   resolveHappierActionFieldPresentation,
   writeHappierActionInputPath,
 } from '../presentation/form/actionInputFields.js';
+import type { HappierTextSelection } from '../presentation/portableTypes.js';
 import { Button } from './Button.js';
 import { Heading } from './Foundation.js';
 import {
@@ -201,6 +202,14 @@ export function Field(props: FieldProps): ReactElement {
   return <HappierField {...props} theme={usePluginTheme()} />;
 }
 
+/**
+ * A caret (`start === end`) or a selected range inside a text field.
+ *
+ * The author holds this between renders, so it carries a public name rather
+ * than only appearing inline in a prop signature.
+ */
+export type TextSelection = HappierTextSelection;
+
 export type TextFieldProps = Readonly<{
   label: string;
   labelKey?: string;
@@ -213,6 +222,25 @@ export type TextFieldProps = Readonly<{
   secure?: boolean;
   multiline?: boolean;
   keyboardType?: 'default' | 'url' | 'numeric';
+  /**
+   * Replaces the prose-entry capitalization this field otherwise derives from
+   * `secure` and `keyboardType`. A search query is not a sentence.
+   */
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  /** Replaces the derived autocorrection, which also silences spellchecking. */
+  autoCorrect?: boolean;
+  /**
+   * The caret or range this field shows. A controlled field whose value is
+   * rewritten between keystrokes otherwise puts the caret at the end of the new
+   * value, so the author keeps it here instead of losing the reader's place.
+   */
+  selection?: TextSelection;
+  onSelectionChange?: (selection: TextSelection) => void;
+  /**
+   * Commits the field. It is composition-aware, so confirming an IME candidate
+   * with Enter settles the composition rather than submitting a partial query.
+   */
+  onSubmitEditing?: () => void;
   /** Logical focus target transferred by the mounted host after author state changes. */
   focusTarget?: PluginUiFocusTarget;
   testID?: string;

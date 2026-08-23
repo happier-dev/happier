@@ -1143,34 +1143,6 @@ function readStructuralContributionProtocol(
     return Object.freeze({ manifest, semantic });
 }
 
-function readTargetedContributionProtocolSemanticFact(
-    value: unknown,
-): TargetedContributionProtocolSemanticFact | null {
-    if (!isSemanticRecord(value)) return null;
-    const protocol = readRuntimeProtocolIdentity(value['protocol']);
-    const operations = readRuntimeSemanticOperations(value['operations']);
-    const surfaces = readRuntimeSemanticSurfaces(value['surfaces']);
-    if (!protocol || !operations || !surfaces) return null;
-    const descriptorValue = value['descriptor'];
-    let descriptor: ProtocolComposableSchema<JsonValue, JsonValue> | undefined;
-    if (descriptorValue !== undefined) {
-        try {
-            descriptor = requireExecutableProtocolSchema(
-                descriptorValue,
-                'Contribution descriptor schema',
-            );
-        } catch {
-            return null;
-        }
-    }
-    return Object.freeze({
-        protocol,
-        ...(descriptor === undefined ? {} : { descriptor }),
-        operations,
-        surfaces,
-    });
-}
-
 function createTargetedContributionPointSemanticCarrier(
     targetPluginId: string,
     pointId: string,
@@ -1236,6 +1208,19 @@ function readTargetedContributionPointSemanticCarrier(
     });
 }
 
+/**
+ * Reads the facts `defineContributionPoint` / `protocol.point()` attached to
+ * this exact point definition.
+ *
+ * The facts were built and frozen by one of those two constructors, which are
+ * the only writers of the private carrier property, so they are NOT re-parsed
+ * here: the one structural admission of a foreign executable value happens
+ * where it is actually consumed, in `decodeTargetedContributionPointSemantics`.
+ * What this does check is that the definition came from a helper at all — a
+ * hand-written point object has no carrier and must not silently project a
+ * point with no target semantics. Pairing each fact with its manifest protocol
+ * is `createDefinedTargetedContributionPointRef`'s check, not a second one.
+ */
 function readContributionPointSemanticFacts(
     point: ContributionPointAuthorDefinition,
 ): readonly TargetedContributionProtocolSemanticFact[] {
@@ -1243,16 +1228,7 @@ function readContributionPointSemanticFacts(
     if (!Array.isArray(carrier) || carrier.length !== point.protocols.length) {
         throw new TypeError('Contribution point helper semantics are invalid');
     }
-    const facts: TargetedContributionProtocolSemanticFact[] = [];
-    for (const [index, value] of carrier.entries()) {
-        const fact = readTargetedContributionProtocolSemanticFact(value);
-        const manifest = point.protocols[index];
-        if (!fact || !manifest || !sameProtocolIdentity(fact.protocol, manifest)) {
-            throw new TypeError('Contribution point helper semantics are invalid');
-        }
-        facts.push(fact);
-    }
-    return Object.freeze(facts);
+    return carrier as readonly TargetedContributionProtocolSemanticFact[];
 }
 
 function createDefinedTargetedContributionPointRef(

@@ -56,7 +56,7 @@ export type MessageActionAvailableSnapshotV1 = Readonly<{
  * receive the target `plugin` surface; an origin is diagnostic caller data,
  * never a way to inherit the caller's authority.
  */
-export type PluginInvocationSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'voice' | 'background' | 'plugin';
+export type PluginInvocationSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'voice' | 'background' | 'api' | 'plugin';
 
 export type PluginInvocationOriginSurface = Exclude<PluginInvocationSurface, 'plugin'>;
 
@@ -86,6 +86,18 @@ export type PluginInvocationCaller =
         origin: 'schedule' | 'manual' | 'event' | 'conversation';
     }>;
 
+export type PluginActionOperationProgressUpdateV1 = Readonly<{
+    label?: string;
+    phase?: string;
+    current?: number;
+    total?: number;
+}>;
+
+/** Invocation-scoped reporter. Handler settlement remains host-owned. */
+export type PluginActionOperationContextV1 = Readonly<{
+    update(progress: PluginActionOperationProgressUpdateV1): void;
+}>;
+
 export interface PluginInvocationContext {
     readonly plugin: PluginIdentity;
     readonly contribution: PluginInvocationContributionIdentity;
@@ -98,6 +110,7 @@ export interface PluginInvocationContext {
      * ordinary invocations.
     */
     readonly messageAction?: MessageActionAvailableSnapshotV1;
+    readonly operation?: PluginActionOperationContextV1;
     readonly signal: AbortSignal;
     /**
      * Operation-scoped capabilities for this invocation. They do not own or

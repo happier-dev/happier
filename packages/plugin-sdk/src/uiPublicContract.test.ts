@@ -9,12 +9,17 @@ import type { PluginDeclarativeNodeV2 as CanonicalPluginDeclarativeNodeV2 } from
 import type {
     ComposerAttachmentAuthorPresentationV1,
     ComposerAttachmentPresentationV1,
+    PluginSessionHeaderActionDescriptor,
     PluginUiChannel,
     PluginUiDeclarativeNodeV2,
     PluginUiDeclarativeToneV2,
     PluginUiIconTokenV1,
+    PluginUiPageHeaderActionV1,
+    PluginUiSemanticCommandV1,
+    PluginUiSessionServerStartDraftV1,
     PluginUiViewV2Input,
 } from './ui/publicContract.js';
+import type { SessionServerStartSpawnDraftV1 } from './services/sessions.js';
 import type { ContributionSurfaceIcon } from './targetedContributionAuthoring.js';
 import type {
     PluginUiIconTokenV1 as CanonicalPluginUiIconTokenV1,
@@ -295,6 +300,44 @@ describe('UI/testing public type contract', () => {
             .toEqualTypeOf<NonNullable<CanonicalDeclarativeNodeOfKind<'item'>['action']>>();
     });
 
+    it('keeps the public view grammar representable exactly where the canonical parser is', () => {
+        // Protocol correlates container, target, instance policy and page
+        // header actions on ONE Registry row. A flat public declaration let an
+        // author's editor and the published JSON Schema accept `headerActions`
+        // on a pane and `instancePolicy: 'multiple'` on a right-sidebar tab —
+        // both of which `PluginUiViewV2Schema` rejects at install time.
+        expectTypeOf<Extract<PluginUiViewV2Input, { container: 'appPage' }>['headerActions']>()
+            .toEqualTypeOf<PluginUiPageHeaderActionV1[] | undefined>();
+        expectTypeOf<
+            Extract<PluginUiViewV2Input, { container: 'rightPane' | 'detailsTab' | 'detailsPane' | 'bottomPane' }>['headerActions']
+        >().toEqualTypeOf<[] | undefined>();
+        expectTypeOf<Extract<PluginUiViewV2Input, { container: 'rightSidebarTab' }>['headerActions']>()
+            .toEqualTypeOf<[] | undefined>();
+        expectTypeOf<Extract<PluginUiViewV2Input, { container: 'appPage' }>['instancePolicy']>()
+            .toEqualTypeOf<'singleton' | undefined>();
+        expectTypeOf<Extract<PluginUiViewV2Input, { container: 'rightSidebarTab' }>['instancePolicy']>()
+            .toEqualTypeOf<'singleton' | undefined>();
+        expectTypeOf<
+            Extract<PluginUiViewV2Input, { container: 'rightPane' | 'detailsTab' | 'detailsPane' | 'bottomPane' }>['instancePolicy']
+        >().toEqualTypeOf<'singleton' | 'multiple' | undefined>();
+        // A header action names the same semantic command grammar the canonical
+        // parser admits, not `unknown`.
+        expectTypeOf<PluginUiPageHeaderActionV1['action']>()
+            .toEqualTypeOf<string | PluginUiSemanticCommandV1>();
+        expectTypeOf<PluginSessionHeaderActionDescriptor['action']>()
+            .toEqualTypeOf<string | PluginUiSemanticCommandV1>();
+    });
+
+    it('aliases the canonical Session start draft instead of re-declaring it', () => {
+        // The predecessor was a hand-copied `unknown`-typed mirror that had
+        // already lost `sourceContext`; the alias cannot drift from the one
+        // browser-safe draft projection the rest of the SDK publishes.
+        expectTypeOf<PluginUiSessionServerStartDraftV1>()
+            .toEqualTypeOf<SessionServerStartSpawnDraftV1>();
+        expectTypeOf<PluginUiSessionServerStartDraftV1['sourceContext']>()
+            .toEqualTypeOf<SessionServerStartSpawnDraftV1['sourceContext']>();
+    });
+
     it('projects Protocol’s canonical UI tone vocabulary on every public tone-carrying field', () => {
         // `PluginUiDestinationBadgeV1Schema.tone` IS the full `PluginUiToneV1Schema`
         // (accent included), so a public badge type that omits `accent` denies an
@@ -317,7 +360,7 @@ describe('UI/testing public type contract', () => {
         // and `ContributionSurfaceIcon` — a byte-identical third copy of the same
         // 20 tokens — had no anchor at all. It types the `icon` of
         // `ContributionSurfaceFallback`, i.e. the `kind: 'state'` declarative node
-        // whose canonical parser (`DeclarativeStateNodeSchema`) reads
+        // whose canonical parser (`PluginDeclarativeStateNodeV2Schema`) reads
         // `PluginUiIconTokenV1Schema.optional()`. A token added to Protocol would
         // therefore reach `PluginUiIconTokenV1` under compiler pressure and leave
         // `ContributionSurfaceIcon` behind, denying an author a value the host

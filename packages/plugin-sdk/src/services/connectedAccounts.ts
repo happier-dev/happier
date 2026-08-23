@@ -55,7 +55,13 @@ export interface PluginConnectedAccountCredentialStore {
 export type PluginConnectedAccountAuthenticationAttempt =
     | Readonly<{ kind: 'connect'; attemptId: string }>
     | Readonly<{ kind: 'reconnect'; attemptId: string; account: ConnectedAccountRef }>;
-export type PluginConnectedAccountAuthenticationContext = PluginInvocationContext & Readonly<{
+/**
+ * Connected Account runtime work is not an Action invocation, so it never
+ * receives the Action progress reporter. Its own `operation` metadata would
+ * otherwise intersect with that reporter and force the host to advertise a
+ * progress callback it discards.
+ */
+export type PluginConnectedAccountAuthenticationContext = Omit<PluginInvocationContext, 'operation'> & Readonly<{
     service: PluginContributionRef;
     attempt: PluginConnectedAccountAuthenticationAttempt;
     configuration: PluginConnectedAccountRuntimeConfiguration;
@@ -166,7 +172,7 @@ export type PluginConnectedAccountAuthenticationModeRuntime =
 export type PluginConnectedAccountHealthResult =
     | Readonly<{ status: ConnectedAccountListedState; displayName?: string; scopes?: readonly string[]; diagnostic?: PluginDiagnosticData }>
     | Readonly<{ status: 'rejected'; diagnostic: PluginDiagnosticData }>;
-export type PluginConnectedAccountReadContext = PluginInvocationContext & Readonly<{
+export type PluginConnectedAccountReadContext = Omit<PluginInvocationContext, 'operation'> & Readonly<{
     account: ConnectedAccountRef;
     configuration: PluginConnectedAccountRuntimeConfiguration;
     credentials: Pick<PluginConnectedAccountCredentialStore, 'get'>;

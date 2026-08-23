@@ -294,9 +294,9 @@ describe('ActionsService source contract', () => {
         expectTypeOf<PluginActionResultById['session.transcript.get']>()
             .toEqualTypeOf<CanonicalSessionTranscriptGetExternalShareableResultV1>();
         expectTypeOf<Extract<PluginInvocableActionId, 'session.permission_mode.set'>>()
-            .toEqualTypeOf<never>();
+            .toEqualTypeOf<'session.permission_mode.set'>();
         expectTypeOf<Extract<PluginInvocableActionId, 'session.history.get' | 'session.events.get' | 'session.messages.recent.get'>>()
-            .toEqualTypeOf<never>();
+            .toEqualTypeOf<'session.history.get' | 'session.events.get' | 'session.messages.recent.get'>();
         expectTypeOf<SessionTranscriptGetExternalShareableInputV1>()
             .toEqualTypeOf<CanonicalSessionTranscriptGetExternalShareableInputV1>();
         expectTypeOf<PublicSessionTranscriptGetExternalShareableInputV1>()

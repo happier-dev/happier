@@ -261,6 +261,14 @@ export type ItemProps = Readonly<{
   density?: 'comfortable' | 'cozy' | 'compact' | 'tight';
   showDivider?: boolean;
   accessibilityLabel?: string;
+  accessibilityLabelKey?: string;
+  /**
+   * Describes the row beside its name — what activating it does, or what makes
+   * this row different from its neighbours. The title remains the accessible
+   * name, so a reader hears the row's identity first and its description after.
+   */
+  accessibilityHint?: string;
+  accessibilityHintKey?: string;
   testID?: string;
   style?: HappierStyleProp;
 }> & ItemSecondaryActionsProps;
@@ -883,9 +891,15 @@ function ListItem(props: ListItemProps): ReactElement {
   const translate = usePluginTranslation();
   const selection = useContext(ListItemSelectionContext);
   const defaultSecondaryActionAccessibilityLabel = translate(LIST_MORE_ACTIONS_TRANSLATION_KEY, 'More actions');
-  if (selection === null) return renderListItem(props, defaultSecondaryActionAccessibilityLabel);
+  const { accessibilityLabelKey, accessibilityHintKey, ...authorProps } = props;
+  const resolvedProps = {
+    ...authorProps,
+    accessibilityLabel: resolveAuthorText(translate, props.accessibilityLabel, accessibilityLabelKey),
+    accessibilityHint: resolveAuthorText(translate, props.accessibilityHint, accessibilityHintKey),
+  } as ListItemProps;
+  if (selection === null) return renderListItem(resolvedProps, defaultSecondaryActionAccessibilityLabel);
   return renderListItem({
-    ...props,
+    ...resolvedProps,
     selected: selection.selected,
     accessibilityRole: 'option',
     accessibilityPositionInSet: selection.positionInSet,

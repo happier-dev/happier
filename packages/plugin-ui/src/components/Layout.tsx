@@ -5,6 +5,7 @@ import type {
   HappierAlignment,
   HappierJustification,
   HappierKeyboardShouldPersistTaps,
+  HappierLayoutChangeEvent,
   HappierScrollEvent,
   HappierStyleProp,
 } from '../presentation/portableTypes.js';
@@ -22,6 +23,17 @@ import {
 
 export type LayoutGap = HappierLayoutGap;
 
+/**
+ * The measurement one layout box reports after the platform has laid it out.
+ *
+ * This is the whole responsive vocabulary an author needs: a box measures
+ * itself and the surface decides what to do with the number. There is no
+ * breakpoint table, dimensions hook or media-query layer above it, because a
+ * plugin surface is sized by the host pane it is mounted in rather than by the
+ * window.
+ */
+export type LayoutChangeEvent = HappierLayoutChangeEvent;
+
 export type StackProps = Readonly<{
   children?: ReactNode;
   gap?: LayoutGap;
@@ -30,6 +42,8 @@ export type StackProps = Readonly<{
   justify?: HappierJustification;
   /** Logical focus target transferred by the mounted host after author state changes. */
   focusTarget?: PluginUiFocusTarget;
+  /** Reports this box's resolved size and position after the platform lays it out. */
+  onLayout?: (event: LayoutChangeEvent) => void;
   testID?: string;
   style?: HappierStyleProp;
 }>;
@@ -41,6 +55,8 @@ export type ScreenProps = Readonly<{
   safeArea?: boolean;
   /** Logical focus target transferred by the mounted host after author state changes. */
   focusTarget?: PluginUiFocusTarget;
+  /** Reports this box's resolved size and position after the platform lays it out. */
+  onLayout?: (event: LayoutChangeEvent) => void;
   testID?: string;
   style?: HappierStyleProp;
 }>;
@@ -51,6 +67,8 @@ export type ScrollAreaProps = Readonly<{
   keyboardShouldPersistTaps?: HappierKeyboardShouldPersistTaps;
   onScroll?: (event: HappierScrollEvent) => void;
   scrollEventThrottle?: number;
+  /** Reports the scroll viewport's resolved size and position, not its content's. */
+  onLayout?: (event: LayoutChangeEvent) => void;
   accessibilityLabel?: string;
   safeArea?: boolean;
   testID?: string;

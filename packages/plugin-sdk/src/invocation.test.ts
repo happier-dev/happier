@@ -41,7 +41,7 @@ describe('Plugin invocation context', () => {
         void surfaceIsRequired;
 
         expectTypeOf<PluginInvocationSurface>().toEqualTypeOf<
-            'cli' | 'mcp' | 'agent' | 'ui' | 'voice' | 'background' | 'plugin'
+            'cli' | 'mcp' | 'agent' | 'ui' | 'voice' | 'background' | 'api' | 'plugin'
         >();
         expectTypeOf<PluginInvocationCaller>().toEqualTypeOf<
             | Readonly<{
@@ -49,7 +49,7 @@ describe('Plugin invocation context', () => {
                 pluginId: string;
                 contribution: PluginInvocationContributionIdentity;
                 materialization: PluginMachineMaterializationRefV1;
-                originSurface?: 'cli' | 'mcp' | 'agent' | 'ui' | 'voice' | 'background';
+                originSurface?: 'cli' | 'mcp' | 'agent' | 'ui' | 'voice' | 'background' | 'api';
             }>
             | Readonly<{
                 kind: 'host';
@@ -72,6 +72,15 @@ describe('Plugin invocation context', () => {
             .toEqualTypeOf<ExpectedMessageActionAvailableSnapshotV1>();
         expectTypeOf<PluginInvocationContext['messageAction']>()
             .toEqualTypeOf<ExpectedMessageActionAvailableSnapshotV1 | undefined>();
+        expectTypeOf<PluginInvocationContext['operation']>()
+            .toEqualTypeOf<Readonly<{
+                update(progress: Readonly<{
+                    label?: string;
+                    phase?: string;
+                    current?: number;
+                    total?: number;
+                }>): void;
+            }> | undefined>();
         expectTypeOf<PublicMessageActionAvailableSnapshotV1>()
             .toEqualTypeOf<ExpectedMessageActionAvailableSnapshotV1>();
     });

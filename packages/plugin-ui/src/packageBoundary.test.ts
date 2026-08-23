@@ -145,7 +145,15 @@ describe('author package boundary', () => {
     expect(packageJson.scripts?.['test:external-authoring:tarballs']).toBe(
       'node ./scripts/validateExternalAuthoringFixture.mjs',
     );
-    expect(packageJson.scripts?.prepack).toBe('yarn -s build');
+    // A direct `yarn pack` must build one exact candidate and then verify the
+    // public declaration report against those same bytes.
+    const prepack = packageJson.scripts?.prepack ?? '';
+    const prepareCandidate = packageJson.scripts?.['prepare:api-governance'] ?? '';
+    const declarationCheck = packageJson.scripts?.['check:api-declarations'] ?? '';
+    expect(declarationCheck).toContain('check:api-governance');
+    expect(prepack).toContain('check:api-governance:prepared');
+    expect(prepareCandidate).toContain('build');
+    expect(prepack.indexOf('prepare:api-governance')).toBeLessThan(prepack.indexOf('check:api-governance:prepared'));
     expect(packageJson.scripts?.pretypecheck).toBe('yarn --cwd ../plugin-sdk -s check:public-toolchain');
     expect(packageJson.scripts?.prebuild).toBe('yarn --cwd ../plugin-sdk -s check:public-toolchain');
     expect(packageJson.scripts?.test).toBe('../../apps/stack/bin/hstack-exec --script=test:local');

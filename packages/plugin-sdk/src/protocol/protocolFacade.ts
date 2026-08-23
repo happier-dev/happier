@@ -13,6 +13,7 @@ import {
     defineProtocolUnion as canonicalDefineProtocolUnion,
     defineProtocolUniqueArray as canonicalDefineProtocolUniqueArray,
     defineProtocolUtf8String as canonicalDefineProtocolUtf8String,
+    isProtocolComposableSchema as canonicalIsProtocolComposableSchema,
     pluginJsonValuesEqual as canonicalPluginJsonValuesEqual,
     ProtocolValidationError as canonicalProtocolValidationError,
 } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -176,47 +177,21 @@ type ProtocolObjectPreservedProjection<
     ProtocolObjectAdditionalValue<TOptions, TProjection> | ProtocolObjectKnownValue<TShape, TProjection>
 >>;
 
-function isProtocolComposableSchemaRecord(value: unknown): value is object {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function hasCompleteProtocolComposableSchemaSurface<TInput, TOutput>(
-    value: unknown,
-): value is ProtocolComposableSchema<TInput, TOutput> {
-    if (!isProtocolComposableSchemaRecord(value)) return false;
-    const jsonSchema = Reflect.get(value, 'jsonSchema');
-    return jsonSchema !== null
-        && typeof jsonSchema === 'object'
-        && !Array.isArray(jsonSchema)
-        && typeof Reflect.get(value, 'parse') === 'function'
-        && typeof Reflect.get(value, 'safeParse') === 'function'
-        && typeof Reflect.get(value, 'optional') === 'function'
-        && typeof Reflect.get(value, 'nullable') === 'function';
-}
-
 /**
  * The one SDK recognition boundary for an executable public composable schema.
- * A plain JSON Schema remains plain manifest data; a parser-shaped partial
- * value is rejected instead of silently becoming a second schema spelling.
+ *
+ * Recognition is structural because an executable parser cannot travel through
+ * manifest JSON and separately installed SDK copies share no symbol identity.
+ * Protocol owns that structural decision; the SDK only re-states the narrowed
+ * type as its own public projection. Anything else is plain declaration data
+ * and is rejected by whichever owner consumes it — the executable-schema
+ * requirement for a contribution protocol, or JSON Schema normalization for a
+ * manifest field. The SDK does not classify near-misses on its own.
  */
 export function readProtocolComposableSchema<TInput = ProtocolJsonValue, TOutput = TInput>(
     value: unknown,
 ): ProtocolComposableSchema<TInput, TOutput> | undefined {
-    if (hasCompleteProtocolComposableSchemaSurface<TInput, TOutput>(value)) return value;
-    if (!isProtocolComposableSchemaRecord(value)) return undefined;
-
-    const members = [
-        Reflect.get(value, 'parse'),
-        Reflect.get(value, 'safeParse'),
-        Reflect.get(value, 'optional'),
-        Reflect.get(value, 'nullable'),
-    ];
-    if (members.some((member) => typeof member === 'function')) {
-        throw new TypeError(
-            'Protocol composable schema must expose complete parse, safeParse, optional, nullable, and jsonSchema surface',
-        );
-    }
-    return undefined;
+    return canonicalIsProtocolComposableSchema<TInput, TOutput>(value) ? value : undefined;
 }
 
 export type ProtocolObjectEvolutionPolicy =
@@ -303,7 +278,7 @@ export const defineProtocolArray = canonicalDefineProtocolArray as <
     itemSchema: TSchema,
     options?: ProtocolArrayOptions,
 ) => ProtocolComposableSchema<
-    readonly ProtocolSchemaOutput<TSchema>[],
+    readonly ProtocolSchemaInput<TSchema>[],
     readonly ProtocolSchemaOutput<TSchema>[]
 >;
 export const defineProtocolUniqueArray = canonicalDefineProtocolUniqueArray as <
@@ -312,7 +287,7 @@ export const defineProtocolUniqueArray = canonicalDefineProtocolUniqueArray as <
     itemSchema: TSchema,
     options?: ProtocolUniqueJsonArrayOptions,
 ) => ProtocolComposableSchema<
-    readonly ProtocolSchemaOutput<TSchema>[],
+    readonly ProtocolSchemaInput<TSchema>[],
     readonly ProtocolSchemaOutput<TSchema>[]
 >;
 export const defineProtocolUnion = canonicalDefineProtocolUnion as <
@@ -322,7 +297,7 @@ export const defineProtocolUnion = canonicalDefineProtocolUnion as <
         ...ProtocolComposableSchema<unknown, unknown>[],
     ],
 >(members: TMembers) => ProtocolComposableSchema<
-    ProtocolSchemaOutput<TMembers[number]>,
+    ProtocolSchemaInput<TMembers[number]>,
     ProtocolSchemaOutput<TMembers[number]>
 >;
 export const defineProtocolJsonValue: <TValue extends ProtocolJsonValue = ProtocolJsonValue>(

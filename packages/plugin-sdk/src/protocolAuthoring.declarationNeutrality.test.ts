@@ -270,6 +270,47 @@ describe('public protocol-authoring declaration neutrality', () => {
         // that only holds on an idle host.
     }, 120_000);
 
+    it('keeps composed array, unique-array, and union input distinct from parsed output', () => {
+        // A schema whose authored input and parsed output genuinely differ is
+        // the only shape that can tell the canonical two-parameter signature
+        // apart from one that reuses the output projection for both sides.
+        const diagnostics = compileExternalProtocolAuthoringConsumer(`
+            import {
+                defineProtocolArray,
+                defineProtocolLiteral,
+                defineProtocolUnion,
+                defineProtocolUniqueArray,
+                type ProtocolComposableSchema,
+                type ProtocolSchemaInput,
+                type ProtocolSchemaOutput,
+            } from './protocol/index.js';
+
+            declare const decimalText: ProtocolComposableSchema<string, number>;
+
+            const decimals = defineProtocolArray(decimalText);
+            const uniqueDecimals = defineProtocolUniqueArray(decimalText);
+            const decimalOrNone = defineProtocolUnion([decimalText, defineProtocolLiteral('none')]);
+
+            const authored: ProtocolSchemaInput<typeof decimals> = ['1', '2'];
+            const parsed: ProtocolSchemaOutput<typeof decimals> = decimals.parse(authored);
+            const authoredUnique: ProtocolSchemaInput<typeof uniqueDecimals> = ['1', '2'];
+            const parsedUnique: ProtocolSchemaOutput<typeof uniqueDecimals> = uniqueDecimals.parse(authoredUnique);
+            const authoredUnion: ProtocolSchemaInput<typeof decimalOrNone> = '1';
+            const parsedUnion: ProtocolSchemaOutput<typeof decimalOrNone> = decimalOrNone.parse(authoredUnion);
+
+            const total: number = parsed[0]! + parsedUnique[0]!;
+            const settled: number | 'none' = parsedUnion;
+            void total;
+            void settled;
+        `);
+
+        expect(diagnostics.map((diagnostic) => (
+            ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
+        ))).toEqual([]);
+        // Whole TypeScript-program work; see the sibling consumer test above
+        // for the measured timings this budget is aligned with.
+    }, 120_000);
+
     it('keeps the source declaration entrypoint validator-neutral without losing algebra inference', async () => {
         const utf8Text = defineProtocolUtf8String({ maxUtf8Bytes: 1_024, minLength: 1 });
         const tags = defineProtocolUniqueArray(utf8Text, { minItems: 1, maxItems: 2 });

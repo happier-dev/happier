@@ -114,6 +114,15 @@ export type HappierPressableProps = Readonly<{
   invalid?: boolean;
   /** The enclosing field's validation message identity, when invalid. */
   errorMessageId?: string;
+  /**
+   * The identity of the element that DESCRIBES this control, beside its name.
+   *
+   * React Native Web has no `accessibilityHint` mapping at all, so a hint alone
+   * reaches native assistive technology and nothing on the web. A caller that
+   * owns a description renders it with a stable `nativeID` and names that id
+   * here, which is the one description relationship RNW actually emits.
+   */
+  describedById?: string;
   /** Visual/current-row state owned by a composite widget's roving selection. */
   highlighted?: boolean;
   selected?: boolean;
@@ -202,6 +211,7 @@ export function HappierPressable({
   busy,
   invalid,
   errorMessageId,
+  describedById,
   highlighted,
   selected,
   expanded,
@@ -394,6 +404,7 @@ export function HappierPressable({
       aria-checked={checked}
       aria-invalid={invalid || undefined}
       aria-errormessage={invalid ? errorMessageId : undefined}
+      aria-describedby={describedById}
       aria-expanded={expanded}
       aria-haspopup={hasPopup}
       aria-controls={controls}

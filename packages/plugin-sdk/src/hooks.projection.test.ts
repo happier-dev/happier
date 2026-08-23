@@ -117,7 +117,7 @@ type ExpectedActionExecuteBeforeHookPayload = Readonly<{
     actionId: string;
     input: JsonValue;
     invocation: Readonly<{
-        surface: 'ui' | 'voice' | 'agent' | 'mcp' | 'cli' | 'rpc' | 'sdk' | 'plugin';
+        surface: 'ui' | 'voice' | 'agent' | 'mcp' | 'cli' | 'rpc' | 'api' | 'plugin';
         sessionId?: string;
         caller: ExpectedPluginExecutionCaller;
     }>;

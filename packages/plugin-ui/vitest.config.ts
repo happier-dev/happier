@@ -13,6 +13,13 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
     packageName: '@happier-dev/plugin-sdk',
     packageSourceRoot: resolve('../../packages/plugin-sdk/src'),
   },
+  {
+    // The public authoring examples import this package by its published
+    // specifier. Without this the package's own tests would exercise a stale
+    // `dist/`, so a source change would silently not be under test.
+    packageName: '@happier-dev/plugin-ui',
+    packageSourceRoot: resolve('src'),
+  },
 ] as const;
 
 const sharedExclude = [

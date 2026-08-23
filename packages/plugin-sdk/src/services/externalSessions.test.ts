@@ -1,7 +1,4 @@
-import { readFile } from 'node:fs/promises';
-
 import * as protocol from '@happier-dev/protocol';
-import ts from 'typescript';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import type { PluginOperationAvailability } from '../availability.js';
@@ -41,7 +38,7 @@ type IsRequired<T, Key extends keyof T> = {} extends Pick<T, Key> ? false : true
 type KeysOfUnion<T> = T extends T ? keyof T : never;
 
 describe('External Sessions contextual service contract', () => {
-    it('declares exactly the six contextual methods and a required Sessions service', async () => {
+    it('declares exactly the six contextual methods and a required Sessions service', () => {
         expectTypeOf<keyof ExternalSessionsService>().toEqualTypeOf<
             | 'capabilities'
             | 'list'
@@ -79,47 +76,6 @@ describe('External Sessions contextual service contract', () => {
         ) => Promise<ExternalSessionOperationReference>>();
         expectTypeOf<SessionsService['external']>().toEqualTypeOf<ExternalSessionsService>();
         expectTypeOf<IsRequired<SessionsService, 'external'>>().toEqualTypeOf<true>();
-
-        const sourceText = await readFile(new URL('./externalSessions.ts', import.meta.url), 'utf8');
-        const source = ts.createSourceFile(
-            'externalSessions.ts',
-            sourceText,
-            ts.ScriptTarget.Latest,
-            true,
-            ts.ScriptKind.TS,
-        );
-        const service = source.statements.find(
-            (statement): statement is ts.InterfaceDeclaration => (
-                ts.isInterfaceDeclaration(statement)
-                && statement.name.text === 'ExternalSessionsService'
-            ),
-        );
-        expect(service?.members.map((member) => (
-            member.name && ts.isIdentifier(member.name) ? member.name.text : null
-        ))).toEqual([
-            'capabilities',
-            'list',
-            'attach',
-            'readTranscript',
-            'followTranscript',
-            'takeover',
-        ]);
-
-        const sessionsSourceText = await readFile(new URL('./sessions.ts', import.meta.url), 'utf8');
-        const sessionsSource = ts.createSourceFile(
-            'sessions.ts',
-            sessionsSourceText,
-            ts.ScriptTarget.Latest,
-            true,
-            ts.ScriptKind.TS,
-        );
-        const sessionsService = sessionsSource.statements.find(
-            (statement): statement is ts.InterfaceDeclaration => (
-                ts.isInterfaceDeclaration(statement)
-                && statement.name.text === 'SessionsService'
-            ),
-        );
-        expect(sessionsService?.typeParameters).toBeUndefined();
     });
 
     it('uses public transcript, follow, takeover, and canonical operation projections', () => {

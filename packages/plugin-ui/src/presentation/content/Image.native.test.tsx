@@ -12,11 +12,12 @@ vi.mock('react-native', () => ({
 
 import { createSurfaceContext } from '../../surfaceFixture.testSupport.js';
 import { HappierImage } from './Image.js';
+import { materializeHappierRenderableImage } from './renderableImage.js';
 
 /**
- * Counts every indexed byte read the encoder performs, without instrumenting
- * the module under test: one conversion of `bytes` reads each index exactly
- * once, so `reads / byteLength` is the number of conversions.
+ * Counts every indexed byte read the render performs, without instrumenting the
+ * module under test. One base64 conversion of `bytes` reads each index exactly
+ * once, so any non-zero count during render is a conversion the reader waits on.
  */
 function countingBytes(bytes: Uint8Array): Readonly<{ proxy: Uint8Array; reads: () => number }> {
   let reads = 0;
@@ -29,6 +30,18 @@ function countingBytes(bytes: Uint8Array): Readonly<{ proxy: Uint8Array; reads: 
   return { proxy, reads: () => reads };
 }
 
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+
+function pngBytes(width: number, height: number, byteLength: number): Uint8Array {
+  const bytes = new Uint8Array(byteLength);
+  bytes.set(PNG_SIGNATURE, 0);
+  bytes.set([0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52], 8);
+  new DataView(bytes.buffer).setUint32(16, width);
+  new DataView(bytes.buffer).setUint32(20, height);
+  for (let index = 24; index < byteLength; index += 1) bytes[index] = index % 251;
+  return bytes;
+}
+
 let renderer: ReactTestRenderer | null = null;
 
 afterEach(() => {
@@ -39,11 +52,16 @@ afterEach(() => {
 });
 
 describe('HappierImage byte source derivation', () => {
-  it('converts one admitted byte identity exactly once across renders', async () => {
+  it('reads no bytes at all during render, because materialization is not a render', async () => {
     const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
-    const bytes = new Uint8Array(3_072);
-    for (let index = 0; index < bytes.length; index += 1) bytes[index] = index % 251;
-    const counted = countingBytes(bytes);
+    const counted = countingBytes(pngBytes(32, 32, 3_072));
+    // The admitting owner materializes off the render path, exactly as the
+    // Resource store and the host brand reader do when bytes arrive. It reads
+    // every byte exactly once; every read after this point belongs to a render.
+    const admitted = materializeHappierRenderableImage(counted.proxy);
+    expect(admitted).not.toBeNull();
+    expect(counted.reads()).toBeGreaterThanOrEqual(3_072);
+    const materializationReads = counted.reads();
 
     const render = (label: string) => (
       <HappierImage bytes={counted.proxy} fallback="?" theme={context.theme} accessibilityLabel={label} />
@@ -53,7 +71,7 @@ describe('HappierImage byte source derivation', () => {
       renderer = create(render('render-0'));
     });
     const firstSource = renderer!.root.findByType('Image').props.source;
-    const readsAfterFirstRender = counted.reads();
+    const readsAfterFirstRender = counted.reads() - materializationReads;
 
     for (let index = 1; index < 10; index += 1) {
       await act(async () => {
@@ -63,9 +81,34 @@ describe('HappierImage byte source derivation', () => {
 
     const lastSource = renderer!.root.findByType('Image').props.source;
 
-    // One conversion, not ten: `reads / byteLength` is the conversion count.
-    expect(readsAfterFirstRender).toBe(bytes.byteLength);
-    expect(counted.reads()).toBe(bytes.byteLength);
+    // Zero conversions, not one and not ten: the source was already derived.
+    expect(readsAfterFirstRender).toBe(0);
+    expect(counted.reads() - materializationReads).toBe(0);
+    expect(firstSource).toBe(admitted);
     expect(lastSource).toBe(firstSource);
+  });
+
+  it('presents the neutral fallback for bytes no owner admitted, without converting them', async () => {
+    const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
+    // Bytes no owner ever admitted — the shape a refused mark and a mark that
+    // never reached an admitting owner both arrive in. The renderer must never
+    // be the thing that pays to find out which.
+    const counted = countingBytes(pngBytes(32, 32, 3_072));
+
+    await act(async () => {
+      renderer = create(
+        <HappierImage
+          bytes={counted.proxy}
+          fallback="AB"
+          theme={context.theme}
+          // The brand composition's explicit colors; it keeps this assertion on
+          // the source decision rather than on `HappierText`'s theme context.
+          backing={{ backgroundColor: '#101010', foregroundColor: '#f0f0f0' }}
+        />,
+      );
+    });
+
+    expect(renderer!.root.findAllByType('Image')).toHaveLength(0);
+    expect(counted.reads()).toBe(0);
   });
 });

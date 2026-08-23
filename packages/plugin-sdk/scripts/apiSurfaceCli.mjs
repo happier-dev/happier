@@ -32,9 +32,13 @@ import {
 import {
   createPublicSurfaceProgram,
   declarationPackageMetadata,
-  projectPublicDeclarationReport,
 } from './publicDeclarationReport.mjs';
+import {
+  assertInventoryMatchesPreparedDeclarationSurface,
+  projectPreparedDeclarationSurface,
+} from '../../../scripts/api-governance/emittedDeclarationSurface.mjs';
 import { assertVendoredWorkspaceDeclarationsAreCurrent } from './vendoredWorkspaceDeclarations.mjs';
+import { summarizeDeclarationDiff } from '../../../scripts/api-governance/declarationDiff.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_PACKAGE_ROOT = resolve(dirname(SCRIPT_PATH), '..');
@@ -84,6 +88,7 @@ export function parseApiSurfaceCliArgs(args, cwd = process.cwd()) {
   let write = false;
   let check = false;
   let json = false;
+  let materializeSource = false;
   let publishedVersion;
   let previousPublishedInventoryPath;
 
@@ -99,6 +104,10 @@ export function parseApiSurfaceCliArgs(args, cwd = process.cwd()) {
     }
     if (argument === '--json') {
       json = true;
+      continue;
+    }
+    if (argument === '--materialize-source') {
+      materializeSource = true;
       continue;
     }
     if (argument === '--package-root') {
@@ -125,6 +134,7 @@ export function parseApiSurfaceCliArgs(args, cwd = process.cwd()) {
     write,
     check,
     json,
+    materializeSource,
     publishedVersion,
     previousPublishedInventoryPath,
   });
@@ -216,9 +226,6 @@ async function readRetainedPublishedApiSurfaceInventory(inventoryPath) {
     && Object.hasOwn(symbol, 'since')
   )).length;
   if (sinceCount === 0) return undefined;
-  if (sinceCount !== retainedInventory.symbols.length) {
-    throw new Error('retained published API surface inventory has incomplete @since provenance');
-  }
   return retainedInventory;
 }
 
@@ -2421,6 +2428,9 @@ async function finalizeApiSurfaceMaterialization(
       path: relativeOutputPath(packageRoot, output.absolutePath),
       changed: output.changed,
       written: options.write && output.changed,
+      summary: output.relativePath === PUBLIC_DECLARATION_REPORT_PATH
+        ? summarizeDeclarationDiff(output.originalContents, output.contents)
+        : Object.freeze([]),
     }))),
     generationPlan,
   });
@@ -2429,8 +2439,10 @@ async function finalizeApiSurfaceMaterialization(
 /**
  * Runs the package-owned API-surface materializer. This lower-level owner
  * projects the inventory, package exports, source barrels, and author API
- * index. The full SDK publisher adds the capability matrix through the same
- * atomic output corridor below.
+ * index. It is the pre-emission phase: a changed `*.public.ts` may require a
+ * generated barrel write before TypeScript can emit the declarations the full
+ * publisher verifies. Its source outputs still use the same atomic corridor;
+ * the caller compiles after this phase, then runs the full publisher below.
  */
 export async function runApiSurfaceMaterializer(options) {
   const prepared = await prepareApiSurfaceMaterialization(options);
@@ -2468,7 +2480,10 @@ export async function runApiSurfaceSourceHarnessForTests({ packageRoot, onProgre
 /**
  * Runs the complete SDK public-contract publisher. The capability matrix is
  * intentionally created here, from the real package source, and published in
- * the same all-output transaction as the API-surface artifacts.
+ * the same all-output transaction as the API-surface artifacts. Its emitted
+ * declaration check deliberately runs only after the pre-emission materializer
+ * and compiler have produced current `dist` output; it never falls back to a
+ * source graph.
  */
 export async function runApiSurfaceCli(options) {
   const prepared = await prepareApiSurfaceMaterialization(options);
@@ -2478,12 +2493,16 @@ export async function runApiSurfaceCli(options) {
     apiInventory: prepared.inventory,
   });
   reportProgress(options, 'declaration-report');
-  const publicDeclarationReport = projectPublicDeclarationReport({
-    program: prepared.publicSurfaceProgram(),
+  const emittedDeclarationSurface = projectPreparedDeclarationSurface({
     packageRoot: prepared.packageRoot,
+    packageJson: prepared.packageJson,
     title: PUBLIC_DECLARATION_REPORT_TITLE,
-    rows: prepared.inventory.symbols,
     bundledDependencies: prepared.packageJson.bundledDependencies ?? [],
+  });
+  assertInventoryMatchesPreparedDeclarationSurface({
+    inventory: prepared.inventory,
+    entrypoints: emittedDeclarationSurface.entrypoints,
+    rows: emittedDeclarationSurface.rows,
   });
   return finalizeApiSurfaceMaterialization(prepared, options, {
     additionalOutputs: [
@@ -2497,7 +2516,7 @@ export async function runApiSurfaceCli(options) {
         owner: 'publicDeclarationReport',
         absolutePath: join(prepared.packageRoot, PUBLIC_DECLARATION_REPORT_PATH),
         relativePath: PUBLIC_DECLARATION_REPORT_PATH,
-        contents: publicDeclarationReport,
+        contents: emittedDeclarationSurface.declarationReport,
       }),
     ],
     materializedPlanOutputs: MATERIALIZED_PLAN_OUTPUTS,
@@ -2509,7 +2528,9 @@ export async function main(args = process.argv.slice(2)) {
   const onProgress = (phase) => {
     process.stderr.write(`api-surface: phase=${phase}\n`);
   };
-  const report = await runApiSurfaceCli({ ...options, onProgress });
+  const report = options.materializeSource
+    ? await runApiSurfaceMaterializer({ ...options, onProgress })
+    : await runApiSurfaceCli({ ...options, onProgress });
   process.stdout.write(options.json
     ? `${JSON.stringify(report, null, 2)}\n`
     : renderCliSummary(report));

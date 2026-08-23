@@ -1,6 +1,8 @@
 import { createSurfaceContextFixture, SURFACE_CONTEXT_THEME_FIXTURE } from '@happier-dev/plugin-sdk/testing';
 import { PUBLIC_TOOLCHAIN_COMPATIBILITY_V1 } from '@happier-dev/plugin-sdk/browser';
 import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
+
+import { materializeHappierRenderableImage } from './presentation/content/renderableImage.js';
 import type {
   PluginUiHostApi,
   ResourceContent,
@@ -61,4 +63,35 @@ export function createHostApiStub(
     releaseComposerContent: async () => unsupportedHostMethod(),
     ...overrides,
   } satisfies PluginUiHostApi;
+}
+
+/**
+ * A minimal admissible packaged mark: PNG signature plus a real IHDR.
+ *
+ * The renderable-image owner reads the declared canvas out of IHDR to bound
+ * decode memory, so a bare signature is deliberately NOT admissible. Every test
+ * that needs an admitted mark builds one here rather than restating the header
+ * layout, and `byteLength` stays divisible by three so an indexed-read counter
+ * measures exactly one read per byte per base64 conversion.
+ */
+export function createAdmittedBrandPngFixture(options?: Readonly<{
+  width?: number;
+  height?: number;
+  byteLength?: number;
+  /** Skip admission to model bytes that reached a render without an owner. */
+  admit?: boolean;
+}>): Uint8Array {
+  const width = options?.width ?? 16;
+  const height = options?.height ?? 16;
+  const byteLength = Math.max(options?.byteLength ?? 27, 27);
+  const bytes = new Uint8Array(byteLength);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  // IHDR chunk: its 13-byte length, then the chunk type.
+  bytes.set([0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52], 8);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(16, width);
+  view.setUint32(20, height);
+  for (let index = 24; index < byteLength; index += 1) bytes[index] = index % 251;
+  if (options?.admit !== false) materializeHappierRenderableImage(bytes);
+  return bytes;
 }

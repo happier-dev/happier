@@ -5,6 +5,7 @@ import type {
   PluginCollectionUiQueryRequestV1,
   PluginCollectionUiQueryResultV1,
 } from '@happier-dev/plugin-sdk/collections';
+import type { AccountKvService } from '@happier-dev/plugin-sdk/storage';
 
 /**
  * The direct Account Collection operations that an executable plugin surface
@@ -50,6 +51,17 @@ export type PluginUiCollectionQueryPager = Readonly<{
 }>;
 
 /**
+ * The plugin's own Account KV, reached directly from a mounted surface.
+ *
+ * It is the same service a daemon plugin gets from `storage.account.kv` — same
+ * keys, same per-key versions, same conditional-write and tombstone rules —
+ * because both realms apply the one Protocol row owner over the one Account
+ * row. A surface therefore reads and writes exactly what its daemon side wrote,
+ * with no daemon reachable.
+ */
+export type PluginUiAccountKv = AccountKvService;
+
+/**
  * Host-private provider input exposed to authors only through the public hook.
  * The host creates it for one captured Account lifetime; authors receive no
  * transport, Account scope, or persisted contract facts.
@@ -61,4 +73,6 @@ export type PluginUiDataClient = Readonly<{
   openCollectionQuery(
     input: PluginUiCollectionQueryInput,
   ): Promise<PluginUiCollectionQueryPager>;
+  /** The plugin's own Account KV scope for this mounted surface. */
+  readonly accountKv: PluginUiAccountKv;
 }>;

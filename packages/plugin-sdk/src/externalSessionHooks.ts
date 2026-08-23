@@ -70,7 +70,13 @@ export type AgentExternalSessionHookInstallationVariant = Readonly<{
         nativeEventName: string;
         command: Readonly<{
             kind: 'happier_observation_v1';
-            shellDialect: 'posix' | 'windows_cmd';
+            /**
+             * The shell the Agent runs this hook entry through. It selects the
+             * host serializer that quotes the generated command, so a variant
+             * whose dialect the current platform cannot execute is refused by
+             * the host rather than installed as an unrunnable entry.
+             */
+            shellDialect: 'posix' | 'windows_cmd' | 'powershell_encoded';
             matcher?: string;
             timeoutMs?: number;
         }>;
@@ -581,6 +587,7 @@ function snapshotVariant(value: unknown): AgentExternalSessionHookInstallationVa
         if (
             command.shellDialect !== 'posix'
             && command.shellDialect !== 'windows_cmd'
+            && command.shellDialect !== 'powershell_encoded'
         ) {
             return invalid(
                 'installation variant command',

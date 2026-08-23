@@ -1,3 +1,4 @@
+export type { ActionOperationDeclarationV1 } from './definePlugin.js';
 export type { DefinePluginInput } from './definePlugin.js';
 export type { DefinedPlugin } from './definePlugin.js';
 export type { DefinedPluginActionContracts } from './definePlugin.js';

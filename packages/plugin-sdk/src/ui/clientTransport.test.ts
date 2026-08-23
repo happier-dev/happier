@@ -1579,7 +1579,7 @@ describe('plugin UI domain client transport adapter', () => {
         vi.useFakeTimers();
         const pending = createPluginUiHostApiClientFromTransport({
             identity,
-            timeoutMs: 25,
+            negotiationTimeoutMs: 25,
             transport: {
                 send: () => undefined,
                 subscribe: () => ({ dispose: () => undefined }),
@@ -1671,30 +1671,43 @@ describe('plugin UI domain client transport adapter', () => {
         expect(transportDisposals).toBe(1);
     });
 
-    it('cancels timed-out host work and does not claim that an unknown side effect is retryable', async () => {
+    it('never abandons a human-held operation on the handshake deadline', async () => {
         vi.useFakeTimers();
         let receive: ((message: unknown) => void) | undefined;
         const sent: PluginUiHostApiWireEnvelopeV1[] = [];
         const api = await createPluginUiHostApiClientFromTransport({
             identity,
-            timeoutMs: 25,
-            createRequestId: () => 'timed-out-request',
+            negotiationTimeoutMs: 25,
+            createRequestId: () => 'human-held-request',
             transport: {
                 subscribe(listener) { receive = listener; return { dispose: () => undefined }; },
                 send(message) {
                     sent.push(message);
                     if (message.kind === 'negotiate') receive?.({
                         wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
-                        methods: ['executeAction'], surface,
+                        methods: ['selectActionInput'], surface,
                     });
                 },
             },
         });
-        const operation = api.executeAction('side-effecting-action', null).catch((cause: unknown) => cause);
-        await vi.advanceTimersByTimeAsync(25);
-
-        await expect(operation).resolves.toMatchObject({ code: 'timeout', retryable: false });
-        expect(sent.map((message) => message.kind)).toEqual(['negotiate', 'request', 'cancel']);
+        const settlements: string[] = [];
+        const selection = api.selectActionInput({
+            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+        }).then(
+            () => 'resolved',
+            (error: unknown) => `rejected:${(error as { code?: string }).code ?? 'unknown'}`,
+        );
+        void selection.then((label) => { settlements.push(label); });
+        // A person reading and filling the form takes far longer than any
+        // handshake budget. The host still owns the answer.
+        await vi.advanceTimersByTimeAsync(10 * 60_000);
+        expect(settlements).toEqual([]);
+        expect(sent.map((message) => message.kind)).toEqual(['negotiate', 'request']);
+        receive?.({
+            wireVersion: 1, kind: 'result', identity, requestId: 'human-held-request',
+            method: 'selectActionInput', result: { kind: 'cancelled' },
+        });
+        await expect(selection).resolves.toBe('resolved');
     });
 
     it('forwards cancellation for an in-flight domain operation before rejecting locally', async () => {

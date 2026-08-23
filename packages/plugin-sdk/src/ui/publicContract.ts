@@ -1,6 +1,8 @@
 import type { QualifiedConnectedAccountRef } from '../connectedAccounts.js';
+import type { SessionServerStartSpawnDraftV1 } from '../services/sessions.js';
 import type { ComposerStagedMediaContentV1 } from '../composer.js';
 import type { JsonValue, PluginJsonValueV2 } from '../identity.js';
+import type { PluginAvailabilityDescriptor } from '../manifest.js';
 import type {
     PluginDeclarativeNodeV2 as PluginManifestDeclarativeNodeV2,
     PluginDeclarativeToneV2 as PluginManifestDeclarativeToneV2,
@@ -402,24 +404,14 @@ export type PluginUiSelectActionInputRequestV1 =
     | PluginUiSelectActionInputTargetedRequestV1
     | PluginUiSelectActionInputHostRequestV1;
 
-export type PluginUiSessionServerStartDraftV1 = Readonly<{
-    executionTarget: unknown;
-    directory: string;
-    organizationPlacement?: unknown;
-    agentTarget: unknown;
-    modelSelection?: unknown;
-    profileId?: string;
-    permissionMode?: string;
-    agentModeId?: string;
-    configuration?: unknown;
-    connectedServices?: unknown;
-    mcpSelection?: unknown;
-    transcriptStorage?: 'persisted' | 'direct';
-    terminal?: unknown;
-    checkoutCreationDraft?: unknown | null;
-    title?: string;
-    agentSessionStartupInstructionsV1?: unknown;
-}>;
+/**
+ * The no-invoke Session settlement carries exactly the canonical browser-safe
+ * server-start draft. `services/sessions.ts` already projects that draft for
+ * the author boundary, so this is an alias of that owner rather than a second
+ * hand-maintained copy: the predecessor copy had drifted (it never gained
+ * `sourceContext`) and typed most of the draft as `unknown`.
+ */
+export type PluginUiSessionServerStartDraftV1 = SessionServerStartSpawnDraftV1;
 
 export type PluginUiSelectActionInputTargetedSubmittedV1 = {
     kind: 'submitted';
@@ -801,12 +793,45 @@ export type PluginUiViewTargetV2 =
     }
     | { kind: 'services'; sessionIdPath?: string; serverIdPath?: string; machineIdPath?: string };
 
+/**
+ * The representable destination grammar, correlated exactly as the canonical
+ * Registry correlates it. Container, target, instance policy and page header
+ * actions travel together on one arm so an author's editor rejects the same
+ * declaration the host parser and the published JSON Schema reject. A flat
+ * shape here let an editor accept `headerActions` on a pane and `multiple` on
+ * a right-sidebar tab, both of which the host refuses at install time.
+ */
 export type PluginUiViewDestinationBindingInputV2 =
-    | { container: 'appPage'; target: { kind: 'app' } }
-    | { container: 'rightSidebarTab'; target: { kind: 'app' } | { kind: 'session'; sessionIdPath?: string } | PluginUiViewTargetV2 & { kind: 'project' } }
-    | { container: 'rightPane' | 'detailsTab' | 'detailsPane' | 'bottomPane'; target: { kind: 'session'; sessionIdPath?: string } | PluginUiViewTargetV2 & { kind: 'project' } }
-    | { container: 'browserPanel'; target: PluginUiViewTargetV2 & { kind: 'browser' } }
-    | { container: 'servicesPanel'; target: PluginUiViewTargetV2 & { kind: 'services' } };
+    | {
+        container: 'appPage';
+        target: { kind: 'app' };
+        instancePolicy?: 'singleton';
+        headerActions?: PluginUiPageHeaderActionV1[];
+    }
+    | {
+        container: 'rightSidebarTab';
+        target: { kind: 'app' } | { kind: 'session'; sessionIdPath?: string } | PluginUiViewTargetV2 & { kind: 'project' };
+        instancePolicy?: 'singleton';
+        headerActions?: [];
+    }
+    | {
+        container: 'rightPane' | 'detailsTab' | 'detailsPane' | 'bottomPane';
+        target: { kind: 'session'; sessionIdPath?: string } | PluginUiViewTargetV2 & { kind: 'project' };
+        instancePolicy?: 'singleton' | 'multiple';
+        headerActions?: [];
+    }
+    | {
+        container: 'browserPanel';
+        target: PluginUiViewTargetV2 & { kind: 'browser' };
+        instancePolicy?: 'singleton';
+        headerActions?: [];
+    }
+    | {
+        container: 'servicesPanel';
+        target: PluginUiViewTargetV2 & { kind: 'services' };
+        instancePolicy?: 'singleton';
+        headerActions?: [];
+    };
 
 export type PluginUiPageHeaderActionV1 = {
     id: string;
@@ -814,7 +839,8 @@ export type PluginUiPageHeaderActionV1 = {
     description?: PluginLocalizedStringV2;
     icon?: PluginUiIconTokenV1;
     order?: number;
-    action: unknown;
+    /** A same-plugin Action local id, or one explicit semantic command. */
+    action: string | PluginUiSemanticCommandV1;
 };
 
 export type PluginUiViewV2Input = PluginUiViewDestinationBindingInputV2 & {
@@ -826,14 +852,17 @@ export type PluginUiViewV2Input = PluginUiViewDestinationBindingInputV2 & {
     badge?: { label: PluginLocalizedStringV2; tone?: PluginUiToneV1 };
     groupHint?: 'navigation' | 'sessions';
     rankHint?: number;
-    instancePolicy?: 'singleton' | 'multiple';
-    headerActions?: PluginUiPageHeaderActionV1[];
 };
 
-export type PluginUiViewV2 = PluginUiViewV2Input & {
-    instancePolicy: 'singleton' | 'multiple';
-    headerActions: PluginUiPageHeaderActionV1[];
-};
+/**
+ * The parsed view: the host resolves `instancePolicy` and `headerActions`
+ * defaults, so both are present — still on their own correlated arm.
+ */
+export type PluginUiViewV2 = PluginUiViewV2Input extends infer TInput
+    ? TInput extends PluginUiViewDestinationBindingInputV2
+        ? TInput & Required<Pick<TInput, 'instancePolicy' | 'headerActions'>>
+        : never
+    : never;
 
 export type PluginUiTranslationBundleV2 = {
     locale: string;
@@ -846,8 +875,9 @@ export type PluginSessionHeaderActionDescriptor = {
     description?: PluginLocalizedStringV2;
     icon?: PluginUiIconTokenV1;
     order?: number;
-    action: unknown;
-    availability?: unknown;
+    /** A same-plugin Action local id, or one explicit semantic command. */
+    action: string | PluginUiSemanticCommandV1;
+    availability?: PluginAvailabilityDescriptor;
 };
 
 /** One verified file in an author-generated UI artifact tree. */

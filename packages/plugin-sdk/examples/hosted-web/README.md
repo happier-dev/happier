@@ -1,6 +1,6 @@
 # Hosted Web Plugin Example
 
-> Packaged hosted-web rendering is unavailable on this platform because no Artifact-backed frame adapter has passed its platform feasibility gate.
+> Packaged hosted-web rendering availability is reported per host; a host that cannot construct its frame adapter reports a typed unavailable reason instead.
 
 This is a maintained conformance/reference package. It is not an ordinary authoring template:
 start a new plugin with `happier plugins create` and declare ordinary contributions through

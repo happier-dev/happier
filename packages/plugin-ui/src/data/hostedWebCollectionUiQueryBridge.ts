@@ -8,6 +8,7 @@ import {
   type PluginHostedWebCollectionUiQueryBridgeResponseV1,
 } from '@happier-dev/plugin-sdk/ui';
 
+import { createUnavailablePluginUiAccountKv } from './accountKv.js';
 import type {
   PluginUiAccountCollectionForDefinition,
   PluginUiCollectionQueryInput,
@@ -90,7 +91,15 @@ export function createUnavailableHostedWebPluginUiDataClient(): PluginUiDataClie
     measureBatch: unavailable,
   });
 
-  return Object.freeze({ collection, openCollectionQuery: unavailable });
+  // Hosted web is a separate isolated renderer: it reaches Account Data only
+  // through the host-owned bridge, which carries Collection UI queries and no
+  // Account KV operation. Reporting that plainly is the truthful state; it is
+  // not a second KV implementation and not a silent no-op.
+  return Object.freeze({
+    collection,
+    openCollectionQuery: unavailable,
+    accountKv: createUnavailablePluginUiAccountKv(),
+  });
 }
 
 function parseSnapshotResponse(value: unknown): Extract<
@@ -113,7 +122,7 @@ function parseSnapshotResponse(value: unknown): Extract<
 export function createHostedWebPluginUiDataClient(input: Readonly<{
   acquireTransport: HostedWebCollectionUiQueryTransportFactory;
 }>): PluginUiDataClient {
-  const { collection } = createUnavailableHostedWebPluginUiDataClient();
+  const { collection, accountKv } = createUnavailableHostedWebPluginUiDataClient();
 
   const openCollectionQuery = async (
     query: PluginUiCollectionQueryInput,
@@ -247,5 +256,5 @@ export function createHostedWebPluginUiDataClient(input: Readonly<{
     });
   };
 
-  return Object.freeze({ collection, openCollectionQuery });
+  return Object.freeze({ collection, openCollectionQuery, accountKv });
 }

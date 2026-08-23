@@ -90,13 +90,16 @@ export function isPluginError(value: unknown): value is PluginError {
 /**
  * Accepts the closed public PluginError shape rather than requiring one SDK
  * module instance, so an external plugin can consume the host's proof too.
+ *
+ * Recognition delegates to the canonical contract first. A false "the handler
+ * never started" answer is not a cosmetic misread: callers use it to retry or
+ * compensate, so an ordinary object that merely calls itself `PluginError`
+ * must not be able to make an effect that did run look like one that did not.
  */
 export function isPluginActionHandlerInvocationKnownNotStarted(error: unknown): boolean {
-    if (error === null || typeof error !== 'object') return false;
-    const candidate = error as Readonly<Record<string, unknown>>;
-    if (candidate.name !== 'PluginError') return false;
+    if (!isPluginError(error)) return false;
+    const candidate = error as unknown as Readonly<Record<string, unknown>>;
     if (candidate.actionHandlerInvocation === 'notStarted') return true;
-    const data = candidate.data;
-    if (data === null || typeof data !== 'object') return false;
-    return (data as Readonly<Record<string, unknown>>).actionHandlerInvocation === 'notStarted';
+    const data = candidate.data as Readonly<Record<string, unknown>>;
+    return data.actionHandlerInvocation === 'notStarted';
 }

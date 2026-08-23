@@ -26,7 +26,11 @@ import {
   useHappierItemGroupItemBehavior,
 } from '../collection/ItemGroup.js';
 import { HappierPressable } from '../interaction/Pressable.js';
-import type { HappierAccessibilityLiveRegion, HappierStyleProp } from '../portableTypes.js';
+import type {
+  HappierAccessibilityLiveRegion,
+  HappierStyleProp,
+  HappierTextSelection,
+} from '../portableTypes.js';
 import { HappierText } from '../text/Text.js';
 import { scaleTextStyleMetrics } from '../text/textStyleScale.js';
 import { resolveHappierTextScaleOwnership } from '../text/textScaleOwnership.js';
@@ -264,6 +268,26 @@ export type HappierTextFieldProps = Readonly<{
   secure?: boolean;
   multiline?: boolean;
   keyboardType?: 'default' | 'url' | 'numeric';
+  /**
+   * Overrides the prose-entry capitalization this field derives from `secure`
+   * and `keyboardType`. A query, an identifier or a code is not a sentence.
+   */
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  /** Overrides the derived autocorrection, which also silences spellchecking. */
+  autoCorrect?: boolean;
+  /**
+   * The caret or range this field must show. A controlled field whose value is
+   * rewritten between keystrokes otherwise lands the caret at the end of the
+   * new value, which makes editing anywhere but the tail impossible.
+   */
+  selection?: HappierTextSelection;
+  onSelectionChange?: (selection: HappierTextSelection) => void;
+  /**
+   * The field's own commit key. Composition-aware on every platform this
+   * package ships to: an IME candidate confirmed with Enter settles the
+   * composition instead of submitting a half-typed query.
+   */
+  onSubmitEditing?: () => void;
   /** Additive host floor; the mounted environment's native target always wins. */
   minimumTouchTarget?: number;
   /** Private semantic focus binding supplied by the public TextField adapter; disabled fields report no target. */
@@ -292,6 +316,16 @@ export function HappierTextField(props: HappierTextFieldProps) {
   const setControlRef = useCallback((instance: unknown | null) => {
     props.controlRef?.(props.disabled === true ? null : instance);
   }, [props.controlRef, props.disabled]);
+  const authorSelectionChange = props.onSelectionChange;
+  // React Native and React Native Web both report the caret inside the native
+  // event; the portable selection is lifted out here so no caller has to know
+  // the host event shape to keep a caret.
+  const onSelectionChange = useCallback((event: Readonly<{
+    nativeEvent: Readonly<{ selection?: HappierTextSelection }>;
+  }>) => {
+    const selection = event.nativeEvent.selection;
+    if (selection) authorSelectionChange?.(selection);
+  }, [authorSelectionChange]);
   return (
     <ReactNativeTextInput
       ref={setControlRef}
@@ -304,12 +338,18 @@ export function HappierTextField(props: HappierTextFieldProps) {
       aria-errormessage={fieldIssue.issueId}
       value={props.value}
       onChangeText={props.onChangeText}
+      selection={props.selection}
+      onSelectionChange={authorSelectionChange === undefined ? undefined : onSelectionChange}
+      onSubmitEditing={props.onSubmitEditing}
       placeholder={props.placeholder}
       placeholderTextColor={props.theme.colors.mutedText}
       editable={!props.disabled}
       secureTextEntry={props.secure}
-      autoCapitalize={props.secure || props.keyboardType === 'url' ? 'none' : 'sentences'}
-      autoCorrect={!props.secure && props.keyboardType !== 'url'}
+      // The derived values remain the default; an author's declaration is the
+      // only thing that can replace them, so a field the author says nothing
+      // about keeps behaving exactly as it did.
+      autoCapitalize={props.autoCapitalize ?? (props.secure || props.keyboardType === 'url' ? 'none' : 'sentences')}
+      autoCorrect={props.autoCorrect ?? (!props.secure && props.keyboardType !== 'url')}
       multiline={props.multiline}
       keyboardType={props.keyboardType}
       allowFontScaling={scaleOwnership.allowHostFontScaling}

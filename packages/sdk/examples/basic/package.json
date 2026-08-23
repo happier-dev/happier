@@ -1,0 +1,8 @@
+{
+  "name": "happier-sdk-basic-example",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@happier-dev/sdk": "0.0.0"
+  }
+}

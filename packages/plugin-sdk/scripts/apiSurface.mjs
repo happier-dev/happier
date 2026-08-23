@@ -1,6 +1,10 @@
 import { posix as path } from 'node:path';
 import { readFile } from 'node:fs/promises';
-import semver from 'semver';
+import {
+  isExactCanonicalPublishedVersion,
+  projectPublishedInventoryProvenance,
+  projectRetainedInventoryProvenance,
+} from '../../../scripts/api-governance/publicationProvenance.mjs';
 
 const ENTRYPOINT_KEYS = Object.freeze([
   'specifier',
@@ -63,10 +67,6 @@ const SOURCE_MODULE_PATTERN = /^src\/[A-Za-z0-9][A-Za-z0-9._/-]*\.tsx?$/u;
 const TYPES_CONDITION_TARGET_PATTERN = /^\.\/dist\/[A-Za-z0-9][A-Za-z0-9._/-]*\.d\.ts$/u;
 const RUNTIME_CONDITION_TARGET_PATTERN = /^\.\/dist\/[A-Za-z0-9][A-Za-z0-9._/-]*\.js$/u;
 const EXPORT_NAME_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
-
-function isExactCanonicalPublishedVersion(value) {
-  return typeof value === 'string' && semver.valid(value) === value;
-}
 
 export class ApiSurfaceValidationError extends Error {
   /** @param {readonly string[]} diagnostics */
@@ -577,45 +577,14 @@ export function projectPublishedApiSurfaceInventory(input) {
   if (!isRecord(input)) {
     throw new ApiSurfaceValidationError(['published inventory input must be an object']);
   }
-  if (
-    !isExactCanonicalPublishedVersion(input.publishedVersion)
-  ) {
-    throw new ApiSurfaceValidationError(['publishedVersion must be exact canonical semver']);
-  }
-
-  const inventory = validateApiSurfaceInventory(input.inventory);
-  for (const symbol of inventory.symbols) {
-    if (Object.hasOwn(symbol, 'since')) {
-      throw new ApiSurfaceValidationError([
-        `current source inventory symbol ${symbolKey(symbol)} must not declare publisher-owned @since`,
-      ]);
-    }
-  }
-
-  const previousSinceBySymbol = new Map();
-  if (input.previousPublishedInventory !== undefined) {
-    const previousInventory = validateApiSurfaceInventory(input.previousPublishedInventory);
-    for (const symbol of previousInventory.symbols) {
-      if (symbol.since === undefined) {
-        throw new ApiSurfaceValidationError([
-          `previous published inventory symbol ${symbolKey(symbol)} is missing @since`,
-        ]);
-      }
-      if (!semver.lte(symbol.since, input.publishedVersion)) {
-        throw new ApiSurfaceValidationError([
-          `previous published inventory symbol ${symbolKey(symbol)} has @since ${symbol.since} after publishedVersion ${input.publishedVersion}`,
-        ]);
-      }
-      previousSinceBySymbol.set(symbolKey(symbol), symbol.since);
-    }
-  }
-
-  return validateApiSurfaceInventory({
-    ...inventory,
-    symbols: inventory.symbols.map((symbol) => ({
-      ...symbol,
-      since: previousSinceBySymbol.get(symbolKey(symbol)) ?? input.publishedVersion,
-    })),
+  return projectPublishedInventoryProvenance({
+    inventory: input.inventory,
+    publishedVersion: input.publishedVersion,
+    previousPublishedInventory: input.previousPublishedInventory,
+    validateInventory: validateApiSurfaceInventory,
+    symbols: (inventory) => inventory.symbols,
+    symbolKey,
+    createError: (diagnostic) => new ApiSurfaceValidationError([diagnostic]),
   });
 }
 
@@ -634,30 +603,13 @@ export function projectRetainedPublishedApiSurfaceInventory(input) {
   if (!isRecord(input)) {
     throw new ApiSurfaceValidationError(['retained published inventory input must be an object']);
   }
-  const inventory = validateApiSurfaceInventory(input.inventory);
-  for (const symbol of inventory.symbols) {
-    if (Object.hasOwn(symbol, 'since')) {
-      throw new ApiSurfaceValidationError([
-        `current source inventory symbol ${symbolKey(symbol)} must not declare publisher-owned @since`,
-      ]);
-    }
-  }
-  const retainedInventory = validateApiSurfaceInventory(input.retainedPublishedInventory);
-  const retainedSinceBySymbol = new Map();
-  for (const symbol of retainedInventory.symbols) {
-    if (symbol.since === undefined) {
-      throw new ApiSurfaceValidationError([
-        `retained published inventory symbol ${symbolKey(symbol)} is missing @since`,
-      ]);
-    }
-    retainedSinceBySymbol.set(symbolKey(symbol), symbol.since);
-  }
-  return validateApiSurfaceInventory({
-    ...inventory,
-    symbols: inventory.symbols.map((symbol) => {
-      const since = retainedSinceBySymbol.get(symbolKey(symbol));
-      return since === undefined ? symbol : { ...symbol, since };
-    }),
+  return projectRetainedInventoryProvenance({
+    inventory: input.inventory,
+    retainedPublishedInventory: input.retainedPublishedInventory,
+    validateInventory: validateApiSurfaceInventory,
+    symbols: (inventory) => inventory.symbols,
+    symbolKey,
+    createError: (diagnostic) => new ApiSurfaceValidationError([diagnostic]),
   });
 }
 

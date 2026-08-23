@@ -8,6 +8,7 @@ import { Markdown } from './components/Content.js';
 import { Menu } from './components/Overlay.js';
 import { usePluginTheme, useSurfaceContext } from './components/PluginUiProvider.js';
 import { usePluginUiDataClient, type PluginUiDataClient } from './data/index.js';
+import { createUnavailablePluginUiAccountKv } from './data/accountKv.js';
 import { useComposer, usePluginResource } from './hostApi/index.js';
 import type { PluginUiPresentationHost } from './presentationHost/context.js';
 import { mountThroughReactNativeWebAsync } from './rnwMount.testSupport.js';
@@ -354,6 +355,7 @@ describe('defineUiSurface', () => {
       openCollectionQuery: async () => {
         throw new Error('The test author surface does not open a query.');
       },
+      accountKv: createUnavailablePluginUiAccountKv(),
     });
     expectedDataClient = client;
     const renderSurface = defineUiSurface(DataAuthorSurface);

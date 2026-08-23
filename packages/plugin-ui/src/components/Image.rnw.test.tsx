@@ -2,12 +2,12 @@ import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb, mountThroughReactNativeWebAsync } from '../rnwMount.testSupport.js';
-import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
+import { createAdmittedBrandPngFixture, createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { BrandMark } from './Image.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { PluginUiPresentationHostProviderInternal } from '../presentationHost/context.js';
 
-const TRANSPARENT_BRAND_BYTES = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+const TRANSPARENT_BRAND_BYTES = createAdmittedBrandPngFixture();
 
 async function mountAdmittedBrandMark(context: ReturnType<typeof createSurfaceContext>) {
   const mount = await mountThroughReactNativeWebAsync(
@@ -70,7 +70,9 @@ describe('bounded package image and brand fallback', () => {
       const sourceImage = image?.querySelector<HTMLImageElement>('img');
 
       expect(image).not.toBeNull();
-      expect(sourceImage?.getAttribute('src')).toContain('data:image/png;base64,iVBORw0KGgo=');
+      expect(sourceImage?.getAttribute('src')).toBe(
+        `data:image/png;base64,${Buffer.from(TRANSPARENT_BRAND_BYTES).toString('base64')}`,
+      );
       expect(getComputedStyle(image!).backgroundColor).toBe(
         renderedColor('backgroundColor', context.theme.colors[current.background]),
       );

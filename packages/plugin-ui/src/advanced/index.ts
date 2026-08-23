@@ -14,6 +14,22 @@ export {
   PluginHostApiProvider,
   type PluginHostApiProviderProps,
 } from '../hostApi/context.js';
+/**
+ * Byte admission for a renderable packaged image.
+ *
+ * A host adapter that acquires image bytes outside the Resource store admits
+ * them here, off the render path, exactly as the store does when a read
+ * resolves. Presentation can only read what an owner admitted, so an
+ * unadmitted or over-ceiling mark presents the neutral text fallback instead of
+ * making a render pay to find out.
+ */
+export {
+  HAPPIER_MAX_RENDERABLE_IMAGE_BYTES,
+  HAPPIER_MAX_RENDERABLE_IMAGE_PIXELS,
+  HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE,
+  materializeHappierRenderableImage,
+  type HappierRenderableImageSource,
+} from '../presentation/content/renderableImage.js';
 export {
   createPluginUiHostApiResourceClient,
   createPluginUiResourceStore,

@@ -381,6 +381,30 @@ describe('External Session hooks public contract', () => {
                 }],
             }));
         }
+
+        // Every dialect the host serializer can actually emit is admissible;
+        // the unencoded `powershell` form above stays rejected because no host
+        // serializer selects it for a hook entry.
+        for (const shellDialect of [
+            'posix',
+            'windows_cmd',
+            'powershell_encoded',
+        ] as const) {
+            expect(validateAgentExternalSessionHooksContribution({
+                ...hooks,
+                installationVariants: [{
+                    ...variant(),
+                    events: [{
+                        ...variant().events[0]!,
+                        command: {
+                            kind: 'happier_observation_v1',
+                            shellDialect,
+                        },
+                    }],
+                }],
+            }).installationVariants[0]!.events[0]!.command.shellDialect)
+                .toBe(shellDialect);
+        }
     });
 
     it('admits plugin-resolved absolute targets and exact declared target sets', () => {

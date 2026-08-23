@@ -3,17 +3,11 @@ import { fileURLToPath } from 'node:url';
 
 import { findRepoRoot } from './vendoredWorkspaceDeclarations.mjs';
 import { ensureWorkspacePackagesBuiltForComponent as ensureWorkspacePackagesBuiltForComponentDefault } from '../../../apps/stack/scripts/utils/proc/pm.mjs';
-import { ensureWorkspacePackagesBuiltByName as ensureWorkspacePackagesBuiltByNameDefault } from '../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
-import {
-  createWorkspaceChildBuildEnv,
-  WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR,
-} from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
-import { loadCliCommonWorkspacesModule } from '../../../scripts/workspaces/loadCliCommonWorkspacesModule.mjs';
+import { bundleWorkspacePackageDependencies } from '../../../scripts/workspaces/bundleWorkspacePackageDependencies.mjs';
+import { WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 import { resolveWorkspaceBundlePublicationMode } from '../../../scripts/workspaces/workspaceBundlePublication.mjs';
 import {
-  DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
   resolveWorkspaceBundleLockPath,
-  withWorkspaceBundleLock,
 } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -50,66 +44,12 @@ export async function bundleWorkspaceDeps(opts = {}) {
   const repoRoot = opts.repoRoot ?? pluginSdkRepoRoot();
   const pluginSdkDir = opts.pluginSdkDir ?? resolve(repoRoot, 'packages', 'plugin-sdk');
   const lockPath = resolvePluginSdkWorkspaceBundleLockPath({ repoRoot, lockPath: opts.lockPath });
-  const baseEnv = opts.env ?? process.env;
-  const publicationMode = opts.publicationMode ?? 'live';
-  const forceArtifactWorkspaceBuilds = publicationMode === 'artifact';
-  const publishWithWorkspaceBundleLock = opts.withWorkspaceBundleLock ?? withWorkspaceBundleLock;
-  const loadWorkspacesModule = opts.loadCliCommonWorkspacesModule ?? loadCliCommonWorkspacesModule;
-  const ensureWorkspacePackagesBuiltByName = opts.ensureWorkspacePackagesBuiltByName
-    ?? ensureWorkspacePackagesBuiltByNameDefault;
-
-  return publishWithWorkspaceBundleLock(async ({ heldLockValue } = {}) => {
-    const childBuildEnv = createWorkspaceChildBuildEnv({
-      env: baseEnv,
-      heldLockValue,
-    });
-    const {
-      bundleWorkspacePackagesWithRuntimeDependencies,
-      resolveWorkspaceBundlesFromPackageJson,
-    } = await loadWorkspacesModule(
-      repoRoot,
-      childBuildEnv,
-      ensureWorkspacePackagesBuiltByName,
-      {
-        force: forceArtifactWorkspaceBuilds,
-        includeDevDependencies: false,
-        publicationMode,
-        quiet: true,
-      },
-    );
-
-    const bundles = resolveWorkspaceBundlesFromPackageJson({
-      repoRoot,
-      hostPackageDir: pluginSdkDir,
-    });
-    await ensureWorkspacePackagesBuiltByName(
-      repoRoot,
-      [...new Set(bundles.map((bundle) => String(bundle?.packageName ?? bundle?.name ?? '').trim()).filter(Boolean))],
-      {
-        quiet: true,
-        env: childBuildEnv,
-        includeDevDependencies: false,
-        publicationMode,
-        ...(forceArtifactWorkspaceBuilds
-          ? { force: true }
-          : {}),
-      },
-    );
-    bundleWorkspacePackagesWithRuntimeDependencies({
-      bundles,
-      publicationMode,
-    });
-  }, {
+  return await bundleWorkspacePackageDependencies({
+    ...opts,
+    repoRoot,
+    hostPackageDir: pluginSdkDir,
     lockPath,
-    heldLockValue: String(
-      opts.heldLockValue
-        ?? opts.heldLockPath
-        ?? baseEnv?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD
-        ?? '',
-    ).trim(),
-    timeoutMs: DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
-    pollIntervalMs: 250,
-    staleAfterMs: DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
+    quiet: true,
   });
 }
 

@@ -221,6 +221,93 @@ describe('hosted-web UI client bootstrap', () => {
         subscription.dispose();
     });
 
+    it('addresses the bootstrapped mount by its whole wire identity in both directions', async () => {
+        const harness = createRealm();
+        expect(installHostedWebPluginUiHostApiClientBootstrap(harness.realm)).toBe(true);
+        const readiness = awaitHostedWebPluginUiHostApiClientBootstrap(harness.realm);
+        harness.dispatch({
+            source: harness.parent,
+            origin: 'https://host.test',
+            data: bootstrapMessage(),
+        });
+        harness.dispatch({
+            source: harness.parent,
+            origin: 'https://host.test',
+            data: readyAcknowledgementMessage(),
+        });
+        const bootstrap = await readiness;
+
+        const received = vi.fn();
+        const subscription = bootstrap.transport.subscribe(received);
+        await bootstrap.transport.send({
+            wireVersion: 1,
+            kind: 'negotiate',
+            identity,
+            apiRange: '^1.0.0',
+        });
+        const staleAnswerSequence = (harness.posted.at(-1)?.message as Readonly<{ sequence: number }>).sequence;
+        await bootstrap.transport.send({
+            wireVersion: 1,
+            kind: 'negotiate',
+            identity,
+            apiRange: '^1.0.0',
+        });
+        const currentAnswerSequence = (harness.posted.at(-1)?.message as Readonly<{ sequence: number }>).sequence;
+
+        // A superseded mount of the same plugin/view differs only by generation.
+        // The bridge nonce, origin, Session and request correlation all still
+        // match, so whole-identity equality is the only thing keeping this
+        // answer out of the frame.
+        const supersededIdentity = { ...identity, generation: '8' };
+        const negotiated = (
+            wireIdentity: typeof identity,
+            requestSequence: number,
+        ) => ({
+            version: 1,
+            pluginId: 'acme.preview',
+            contributionId: 'preview-web',
+            surfaceId: 'preview-surface',
+            sessionId: 'session-1',
+            nonce: 'nonce-1',
+            sequence: requestSequence + 10,
+            requestSequence,
+            kind: 'result',
+            payload: {
+                wireVersion: 1,
+                kind: 'negotiated',
+                identity: wireIdentity,
+                apiVersion: '1.0.0',
+                methods: ['context'],
+                surface: { placement: 'settingsPage' },
+            },
+        });
+        harness.dispatch({
+            source: harness.parent,
+            origin: 'https://host.test',
+            data: negotiated(supersededIdentity, staleAnswerSequence),
+        });
+        expect(received).not.toHaveBeenCalled();
+
+        harness.dispatch({
+            source: harness.parent,
+            origin: 'https://host.test',
+            data: negotiated(identity, currentAnswerSequence),
+        });
+        expect(received).toHaveBeenCalledTimes(1);
+        expect(received).toHaveBeenCalledWith(expect.objectContaining({ kind: 'negotiated', identity }));
+
+        const postedBeforeStaleSend = harness.posted.length;
+        expect(() => bootstrap.transport.send({
+            wireVersion: 1,
+            kind: 'negotiate',
+            identity: supersededIdentity,
+            apiRange: '^1.0.0',
+        })).toThrow('Plugin UI host wire identity does not match the hosted surface.');
+        expect(harness.posted).toHaveLength(postedBeforeStaleSend);
+
+        subscription.dispose();
+    });
+
     it('routes Collection UI-query requests, cancellation, and content-free wakeups through the one bootstrap controller', async () => {
         const harness = createRealm();
         expect(installHostedWebPluginUiHostApiClientBootstrap(harness.realm)).toBe(true);

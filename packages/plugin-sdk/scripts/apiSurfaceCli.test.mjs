@@ -434,6 +434,64 @@ function runJsonCli(packageRoot, args = []) {
   return runCli(packageRoot, ['--json', ...args]);
 }
 
+function runProductionCli(packageRoot, args = []) {
+  return spawnSync(
+    process.execPath,
+    [CLI_PATH, '--package-root', packageRoot, ...args],
+    { encoding: 'utf8' },
+  );
+}
+
+test('source materialization updates generated barrels before declaration preparation', async () => {
+  const root = await createPackageFixture();
+  try {
+    await writeFixtureFile(root, 'src/actions/newlyPublished.ts', [
+      'export type NewlyPublishedActionOptions = Readonly<{ id: string }>;',
+      '',
+    ].join('\n'));
+    await writeFile(join(root, 'src/actions/index.public.ts'), [
+      "export type { ActionsService } from './service.js';",
+      "export type { NewlyPublishedActionOptions } from './newlyPublished.js';",
+      '',
+    ].join('\n'), 'utf8');
+
+    const result = runProductionCli(root, ['--materialize-source', '--write']);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      await readFile(join(root, 'src/actions/index.ts'), 'utf8'),
+      /export type \{ NewlyPublishedActionOptions \} from '\.\/newlyPublished\.js';/u,
+    );
+    assert.doesNotMatch(result.stdout, /publicDeclarationReport/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('source materialization check reports a stale generated barrel without repairing it', async () => {
+  const root = await createPackageFixture();
+  try {
+    await writeFixtureFile(root, 'src/actions/newlyPublished.ts', [
+      'export type NewlyPublishedActionOptions = Readonly<{ id: string }>;',
+      '',
+    ].join('\n'));
+    await writeFile(join(root, 'src/actions/index.public.ts'), [
+      "export type { ActionsService } from './service.js';",
+      "export type { NewlyPublishedActionOptions } from './newlyPublished.js';",
+      '',
+    ].join('\n'), 'utf8');
+    const generatedBarrelBefore = await readFile(join(root, 'src/actions/index.ts'), 'utf8');
+
+    const result = runProductionCli(root, ['--materialize-source', '--check']);
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stdout, /drift sourceBarrels src\/actions\/index\.ts/u);
+    assert.equal(await readFile(join(root, 'src/actions/index.ts'), 'utf8'), generatedBarrelBefore);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('real CLI default output is a concise summary with bounded real-phase progress', async () => {
   const root = await createPackageFixture();
   try {
@@ -1042,20 +1100,44 @@ test('ordinary checks retain validated publication @since without writing it awa
   }
 });
 
-test('ordinary checks reject incomplete local @since metadata without writing it', async () => {
+test('ordinary checks preserve prior @since while leaving newly added symbols unstamped', async () => {
   const root = await createPackageFixture();
   try {
-    const inventoryBefore = JSON.parse(await readFile(join(root, 'api-surface.json'), 'utf8'));
-    inventoryBefore.symbols[0].since = '1.0.0';
-    await writeFile(join(root, 'api-surface.json'), `${JSON.stringify(inventoryBefore, null, 2)}\n`, 'utf8');
-    const persistedBefore = await readFile(join(root, 'api-surface.json'), 'utf8');
-    const barrelBefore = await readFile(join(root, 'src/actions/index.ts'), 'utf8');
+    const published = runJsonCli(root, ['--write', '--published-version', '1.0.0']);
+    assert.equal(published.status, 0, published.stderr);
+    await writeFile(
+      join(root, 'src/actions/service.ts'),
+      [
+        'export interface ActionsService {}',
+        'export interface UnpublishedActionsService {}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      join(root, 'src/actions/index.public.ts'),
+      [
+        "export type { ActionsService } from './service.js';",
+        "export type { UnpublishedActionsService } from './service.js';",
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const ordinaryWrite = runJsonCli(root, ['--write']);
+    assert.equal(ordinaryWrite.status, 0, ordinaryWrite.stderr);
+    const actionSymbols = JSON.parse(await readFile(join(root, 'api-surface.json'), 'utf8'))
+      .symbols
+      .filter((symbol) => symbol.specifier === './actions')
+      .map(({ exportName, since }) => ({ exportName, since }));
+    assert.deepEqual(actionSymbols, [
+      { exportName: 'ActionsService', since: '1.0.0' },
+      { exportName: 'UnpublishedActionsService', since: undefined },
+    ]);
 
     const ordinaryCheck = runJsonCli(root, ['--check']);
-    assert.equal(ordinaryCheck.status, 1, ordinaryCheck.stdout);
-    assert.match(ordinaryCheck.stderr, /incomplete @since provenance/u);
-    assert.equal(await readFile(join(root, 'api-surface.json'), 'utf8'), persistedBefore);
-    assert.equal(await readFile(join(root, 'src/actions/index.ts'), 'utf8'), barrelBefore);
+    assert.equal(ordinaryCheck.status, 0, ordinaryCheck.stderr);
+    assert.equal(JSON.parse(ordinaryCheck.stdout).status, 'current');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

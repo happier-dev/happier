@@ -186,6 +186,12 @@ export type HappierScrollEvent = Readonly<{
   nativeEvent: unknown;
 }>;
 
+/** A caret (`start === end`) or a selected range inside a text control. */
+export type HappierTextSelection = Readonly<{
+  start: number;
+  end: number;
+}>;
+
 export type HappierKeyboardShouldPersistTaps = boolean | 'always' | 'never' | 'handled';
 
 export type HappierTextHostProps = Readonly<{

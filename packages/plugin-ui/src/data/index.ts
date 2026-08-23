@@ -12,6 +12,7 @@ import type {
 
 import { usePluginUiDataClient } from './context.js';
 import type {
+  PluginUiAccountKv,
   PluginUiCollectionQueryPager,
   PluginUiCollectionQuerySnapshot,
 } from './types.js';
@@ -19,11 +20,24 @@ import type {
 export { usePluginUiDataClient } from './context.js';
 export type {
   PluginUiAccountCollectionForDefinition,
+  PluginUiAccountKv,
   PluginUiCollectionQueryInput,
   PluginUiCollectionQueryPager,
   PluginUiCollectionQuerySnapshot,
   PluginUiDataClient,
 } from './types.js';
+
+/**
+ * The mounted surface's own Account KV scope.
+ *
+ * Account KV is the small, Account-portable store a plugin uses for its own
+ * non-declarative state. Reading it from a surface needs no daemon: this is the
+ * same Account row the plugin's daemon side writes, reached through the same
+ * Protocol owner.
+ */
+export function usePluginAccountKv(): PluginUiAccountKv {
+  return usePluginUiDataClient().accountKv;
+}
 
 export type PluginUiCollectionQueryFailure =
   | PluginCollectionUiQueryErrorV1

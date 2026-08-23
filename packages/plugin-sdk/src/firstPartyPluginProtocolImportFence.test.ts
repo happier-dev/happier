@@ -165,7 +165,6 @@ const EXPECTED_PLUGIN_RUNTIME_HOST_PACKAGE_REACHES: Readonly<Record<string, read
     '@happier-dev/agents/providers/claude-model-options',
     '@happier-dev/protocol/agents/claude',
   ],
-  elevenlabs: ['@happier-dev/agents'],
   opencode: ['@happier-dev/agents/request-auth'],
   pi: ['@happier-dev/agents/request-auth'],
 };

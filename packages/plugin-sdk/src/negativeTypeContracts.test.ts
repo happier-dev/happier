@@ -130,6 +130,11 @@ describe('SDK negative type contracts', () => {
                 reason: 'A tombstone cannot be deleted through an absent precondition.',
                 guardedDeclaration: "void transaction.delete('checkpoint', { expectedVersion: 'absent' });",
             },
+            {
+                fileName: 'targetedContributionAuthoring.test.ts',
+                reason: 'A descriptor-free protocol forbids the field.',
+                guardedDeclaration: "descriptor: { providerId: 'github' },",
+            },
         ]);
     });
 

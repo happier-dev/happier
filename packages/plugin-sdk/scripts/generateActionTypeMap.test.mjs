@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import ts from 'typescript';
 
-import { renderActionTypeProjection } from './generateActionTypeMap.mjs';
+import { renderActionTypeProjection, writeFileIfChanged } from './generateActionTypeMap.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const PACKAGE_ROOT = resolve(dirname(SCRIPT_PATH), '..');
@@ -51,6 +52,28 @@ test('Action input projections accept the public readonly JSON value without cha
   assert.equal(result, '{ payload: PluginJsonValueV2; }');
 });
 
+test('Action type map publication leaves identical output untouched and writes changed output', async (t) => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-type-map-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const outputPath = resolve(directory, 'actionTypeMap.generated.ts');
+
+  await writeFileIfChanged(outputPath, 'first\n');
+  const knownOldDate = new Date('2000-01-01T00:00:00.000Z');
+  utimesSync(outputPath, knownOldDate, knownOldDate);
+  const beforeIdenticalWrite = statSync(outputPath);
+
+  await writeFileIfChanged(outputPath, 'first\n');
+  const afterIdenticalWrite = statSync(outputPath);
+  assert.equal(afterIdenticalWrite.mtimeMs, beforeIdenticalWrite.mtimeMs);
+  if (beforeIdenticalWrite.ino !== 0 && afterIdenticalWrite.ino !== 0) {
+    assert.equal(afterIdenticalWrite.ino, beforeIdenticalWrite.ino);
+  }
+
+  await writeFileIfChanged(outputPath, 'second\n');
+  assert.equal(readFileSync(outputPath, 'utf8'), 'second\n');
+  assert.notEqual(statSync(outputPath).mtimeMs, beforeIdenticalWrite.mtimeMs);
+});
+
 test('generated Action projection is declaration-neutral and retains its public aliases', () => {
   execFileSync(process.execPath, [GENERATOR_PATH, '--check'], {
     cwd: PACKAGE_ROOT,
@@ -60,7 +83,11 @@ test('generated Action projection is declaration-neutral and retains its public 
   const source = readFileSync(GENERATED_PATH, 'utf8');
   const importPaths = [...source.matchAll(/^import(?: type)? [^;]+ from '([^']+)';$/gmu)]
     .map((match) => match[1]);
-  assert.deepEqual(importPaths, ['../identity.js']);
+  assert.deepEqual(importPaths, [
+    '../identity.js',
+    '../externalSessions.js',
+    '../ui/publicContract.js',
+  ]);
   assert.doesNotMatch(
     source,
     /(?:['"]zod(?:\/[^'"]*)?['"]|\bz\.[A-Za-z_$]|\bZod[A-Za-z0-9_]*\b|\$(?:brand|Zod[A-Za-z0-9_]*))/u,
@@ -70,6 +97,10 @@ test('generated Action projection is declaration-neutral and retains its public 
     'PluginPolicyExpressionV2',
     'ActionSurfaceBindingTransform',
     'PluginJsonSchemaV2',
+    'PluginAgentExternalSessionLinkDataArray',
+    'PluginAgentExternalSessionLinkDataObject',
+    'PluginAgentExternalSessionLinkDataValue',
+    'JSONType',
     'PluginActionInputById',
     'PluginActionResultById',
     'PluginInvocableActionId',

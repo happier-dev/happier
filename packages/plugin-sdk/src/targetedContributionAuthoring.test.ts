@@ -188,6 +188,41 @@ describe('targeted contribution point semantics', () => {
             .not.toHaveProperty('descriptor');
     });
 
+    it('refuses a contribution point that did not come from the point helpers', () => {
+        const protocol = defineContributionProtocol({
+            id: 'triage-source',
+            version: 1,
+            operations: {
+                inspect: {
+                    required: true,
+                    input: { kind: 'contributorDefined' },
+                    resultSchema: emptyResultSchema,
+                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                },
+            },
+        });
+        const helperPoint = protocol.point();
+
+        // A hand-written definition can reproduce the public authoring shape
+        // exactly — only the helper-attached semantics are missing, and those
+        // are the whole reason the point can be decoded later. Projecting it as
+        // a semantics-free point would silently retire the target's contract.
+        const handWritten: ContributionPointAuthorDefinition = {
+            protocols: helperPoint.protocols,
+        };
+        expect(() => definePlugin({
+            id: 'happier.triage',
+            version: '0.1.0',
+            contributionPoints: { sources: handWritten },
+        })).toThrow(/Contribution point helper semantics are invalid/u);
+
+        expect(() => definePlugin({
+            id: 'happier.triage',
+            version: '0.1.0',
+            contributionPoints: { sources: helperPoint },
+        })).not.toThrow();
+    });
+
     it('projects the live target descriptor and declared surfaces without serializing executable semantics', () => {
         const descriptor = defineProtocolObject({
             providerId: defineProtocolString(),

@@ -9,6 +9,7 @@ import type {
   HappierAlignment,
   HappierJustification,
   HappierKeyboardShouldPersistTaps,
+  HappierLayoutChangeEvent,
   HappierScrollEvent,
   HappierStyleProp,
 } from '../portableTypes.js';
@@ -25,6 +26,8 @@ export type HappierStackProps = Readonly<{
   wrap?: boolean;
   align?: HappierAlignment;
   justify?: HappierJustification;
+  /** Reports this box's resolved size and position after the platform lays it out. */
+  onLayout?: (event: HappierLayoutChangeEvent) => void;
   testID?: string;
   style?: HappierStyleProp;
 }>;
@@ -33,6 +36,8 @@ export type HappierScreenProps = Readonly<{
   children?: ReactNode;
   /** Private semantic focus binding supplied by the public layout adapter. */
   controlRef?: (instance: unknown | null) => void;
+  /** Reports this box's resolved size and position after the platform lays it out. */
+  onLayout?: (event: HappierLayoutChangeEvent) => void;
   testID?: string;
   style?: HappierStyleProp;
   safeAreaInsets?: Readonly<{ top: number; right: number; bottom: number; left: number }>;
@@ -44,6 +49,8 @@ export type HappierScrollAreaProps = Readonly<{
   keyboardShouldPersistTaps?: HappierKeyboardShouldPersistTaps;
   onScroll?: (event: HappierScrollEvent) => void;
   scrollEventThrottle?: number;
+  /** Reports this box's resolved size and position after the platform lays it out. */
+  onLayout?: (event: HappierLayoutChangeEvent) => void;
   accessibilityLabel?: string;
   testID?: string;
   style?: HappierStyleProp;
@@ -54,7 +61,7 @@ export type HappierScrollAreaProps = Readonly<{
 const screenBaseStyle: ViewStyle = { flex: 1, minWidth: 0 };
 const stackBaseStyle: ViewStyle = { minWidth: 0 };
 
-export function HappierScreen({ children, controlRef, testID, style, safeAreaInsets }: HappierScreenProps) {
+export function HappierScreen({ children, controlRef, onLayout, testID, style, safeAreaInsets }: HappierScreenProps) {
   const insetStyle: ViewStyle | undefined = safeAreaInsets
     ? {
         paddingTop: safeAreaInsets.top,
@@ -67,6 +74,7 @@ export function HappierScreen({ children, controlRef, testID, style, safeAreaIns
     <View
       ref={controlRef}
       tabIndex={controlRef ? -1 : undefined}
+      onLayout={onLayout}
       testID={testID}
       style={[screenBaseStyle, insetStyle, style]}
     >
@@ -83,6 +91,7 @@ export function HappierStack({
   align,
   justify,
   controlRef,
+  onLayout,
   testID,
   style,
 }: HappierStackProps) {
@@ -90,6 +99,7 @@ export function HappierStack({
     <View
       ref={controlRef}
       tabIndex={controlRef ? -1 : undefined}
+      onLayout={onLayout}
       testID={testID}
       style={[
         stackBaseStyle,

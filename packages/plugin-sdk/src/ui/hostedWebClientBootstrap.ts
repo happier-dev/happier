@@ -8,6 +8,7 @@ import {
     PluginHostedWebCollectionUiQueryBridgeOperationV1Schema,
     PluginHostedWebCollectionUiQueryBridgeResponseV1Schema,
     PluginUiHostApiWireEnvelopeV1Schema,
+    pluginUiHostApiWireIdentitiesEqual,
     readPluginHostedWebBridgeFrameOriginV1,
     type PluginHostedWebCollectionUiQueryBridgeChangeV1,
     type PluginHostedWebCollectionUiQueryBridgeOperationV1,
@@ -155,14 +156,6 @@ function readHostedWebBootstrapConfig(realm: HostedWebPluginUiClientRealm): Host
     });
 }
 
-function sameIdentity(expected: PluginUiHostApiWireIdentityV1, actual: PluginUiHostApiWireIdentityV1): boolean {
-    return expected.pluginId === actual.pluginId
-        && expected.pluginVersion === actual.pluginVersion
-        && expected.viewId === actual.viewId
-        && expected.generation === actual.generation
-        && expected.sessionId === actual.sessionId;
-}
-
 function readMessageData(raw: unknown): unknown {
     const event = raw && typeof raw === 'object' ? raw as HostedWebMessageEvent : {};
     if (typeof event.data !== 'string') return event.data;
@@ -295,7 +288,7 @@ function createHostedWebBootstrapController(
     };
     const deliver = (wire: PluginUiHostApiWireEnvelopeV1): void => {
         const expected = identity;
-        if (!expected || !sameIdentity(expected, wire.identity)) return;
+        if (!expected || !pluginUiHostApiWireIdentitiesEqual(expected, wire.identity)) return;
         for (const listener of listeners) listener(wire);
     };
     const disconnectCollectionUiQuery = (error: PluginUiHostApiClientError): void => {
@@ -368,7 +361,7 @@ function createHostedWebBootstrapController(
                     );
                 }
                 const wire = PluginUiHostApiWireEnvelopeV1Schema.parse(message);
-                if (!sameIdentity(identity, wire.identity)) {
+                if (!pluginUiHostApiWireIdentitiesEqual(identity, wire.identity)) {
                     throw new TypeError('Plugin UI host wire identity does not match the hosted surface.');
                 }
                 sequence += 1;

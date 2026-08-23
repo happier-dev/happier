@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createUnavailablePluginUiAccountKv } from '../data/accountKv.js';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import type { RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 
@@ -102,6 +103,111 @@ function setInputValue(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+type RecordingAccountKv = PluginUiDataClient['accountKv'] & Readonly<{
+  writes: { key: string; value: unknown; expectedVersion: number | 'absent' }[];
+}>;
+
+/**
+ * One in-memory Account row with the public per-key CAS contract, so the
+ * example's remembered-project behaviour is exercised through the same shape
+ * the real Protocol row owner enforces.
+ */
+function createRecordingAccountKv(
+  initial: Readonly<Record<string, Readonly<{ version: number; value: unknown }>>> = {},
+): RecordingAccountKv {
+  const values = new Map(Object.entries(initial));
+  const writes: { key: string; value: unknown; expectedVersion: number | 'absent' }[] = [];
+  const unsupported = async (): Promise<never> => {
+    throw new Error('This fixture only exercises the get/set Account KV path.');
+  };
+  return Object.freeze({
+    writes,
+    get: vi.fn(async (key: string) => values.get(key) ?? null),
+    set: vi.fn(async (
+      key: string,
+      value: unknown,
+      options: Readonly<{ expectedVersion: number | 'absent' }>,
+    ) => {
+      writes.push({ key, value, expectedVersion: options.expectedVersion });
+      const current = values.get(key);
+      const expected = current ? current.version : 'absent';
+      if (options.expectedVersion !== expected) {
+        throw Object.assign(new Error('conflict'), { code: 'plugin_account_kv_conflict' });
+      }
+      const version = current ? current.version + 1 : 0;
+      values.set(key, { version, value });
+      return { version };
+    }),
+    delete: unsupported,
+    list: unsupported,
+    transaction: unsupported,
+  }) as unknown as RecordingAccountKv;
+}
+
+describe('Projects and Tasks Account KV continuity', () => {
+  it('restores the remembered project from Account KV and writes the next choice conditionally', async () => {
+    const emptyPager = createMutablePager(Object.freeze({
+      rows: Object.freeze([]),
+      hasMore: false,
+      status: 'idle',
+    }));
+    const accountKv = createRecordingAccountKv({
+      'ui/lastProjectId': { version: 4, value: 'project-remembered' },
+    });
+    const openCollectionQuery: PluginUiDataClient['openCollectionQuery'] = vi.fn(async () => emptyPager);
+    const unusedCollection = vi.fn(async () => {
+      throw new Error('This journey never performs a direct collection mutation.');
+    });
+    const dataClient = Object.freeze({
+      collection: () => Object.freeze({
+        get: unusedCollection,
+        put: unusedCollection,
+        delete: unusedCollection,
+        query: unusedCollection,
+        batch: unusedCollection,
+        limits: unusedCollection,
+        measureBatch: unusedCollection,
+      }),
+      openCollectionQuery,
+      accountKv,
+    }) as unknown as PluginUiDataClient;
+    const renderFixture = createProjectsTasksRenderContext();
+    const mount = await mountThroughReactNativeWebAsync(
+      bindDataClient(renderSurface(renderFixture.context), dataClient),
+    );
+
+    try {
+      // The surface opens straight onto the remembered project: no daemon is in
+      // the path and the person did not have to retype the id on this device.
+      await vi.waitFor(() => {
+        expect(openCollectionQuery).toHaveBeenCalledWith(expect.objectContaining({
+          parameters: { projectId: 'project-remembered' },
+        }));
+      });
+      expect(accountKv.writes).toEqual([]);
+
+      const projectInput = findByAccessibleName(mount, 'Project ID') as HTMLInputElement;
+      await act(async () => {
+        setInputValue(projectInput, 'project-next');
+      });
+      await act(async () => {
+        findByAccessibleName(mount, 'Show open tasks').click();
+      });
+
+      await vi.waitFor(() => {
+        expect(accountKv.writes).toEqual([{
+          key: 'ui/lastProjectId',
+          value: 'project-next',
+          expectedVersion: 4,
+        }]);
+      });
+    } finally {
+      mount.unmount();
+      renderFixture.dispose();
+    }
+  });
+});
+
 describe('Projects and Tasks Account Collection surface', () => {
   it('waits for a submitted Project before opening the declared query, then pages, distinguishes retained and empty query errors, and surfaces a revision conflict after completing with the current revision', async () => {
     const emptyPager = createMutablePager(Object.freeze({
@@ -170,6 +276,7 @@ describe('Projects and Tasks Account Collection surface', () => {
         return collection as unknown as PluginUiAccountCollectionForDefinition<TDefinition>;
       },
       openCollectionQuery,
+      accountKv: createUnavailablePluginUiAccountKv(),
     }) satisfies PluginUiDataClient;
     const renderFixture = createProjectsTasksRenderContext();
     const { context: renderContext } = renderFixture;

@@ -176,3 +176,67 @@ describe('managed Provider registration', () => {
         expect(duplicate.registrations()).toEqual([]);
     });
 });
+
+describe('declared Provider arm correspondence', () => {
+    const armScope = (providerArms: Readonly<{
+        managedRuntime: boolean;
+        catalogParserIds: readonly string[];
+    }>) => createPluginRegistrationScope({
+        pluginId: 'acme.providers',
+        target: { realm: 'daemon' },
+        rights: [{
+            family: 'providers',
+            localId: 'gateway',
+            target: { realm: 'daemon' },
+            providerArms,
+        }],
+    });
+
+    it('fails activation when a declared managed runtime arm is never registered', () => {
+        const registration = armScope({ managedRuntime: true, catalogParserIds: ['acme-catalog-v3'] });
+        registration.api.providers.registerCatalogParser(
+            'gateway',
+            'acme-catalog-v3',
+            vi.fn(() => ({ models: [] })),
+        );
+
+        expect(() => registration.commit())
+            .toThrow(/missing managed Provider runtime for 'providers\/gateway'/i);
+        expect(registration.registrations()).toEqual([]);
+    });
+
+    it('fails activation when a declared catalog format arm is never registered', () => {
+        const registration = armScope({ managedRuntime: true, catalogParserIds: ['acme-catalog-v3'] });
+        registration.api.providers.register('gateway', { start: vi.fn() });
+
+        expect(() => registration.commit())
+            .toThrow(/does not implement declared Provider catalog formats for 'providers\/gateway'/i);
+        expect(registration.registrations()).toEqual([]);
+    });
+
+    it('fails activation on an undeclared managed runtime or catalog format', () => {
+        const extraRuntime = armScope({ managedRuntime: false, catalogParserIds: ['acme-catalog-v3'] });
+        extraRuntime.api.providers.register('gateway', { start: vi.fn() });
+        extraRuntime.api.providers.registerCatalogParser('gateway', 'acme-catalog-v3', vi.fn(() => ({ models: [] })));
+        expect(() => extraRuntime.commit())
+            .toThrow(/registered an undeclared managed Provider runtime for 'providers\/gateway'/i);
+
+        const extraFormat = armScope({ managedRuntime: true, catalogParserIds: [] });
+        extraFormat.api.providers.register('gateway', { start: vi.fn() });
+        extraFormat.api.providers.registerCatalogParser('gateway', 'other-format', vi.fn(() => ({ models: [] })));
+        expect(() => extraFormat.commit())
+            .toThrow(/does not implement declared Provider catalog formats for 'providers\/gateway'/i);
+    });
+
+    it('commits the complete declared composite', () => {
+        const registration = armScope({ managedRuntime: true, catalogParserIds: ['acme-catalog-v3'] });
+        const parse = vi.fn(() => ({ models: [] }));
+        registration.api.providers.register('gateway', { start: vi.fn() });
+        registration.api.providers.registerCatalogParser('gateway', 'acme-catalog-v3', parse);
+
+        const [published] = registration.commit();
+        if (published?.family !== 'providers') throw new Error('Expected committed Provider registration');
+        expect(published.value.managedRuntime?.start).toEqual(expect.any(Function));
+        expect(published.value.catalogParsers?.['acme-catalog-v3']).toBe(parse);
+    });
+});

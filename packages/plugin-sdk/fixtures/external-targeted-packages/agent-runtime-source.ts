@@ -20,6 +20,11 @@ export const externalRuntimeEvent: AgentSessionRuntimeEvent = {
 
 export const externalProviderBinding: AgentSessionProviderBinding = {
   connectionId: 'connection-external',
+  upstream: {
+    protocol: 'openai-responses',
+    normalizedUrl: 'https://api.example.test/v1',
+    credential: 'apiKey',
+  },
   model: {
     id: 'model-external',
     name: 'External model',

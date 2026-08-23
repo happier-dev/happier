@@ -1,5 +1,9 @@
 export type { ActionContract } from './service.js';
 export type { ActionCaller } from './actionTypeMap.generated.js';
+export type { PluginAgentExternalSessionLinkDataArray } from './actionTypeMap.generated.js';
+export type { PluginAgentExternalSessionLinkDataObject } from './actionTypeMap.generated.js';
+export type { PluginAgentExternalSessionLinkDataValue } from './actionTypeMap.generated.js';
+export type { JSONType } from './actionTypeMap.generated.js';
 export type {
     AdmittedTargetedOperationExecutionHandle,
     AdmittedTargetedOperationIdentity,

@@ -80,6 +80,8 @@ const packageJsonPath = join(packageRoot, 'package.json');
 const pluginUiPackageRoot = join(packageRoot, '..', 'plugin-ui');
 const pluginUiPackageJsonPath = join(pluginUiPackageRoot, 'package.json');
 const pluginUiDocsRoot = join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'ui');
+const pluginGuidesDocsRoot = join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'guides');
+const pluginExamplesDocsRoot = join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'examples');
 const pluginDocsRoot = join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins');
 const sdkReadmePath = join(packageRoot, 'README.md');
 const minimalManifestDocumentationPath = join(pluginDocsRoot, 'manifest', 'index.mdx');
@@ -134,6 +136,7 @@ const copyableExamples = [
     { name: 'multi-mode-fallback', sourceEntry: 'src/index.ts', ui: 'both', coldManifest: true },
     { name: 'production-hosted-reference', sourceEntry: 'index.ts', ui: 'hostedWeb', coldManifest: true },
     { name: 'code-defined', sourceEntry: 'index.ts', ui: 'none', coldManifest: false },
+    { name: 'tracked-action', sourceEntry: 'index.ts', ui: 'none', coldManifest: false },
     { name: 'public-authoring', sourceEntry: 'index.ts', ui: 'both', coldManifest: false },
     { name: 'advanced-package-root', sourceEntry: 'index.ts', ui: 'none', coldManifest: false },
 ] as const;
@@ -2799,7 +2802,9 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(testing).toContain('`createPluginUiTestkit`');
         expect(testing).toMatch(/does not prove\s+layout, styling, native reconciliation, CSP\/origin/u);
         expect(testing).toMatch(/installed discovery, on-demand activation, generation\s+replacement/u);
+    });
 
+    it('states hosted-web availability as a per-host fact on every overview page', () => {
         for (const documentPath of [
             join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'glossary.mdx'),
             join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'index.mdx'),
@@ -2809,7 +2814,17 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'security', 'sandboxing.mdx'),
             join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'security', 'trust-model.mdx'),
         ]) {
-            expect(readFileSync(documentPath, 'utf8')).toMatch(/\b(?:unavailable|not currently available)\b/iu);
+            const document = readFileSync(documentPath, 'utf8');
+            // The retired claim asserted one global feasibility gate. Hosts now
+            // each report the one frame adapter they constructed, so the page
+            // must neither repeat the retired sentence nor drop the caveat and
+            // read as an unconditional availability claim.
+            expect(document, `${documentPath} must not repeat the retired global hosted-web unavailability claim`)
+                .not.toContain('Artifact-backed frame adapter');
+            expect(document, `${documentPath} must state hosted-web availability as a per-host fact`)
+                .toMatch(/availability\s+is\s+(?:reported\s+)?per\s+host|per\s+host:|host-constructed frame adapter|each host reports/iu);
+            expect(document, `${documentPath} must keep the typed unavailable outcome visible`)
+                .toMatch(/\bunavailable\b/iu);
         }
     });
 
@@ -2825,7 +2840,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
     });
 
     it('keeps hosted source/build claims distinct from unavailable app-adoption evidence', () => {
-        const hostedUnavailable = 'Packaged hosted-web rendering is unavailable on this platform because no Artifact-backed frame adapter has passed its platform feasibility gate.';
+        const hostedUnavailable = 'Packaged hosted-web rendering availability is reported per host; a host that cannot construct its frame adapter reports a typed unavailable reason instead.';
         for (const exampleName of ['hosted-web', 'multi-mode-fallback'] as const) {
             const manifest = readExampleManifest(exampleName);
             expect(manifest.contributes.ui.renderers).toContainEqual(
@@ -2866,6 +2881,12 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             const snippets = [
                 ['index-react-native.tsx', join(pluginUiDocsRoot, 'index.mdx'), 'tsx', 0],
                 ['react-native.tsx', join(pluginUiDocsRoot, 'react-native.mdx'), 'tsx', 0],
+                // The Composer guide's mounted read path and staged-media leaf
+                // are complete author files without a `definePlugin` call, so
+                // the definePlugin snippet lane does not reach them.
+                ['composer-mounted-read.tsx', join(pluginGuidesDocsRoot, 'composer.mdx'), 'tsx', 0],
+                ['composer-staged-media.ts', join(pluginGuidesDocsRoot, 'composer.mdx'), 'ts', 1],
+                ['action-resource-ui-panel.tsx', join(pluginExamplesDocsRoot, 'action-resource-ui-plugin.mdx'), 'tsx', 0],
             ] as const;
             const sourceFiles: string[] = [];
             for (const [fileName, documentPath, language, occurrence] of snippets) {
@@ -3405,6 +3426,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                     'background-indexer',
                     'projects-tasks',
                     'code-defined',
+                    'tracked-action',
                     'public-authoring',
                     'production-hosted-reference',
                     'advanced-package-root',

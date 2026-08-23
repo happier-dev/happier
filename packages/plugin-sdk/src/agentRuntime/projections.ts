@@ -45,6 +45,7 @@ import type {
 import type {
   AgentPermissionIntent,
   AgentSessionProviderBinding,
+  AgentSessionProviderBindingUpstream,
   AgentSessionRuntimeEvent,
 } from './session.js';
 import type { AgentAcpToolNameInference } from './acpTypes.js';
@@ -52,6 +53,15 @@ import type { JsonValue } from '../identity.js';
 
 /** @realm any */
 export { buildAgentAccountUsageRecordId } from './accountUsage.js';
+/**
+ * The canonical public name stays stable while the declaration itself is the
+ * SDK-owned structural projection, so an external author's emitted closure
+ * never reaches into the private Protocol package. `projections.test.ts` holds
+ * this alias equal to `@happier-dev/protocol`'s settings-owned type.
+ */
+export type {
+  AgentConnectedServicesProviderStateSharingPolicy as ConnectedServicesProviderStateSharingPolicyV1,
+} from './session.js';
 export type {
   AgentAcpAuthenticationContext,
   AgentAcpAuthenticationDefinition,
@@ -212,6 +222,7 @@ export type {
   AgentSessionMcpLaunchConfig,
   AgentSessionOpenRequest,
   AgentSessionProviderBinding,
+  AgentSessionProviderBindingUpstream,
   AgentSessionRuntime,
   AgentSessionRuntimeAuthApplyRequest,
   AgentSessionRuntimeAuthApplyResult,
