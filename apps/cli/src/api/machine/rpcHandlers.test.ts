@@ -847,6 +847,7 @@ describe('registerMachineRpcHandlers', () => {
           anthropic: { source: 'connected', profileId: 'work' },
         },
       },
+      connectedServicesUpdatedAt: 555,
       transcriptStorage: 'direct',
     });
 
@@ -866,6 +867,7 @@ describe('registerMachineRpcHandlers', () => {
           anthropic: { source: 'connected', profileId: 'work' },
         },
       },
+      connectedServicesUpdatedAt: 555,
       transcriptStorage: 'direct',
     }));
     const firstSpawnCall = spawnSession.mock.calls.at(0) as [unknown] | undefined;
@@ -1178,6 +1180,7 @@ describe('registerMachineRpcHandlers', () => {
           openai: { source: 'connected', profileId: 'default' },
         },
       },
+      connectedServicesUpdatedAt: 777,
       transcriptStorage: 'direct',
     });
 
@@ -1210,6 +1213,7 @@ describe('registerMachineRpcHandlers', () => {
           openai: { source: 'connected', profileId: 'default' },
         },
       },
+      connectedServicesUpdatedAt: 777,
       transcriptStorage: 'direct',
     }));
     const firstResumeCall = spawnSession.mock.calls.at(0) as [unknown] | undefined;
