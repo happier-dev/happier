@@ -417,6 +417,10 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     const onTerminalInjectionFailure = vi.fn(async () => (
       { action: 'claimed_pending_delivery' as const }
     ));
+    let resolveFirstInjectionAttempt: (() => void) | undefined;
+    const firstInjectionAttempted = new Promise<void>((resolve) => {
+      resolveFirstInjectionAttempt = resolve;
+    });
     let subscribedHook: ((data: SessionHookData) => void) | undefined;
     let pendingPullCount = 0;
     const handle: TerminalHostHandle = {
@@ -432,6 +436,7 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     };
     const injectUserPrompt = vi.fn<TerminalHostAdapter['injectUserPrompt']>(async () => {
       if (injectUserPrompt.mock.calls.length === 1) {
+        resolveFirstInjectionAttempt?.();
         return {
           status: 'failed',
           reason: 'timeout',
@@ -492,16 +497,15 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     });
 
     try {
-      await waitUntil(() => typeof subscribedHook === 'function', 10_000);
+      await firstInjectionAttempted;
       const hook = subscribedHook;
-      if (!hook) throw new Error('Claude session hook subscription was not registered before resume activation');
+      if (!hook) throw new Error('Claude session hook subscription was not registered before injection');
       hook({
         hook_event_name: 'SessionStart',
         session_id: claudeSessionId,
         transcript_path: transcriptPath,
         source: 'resume',
       });
-      await waitUntil(() => injectUserPrompt.mock.calls.length === 1, 10_000);
       hook({
         hook_event_name: 'UserPromptSubmit',
         session_id: claudeSessionId,
