@@ -3751,7 +3751,7 @@ async function finalizeConversationConnectionDelete(input: Readonly<{
   if (custody.kind !== 'settled') return;
 
   const relationPage = await collection.query({
-    index: 'by-connection-binding' as typeof CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
+    index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
     prefix: [input.connectionId],
     // Bound relation cleanup must see every binding-scoped ingress obligation
     // before it reaches the unbound checkpoint/census rows. Otherwise a full
@@ -3895,7 +3895,7 @@ async function finalizeConversationBindingDelete(input: Readonly<{
   if (custody.kind !== 'settled') return;
 
   const relationPage = await collection.query({
-    index: 'by-connection-binding' as typeof CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
+    index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
     prefix: [current.binding.connectionId, input.bindingId],
     order: 'desc',
     limit: MAX_CONNECTION_DELETE_RELATION_ROWS,

@@ -115,6 +115,7 @@ function createEstablishedInvoker(
     isCurrent: () => boolean = () => true,
 ) {
     return createConnectedAccountHostRuntimeInvoker({
+        resolveNetworkAddresses: testResolveNetworkAddresses,
         resolveRuntime: async () => Object.freeze({
             ref: service,
             generation: 'generation-1',
@@ -584,6 +585,7 @@ describe('connected-account runtime invoker', () => {
             },
         };
         const invoker = createConnectedAccountHostRuntimeInvoker({
+            resolveNetworkAddresses: testResolveNetworkAddresses,
             resolveRuntime: async () => Object.freeze({
                 ref: service,
                 generation: 'generation-1',
@@ -758,6 +760,7 @@ describe('connected-account runtime invoker', () => {
             },
         };
         const invoker = createConnectedAccountHostRuntimeInvoker({
+            resolveNetworkAddresses: testResolveNetworkAddresses,
             resolveRuntime: async () => Object.freeze({
                 ref: service,
                 generation: 'generation-1',
@@ -878,6 +881,7 @@ describe('connected-account runtime invoker', () => {
             },
         };
         const invoker = createConnectedAccountHostRuntimeInvoker({
+            resolveNetworkAddresses: testResolveNetworkAddresses,
             resolveRuntime: async () => Object.freeze({
                 ref: service,
                 generation: 'generation-1',
@@ -978,6 +982,7 @@ describe('connected-account runtime invoker', () => {
             },
         };
         const invoker = createConnectedAccountHostRuntimeInvoker({
+            resolveNetworkAddresses: testResolveNetworkAddresses,
             resolveRuntime: async () => Object.freeze({
                 ref: service,
                 generation: 'generation-1',
@@ -1117,6 +1122,7 @@ describe('connected-account runtime invoker', () => {
             getSecret: async () => null,
         });
         const invoker = createConnectedAccountHostRuntimeInvoker({
+            resolveNetworkAddresses: testResolveNetworkAddresses,
             resolveRuntime: async (ref) => await registry.resolve(ref),
             resolvePlugin: () => Object.freeze({
                 version: '1.0.0',
@@ -1297,6 +1303,7 @@ describe('connected-account runtime invoker', () => {
                 getSecret: async () => null,
             });
             const invoker = createConnectedAccountHostRuntimeInvoker({
+                resolveNetworkAddresses: testResolveNetworkAddresses,
                 resolveRuntime: async (ref) => await registry.resolve(ref),
                 resolvePlugin: () => Object.freeze({
                     version: '1.0.0',
@@ -1465,6 +1472,7 @@ describe('connected-account runtime invoker', () => {
         } satisfies PluginConnectedAccountRuntime;
         const createInvoker = (status: 'available' | 'denied') =>
             createConnectedAccountHostRuntimeInvoker({
+                resolveNetworkAddresses: testResolveNetworkAddresses,
                 resolveRuntime: async () => Object.freeze({
                     ref: service,
                     generation: 'generation-1',
@@ -1570,6 +1578,7 @@ describe('connected-account runtime invoker', () => {
             return Object.freeze({}) as PluginInvocationContext['services'];
         });
         const invoker = createConnectedAccountHostRuntimeInvoker({
+            resolveNetworkAddresses: testResolveNetworkAddresses,
             resolveRuntime: async () => Object.freeze({
                 ref: service,
                 generation: 'generation-1',

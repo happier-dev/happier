@@ -1,4 +1,7 @@
-import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
+import {
+    resolveAgentUiBehavior,
+    resolveOwningMachineIdForSession,
+} from '@/agents/registry/registryUiBehavior';
 
 import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
 
@@ -11,7 +14,12 @@ export function resolveProviderMessageMetaOverrides(args: {
     if (!args.agentId) return args.metaOverrides;
 
     try {
-        return resolveAgentUiBehavior(args.agentId).message?.buildOverrides?.({
+        // The overrides travel outbound to the Agent running this Session, so
+        // they are built from the declaration held by that Session's machine.
+        return resolveAgentUiBehavior(
+            args.agentId,
+            resolveOwningMachineIdForSession(args.session),
+        ).message?.buildOverrides?.({
             session: args.session,
             settings: args.settings,
             metaOverrides: args.metaOverrides as Record<string, unknown> | undefined,

@@ -184,7 +184,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     // verified candidate after the first render — including it here would mark
     // a pristine form dirty and prompt for changes the user never made.
     const authoringStateKey = JSON.stringify({
-        draft, secretId, enableAfterSaving,
+        draft, secretId, enableAfterSaving, machineId,
         selectedCandidateId, contributionDisplayName,
         contributionEndpointValues,
     });

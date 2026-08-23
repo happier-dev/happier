@@ -24,7 +24,8 @@ const FRAME = 'components/browser/frame/BrowserFrameUnavailable.tsx';
 const STATUS_BAR = 'components/browser/BrowserStatusBar.tsx';
 const SURFACE_FALLBACK = 'components/browser/surfaces/BrowserSurfaceFallback.tsx';
 const TARGET_CARD = 'components/browser/launchpad/BrowserTargetCard.tsx';
-const ORIGIN_CHIP = 'components/browser/BrowserOriginChip.tsx';
+// The origin chip was merged into the security indicator (one identity chip, not two pills).
+const ORIGIN_CHIP = 'components/browser/toolbar/SecurityOriginIndicator.tsx';
 
 // Surfaces that turn a reason/lastError/surface-state token into copy: they MUST
 // route through the mapper. (The origin chip renders a static neutral key, so it

@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import axios from 'axios';
 
 import { configuration } from '@/configuration';
 
@@ -84,6 +85,40 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('composes Account-server-owned Actions into the executor used by the daemon ingress', async () => {
+    const post = vi.spyOn(axios, 'post').mockResolvedValueOnce({
+      status: 200,
+      data: { tokens: [] },
+    });
+    onTestFinished(() => post.mockRestore());
+    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+
+    createCliActionExecutorFromCredentials({
+      credentials: {
+        token: 'signed-daemon-account-token',
+        encryption: null,
+        credentialProvenance: 'stored_session',
+      },
+    });
+
+    const accountApiTokensListAction = createCliActionExecutor.mock.calls.at(-1)?.[0]
+      ?.accountApiTokensListAction;
+    expect(accountApiTokensListAction).toEqual(expect.any(Function));
+    await expect(accountApiTokensListAction?.({
+      input: {},
+      context: { surface: 'api', authority: 'account_automation' },
+    })).resolves.toEqual({ tokens: [] });
+    expect(post).toHaveBeenCalledWith(
+      expect.stringMatching(/\/v1\/account\/api-tokens\/list$/),
+      {},
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer signed-daemon-account-token',
+        }),
+      }),
+    );
   });
 
   it('routes a PAT Session Action through the selected API endpoint with the exact resolved Session target', async () => {

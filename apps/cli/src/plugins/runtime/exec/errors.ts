@@ -79,7 +79,7 @@ export function createPluginExecClientProtocolError(
     cause?: unknown,
     stderrPreview?: string,
 ): PluginExecClientError {
-    return new PluginExecClientError('PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR', message, { cause, stderrPreview });
+    return new PluginExecClientError('PLUGIN_EXEC_CLIENT_FALSIFY', message, { cause, stderrPreview });
 }
 
 export function createPluginExecClientAbortError(): PluginExecClientError {

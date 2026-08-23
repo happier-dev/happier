@@ -39,7 +39,7 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 
 type SettingsKey = Extract<keyof Settings, string>;
 
-function readOwnerMetadataFromSessionLike(session: unknown): Record<string, unknown> | null {
+export function readOwnerMetadataFromSessionLike(session: unknown): Record<string, unknown> | null {
     if (!isRecord(session)) return null;
     const metadata = readSessionOwnerMetadataView({
         metadataLayoutVersion: typeof session.metadataLayoutVersion === 'number'

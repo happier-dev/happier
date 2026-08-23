@@ -26,6 +26,7 @@ import {
 import {
   QualifiedConnectedAccountIdSchema,
   QualifiedConnectedAccountRefSchema,
+  sameQualifiedConnectedAccountRef,
   type QualifiedConnectedAccountRef,
 } from './qualifiedConnectedAccountPersistence.js';
 import {
@@ -411,15 +412,6 @@ export type QualifiedConnectedAccountQuotaResponseV4 = z.infer<
 export type QualifiedConnectedServiceUsageSourceResolutionV4 = z.infer<
   typeof QualifiedConnectedServiceUsageSourceResolutionV4Schema
 >;
-
-function sameQualifiedConnectedAccountRef(
-  left: QualifiedConnectedAccountRef,
-  right: QualifiedConnectedAccountRef,
-): boolean {
-  return left.service.pluginId === right.service.pluginId
-    && left.service.localId === right.service.localId
-    && left.accountId === right.accountId;
-}
 
 function sourceResolutionMatchesQuotaResponse(
   response: QualifiedConnectedAccountQuotaResponseV4,

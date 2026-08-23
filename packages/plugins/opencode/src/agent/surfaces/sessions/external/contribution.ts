@@ -328,7 +328,9 @@ function withAdmittedBaseUrl(
   requestedSource: AgentExternalSessionSource,
 ): OpenCodeExternalSessionSource {
   const admitted = typeof requestedSource.baseUrl === 'string' ? requestedSource.baseUrl.trim() : '';
-  return validatedSource;
+  return admitted && typeof validatedSource.baseUrl === 'string'
+    ? { ...validatedSource, baseUrl: admitted }
+    : validatedSource;
 }
 
 export function createOpenCodeExternalSessionsContribution(params: Readonly<{

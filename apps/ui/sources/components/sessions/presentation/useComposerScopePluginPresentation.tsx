@@ -411,9 +411,6 @@ export function useComposerScopePluginPresentation(
                 machineId={snapshot.host.machineId ?? null}
                 parentLifetime={surfaceLifetime}
                 transactionApplier={transactionApplier}
-                {...(openDestinationSurface === undefined
-                    ? {}
-                    : { openSurface: openDestinationSurface })}
             />
         );
     }, [

@@ -814,7 +814,6 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       .resolves.toEqual([{
         origin: 'https://eu.example.test',
         base: 'https://eu.example.test',
-        privateNetwork: false,
       }]);
     expect(invokeEstablished).not.toHaveBeenCalled();
   });

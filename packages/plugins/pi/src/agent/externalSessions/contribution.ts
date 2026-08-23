@@ -1693,12 +1693,6 @@ export function createPiExternalSessionsContribution(params: Readonly<{
       // is not the transcript. Reporting ordinary completion here publishes a
       // partial history as authoritative and retires the continuation that
       // would have surfaced the gap.
-      if (!hasMore && page.reachedStart && nextActiveLeafId !== null) {
-        return failed(
-          'agent_error',
-          'Pi transcript branch reaches the start of its source with an unresolved parent entry.',
-        );
-      }
       const tail = request.cursor && !sourceReplaced
         ? null
         : await readCurrentTail({ file, maxBytes: request.maxSerializedBytes });

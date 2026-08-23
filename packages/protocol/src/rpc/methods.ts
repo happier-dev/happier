@@ -123,6 +123,7 @@ export const RPC_METHODS = {
   DAEMON_PLUGIN_UI_REACT_NATIVE_CRASH_REPORT_SUBMIT: 'daemon.plugins.ui.reactNativeCrashReports.submit',
   DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT: 'daemon.localServices.inventory.snapshot',
   DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH: 'daemon.localServices.inventory.refresh',
+  DAEMON_LOCAL_SERVICES_INVENTORY_WATCH: 'daemon.localServices.inventory.watch',
   DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT: 'daemon.localServices.launcher.snapshot',
   DAEMON_LOCAL_SERVICES_LAUNCHER_START: 'daemon.localServices.launcher.start',
   DAEMON_LOCAL_SERVICES_LAUNCHER_OPEN_PREVIEW: 'daemon.localServices.launcher.openPreview',

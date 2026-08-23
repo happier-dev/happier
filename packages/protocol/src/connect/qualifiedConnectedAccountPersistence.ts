@@ -33,3 +33,22 @@ export const QualifiedConnectedAccountRefSchema: ProtocolComposableSchema<{
 export const QualifiedConnectedAccountRefJsonSchema = QualifiedConnectedAccountRefSchema.jsonSchema;
 
 export type QualifiedConnectedAccountRef = ReturnType<typeof QualifiedConnectedAccountRefSchema.parse>;
+
+/**
+ * The one equality for a qualified connected-account ref.
+ *
+ * A ref is three fields, and every caller that has ever compared two of them —
+ * quota source resolution, and now selected-pull-request review scope
+ * production — needs the same answer to "is this the account I authorized as".
+ * Comparing them inline is how two callers end up disagreeing about whether
+ * the contribution identity takes part, so the comparison lives beside the
+ * schema that defines the shape.
+ */
+export function sameQualifiedConnectedAccountRef(
+  left: QualifiedConnectedAccountRef,
+  right: QualifiedConnectedAccountRef,
+): boolean {
+  return left.service.pluginId === right.service.pluginId
+    && left.service.localId === right.service.localId
+    && left.accountId === right.accountId;
+}

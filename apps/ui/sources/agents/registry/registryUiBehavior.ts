@@ -42,6 +42,7 @@ import {
 } from './generatedBundledPluginEntries.uiBehaviorOverrides';
 import {
     createAgentUiBehaviorFromDescriptor,
+    readOwnerMetadataFromSessionLike,
 } from './agentUiBehaviorDescriptors';
 import {
     resolveProjectedAgentUiBehaviorEntry,
@@ -617,10 +618,13 @@ function readCustodyObservedLocalId(session: Session): string | null {
  * metadata view. Every Session-scoped behavior read passes it so a decision
  * about the Agent running on this machine can never be answered with another
  * machine's declaration.
+ *
+ * It accepts a session-like value because the outbound message path carries the
+ * Session untyped; the narrowing is the same one the descriptor interpreter
+ * already uses, so there is one owner-metadata reader rather than two.
  */
-function resolveOwningMachineIdForSession(session: Session | null | undefined): string | null {
-    if (!session) return null;
-    return resolveSessionMachineId(readSessionOwnerMetadataView(session));
+export function resolveOwningMachineIdForSession(session: unknown): string | null {
+    return resolveSessionMachineId(readOwnerMetadataFromSessionLike(session));
 }
 
 function resolveSessionAgentUiBehavior(session: Session): AgentUiBehavior | null {

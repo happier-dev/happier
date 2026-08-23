@@ -10,6 +10,7 @@ import {
     type PluginContributionRef,
 } from '@happier-dev/plugin-sdk';
 
+import type { PluginNetworkAddressResolver } from '@/plugins/runtime/fetch/originLocality';
 import { createPluginInvocationPresentation } from '@/plugins/runtime/invocation/services/interactions';
 import {
     withPluginInvocationServiceBindingAvailability,
@@ -220,6 +221,8 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
         service: PluginContributionRef,
         configuration: PluginConnectedAccountRuntimeConfiguration,
     ): MaybePromise<readonly string[]>;
+    /** DNS boundary for the private-network decision; defaults to the host resolver. */
+    resolveNetworkAddresses?: PluginNetworkAddressResolver;
 }>): ConnectedAccountHostRuntimeInvoker {
     async function createContext(input: ConnectedAccountRuntimeAuthenticationInvocation): Promise<Readonly<{
         lease: ConnectedAccountRuntimeLease;
@@ -310,6 +313,9 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                         ? {}
                         : { configurationRevocationSignal }),
                     isGenerationCurrent: () => lease.isCurrent(),
+                    ...(params.resolveNetworkAddresses
+                        ? { resolveNetworkAddresses: params.resolveNetworkAddresses }
+                        : {}),
                 });
                 serviceBinding = bindConnectedAccountConfiguredOrigins(serviceBinding, resolution);
             }
@@ -486,6 +492,9 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                         ? {}
                         : { configurationRevocationSignal }),
                     isGenerationCurrent: () => lease.isCurrent(),
+                    ...(params.resolveNetworkAddresses
+                        ? { resolveNetworkAddresses: params.resolveNetworkAddresses }
+                        : {}),
                 });
                 serviceBinding = bindConnectedAccountConfiguredOrigins(serviceBinding, resolution);
             }

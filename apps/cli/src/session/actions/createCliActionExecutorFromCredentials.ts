@@ -6,6 +6,7 @@ import {
   type SessionTranscriptFollowLeaseRegistry,
 } from '@/api/session/transcriptQueries';
 import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscriptActionInput';
+import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { configuration } from '@/configuration';
 import { readSettings, type StoredCredentials } from '@/persistence';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
@@ -308,6 +309,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
 
     return createCliActionExecutor({
       ...cryptoContext,
+      ...createAccountServerActionDeps({ token: credentials.token }),
       token: credentials.token,
       credentials,
       sessionId: 'cli-global',

@@ -24,6 +24,39 @@ export const CodingPromptBehaviorV1Schema = z
 
 export type CodingPromptBehaviorV1 = z.infer<typeof CodingPromptBehaviorV1Schema>;
 
+/**
+ * Sparse override of the Account coding-prompt behavior. Every key is
+ * optional and an absent key inherits the Account value rather than
+ * restating it, so an Account-level change still reaches an owner that
+ * never expressed an opinion. This carries no prompt text: profile-specific
+ * system stacks are owned by `PromptStacksV1.surfaces.profilesById`.
+ */
+export const CodingPromptBehaviorOverridesV1Schema = z
+  .object({
+    sessionTitleUpdates: CodingPromptSessionTitleUpdatesInputV1Schema.optional(),
+    responseOptions: CodingPromptBehaviorModeV1Schema.optional(),
+  })
+  .strict();
+
+export type CodingPromptBehaviorOverridesV1 = z.infer<typeof CodingPromptBehaviorOverridesV1Schema>;
+
+/** Applies a sparse override onto a fully resolved Account behavior. */
+export function applyCodingPromptBehaviorOverridesV1(
+  base: CodingPromptBehaviorV1,
+  overrides: CodingPromptBehaviorOverridesV1 | null | undefined,
+): CodingPromptBehaviorV1 {
+  if (!overrides) return base;
+  return {
+    ...base,
+    ...(overrides.sessionTitleUpdates === undefined
+      ? {}
+      : { sessionTitleUpdates: overrides.sessionTitleUpdates }),
+    ...(overrides.responseOptions === undefined
+      ? {}
+      : { responseOptions: overrides.responseOptions }),
+  };
+}
+
 export const DEFAULT_CODING_PROMPT_BEHAVIOR_V1: CodingPromptBehaviorV1 = Object.freeze(
   CodingPromptBehaviorV1Schema.parse({}),
 );
