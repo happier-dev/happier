@@ -65,7 +65,7 @@ describe('resolveSessionHandoffEligibility', () => {
     });
   });
 
-  it('rejects unsupported direct session storage providers', () => {
+  it('rejects Pi handoff because vendor state transfer is unsupported', () => {
     expect(
       resolveSessionHandoffEligibility({
         metadata: {
@@ -80,7 +80,7 @@ describe('resolveSessionHandoffEligibility', () => {
       }),
     ).toEqual({
       eligible: false,
-      reasonCode: 'storage_mode_unsupported',
+      reasonCode: 'handoff_unsupported',
       agentId: 'pi',
       storageMode: 'direct',
     });
