@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LocalServiceInventorySnapshotClientResult } from './api';
@@ -10,6 +7,7 @@ import {
     resetLocalServiceInventoryStoreForTests,
     subscribeLocalServiceInventoryStore,
 } from './sharedStore';
+import { expectNoWallClockPolling } from '../noPollingTestHelpers';
 import { selectLocalServiceInventoryRows, type LocalServiceInventorySnapshot } from './store';
 
 const snapshot = {
@@ -85,16 +83,15 @@ describe('shared local-service inventory store', () => {
         unsub();
     });
 
-    it('uses no wall-clock setInterval poll in the inventory state surface', () => {
-        const storeSource = readFileSync(
-            fileURLToPath(new URL('./sharedStore.ts', import.meta.url)),
-            'utf8',
-        );
-        const hookSource = readFileSync(
-            fileURLToPath(new URL('./useLocalServiceInventoryState.ts', import.meta.url)),
-            'utf8',
-        );
-        expect(storeSource).not.toContain('setInterval(');
-        expect(hookSource).not.toContain('setInterval(');
+    it('does not re-fetch the inventory on a wall clock while subscribed', async () => {
+        const snapshotClient = vi.fn(async (): Promise<LocalServiceInventorySnapshotClientResult> => ({
+            status: 'ok',
+            snapshot,
+        }));
+
+        await expectNoWallClockPolling({
+            subscribe: () => subscribeLocalServiceInventoryStore(key, () => {}, { snapshotClient }),
+            fetchSpy: snapshotClient,
+        });
     });
 });

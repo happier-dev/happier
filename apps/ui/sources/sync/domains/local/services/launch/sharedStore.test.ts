@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LocalServiceLauncherSnapshotClientResult } from './api';
@@ -10,6 +7,7 @@ import {
     resetLocalServiceLauncherStoreForTests,
     subscribeLocalServiceLauncherStore,
 } from './sharedStore';
+import { expectNoWallClockPolling } from '../noPollingTestHelpers';
 import { selectLocalServiceLaunchTargets } from './store';
 import type { LocalServiceLauncherSnapshot } from './types';
 
@@ -86,16 +84,15 @@ describe('shared local-service launcher store', () => {
         unsub();
     });
 
-    it('uses no wall-clock setInterval poll in the launcher state surface', () => {
-        const storeSource = readFileSync(
-            fileURLToPath(new URL('./sharedStore.ts', import.meta.url)),
-            'utf8',
-        );
-        const hookSource = readFileSync(
-            fileURLToPath(new URL('./useLocalServiceLauncherState.ts', import.meta.url)),
-            'utf8',
-        );
-        expect(storeSource).not.toContain('setInterval(');
-        expect(hookSource).not.toContain('setInterval(');
+    it('does not re-fetch launch targets on a wall clock while subscribed', async () => {
+        const snapshotClient = vi.fn(async (): Promise<LocalServiceLauncherSnapshotClientResult> => ({
+            status: 'ok',
+            snapshot,
+        }));
+
+        await expectNoWallClockPolling({
+            subscribe: () => subscribeLocalServiceLauncherStore(key, () => {}, { snapshotClient }),
+            fetchSpy: snapshotClient,
+        });
     });
 });

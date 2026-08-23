@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import type {
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
@@ -15,6 +12,7 @@ import {
     resetLocalServicePublicPreviewStoreForTests,
     subscribeLocalServicePublicPreviewStore,
 } from './sharedStore';
+import { expectNoWallClockPolling } from '../noPollingTestHelpers';
 import { selectLocalServicePublicPreviewRows } from './store';
 
 const exposure = {
@@ -176,11 +174,15 @@ describe('shared local-service public-preview store', () => {
         unsub();
     });
 
-    it('uses no wall-clock setInterval poll in the public-preview state surface', () => {
-        const hookSource = readFileSync(
-            fileURLToPath(new URL('./useLocalServicePublicPreviewState.ts', import.meta.url)),
-            'utf8',
-        );
-        expect(hookSource).not.toContain('setInterval(');
+    it('does not re-fetch the public-preview status on a wall clock while subscribed', async () => {
+        const statusClient = vi.fn(async (): Promise<LocalServicePublicPreviewStatusClientResult> => ({
+            status: 'ok',
+            snapshot,
+        }));
+
+        await expectNoWallClockPolling({
+            subscribe: () => subscribeLocalServicePublicPreviewStore(key, () => {}, { statusClient }),
+            fetchSpy: statusClient,
+        });
     });
 });

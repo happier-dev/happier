@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LocalServiceManagedSnapshotClientResult } from './api';
@@ -10,6 +7,7 @@ import {
     resetManagedLocalServicesStoreForTests,
     subscribeManagedLocalServicesStore,
 } from './sharedStore';
+import { expectNoWallClockPolling } from '../noPollingTestHelpers';
 import { selectManagedLocalServiceRows, type ManagedLocalServicesSnapshot } from './store';
 
 const snapshot = {
@@ -76,16 +74,15 @@ describe('shared managed local-services store', () => {
         unsub();
     });
 
-    it('uses no wall-clock setInterval poll in the managed-services state surface', () => {
-        const storeSource = readFileSync(
-            fileURLToPath(new URL('./sharedStore.ts', import.meta.url)),
-            'utf8',
-        );
-        const hookSource = readFileSync(
-            fileURLToPath(new URL('./useManagedLocalServicesState.ts', import.meta.url)),
-            'utf8',
-        );
-        expect(storeSource).not.toContain('setInterval(');
-        expect(hookSource).not.toContain('setInterval(');
+    it('does not re-fetch managed services on a wall clock while subscribed', async () => {
+        const snapshotClient = vi.fn(async (): Promise<LocalServiceManagedSnapshotClientResult> => ({
+            status: 'ok',
+            snapshot,
+        }));
+
+        await expectNoWallClockPolling({
+            subscribe: () => subscribeManagedLocalServicesStore(key, () => {}, { snapshotClient }),
+            fetchSpy: snapshotClient,
+        });
     });
 });

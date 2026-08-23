@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol';
@@ -15,6 +12,7 @@ import {
     resetLocalServicePreviewStoreForTests,
     subscribeLocalServicePreviewStore,
 } from './sharedStore';
+import { expectNoWallClockPolling } from '../noPollingTestHelpers';
 import { selectLocalServicePreviewRows, type LocalServicePreviewSnapshot } from './store';
 
 function previewResource(previewId: string): LocalServicePreviewResourceV1 {
@@ -169,16 +167,15 @@ describe('shared local-service preview store (PRV-4)', () => {
         unsub();
     });
 
-    it('uses no wall-clock setInterval poll in the preview state surface (PRV-4 DONE gate)', () => {
-        const storeSource = readFileSync(
-            fileURLToPath(new URL('./sharedStore.ts', import.meta.url)),
-            'utf8',
-        );
-        const hookSource = readFileSync(
-            fileURLToPath(new URL('./useLocalServicePreviewState.ts', import.meta.url)),
-            'utf8',
-        );
-        expect(storeSource).not.toContain('setInterval(');
-        expect(hookSource).not.toContain('setInterval(');
+    it('does not re-fetch previews on a wall clock while subscribed (PRV-4 DONE gate)', async () => {
+        const snapshotClient = vi.fn(async (): Promise<LocalServicePreviewSnapshotClientResult> => ({
+            status: 'ok',
+            snapshot,
+        }));
+
+        await expectNoWallClockPolling({
+            subscribe: () => subscribeLocalServicePreviewStore(key, () => {}, { snapshotClient }),
+            fetchSpy: snapshotClient,
+        });
     });
 });

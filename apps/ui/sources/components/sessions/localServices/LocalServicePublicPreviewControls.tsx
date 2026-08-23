@@ -351,25 +351,35 @@ export function LocalServicePublicPreviewControls(props: Readonly<{
                         showChevron={false}
                     />
                 ))}
-                {activeExposures.map((exposure) => (
-                    <Item
-                        key={`exposure:${exposure.exposureId}`}
-                        testID={`${testID}-exposure:${exposure.exposureId}`}
-                        title={exposure.publicUrl}
-                        subtitle={t('localServices.publicPreview.activeSubtitle')}
-                        detail={t('localServices.publicPreview.secretLinkMode')}
-                        detailTestID={`${testID}-exposure:${exposure.exposureId}-mode`}
-                        mode="info"
-                        showChevron={false}
-                        rightElement={(
-                            <ExposureActions
-                                exposure={exposure}
-                                actions={actions}
-                                testID={`${testID}-exposure:${exposure.exposureId}`}
-                            />
-                        )}
-                    />
-                ))}
+                {activeExposures.map((exposure) => {
+                    // G15: `expiresAt` was on the wire and unread, so a dead link kept reading
+                    // "Shareable link active". The deadline now decides what the row says.
+                    const expiry = selectLocalServicePublicExposureExpiry(exposure, nowMs);
+                    return (
+                        <Item
+                            key={`exposure:${exposure.exposureId}`}
+                            testID={`${testID}-exposure:${exposure.exposureId}`}
+                            title={exposure.publicUrl}
+                            subtitle={expiry.expired
+                                ? t('localServices.publicPreview.expiredSubtitle')
+                                : t('localServices.publicPreview.activeSubtitle')}
+                            detail={expiry.expired
+                                ? modeLabel(exposure.mode)
+                                : expiresInLabel(expiry.remainingMs)}
+                            detailTestID={`${testID}-exposure:${exposure.exposureId}-mode`}
+                            mode="info"
+                            showChevron={false}
+                            rightElement={(
+                                <ExposureActions
+                                    exposure={exposure}
+                                    expired={expiry.expired}
+                                    actions={actions}
+                                    testID={`${testID}-exposure:${exposure.exposureId}`}
+                                />
+                            )}
+                        />
+                    );
+                })}
             </ItemGroup>
         </View>
     );

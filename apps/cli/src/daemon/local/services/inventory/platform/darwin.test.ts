@@ -395,45 +395,31 @@ describe('parseDarwinLsofTcpListenOutput', () => {
 });
 
 describe('readDarwinProcessFacts', () => {
-    it('reads canonical identity facts, including the authoritative executable path, for only the requested PID', async () => {
+    it('reads canonical identity and ownership facts for only the requested PID, with one ps call', async () => {
         const execFile = vi.fn(async (command: string, args: readonly string[]) => {
             if (command === 'ps') {
                 return {
-                    stdout: '  123    99 Mon Jun 30 12:34:56 2025 happier --resume abc\n',
-                };
-            }
-            if (command === 'lsof' && args.includes('txt')) {
-                return {
-                    stdout: [
-                        'p123',
-                        'ftxt',
-                        'n/Applications/Happier.app/Contents/MacOS/happier',
-                        'ftxt',
-                        'n/usr/lib/dyld',
-                    ].join('\n'),
+                    stdout: '  123    99   501 Mon Jun 30 12:34:56 2025 happier --resume abc\n',
                 };
             }
             throw new Error(`unexpected boundary call ${command} ${args.join(' ')}`);
         });
 
-        const processes = await readDarwinProcessFacts({ execFile, pids: [123] });
+        const processes = await readDarwinProcessFacts({ execFile, pids: [123], daemonUserId: '501' });
 
         expect(processes.get(123)).toEqual({
             pid: 123,
             ppid: 99,
             processStartTimeMs: Date.parse('Mon Jun 30 12:34:56 2025'),
             command: 'happier --resume abc',
-            executablePath: '/Applications/Happier.app/Contents/MacOS/happier',
+            processOwnership: 'self',
         });
         expect(execFile).toHaveBeenCalledWith(
             'ps',
-            ['-o', 'pid=,ppid=,lstart=,command=', '-p', '123'],
+            ['-o', 'pid=,ppid=,uid=,lstart=,command=', '-p', '123'],
             { timeout: 2_000, maxBuffer: 1024 * 1024 },
         );
-        expect(execFile).toHaveBeenCalledWith(
-            'lsof',
-            ['-nP', '-a', '-d', 'txt', '-p', '123', '-F', 'pfn'],
-            { timeout: 2_000, maxBuffer: 1024 * 1024 },
-        );
+        // The `lsof -d txt` executable-path call is gone: nothing read `executablePath`.
+        expect(execFile).toHaveBeenCalledOnce();
     });
 });
