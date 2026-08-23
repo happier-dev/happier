@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -39,6 +40,35 @@ describe('sessionRunnerLock', () => {
 
     await res.release();
     await expect(readFile(lockPath, 'utf8')).rejects.toThrow();
+  });
+
+  it('releases its owned lock synchronously when the runner process exits', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-runner-lock-'));
+    const processExitEmitter = new EventEmitter();
+    const res = await acquireSessionRunnerLock({
+      happyHomeDir,
+      sessionId: 'sess_process_exit',
+      pid: process.pid,
+      nowMs: 10_001,
+      processExitEmitter,
+      getCurrentProcessCommandHash: async () => 'a'.repeat(64),
+      readProcessRunState: async () => 'servable',
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    const lockPath = sessionRunnerLockPathForSessionId({ happyHomeDir, sessionId: 'sess_process_exit' });
+    expect(lockPath).not.toBeNull();
+    if (!lockPath) return;
+
+    try {
+      await expect(readFile(lockPath, 'utf8')).resolves.toContain('sess_process_exit');
+      processExitEmitter.emit('exit', 0);
+      await expect(readFile(lockPath, 'utf8')).rejects.toThrow();
+    } finally {
+      await res.release();
+    }
   });
 
   it('uses a hashed lock filename when sessionId is too long', async () => {

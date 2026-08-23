@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { TrackedSession } from '../types';
 import { isSessionRunnerActive, probeSessionRunnerServiceability, resolveSessionRunnerResumeDecision } from './isSessionRunnerActive';
@@ -69,6 +69,54 @@ describe('probeSessionRunnerServiceability', () => {
       getProcessCommandHash: async () => null,
       probeCapability: async () => ({ state: 'servable' }),
     })).resolves.toEqual({ state: 'runner_unknown', reason: 'runner_presence_unproven' });
+  });
+
+  it('proves runner absence when a live lock PID has been reused by another process instance', async () => {
+    const probeCapability = vi.fn(async () => ({ state: 'servable' as const }));
+
+    await expect(probeSessionRunnerServiceability({
+      sessionId: 'sess_1',
+      trackedSessions: [],
+      readProcessRunState: async () => 'servable',
+      readSessionRunnerLockStatus: async () => ({
+        ok: true,
+        lock: {
+          sessionId: 'sess_1',
+          pid: 123,
+          acquiredAtMs: 1,
+          processCommandHash: 'a'.repeat(64),
+          processInstanceFingerprint: 'linux-proc:old',
+        },
+      }),
+      getProcessCommandHash: async () => null,
+      getProcessInstanceFingerprint: () => 'linux-proc:new',
+      probeCapability,
+    })).resolves.toEqual({ state: 'runner_absent' });
+    expect(probeCapability).not.toHaveBeenCalled();
+  });
+
+  it('lets atomic lock acquisition replace a proven matching stopped lock holder', async () => {
+    const probeCapability = vi.fn(async () => ({ state: 'servable' as const }));
+
+    await expect(probeSessionRunnerServiceability({
+      sessionId: 'sess_1',
+      trackedSessions: [],
+      readProcessRunState: async () => 'stopped',
+      readSessionRunnerLockStatus: async () => ({
+        ok: true,
+        lock: {
+          sessionId: 'sess_1',
+          pid: 123,
+          acquiredAtMs: 1,
+          processCommandHash: 'a'.repeat(64),
+          processInstanceFingerprint: 'linux-proc:same',
+        },
+      }),
+      getProcessCommandHash: async () => 'a'.repeat(64),
+      getProcessInstanceFingerprint: () => 'linux-proc:same',
+      probeCapability,
+    })).resolves.toEqual({ state: 'runner_absent' });
+    expect(probeCapability).not.toHaveBeenCalled();
   });
 });
 
