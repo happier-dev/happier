@@ -707,10 +707,10 @@ async function copyWithSafePublication({
     }
     compareFingerprints(finalPublished.fingerprints, published.fingerprints);
     if (expectedFingerprints) compareFingerprints(finalPublished.fingerprints, expectedFingerprints);
-    const finalManifest = await readManifest(manifestTemporaryPath, manifestTemporaryIdentity);
-    compareFingerprints(finalPublished.fingerprints, finalManifest.manifest.fingerprints);
     await assertSameDirectory('disposable root', output.root);
     await assertSameDirectory('output parent', output.outputParent);
+    const finalManifest = await readManifest(manifestTemporaryPath, manifestTemporaryIdentity);
+    compareFingerprints(finalPublished.fingerprints, finalManifest.manifest.fingerprints);
     await assertSameRegularFile('source', sourcePath, sourceIdentity);
     await requireAbsent('output manifest', output.manifestPath);
     await assertSameRegularFile('manifest partial file', manifestTemporaryPath, manifestTemporaryIdentity);
