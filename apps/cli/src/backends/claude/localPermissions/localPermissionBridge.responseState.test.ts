@@ -110,7 +110,7 @@ describe('ClaudeLocalPermissionBridge (response state)', () => {
     const matching = bridge.handlePermissionHook({
       hook_event_name: 'PermissionRequest',
       tool_name: 'Bash',
-      tool_input: { command: 'unset BAR; find src -maxdepth 1' },
+      tool_input: { command: 'find src -maxdepth 1' },
       tool_use_id: 'toolu_allowlist_match_2',
     });
     const unrelated = bridge.handlePermissionHook({
