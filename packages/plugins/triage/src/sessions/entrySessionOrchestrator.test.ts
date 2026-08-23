@@ -231,9 +231,15 @@ describe('startEntrySession', () => {
         expect(invoker.calls.map((call) => call.actionId)).toEqual(['session.open']);
     });
 
-    it.each(['pullRequest', 'issue', 'errorIssue', 'other'] as const)(
-        'rejects a Fix into an existing Session for %s before any creation, link or open',
-        async (workflowSubject) => {
+    /**
+     * Reusing an EXISTING Session stays a reference-only affair: an action that
+     * declares a workspace has a directory to create, and an existing Session
+     * already has one. The subject the entry happens to carry never enters this
+     * decision, which is why the cases are the modes rather than the subjects.
+     */
+    it.each(['repository', 'pull_request'] as const)(
+        'rejects a %s action into an existing Session before any creation, link or open',
+        async (workspaceMode) => {
             const fixture = createTestkitCorpusCollections();
             const entryRef = testkitEntryRef();
             const invoker = createTestkitActionInvoker();
@@ -241,12 +247,14 @@ describe('startEntrySession', () => {
             const result = await startEntrySession(deps(fixture, invoker), {
                 entryRef,
                 display: TESTKIT_LINK_DISPLAY,
-                workflowSubject,
-                intent: 'fix',
+                workspaceMode,
                 destination: { kind: 'existing', sessionId: 'session-existing' },
             });
 
-            expect(result).toEqual({ type: 'rejected', reason: 'existingSessionNotOfferedForFix' });
+            expect(result).toEqual({
+                type: 'rejected',
+                reason: 'existingSessionRequiresReferenceOnlyMode',
+            });
             expect(invoker.calls).toEqual([]);
             const linkTag = await deriveSessionLinkTag(
                 fixture.collections.sessionLinks,
@@ -257,7 +265,7 @@ describe('startEntrySession', () => {
         },
     );
 
-    it('rejects an Ask that carries a workspace materialization', async () => {
+    it('rejects a reference-only action that carries a workspace materialization', async () => {
         const fixture = createTestkitCorpusCollections();
         const entryRef = testkitEntryRef();
         const invoker = createTestkitActionInvoker();
@@ -274,11 +282,11 @@ describe('startEntrySession', () => {
             },
         });
 
-        expect(result).toEqual({ type: 'rejected', reason: 'askUsesReferenceOnly' });
+        expect(result).toEqual({ type: 'rejected', reason: 'referenceOnlyModeRequiresReferenceOnlyWorkspace' });
         expect(invoker.calls).toEqual([]);
     });
 
-    it('rejects a pull-request Fix that has no prepared review workspace', async () => {
+    it('rejects a pull-request action that has no prepared review workspace', async () => {
         const fixture = createTestkitCorpusCollections();
         const entryRef = testkitEntryRef();
         const invoker = createTestkitActionInvoker();
@@ -297,12 +305,12 @@ describe('startEntrySession', () => {
 
         expect(result).toEqual({
             type: 'rejected',
-            reason: 'pullRequestFixRequiresPreparedWorkspace',
+            reason: 'pullRequestModeRequiresPreparedWorkspace',
         });
         expect(invoker.calls).toEqual([]);
     });
 
-    it('rejects an error-issue Fix that tries to use a prepared review workspace', async () => {
+    it('rejects a repository action that tries to use a prepared review workspace', async () => {
         const fixture = createTestkitCorpusCollections();
         const entryRef = testkitEntryRef();
         const invoker = createTestkitActionInvoker();
@@ -321,12 +329,12 @@ describe('startEntrySession', () => {
 
         expect(result).toEqual({
             type: 'rejected',
-            reason: 'nonPullRequestFixRequiresSelectedProject',
+            reason: 'repositoryModeRequiresSelectedProject',
         });
         expect(invoker.calls).toEqual([]);
     });
 
-    it('creates an error Fix in the project the user selected', async () => {
+    it('creates a repository action in the project the user selected', async () => {
         const fixture = createTestkitCorpusCollections();
         const entryRef = testkitEntryRef({ kindId: 'error-issue', entryId: 'ERR-9' });
         const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
@@ -354,7 +362,7 @@ describe('startEntrySession', () => {
         });
     });
 
-    it('creates a pull-request Fix at the prepared path and keeps only the bounded prepared facts', async () => {
+    it('creates a pull-request action at the prepared path and keeps only the bounded prepared facts', async () => {
         const fixture = createTestkitCorpusCollections();
         const entryRef = testkitEntryRef();
         const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
@@ -473,7 +481,7 @@ describe('startEntrySession', () => {
         expect(invoker.callsFor('session.open')).toHaveLength(1);
     });
 
-    it('refuses a pull-request Fix when no preparation dependency is wired at all', async () => {
+    it('refuses a pull-request action when no preparation dependency is wired at all', async () => {
         const fixture = createTestkitCorpusCollections();
         const invoker = createTestkitActionInvoker();
 
@@ -643,5 +651,51 @@ describe('startEntrySession', () => {
         // Only the failed phase repeats: no creation, no second link write.
         expect(retry.calls.map((call) => call.actionId)).toEqual(['session.open']);
         expect(fixture.control.sessionLinks.inspect(linkTag)?.revision).toBe(linkedRevision);
+    });
+});
+
+/**
+ * The gate reads the ONE pairing table, and so does the surface that builds the
+ * request (`ui/header/newSessionDestination.ts`).
+ *
+ * Before `workspaceMode` existed the two ends each restated the three pairings
+ * in their own vocabulary with nothing binding the copies — the unbound
+ * duplicate the Ask/Fix verifier filed as F1, where a change to one end was
+ * invisible to the other until a start was refused in front of a reader. This
+ * case exists so a table edit this gate did not follow fails here.
+ */
+describe('the workspace-mode gate is bound to the pairing table', () => {
+    const MATERIALIZATIONS: Readonly<Record<
+        TriageWorkspaceMaterializationV1['kind'],
+        TriageWorkspaceMaterializationV1
+    >> = {
+        referenceOnly: { kind: 'referenceOnly', directory: '/projects/example' },
+        selectedProject: { kind: 'selectedProject', directory: '/projects/example' },
+        reviewWorkspace: REVIEW_WORKSPACE,
+    };
+    const MODES: readonly TriageWorkspaceModeV1[] = ['reference_only', 'repository', 'pull_request'];
+
+    it.each(MODES)('admits only the materialization %s names, and rejects the other two', async (workspaceMode) => {
+        const paired = TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1[workspaceMode];
+        for (const [kind, materialization] of Object.entries(MATERIALIZATIONS)) {
+            const fixture = createTestkitCorpusCollections();
+            const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
+            // Preparation is wired but refuses, so the pull-request arm settles
+            // past the gate without a real SCM boundary and still proves the
+            // gate let it through.
+            const source = createTestkitPrepareReviewWorkspace({ results: [{ kind: 'workspaceMismatch' }] });
+            const result = await startEntrySession(deps(fixture, invoker, source), {
+                entryRef: testkitEntryRef(),
+                display: TESTKIT_LINK_DISPLAY,
+                workspaceMode,
+                destination: {
+                    kind: 'new',
+                    creationKey: 'creation-key-a',
+                    spawn: TESTKIT_SPAWN_REQUEST,
+                    materialization,
+                },
+            });
+            expect(result.type === 'rejected', `${workspaceMode} + ${kind}`).toBe(kind !== paired);
+        }
     });
 });
