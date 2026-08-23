@@ -472,7 +472,6 @@ import {
 
 const SESSION_LIST_BACKGROUND_HYDRATION_SCROLL_SETTLE_MS = 180;
 const WEB_INITIAL_SESSION_MESSAGES_PAGE_SIZE = 12;
-const WEB_INITIAL_SESSION_HISTORY_BACKFILL_DELAY_MS = 250;
 
 /**
  * How long a successful `/v1/version` answer stays fresh.
@@ -5156,12 +5155,6 @@ class Sync {
                   ...this.getMessageDecryptBatchOptions(),
                   log,
               });
-              if (Platform.OS === 'web') {
-                  setTimeout(() => {
-                      if (!resolveSessionLiveConsumption(sessionId).isFullContentConsumer) return;
-                      void this.loadOlderMessages(sessionId);
-                  }, WEB_INITIAL_SESSION_HISTORY_BACKFILL_DELAY_MS);
-              }
               return;
           }
 
