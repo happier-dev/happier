@@ -8,6 +8,20 @@ export const AUTOMATION_TEMPLATE_PLAIN_V1_KIND =
 export const AUTOMATION_TEMPLATE_PAYLOAD_CIPHERTEXT_MAX_CHARS = 200_000;
 export const AUTOMATION_TEMPLATE_PAYLOAD_PLAINTEXT_MAX_CHARS = 200_000;
 
+/**
+ * How large the serialized template envelope may be as one persisted
+ * `templateCiphertext` string: the bounded payload above plus its envelope
+ * framing. Every reader and writer of that same persisted field binds here —
+ * the V3 API, the Run recipe, the Account encryption transition, the server's
+ * authoring validation, and the daemon's pre-decrypt bound. A second local
+ * ceiling would make a validly persisted definition unreadable by one of them.
+ *
+ * This is deliberately not the whole-execution-input byte limit
+ * (`MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES`), which bounds a different
+ * persisted field.
+ */
+export const AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS = 220_000;
+
 const ExistingSessionIdSchema = z.string().trim().min(1).max(128);
 
 export const EncryptedAutomationTemplateEnvelopeSchema = z

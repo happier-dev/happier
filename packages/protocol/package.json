@@ -415,6 +415,10 @@
       "types": "./dist/voice/providerOperations.d.ts",
       "default": "./dist/voice/providerOperations.js"
     },
+    "./voice/prompt": {
+      "types": "./dist/voice/prompt.d.ts",
+      "default": "./dist/voice/prompt.js"
+    },
     "./voice/speech": {
       "types": "./dist/voice/speech.d.ts",
       "default": "./dist/voice/speech.js"

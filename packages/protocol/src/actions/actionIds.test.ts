@@ -193,6 +193,7 @@ describe('ActionIdSchema', () => {
         'transcript.page',
         'transcript.readAfter',
         'transcript.follow',
+        'transcript.unfollow',
         'transcript.import',
         'transcript.search',
       ],
@@ -445,6 +446,15 @@ describe('ActionIdSchema', () => {
       account_plugin_data: [
         'account.plugins.data.erase',
       ],
+      account_sessions: [
+        'account.sessions.signOutEverywhere',
+      ],
+      account_api_tokens: [
+        'account.apiTokens.create',
+        'account.apiTokens.list',
+        'account.apiTokens.revoke',
+        'account.apiTokens.revokeAll',
+      ],
       automation_events: [
         'automation.event.sources.list',
         'automation.event.admit',
@@ -574,6 +584,7 @@ describe('ActionIdSchema', () => {
       'transcript.page',
       'transcript.readAfter',
       'transcript.follow',
+      'transcript.unfollow',
       'transcript.import',
       'transcript.search',
       'session.permission.respond',
@@ -773,6 +784,11 @@ describe('ActionIdSchema', () => {
       'plugin.webhook.endpoint.credential.rotate',
       'plugin.webhook.endpoint.credential.finishRotation',
       'account.plugins.data.erase',
+      'account.sessions.signOutEverywhere',
+      'account.apiTokens.create',
+      'account.apiTokens.list',
+      'account.apiTokens.revoke',
+      'account.apiTokens.revokeAll',
       'automation.event.sources.list',
       'automation.event.admit',
       'automation.event.source.status.report',

@@ -61,7 +61,14 @@ describe('createActionExecutor (runtime-unification actions)', () => {
   });
 
   it('delegates validated runtime actions to the canonical runtime action executor', async () => {
-    const runtimeActionExecute = vi.fn(async () => ({ navigated: true }));
+    const runtimeOutput = {
+      v: 1,
+      commandId: 'cmd_1',
+      status: 'dispatched',
+      adapterKind: 'localPreview',
+      events: [],
+    } as const;
+    const runtimeActionExecute = vi.fn(async () => runtimeOutput);
     const executor = createActionExecutor(createDeps({ runtimeActionExecute }));
 
     const input = {
@@ -73,11 +80,30 @@ describe('createActionExecutor (runtime-unification actions)', () => {
     };
     const result = await executor.execute('browser.navigate', input, { serverId: 'server_1', surface: 'ui' });
 
-    expect(result).toEqual({ ok: true, result: { navigated: true } });
+    expect(result).toEqual({ ok: true, result: runtimeOutput });
     expect(runtimeActionExecute).toHaveBeenCalledWith({
       actionId: 'browser.navigate',
       input,
       context: { serverId: 'server_1', surface: 'ui' },
+    });
+  });
+
+  it('fails closed when a runtime action producer returns output outside its declared schema', async () => {
+    const runtimeActionExecute = vi.fn(async () => ({ navigated: true }));
+    const executor = createActionExecutor(createDeps({ runtimeActionExecute }));
+
+    const result = await executor.execute('browser.navigate', {
+      commandId: 'cmd_1',
+      kind: 'navigate',
+      browserSessionId: 'browser_session_1',
+      viewId: 'view_1',
+      url: 'https://example.com',
+    }, { surface: 'ui' });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'invalid_action_output',
+      error: 'invalid_action_output',
     });
   });
 
@@ -132,7 +158,14 @@ describe('createActionExecutor (runtime-unification actions)', () => {
   });
 
   it('enables real-executor runtime families on the user-initiated ui surface (§3.2 flip)', async () => {
-    const runtimeActionExecute = vi.fn(async () => ({ navigated: true }));
+    const runtimeOutput = {
+      v: 1,
+      commandId: 'cmd_1',
+      status: 'dispatched',
+      adapterKind: 'localPreview',
+      events: [],
+    } as const;
+    const runtimeActionExecute = vi.fn(async () => runtimeOutput);
     const executor = createActionExecutor(createDeps({ runtimeActionExecute }));
 
     const result = await executor.execute(
@@ -147,7 +180,7 @@ describe('createActionExecutor (runtime-unification actions)', () => {
       { surface: 'ui' },
     );
 
-    expect(result).toEqual({ ok: true, result: { navigated: true } });
+    expect(result).toEqual({ ok: true, result: runtimeOutput });
     expect(runtimeActionExecute).toHaveBeenCalledTimes(1);
   });
 

@@ -17,6 +17,104 @@ const sessionSpawnInput = {
 } as const;
 
 describe('createActionExecutor (durable plugin approval caller provenance)', () => {
+  it('requires a host-stamped present-user authority to decide an approval', async () => {
+    const openRequest = ApprovalRequestV1Schema.parse({
+      v: 1,
+      status: 'open',
+      createdAtMs: 100,
+      updatedAtMs: 100,
+      createdBy: { surface: 'system' },
+      actionId: 'session.title.set',
+      actionArgs: { sessionId: 'session-1', title: 'Approved title' },
+      summary: 'Set title',
+    });
+    const approvalsUpdate = vi.fn(async () => ({ ok: true }));
+    const executor = createActionExecutor({
+      approvalsGet: async () => openRequest,
+      approvalsUpdate,
+    } as unknown as ActionExecutorDeps);
+
+    await expect(executor.execute('approval.request.decide', {
+      artifactId: 'approval-present-user-1',
+      decision: 'reject',
+    }, {
+      surface: 'api',
+      authority: 'account_automation',
+    })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'present_user_required',
+    });
+    expect(approvalsUpdate).not.toHaveBeenCalled();
+
+    await expect(executor.execute('approval.request.decide', {
+      artifactId: 'approval-present-user-1',
+      decision: 'reject',
+    }, {
+      surface: 'ui',
+      authority: 'present_user',
+    })).resolves.toMatchObject({
+      ok: true,
+      result: { status: 'rejected' },
+    });
+    expect(approvalsUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('reaches the injected canonical contributed-Action invoker through action.invoke', async () => {
+    const invokeContributedAction = vi.fn(async () => ({
+      ok: true as const,
+      result: { status: 'executed', value: { opened: true } },
+    }));
+    const executor = createActionExecutor({
+      invokeContributedAction,
+      isActionApprovalRequired: () => false,
+    } as unknown as ActionExecutorDeps);
+
+    await expect(executor.execute('action.invoke', {
+      action: { pluginId: 'acme.notes', localId: 'save-note' },
+      input: { title: 'Quarterly notes' },
+    }, {
+      surface: 'api',
+      authority: 'account_automation',
+    })).resolves.toEqual({
+      ok: true,
+      result: { status: 'executed', value: { opened: true } },
+    });
+
+    expect(invokeContributedAction).toHaveBeenCalledWith(expect.objectContaining({
+      action: { pluginId: 'acme.notes', localId: 'save-note' },
+      input: { title: 'Quarterly notes' },
+    }));
+  });
+
+  it('projects contributed failures onto the public Action failure envelope', async () => {
+    const invokeContributedAction = vi.fn(async () => ({
+      ok: false as const,
+      errorCode: 'target_declined',
+      error: 'Target rejected this request',
+      details: { reason: 'policy' },
+      retryable: true,
+      data: { internalTargetState: 'declined' },
+      actionHandlerInvocation: 'notStarted' as const,
+    }));
+    const executor = createActionExecutor({
+      invokeContributedAction,
+      isActionApprovalRequired: () => false,
+    } as unknown as ActionExecutorDeps);
+
+    await expect(executor.execute('action.invoke', {
+      action: { pluginId: 'acme.notes', localId: 'save-note' },
+      input: { title: 'Quarterly notes' },
+    }, {
+      surface: 'api',
+      authority: 'account_automation',
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'target_declined',
+      error: 'Target rejected this request',
+      details: { reason: 'policy' },
+    });
+  });
+
   it('replays a plugin-approved Session spawn with the exact contribution and nested initial-input settlement', async () => {
     let storedRequest: ApprovalRequestV1 | null = null;
     const approvalsCreate = vi.fn(async ({ request }: { request: ApprovalRequestV1 }) => {

@@ -1,21 +1,33 @@
 import { z } from 'zod';
 
 import { RuntimeActionIdV1Schema, type RuntimeActionIdV1 } from '../actionIds.js';
-import type { ActionSpecWithoutApproval } from '../actionSpecs.js';
+import type { PreNormalizedActionSpec, PreNormalizedActionSurfaces } from '../actionSpecs.js';
 import { RUNTIME_DANGER_ACTION_IDS } from '../danger.js';
 import { runtimeActionSideEffectClass } from '../safety.js';
 import { isRuntimeActionExecutorReal, resolveRuntimeActionSurfaces } from '../surfaces.js';
 import {
-  BrowserCommandDispatchResultV1Schema,
-  BrowserNavigateCommandV1Schema,
-} from '../../browser/control/v1.js';
-import { BROWSER_RUNTIME_ACTION_SPEC_FAMILY } from './browser.js';
-import { PassthroughEmptyObjectSchema, type RuntimeActionSpecFamily, type RuntimeActionSpecTextMap } from './common.js';
-import { LOCAL_SERVICES_RUNTIME_ACTION_SPEC_FAMILY } from './localServices.js';
-import { PEER_MEDIATION_RUNTIME_ACTION_SPEC_FAMILY } from './peerMediation.js';
-import { SIMULATOR_RUNTIME_ACTION_SPEC_FAMILY } from './simulator.js';
+  BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS,
+  BROWSER_RUNTIME_ACTION_OUTPUT_SCHEMAS,
+  BROWSER_RUNTIME_ACTION_SPEC_FAMILY,
+} from './browser.js';
+import { type RuntimeActionSpecFamily, type RuntimeActionSpecTextMap } from './common.js';
+import {
+  LOCAL_SERVICES_RUNTIME_ACTION_INPUT_SCHEMAS,
+  LOCAL_SERVICES_RUNTIME_ACTION_OUTPUT_SCHEMAS,
+  LOCAL_SERVICES_RUNTIME_ACTION_SPEC_FAMILY,
+} from './localServices.js';
+import {
+  PEER_MEDIATION_RUNTIME_ACTION_INPUT_SCHEMAS,
+  PEER_MEDIATION_RUNTIME_ACTION_OUTPUT_SCHEMAS,
+  PEER_MEDIATION_RUNTIME_ACTION_SPEC_FAMILY,
+} from './peerMediation.js';
+import {
+  SIMULATOR_RUNTIME_ACTION_INPUT_SCHEMAS,
+  SIMULATOR_RUNTIME_ACTION_OUTPUT_SCHEMAS,
+  SIMULATOR_RUNTIME_ACTION_SPEC_FAMILY,
+} from './simulator.js';
 
-const RUNTIME_ACTION_SPEC_FAMILIES: readonly RuntimeActionSpecFamily[] = Object.freeze([
+const RUNTIME_ACTION_SPEC_FAMILIES = Object.freeze([
   BROWSER_RUNTIME_ACTION_SPEC_FAMILY,
   LOCAL_SERVICES_RUNTIME_ACTION_SPEC_FAMILY,
   PEER_MEDIATION_RUNTIME_ACTION_SPEC_FAMILY,
@@ -31,21 +43,25 @@ function mergeRuntimeActionTextMaps(
 const RUNTIME_ACTION_TITLES = mergeRuntimeActionTextMaps((family) => family.titles);
 const RUNTIME_ACTION_DESCRIPTIONS = mergeRuntimeActionTextMaps((family) => family.descriptions);
 
-function runtimeActionInputSchema(actionId: RuntimeActionIdV1): z.ZodTypeAny {
-  for (const family of RUNTIME_ACTION_SPEC_FAMILIES) {
-    const schema = family.inputSchemaForAction(actionId);
-    if (schema) return schema;
-  }
-  return PassthroughEmptyObjectSchema;
-}
+/**
+ * The sole aggregate runtime-schema owner. Family maps retain literal schema
+ * carriers and this exhaustive merge gives the Action registry one concrete
+ * input/output schema for every runtime id — no prefix fallback or unknown
+ * public result carrier remains.
+ */
+export const RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
+  ...BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS,
+  ...LOCAL_SERVICES_RUNTIME_ACTION_INPUT_SCHEMAS,
+  ...PEER_MEDIATION_RUNTIME_ACTION_INPUT_SCHEMAS,
+  ...SIMULATOR_RUNTIME_ACTION_INPUT_SCHEMAS,
+} as const satisfies Readonly<Record<RuntimeActionIdV1, z.ZodTypeAny>>);
 
-function runtimeActionOutputSchema(actionId: RuntimeActionIdV1): z.ZodTypeAny {
-  for (const family of RUNTIME_ACTION_SPEC_FAMILIES) {
-    const schema = family.outputSchemaForAction(actionId);
-    if (schema) return schema;
-  }
-  return z.unknown();
-}
+export const RUNTIME_ACTION_OUTPUT_SCHEMAS = Object.freeze({
+  ...BROWSER_RUNTIME_ACTION_OUTPUT_SCHEMAS,
+  ...LOCAL_SERVICES_RUNTIME_ACTION_OUTPUT_SCHEMAS,
+  ...PEER_MEDIATION_RUNTIME_ACTION_OUTPUT_SCHEMAS,
+  ...SIMULATOR_RUNTIME_ACTION_OUTPUT_SCHEMAS,
+} as const satisfies Readonly<Record<RuntimeActionIdV1, z.ZodTypeAny>>);
 
 // UX-3: the fail-closed projection-contract copy belongs only to runtime actions whose executor is
 // not yet real. Enabled runtime actions surface human-facing copy from the family maps.
@@ -58,32 +74,26 @@ type RuntimeActionSpecFor<
   TActionId extends RuntimeActionIdV1,
   TInputSchema extends z.ZodTypeAny,
   TOutputSchema extends z.ZodTypeAny,
-  TPlugin extends boolean,
-> = Omit<ActionSpecWithoutApproval, 'id' | 'inputSchema' | 'outputSchema' | 'surfaces'> & Readonly<{
+> = Omit<PreNormalizedActionSpec, 'id' | 'inputSchema' | 'outputSchema' | 'surfaces'> & Readonly<{
   id: TActionId;
   inputSchema: TInputSchema;
   outputSchema: TOutputSchema;
-  surfaces: ActionSpecWithoutApproval['surfaces'] & Readonly<{ plugin: TPlugin }>;
+  surfaces: PreNormalizedActionSurfaces;
 }>;
 
 function createRuntimeActionSpecFor<
   const TActionId extends RuntimeActionIdV1,
   const TInputSchema extends z.ZodTypeAny,
   const TOutputSchema extends z.ZodTypeAny,
-  const TPlugin extends boolean,
 >(params: Readonly<{
   actionId: TActionId;
   inputSchema: TInputSchema;
   outputSchema: TOutputSchema;
-  plugin: TPlugin;
-}>): RuntimeActionSpecFor<TActionId, TInputSchema, TOutputSchema, TPlugin> {
+}>): RuntimeActionSpecFor<TActionId, TInputSchema, TOutputSchema> {
   const { actionId } = params;
   const sideEffectClass = runtimeActionSideEffectClass(actionId);
   const title = RUNTIME_ACTION_TITLES[actionId] ?? actionId;
   const executorReal = isRuntimeActionExecutorReal(actionId);
-  if (params.plugin && !executorReal) {
-    throw new Error(`Runtime action ${actionId} cannot enable the plugin surface without a real executor.`);
-  }
   const humanDescription = RUNTIME_ACTION_DESCRIPTIONS[actionId] ?? title;
   return {
     id: actionId,
@@ -93,7 +103,6 @@ function createRuntimeActionSpecFor<
     placements: [],
     surfaces: {
       ...resolveRuntimeActionSurfaces(actionId),
-      plugin: params.plugin,
     },
     sideEffectClass,
     outputSchema: params.outputSchema,
@@ -106,24 +115,14 @@ function createRuntimeActionSpecFor<
   };
 }
 
-function createRuntimeActionSpec(actionId: RuntimeActionIdV1) {
-  if (actionId === 'browser.navigate') {
-    return createRuntimeActionSpecFor({
-      actionId,
-      inputSchema: BrowserNavigateCommandV1Schema,
-      outputSchema: BrowserCommandDispatchResultV1Schema,
-      plugin: true,
-    });
-  }
-
+function createRuntimeActionSpec<TActionId extends RuntimeActionIdV1>(actionId: TActionId) {
   return createRuntimeActionSpecFor({
     actionId,
-    inputSchema: runtimeActionInputSchema(actionId),
-    outputSchema: runtimeActionOutputSchema(actionId),
-    plugin: false,
+    inputSchema: RUNTIME_ACTION_INPUT_SCHEMAS[actionId],
+    outputSchema: RUNTIME_ACTION_OUTPUT_SCHEMAS[actionId],
   });
 }
 
 export const RUNTIME_ACTION_SPECS = Object.freeze(
   RuntimeActionIdV1Schema.options.map(createRuntimeActionSpec),
-) satisfies readonly ActionSpecWithoutApproval[];
+) satisfies readonly PreNormalizedActionSpec[];

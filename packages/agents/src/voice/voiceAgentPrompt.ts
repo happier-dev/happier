@@ -1,14 +1,16 @@
 import {
-  buildMemoryRecallGuidanceBlockV1,
-  buildPromptPlanV1,
   listVoiceActionBlockSpecs,
   listVoiceSdkSafeToolActionSpecs,
   listVoiceToolActionSpecs,
+} from '@happier-dev/protocol/actions/actionSpecs';
+import {
+  buildMemoryRecallGuidanceBlockV1,
+  buildPromptPlanV1,
   renderPromptPlanV1,
   VOICE_ACTIONS_TAG,
   VOICE_TOOL_RESULTS_JSON_PREFIX,
   type PromptBlockV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/prompt';
 
 import {
   buildVoiceDiscoveryChecklistLines,
@@ -198,7 +200,17 @@ export function buildVoiceAgentBasePrompt(params?: Readonly<{
   }));
 }
 
-export function buildElevenLabsVoiceAgentPrompt(params?: Readonly<{
+/**
+ * Builds the system prompt for a realtime Voice provider whose actions are
+ * exposed to the model as client tools.
+ *
+ * The provider owns its own template syntax: `initialConversationContextPlaceholder`
+ * and `sessionIdPlaceholder` are rendered verbatim, so a provider that substitutes
+ * `{{name}}` variables passes those strings and one that substitutes nothing passes
+ * a concrete value. An omitted placeholder drops its line rather than emitting a
+ * provider dialect this owner does not speak.
+ */
+export function buildVoiceClientToolAgentPrompt(params?: Readonly<{
   assistantName?: string;
   verbosity?: VoicePromptVerbosity;
   initialConversationContextPlaceholder?: string;
@@ -207,8 +219,8 @@ export function buildElevenLabsVoiceAgentPrompt(params?: Readonly<{
   extraSystemAppendBlocks?: readonly string[];
   actionSpecs?: readonly VoicePromptActionSpec[];
 }>): string {
-  const ctx = params?.initialConversationContextPlaceholder ?? '{{initialConversationContext}}';
-  const sessionId = params?.sessionIdPlaceholder ?? '{{sessionId}}';
+  const ctx = params?.initialConversationContextPlaceholder?.trim() ?? '';
+  const sessionId = params?.sessionIdPlaceholder?.trim() ?? '';
   const actionSpecs = params?.actionSpecs ?? listVoiceSdkSafeToolActionSpecs();
   const disabled = new Set(params?.disabledActionIds ?? []);
   const availableToolNames = new Set(actionSpecs
@@ -226,16 +238,15 @@ export function buildElevenLabsVoiceAgentPrompt(params?: Readonly<{
   return renderPromptPlanV1(buildPromptPlanV1({
     modality: 'voice',
     blocks: buildVoiceBlocks({
-      idPrefix: 'voice.elevenlabs',
+      idPrefix: 'voice.client_tools',
       base: { ...(params ?? {}), actionSpecs },
       extraSystemAppendBlocks: params?.extraSystemAppendBlocks,
       bodyBlocks: [
         {
-          id: 'voice.elevenlabs.tool_contract',
+          id: 'voice.client_tools.tool_contract',
           scope: 'session',
           text: [
-            `Active coding session (internal tool target): ${sessionId}`,
-            '',
+            ...(sessionId ? [`Active coding session (internal tool target): ${sessionId}`, ''] : []),
             ...(discoveryLines.length > 0 ? ['Discovery checklist:', ...discoveryLines, ''] : []),
             'Tools:',
             '- Tool results are JSON strings. If ok=false, explain the error briefly and ask the user what to do next.',
@@ -245,9 +256,7 @@ export function buildElevenLabsVoiceAgentPrompt(params?: Readonly<{
               : '- The catalog below is the complete set of tools available for this conversation.',
             ...toolLines,
             '',
-            'Conversation context (may be empty):',
-            ctx,
-            '',
+            ...(ctx ? ['Conversation context (may be empty):', ctx, ''] : []),
           ].join('\n'),
         },
       ],

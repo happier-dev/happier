@@ -229,6 +229,16 @@ type StrictJsonMeasurementTask =
   | Readonly<{ kind: 'value'; value: unknown }>;
 
 /**
+ * `JSON.stringify` has no spelling for these: it omits an object member that
+ * holds one and writes `null` for an array element that does. Measuring the
+ * exact serialized spelling means reproducing that rule rather than inventing
+ * a third answer.
+ */
+function hasNoJsonSpelling(value: unknown): boolean {
+  return value === undefined || typeof value === 'function' || typeof value === 'symbol';
+}
+
+/**
  * Measures the exact JSON.stringify spelling in UTF-8 bytes without creating
  * a complete serialized JSON string. Individual strings still use
  * JSON.stringify so escaping, number spelling, and object-key spelling stay
@@ -265,6 +275,7 @@ export function measureSerializedValidatedStrictPluginJsonUtf8Bytes(
   path: string,
   maximumBytes?: number,
 ): number {
+  if (hasNoJsonSpelling(value)) throw new Error(`${path} must contain strict JSON data`);
   const tasks: StrictJsonMeasurementTask[] = [{ kind: 'value', value }];
   let measuredBytes = 0;
 
@@ -305,14 +316,18 @@ export function measureSerializedValidatedStrictPluginJsonUtf8Bytes(
       tasks.push({ kind: 'text', value: ']' });
       for (let index = current.length - 1; index >= 0; index -= 1) {
         if (index < current.length - 1) tasks.push({ kind: 'text', value: ',' });
-        tasks.push({ kind: 'value', value: current[index] });
+        const element = current[index];
+        tasks.push(hasNoJsonSpelling(element)
+          ? { kind: 'text', value: 'null' }
+          : { kind: 'value', value: element });
       }
       tasks.push({ kind: 'text', value: '[' });
       continue;
     }
+    if (typeof current !== 'object') throw new Error(`${path} must contain strict JSON data`);
 
     const object = current as Record<string, unknown>;
-    const keys = Object.keys(object);
+    const keys = Object.keys(object).filter((key) => !hasNoJsonSpelling(object[key]));
     tasks.push({ kind: 'text', value: '}' });
     for (let index = keys.length - 1; index >= 0; index -= 1) {
       const key = keys[index]!;

@@ -10,6 +10,7 @@ import { SessionTranscriptObservationProvenanceV1Schema } from '../sessions/mess
 import { SessionStoredMessageContentSchema } from '../sessions/messages/sessionStoredMessageContent.js';
 import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from '../sessions/control/runtimeIssueV1.js';
 import { TurnIdSchema } from '../sessions/idsV1.js';
+import { ActionOperationSnapshotEphemeralV1Schema } from '../actions/operations/v1.js';
 import {
   parseSessionRuntimeActivityProjectionFields,
   SessionRuntimeActivityStateSchema,
@@ -414,6 +415,7 @@ export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
     online: z.boolean(),
     timestamp: TimestampMsSchema,
   }).passthrough(),
+  ActionOperationSnapshotEphemeralV1Schema,
 ]);
 
 export type EphemeralUpdate = z.infer<typeof EphemeralUpdateSchema>;

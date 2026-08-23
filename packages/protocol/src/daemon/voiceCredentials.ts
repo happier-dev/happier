@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
 import { ConnectedAccountHttpHeadersRequestSchema } from '../connect/connectedAccountPurposes.js';
+import {
+  QualifiedConnectedAccountPurposeBindingTargetV1Schema,
+} from '../connect/connectedAccountPurposeBindings.js';
 import { ConnectedServiceCredentialRevisionV1Schema } from '../connect/connectedServiceSchemas.js';
 import {
   VoiceCredentialAccessPhaseSchema,
@@ -61,11 +64,43 @@ export type DaemonVoiceClientRawCredentialMaterializeResponseV1 = z.infer<
   typeof DaemonVoiceClientRawCredentialMaterializeResponseV1Schema
 >;
 
+/**
+ * The exact contribution declaration the calling Voice runtime was activated
+ * from.
+ *
+ * A projected external plugin names the daemon registry generation its
+ * declaration was projected at, so the daemon can refuse to materialize under a
+ * declaration the caller never saw. A first-party provider compiled into this
+ * client has no daemon projection to name: its declaration ships in the calling
+ * binary, so there is no generation for it to assert and none is invented.
+ */
+export const DaemonVoiceClientMediatedCredentialDeclarationAuthorityV1Schema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('projected'),
+    cacheIdentity: DaemonPluginReactNativeBundleCacheIdentityV1Schema,
+  }).strict(),
+  z.object({
+    kind: z.literal('bundled'),
+  }).strict(),
+]);
+export type DaemonVoiceClientMediatedCredentialDeclarationAuthorityV1 = z.infer<
+  typeof DaemonVoiceClientMediatedCredentialDeclarationAuthorityV1Schema
+>;
+
 export const DaemonVoiceClientMediatedCredentialMaterializeRequestV1Schema = z.object({
   contribution: asProtocolZod(PluginContributionIdentityV1Schema),
   platform: z.enum(['web', 'ios', 'android']),
   phase: z.enum(['settings', 'prepare', 'connection']),
   operationId: asProtocolZod(PluginContributionLocalIdSchema),
+  declarationAuthority: DaemonVoiceClientMediatedCredentialDeclarationAuthorityV1Schema,
+  /**
+   * The Connected Account selection the caller captured with the credential
+   * authority this operation runs under. The daemon resolves its own current
+   * selection independently, so without it a daemon that has already moved to
+   * Account B answers a caller still holding Account A and both sides stay
+   * internally consistent while the wrong account's headers are used.
+   */
+  expectedSelection: QualifiedConnectedAccountPurposeBindingTargetV1Schema,
 }).strict();
 export type DaemonVoiceClientMediatedCredentialMaterializeRequestV1 = z.infer<
   typeof DaemonVoiceClientMediatedCredentialMaterializeRequestV1Schema

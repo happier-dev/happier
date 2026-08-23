@@ -4,6 +4,7 @@ import {
   AgentSessionProviderBindingV1Schema,
   ProviderRuntimeBindingBasisV1Schema,
   applySessionProviderBindingMetadataV1,
+  projectAgentSessionProviderBindingV1,
   readSessionProviderBindingMetadataV1,
   readSessionProviderBindingMetadataStateV1,
   SESSION_PROVIDER_BINDING_METADATA_KEY_V1,
@@ -163,24 +164,38 @@ describe('session provider binding metadata', () => {
   });
 
   it('carries the exact authorized model descriptor with the launch materialization', () => {
-    const providerBinding = {
-      connectionId: 'pc_work',
-      model: {
-        id: 'gpt-5',
-        name: 'GPT-5',
-        capabilities: {
-          toolRoundTrips: 'supported',
-          reasoningControls: 'supported',
-        },
-      },
-      materialization: {
-        v: 1,
-        kind: 'engineConfig',
-        engineConfig: { provider: { baseUrl: 'http://127.0.0.1:4455/v1' } },
+    const model = {
+      id: 'gpt-5',
+      name: 'GPT-5',
+      capabilities: {
+        toolRoundTrips: 'supported',
+        reasoningControls: 'supported',
       },
     } as const;
+    const materialization = {
+      v: 1,
+      kind: 'engineConfig',
+      engineConfig: { provider: { baseUrl: 'http://127.0.0.1:4455/v1' } },
+    } as const;
+    const providerBinding = projectAgentSessionProviderBindingV1({
+      metadata: {
+        ...binding,
+        model,
+        runtimeBindingBasis,
+      },
+      materialization,
+    });
 
-    expect(AgentSessionProviderBindingV1Schema.parse(providerBinding)).toEqual(providerBinding);
+    expect(AgentSessionProviderBindingV1Schema.parse(providerBinding)).toEqual({
+      connectionId: 'pc_work',
+      model,
+      upstream: {
+        protocol: 'openai-responses',
+        normalizedUrl: 'https://provider.example/v1',
+        credential: 'apiKey',
+      },
+      materialization,
+    });
     expect(AgentSessionProviderBindingV1Schema.safeParse({
       ...providerBinding,
       model: { id: 'different', name: '' },

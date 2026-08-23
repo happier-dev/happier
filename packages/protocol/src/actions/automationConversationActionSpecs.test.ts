@@ -54,7 +54,7 @@ describe('Automation conversation admission ActionSpec', () => {
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
+      api: false,
       plugin: true,
     });
 
@@ -138,7 +138,7 @@ describe('Automation conversation admission ActionSpec', () => {
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
+      api: false,
     }));
   });
 
@@ -200,7 +200,7 @@ describe('Automation conversation admission ActionSpec', () => {
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
+      api: false,
       plugin: true,
     }));
     expect(spec.approval).toEqual({ result: 'none' });

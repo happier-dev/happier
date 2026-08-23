@@ -96,4 +96,94 @@ describe('createActionExecutor (plugin Settings administration)', () => {
       error: 'invalid_action_output',
     });
   });
+
+  it('requires a present user before secret custody mutations reach the administration owner', async () => {
+    const pluginSettingsAdministrationAction = vi.fn(async () => ({
+      ok: true,
+      kind: 'plugins.settings.secret.bind' as const,
+      data: {
+        localId: 'token',
+        custody: 'account' as const,
+        target: { kind: 'account' as const },
+        revision: 'account-secret-r1:1',
+        application: { kind: 'live' as const },
+      },
+    }));
+    const executor = createActionExecutor({
+      pluginSettingsAdministrationAction,
+      isActionApprovalRequired: () => false,
+    } as ActionExecutorDeps);
+    const inputs = {
+      'plugins.settings.secret.bind': {
+        pluginId: 'acme.settings',
+        localId: 'token',
+        savedSecretId: 'saved-secret-1',
+      },
+      'plugins.settings.secret.unbind': {
+        pluginId: 'acme.settings',
+        localId: 'token',
+      },
+      'plugins.settings.secret.delete': {
+        pluginId: 'acme.settings',
+        localId: 'token',
+      },
+    } as const;
+    const mutationActionIds = Object.keys(inputs) as Array<keyof typeof inputs>;
+
+    for (const actionId of mutationActionIds) {
+      await expect(executor.execute(actionId, inputs[actionId], {
+        surface: 'api',
+        authority: 'account_automation',
+        actionCaller: { kind: 'host' },
+      })).resolves.toEqual({
+        ok: false,
+        errorCode: 'present_user_required',
+        error: 'present_user_required',
+      });
+
+      await expect(executor.execute(actionId, inputs[actionId], {
+        surface: 'plugin',
+        authority: 'account_automation',
+        actionCaller: { kind: 'plugin', pluginId: 'acme.settings' },
+      })).resolves.toEqual({
+        ok: false,
+        errorCode: 'present_user_required',
+        error: 'present_user_required',
+      });
+    }
+
+    expect(pluginSettingsAdministrationAction).not.toHaveBeenCalled();
+
+    await expect(executor.execute(
+      'plugins.settings.secret.bind',
+      inputs['plugins.settings.secret.bind'],
+      {
+        surface: 'api',
+        authority: 'present_user',
+        actionCaller: { kind: 'host' },
+      },
+    )).resolves.toEqual({
+      ok: true,
+      result: {
+        ok: true,
+        kind: 'plugins.settings.secret.bind',
+        data: {
+          localId: 'token',
+          custody: 'account',
+          target: { kind: 'account' },
+          revision: 'account-secret-r1:1',
+          application: { kind: 'live' },
+        },
+      },
+    });
+    expect(pluginSettingsAdministrationAction).toHaveBeenCalledWith({
+      actionId: 'plugins.settings.secret.bind',
+      input: inputs['plugins.settings.secret.bind'],
+      context: {
+        surface: 'api',
+        authority: 'present_user',
+        actionCaller: { kind: 'host' },
+      },
+    });
+  });
 });

@@ -91,7 +91,7 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 describe('createActionExecutor (approvals)', () => {
   it('routes plugin dev-loop actions through one executor dependency on the agent surface', async () => {
     const pluginsDevLoopAction = vi.fn(async ({ actionId }) => ({
-      kind: actionId,
+      kind: actionId.replaceAll('.', '_'),
       ok: true,
     }));
     const executor = createExecutor({ pluginsDevLoopAction } as any);
@@ -109,7 +109,7 @@ describe('createActionExecutor (approvals)', () => {
       expect(result).toEqual({
         ok: true,
         result: {
-          kind: actionId,
+          kind: actionId.replaceAll('.', '_'),
           ok: true,
         },
       });
@@ -1533,6 +1533,27 @@ describe('createActionExecutor (approvals)', () => {
         isActionApprovalRequired: (actionId, ctx) =>
           isApprovalRequiredByActionsSettings(actionId, defaultActionsSettings, ctx),
       } as any);
+    const capturedPageResult = {
+      v: 1,
+      kind: 'browserPageReference',
+      contextId: 'context_1',
+      sourceViewId: 'v1',
+      sourceAdapterKind: 'localPreview',
+      fidelity: 'previewProxy',
+      capturedAtMs: 1,
+      navigationGeneration: 0,
+      lifecycleState: 'available',
+      redactionLevel: 'none',
+    } as const;
+    const attachedContextResult = {
+      v: 1,
+      attachmentId: 'attachment_1',
+      contextId: 'context_1',
+      sourceViewId: 'v1',
+      capturedNavigationGeneration: 0,
+      currentNavigationGeneration: 0,
+      state: 'available',
+    } as const;
 
     it('routes an agent-initiated dangerous capture to the approval gate (not action_disabled)', async () => {
       const runtimeActionExecute = vi.fn(async () => ({ captured: true }));
@@ -1553,7 +1574,7 @@ describe('createActionExecutor (approvals)', () => {
     });
 
     it('runs the runtime executor for an agent capture once approval is granted', async () => {
-      const runtimeActionExecute = vi.fn(async () => ({ captured: true }));
+      const runtimeActionExecute = vi.fn(async () => capturedPageResult);
       const approvalsCreate = vi.fn(async () => ({ artifactId: 'cap-3' }));
       const executor = wireApprovalFloor(runtimeActionExecute, approvalsCreate, 'approve');
 
@@ -1563,13 +1584,13 @@ describe('createActionExecutor (approvals)', () => {
         { surface: 'agent', defaultSessionId: 's1' },
       );
 
-      expect(res).toEqual({ ok: true, result: { captured: true } });
+      expect(res).toEqual({ ok: true, result: capturedPageResult });
       expect(approvalsCreate).toHaveBeenCalledTimes(1);
       expect(runtimeActionExecute).toHaveBeenCalledTimes(1);
     });
 
     it('executes the same capture user-initiated (ui) with no approval prompt', async () => {
-      const runtimeActionExecute = vi.fn(async () => ({ captured: true }));
+      const runtimeActionExecute = vi.fn(async () => capturedPageResult);
       const approvalsCreate = vi.fn(async () => ({ artifactId: 'cap-2' }));
       const executor = wireApprovalFloor(runtimeActionExecute, approvalsCreate, 'reject');
 
@@ -1579,7 +1600,7 @@ describe('createActionExecutor (approvals)', () => {
         { surface: 'ui', defaultSessionId: 's1' },
       );
 
-      expect(res).toEqual({ ok: true, result: { captured: true } });
+      expect(res).toEqual({ ok: true, result: capturedPageResult });
       expect(runtimeActionExecute).toHaveBeenCalledTimes(1);
       expect(approvalsCreate).not.toHaveBeenCalled();
     });
@@ -1601,7 +1622,7 @@ describe('createActionExecutor (approvals)', () => {
     });
 
     it('keeps user-initiated browser context attach unprompted', async () => {
-      const runtimeActionExecute = vi.fn(async () => ({ attached: true }));
+      const runtimeActionExecute = vi.fn(async () => attachedContextResult);
       const approvalsCreate = vi.fn(async () => ({ artifactId: 'attach-2' }));
       const executor = wireApprovalFloor(runtimeActionExecute, approvalsCreate, 'reject');
 
@@ -1611,7 +1632,13 @@ describe('createActionExecutor (approvals)', () => {
         { surface: 'ui', defaultSessionId: 's1' },
       );
 
-      expect(res).toEqual({ ok: true, result: { attached: true } });
+      expect(res).toEqual({
+        ok: true,
+        result: {
+          ...attachedContextResult,
+          requiresReconfirmBeforeSend: false,
+        },
+      });
       expect(runtimeActionExecute).toHaveBeenCalledTimes(1);
       expect(approvalsCreate).not.toHaveBeenCalled();
     });

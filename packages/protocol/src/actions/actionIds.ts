@@ -148,6 +148,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'transcript.page',
     'transcript.readAfter',
     'transcript.follow',
+    'transcript.unfollow',
     'transcript.import',
     'transcript.search',
   ],
@@ -379,6 +380,15 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   account_plugin_data: [
     'account.plugins.data.erase',
   ],
+  account_sessions: [
+    'account.sessions.signOutEverywhere',
+  ],
+  account_api_tokens: [
+    'account.apiTokens.create',
+    'account.apiTokens.list',
+    'account.apiTokens.revoke',
+    'account.apiTokens.revokeAll',
+  ],
   automation_events: [
     'automation.event.sources.list',
     'automation.event.admit',
@@ -448,6 +458,8 @@ export const ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.plugin_permission_grants,
   ...ACTION_ID_FAMILIES_V1.plugin_webhooks,
   ...ACTION_ID_FAMILIES_V1.account_plugin_data,
+  ...ACTION_ID_FAMILIES_V1.account_sessions,
+  ...ACTION_ID_FAMILIES_V1.account_api_tokens,
   ...ACTION_ID_FAMILIES_V1.automation_events,
   ...ACTION_ID_FAMILIES_V1.automation_conversation,
   ...ACTION_ID_FAMILIES_V1.scm_pull_request,

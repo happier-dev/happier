@@ -1,9 +1,15 @@
 import type { ActionsSettingsV1 } from '../actionSettings.js';
 import type { ActionExecuteResult } from '../actionExecutionResult.js';
+import type { AgentsBackendsListOutput } from '../agentBackendInventory.js';
 import type { ActionId, PluginDevLoopActionIdV1, RuntimeActionIdV1 } from '../actionIds.js';
-import type { ActionSurfaces, SessionTranscriptGetResult } from '../actionSpecs.js';
+import type {
+  ActionRequiredAuthority,
+  ActionSurfaces,
+  SessionTranscriptGetResult,
+} from '../actionSpecs.js';
 import type { ActionUiPlacement } from '../actionUiPlacements.js';
 import type { ActionDefinitionV1 } from '../actionDefinitionV1.js';
+import type { ExternalActionTargetV1 } from '../externalActionApi.js';
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../../memory/memorySearch.js';
 import type { MemoryWindowV1 } from '../../memory/memoryWindow.js';
 import type { ApprovalRequestOriginV1, ApprovalRequestV1 } from '../../approvals/approvalRequestV1.js';
@@ -37,6 +43,7 @@ import type {
   SessionHandoffWorkspaceTransfer,
 } from '../../sessions/control/handoff/handoffSchemas.js';
 import type { SessionContinueWithReplayRpcParams } from '../../sessions/continueWithReplay.js';
+import type { SessionForkRpcParams } from '../../sessions/fork.js';
 import type {
   PluginSessionInputSourceV1,
   SessionInputCausalPermissionAuthorityV1,
@@ -109,10 +116,35 @@ import type {
   PluginAccountDataEraseActionInputV1,
   PluginAccountDataEraseActionOutputV1,
 } from '../../plugins/data/accountEraseV1.js';
+import type {
+  AccountSessionsSignOutEverywhereActionInputV1,
+  AccountSessionsSignOutEverywhereActionOutputV1,
+} from '../../auth/accountSessions.js';
+import type {
+  AccountApiTokensCreateActionInputV1,
+  AccountApiTokensCreateActionOutputV1,
+  AccountApiTokensListActionInputV1,
+  AccountApiTokensListActionOutputV1,
+  AccountApiTokensRevokeActionInputV1,
+  AccountApiTokensRevokeActionOutputV1,
+  AccountApiTokensRevokeAllActionInputV1,
+  AccountApiTokensRevokeAllActionOutputV1,
+} from '../../auth/accountApiTokens.js';
 import type { PluginMachineMaterializationRefV1 } from '../../plugins/availability/materializationRefV1.js';
 import type { PluginSettingsAdministrationActionIdV1 } from '../../plugins/settingsAdministration.js';
 
-export type { ActionExecuteResult } from '../actionExecutionResult.js';
+export type {
+  ActionExecuteFailure,
+  ActionExecuteResult,
+} from '../actionExecutionResult.js';
+
+export type ActionPreparedInvocation = Readonly<{
+  run: () => Promise<ActionExecuteResult>;
+}>;
+
+export type ActionPrepareResult =
+  | Readonly<{ kind: 'ready'; invocation: ActionPreparedInvocation }>
+  | Readonly<{ kind: 'settled'; result: ActionExecuteResult }>;
 
 export type RuntimeActionExecutionFamily =
   | 'browser'
@@ -179,6 +211,18 @@ export type ActionCaller =
   | Readonly<{ kind: 'host' }>
   | ActionPluginCaller
   | ActionAutomationRunCaller;
+
+/**
+ * Narrow host adapter seam for the existing committed-runtime contributed
+ * Action invoker. Selection/currentness/cancellation remain with that owner;
+ * the canonical ActionExecutor only validates and admits `action.invoke`.
+ */
+export type InvokeContributedAction = (request: Readonly<{
+  action: import('../../plugins/contributionIdentity.js').PluginContributionIdentityV1;
+  input: unknown;
+  context: ActionExecutorContext;
+  signal?: AbortSignal;
+}>) => Promise<ActionExecuteResult>;
 
 /**
  * One canonical host-authenticated webhook endpoint operation. The Action
@@ -269,6 +313,29 @@ export type ActionExecutorContext = Readonly<{
 
   /** Host-stamped caller identity. Never accepted from plugin action input. */
   actionCaller?: ActionCaller;
+
+  /**
+   * Host-stamped admission authority. Public ingress must set this explicitly;
+   * it is never Action input and never inferred from a client-provided surface.
+   */
+  authority?: ActionRequiredAuthority;
+
+  /**
+   * Verified public-API credential provenance, stamped only after bearer
+   * authentication. It is never accepted from Action input or persisted as an
+   * Action-owned identity.
+   */
+  externalActionCredential?: Readonly<{
+    accountId: string;
+    principalId: string;
+    credentialId: string;
+  }>;
+
+  /**
+   * Resolved public-API routing target. This stays transport metadata rather
+   * than becoming Action input or a second placement decision maker.
+   */
+  externalActionTarget?: ExternalActionTargetV1;
 
   /**
    * Disables interception for the one action execution nested directly inside
@@ -405,6 +472,20 @@ export type PluginExternalSessionActionId =
   | 'sessions.external.unfollow'
   | 'sessions.external.backgroundFollow.set';
 
+/**
+ * User-facing External Session operations owned by the daemon's fenced host
+ * adapter. This intentionally extends, but does not replace, the narrower
+ * plugin-provenance Action family: API callers never manufacture a plugin
+ * identity merely to reach discovery, linking, transcript, or takeover Start.
+ */
+export type HostExternalSessionActionId =
+  | PluginExternalSessionActionId
+  | 'sessions.external.candidates.list'
+  | 'sessions.external.link.ensure'
+  | 'sessions.external.transcript.page'
+  | 'sessions.external.transcript.readAfter'
+  | 'sessions.external.takeover.start';
+
 export type RuntimeActionDispatchArgs<TActionId extends RuntimeActionIdV1 = RuntimeActionIdV1> =
   RuntimeActionExecuteArgsFor<TActionId> & Readonly<{
     runtimeActionExecute: RuntimeActionExecute;
@@ -487,6 +568,9 @@ export type ActionExecutorDeps = Readonly<{
    * with the static host catalog.
    */
   listContributedActionDefinitions?: () => readonly ActionDefinitionV1[];
+
+  /** Existing committed-runtime invoker consumed by the `action.invoke` host Action. */
+  invokeContributedAction?: InvokeContributedAction;
 
   interceptActionExecution?: (request: Readonly<{
     actionId: ActionId;
@@ -579,6 +663,17 @@ export type ActionExecutorDeps = Readonly<{
     pluginId: string;
     signal?: AbortSignal;
   }>) => Promise<ActionExecuteResult>;
+  /**
+   * Host-owned adapter for user-facing External Session controls. This is
+   * deliberately separate from the plugin-provenance adapter above: public
+   * ingress never supplies a plugin identity to select a contributor.
+   */
+  hostExternalSessionAction?: (args: Readonly<{
+    actionId: HostExternalSessionActionId;
+    input: unknown;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<ActionExecuteResult>;
   runtimeActionExecute?: RuntimeActionExecute;
   scmActionExecute?: ScmActionExecute;
 
@@ -589,7 +684,13 @@ export type ActionExecutorDeps = Readonly<{
     actionRequestId?: string | null;
     signal?: AbortSignal;
   }>) => Promise<unknown>;
-  sessionFork: (args: Readonly<{ sessionId: string; serverId?: string | null; signal?: AbortSignal }>) => Promise<unknown>;
+  sessionFork: (args: Readonly<
+    Omit<SessionForkRpcParams, 'v' | 'parentSessionId'> & {
+      sessionId: string;
+      serverId?: string | null;
+      signal?: AbortSignal;
+    }
+  >) => Promise<unknown>;
   sessionContinueWithReplay?: (args: SessionContinueWithReplayRpcParams & Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
   sessionRollback: (args: Readonly<{ sessionId: string; serverId?: string | null; target?: SessionRollbackTarget; signal?: AbortSignal }>) => Promise<unknown>;
   checkpointCodeRollback?: (args: Readonly<{
@@ -692,7 +793,7 @@ export type ActionExecutorDeps = Readonly<{
     agentId: string;
     backendTargetKey: string;
   }> | null;
-  agentsBackendsList: (args: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>) => Promise<unknown>;
+  agentsBackendsList: (args: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>) => Promise<AgentsBackendsListOutput>;
   agentsModelsList: (args: Readonly<{ agentId?: string; machineId?: string; limit?: number; backendTargetKey?: string }>) => Promise<unknown>;
   agentsConfigOptionsList?: (args: Readonly<{ agentId?: string; machineId?: string; limit?: number; backendTargetKey?: string; modelId?: string }>) => Promise<unknown>;
   agentsSessionModesList?: (args: Readonly<{ agentId?: string; machineId?: string; limit?: number; backendTargetKey?: string }>) => Promise<unknown>;
@@ -714,6 +815,8 @@ export type ActionExecutorDeps = Readonly<{
     requestedAction: PendingRequestedActionV1;
     actionCaller?: ActionCaller;
     idempotencyKey?: string;
+    /** Caller-retained durable input identity; plugin inputs derive their own. */
+    localId?: string;
     source?: PluginSessionInputSourceV1;
     permissionModeOverride?: string;
     modelOverride?: string | null;
@@ -874,8 +977,8 @@ export type ActionExecutorDeps = Readonly<{
   sessionModesList: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
 
   // Voice panel targeting + session query tools
-  sessionTargetPrimarySet: (args: Readonly<{ sessionId: string | null }>) => Promise<unknown>;
-  sessionTargetTrackedSet: (args: Readonly<{ sessionIds: readonly string[] }>) => Promise<unknown>;
+  sessionTargetPrimarySet?: (args: Readonly<{ sessionId: string | null }>) => Promise<unknown>;
+  sessionTargetTrackedSet?: (args: Readonly<{ sessionIds: readonly string[] }>) => Promise<unknown>;
   sessionList: (args: Readonly<{
     limit?: number;
     cursor?: string | null;
@@ -1061,6 +1164,41 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<PluginAccountDataEraseActionOutputV1>;
+
+  /**
+   * The UI-present host path for invalidating the current Account's signed
+   * sessions. The transport owns Account derivation and token-epoch mutation.
+   */
+  accountSessionsSignOutEverywhereAction?: (args: Readonly<{
+    input: AccountSessionsSignOutEverywhereActionInputV1;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<AccountSessionsSignOutEverywhereActionOutputV1>;
+
+  /**
+   * Current-Account API-token lifecycle owners. Transport derives the Account
+   * from verified provenance; callers can select only token-local input.
+   */
+  accountApiTokensCreateAction?: (args: Readonly<{
+    input: AccountApiTokensCreateActionInputV1;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<AccountApiTokensCreateActionOutputV1>;
+  accountApiTokensListAction?: (args: Readonly<{
+    input: AccountApiTokensListActionInputV1;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<AccountApiTokensListActionOutputV1>;
+  accountApiTokensRevokeAction?: (args: Readonly<{
+    input: AccountApiTokensRevokeActionInputV1;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<AccountApiTokensRevokeActionOutputV1>;
+  accountApiTokensRevokeAllAction?: (args: Readonly<{
+    input: AccountApiTokensRevokeAllActionInputV1;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<AccountApiTokensRevokeAllActionOutputV1>;
 
   pluginPermissionGrantAction?: (args: Readonly<
     & {

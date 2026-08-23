@@ -4,6 +4,7 @@ import {
 } from '@happier-dev/protocol/plugins/agents';
 import {
   SessionModelSelectionIntentV1Schema,
+  readSessionModelSelectionIntentSourceV1,
   resolveSessionModelSelectionIntentV1,
   type ProviderBoundModelRef,
   type SessionModelSelectionIntentV1,
@@ -11,6 +12,7 @@ import {
 import {
   readExactSessionActiveModelSelectionV1,
 } from '@happier-dev/protocol/providers/active-model-selection';
+import { readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol';
 import {
   readPermissionModeIntentFromMetadata,
   readStringOverrideIntentFromMetadata,
@@ -65,6 +67,74 @@ export function resolveModelSelectionIntentFromSessionMetadata(
     legacy: obj[MODEL_OVERRIDE_KEY],
     agentTargetKey,
   });
+}
+
+/** The ambient Provider connection a Session can prove, or its refusal to guess. */
+export type AmbientProviderConnectionForModelIntent = Readonly<
+  | { status: 'resolved'; providerConnectionId: string | null }
+  | {
+      status: 'unreadable';
+      code: 'model_selection_session_provider_state_unreadable';
+    }
+>;
+
+const AMBIENT_PROVIDER_CONNECTION_UNREADABLE: AmbientProviderConnectionForModelIntent =
+  Object.freeze({
+    status: 'unreadable',
+    code: 'model_selection_session_provider_state_unreadable',
+  });
+
+function resolvedAmbientProviderConnection(
+  providerConnectionId: string | null,
+): AmbientProviderConnectionForModelIntent {
+  return Object.freeze({ status: 'resolved', providerConnectionId });
+}
+
+/**
+ * The Provider connection a model intent means when the caller named a model id
+ * WITHOUT naming a connection.
+ *
+ * A model id alone is not a complete selection: the same id can exist in an
+ * Agent's native catalog and in several Provider connections. The only owner
+ * that can complete it is the Session itself, so this is the one place that
+ * decides, and both `session.model.set` and `session.message.send` consume it
+ * rather than each re-deriving the rule and drifting apart.
+ *
+ * An ACTIVE Session is answered by the binding actually applied to its running
+ * runner; an inactive one by its persisted intent. A Session with neither is
+ * native, which is also what a Provider-less Session's model id has always
+ * meant. Callers that DID name a connection (including an explicit `null` for
+ * "native") must not call this — an explicit choice is never overridden by
+ * ambient state.
+ *
+ * Absent state and unreadable state are different answers. A Session with no
+ * binding and no persisted intent is native; a Session whose binding or
+ * canonical intent is PRESENT but does not parse cannot say what it means, and
+ * is refused rather than silently reported as an explicit native selection.
+ */
+export function resolveAmbientProviderConnectionForModelIntent(input: Readonly<{
+  metadata: unknown;
+  agentTargetKey: string;
+  sessionActive: boolean;
+}>): AmbientProviderConnectionForModelIntent {
+  const record = asRecord(input.metadata);
+  if (!record) return resolvedAmbientProviderConnection(null);
+  if (input.sessionActive) {
+    const binding = readSessionProviderBindingMetadataStateV1(record);
+    if (binding.kind === 'invalid') return AMBIENT_PROVIDER_CONNECTION_UNREADABLE;
+    return resolvedAmbientProviderConnection(
+      binding.kind === 'valid' ? binding.binding.connectionId : null,
+    );
+  }
+  const source = readSessionModelSelectionIntentSourceV1({
+    canonical: record[MODEL_SELECTION_INTENT_KEY],
+    legacy: record[MODEL_OVERRIDE_KEY],
+  });
+  if (source.status === 'invalid') return AMBIENT_PROVIDER_CONNECTION_UNREADABLE;
+  return resolvedAmbientProviderConnection(
+    resolveModelSelectionIntentFromSessionMetadata(record, input.agentTargetKey)
+      ?.selection?.providerConnectionId ?? null,
+  );
 }
 
 /**

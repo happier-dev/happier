@@ -1,6 +1,6 @@
 import {
   EXTERNAL_SESSIONS_AGENT_IDS_BY_SOURCE_KIND_V1,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   type BackendSurfaceAvailabilityV1,
   type PluginAgentExternalSessionLinkDataValue,
 } from '@happier-dev/protocol';
@@ -86,7 +86,7 @@ export function projectSessionMetadataForAgentHandoff(
   value: unknown,
 ): HandoffExportSessionMetadataV1 {
   const metadata = asRecord(value);
-  const linkedExternalSessionV1 = readLinkedExternalSessionV1FromMetadata(metadata);
+  const linkedExternalSessionV1 = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
   const providerSessionId = readProviderSessionIdSessionState(metadata).value;
   const codexRuntimeDescriptor = readSessionMetadataRuntimeDescriptor(metadata, 'codex');
   const openCodeRuntimeDescriptor = readSessionMetadataRuntimeDescriptor(metadata, 'opencode');

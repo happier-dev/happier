@@ -211,7 +211,12 @@ export type {
   AutomationJsonScalarV1,
 } from './automationActionSpecsV1.js';
 
-export { AutomationAccountCurrentnessWitnessV1Schema } from './automationAccountCurrentnessV1.js';
+export {
+  AutomationAccountCurrentnessWitnessV1Schema,
+  projectAutomationAccountCurrentnessWitnessV1,
+  sameAutomationAccountContentIdentityV1,
+  sameAutomationAccountCurrentnessWitnessV1,
+} from './automationAccountCurrentnessV1.js';
 export type { AutomationAccountCurrentnessWitnessV1 } from './automationAccountCurrentnessV1.js';
 
 export {

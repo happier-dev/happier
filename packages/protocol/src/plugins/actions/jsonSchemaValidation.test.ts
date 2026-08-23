@@ -282,6 +282,36 @@ describe('protocol composable schema kernel', () => {
     assertNeutralSurface(schema.nullable());
   });
 
+  it('admits a composable member only on its complete five-member surface', () => {
+    const complete = defineProtocolString({ minLength: 1 });
+    expect(defineProtocolObject({ label: complete }, { policy: 'closed' }).jsonSchema)
+      .toMatchObject({ properties: { label: { type: 'string' } } });
+
+    // A plain JSON Schema is manifest data, never an executable member.
+    expect(() => defineProtocolObject(
+      { label: { type: 'string' } } as unknown as Readonly<
+        Record<string, ProtocolComposableSchema<unknown, unknown>>
+      >,
+      { policy: 'closed' },
+    )).toThrow(TypeError);
+
+    // Each member is load-bearing: dropping exactly one from an otherwise
+    // complete composable must not be accepted as a second schema spelling.
+    for (const omitted of ['jsonSchema', 'parse', 'safeParse', 'optional', 'nullable'] as const) {
+      const partial: Record<string, unknown> = { ...complete };
+      // `parse`/`safeParse`/`optional`/`nullable` are own enumerable members of
+      // the neutral plain object, so a spread copy carries all five.
+      expect(Object.hasOwn(partial, omitted)).toBe(true);
+      delete partial[omitted];
+      expect(() => defineProtocolObject(
+        { label: partial } as unknown as Readonly<
+          Record<string, ProtocolComposableSchema<unknown, unknown>>
+        >,
+        { policy: 'closed' },
+      )).toThrow(TypeError);
+    }
+  });
+
   it('composes a mutable structural schema across copies without an identity gate', () => {
     const copy = <TInput, TOutput>(
       source: ProtocolComposableSchema<TInput, TOutput>,

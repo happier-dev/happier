@@ -1,8 +1,29 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createActionExecutor } from './actionExecutor';
+import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor';
 
 describe('createActionExecutor (review.start)', () => {
+  it('settles a direct successful branch through the declared output schema', async () => {
+    const executor = createActionExecutor({
+      reviewStartInline: async () => new Map([['unexpected', true]]),
+    } as ActionExecutorDeps);
+
+    await expect(executor.execute(
+      'review.start',
+      {
+        sessionId: 's1',
+        engineIds: ['codex'],
+        instructions: 'Review this.',
+        runLocation: 'current_session',
+      },
+      { defaultSessionId: 's1' },
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_action_output',
+      error: 'invalid_action_output',
+    });
+  });
+
   it('routes current-session single-engine reviews to the inline review dependency', async () => {
     const executionRunStart = vi.fn(async () => ({ runId: 'run_1' }));
     const reviewStartInline = vi.fn(async () => ({ ok: true, reviewTurnId: 'turn-review-native' }));

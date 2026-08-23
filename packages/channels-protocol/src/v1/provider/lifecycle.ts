@@ -18,6 +18,7 @@ import {
     ConversationProviderConnectionInputV1Fields,
     ConversationProviderConnectionInputV1Schema,
     ConversationProviderConnectionKeyV1ProtocolSchema,
+    ConversationSharedEndpointInputModesV1ProtocolSchema,
 } from './connection.js';
 
 export {
@@ -40,6 +41,17 @@ const conversationConnectionReadyV1 = defineProtocolObject({
     kind: defineProtocolLiteral('ready'),
     integrationPrincipal: ConversationIntegrationPrincipalV1ProtocolSchema,
     providerConnectionKey: ConversationProviderConnectionKeyV1ProtocolSchema,
+    /**
+     * The CURRENT shared-endpoint delivery capability, re-authenticated by this
+     * probe. Setup states this once when a connection is created; a platform
+     * can narrow it afterwards (a Telegram bot whose BotFather group privacy is
+     * re-enabled stops receiving ordinary supergroup messages entirely). A
+     * provider that can observe the capability restates it here so the saved
+     * bindings that depend on it cannot stay apparently ready while their
+     * messages are impossible to observe. Omitted means the same thing it means
+     * in setup: this provider asserts no shared-endpoint delivery restriction.
+     */
+    sharedEndpointInputModes: ConversationSharedEndpointInputModesV1ProtocolSchema.optional(),
 }, { policy: 'closed' });
 
 /** @internal Relative-only input for composed Channels protocol schemas. */

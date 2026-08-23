@@ -32,6 +32,8 @@ export type {
   ActionExecuteResult,
   ActionExecutorContext,
   ActionExecutorDeps,
+  ActionPreparedInvocation,
+  ActionPrepareResult,
   ApprovalQueueListItemV1,
   ApprovalQueueListResultV1,
   ApprovalQueueQueryPlanV1,

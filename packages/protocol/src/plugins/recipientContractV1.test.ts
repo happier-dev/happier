@@ -5,6 +5,7 @@ import {
   createVoiceProviderRecipientContractFromCredentialsV1,
   materializeRecipientOperationRequestV1,
   normalizeRecipientContractV1,
+  resolveRequiredRecipientContractApprovalDigestV1,
   serializeRecipientContractV1,
 } from './recipientContractV1.js';
 
@@ -83,6 +84,21 @@ describe('RecipientContractV1', () => {
     expect(createRecipientContractDigestV1(normalized)).toBe(
       'sha256:cc4abb33445788f71a46e67333cd2776044d6d7fa3ef7176aac243ebc600f1db',
     );
+  });
+
+  it('fences a stored approval only for a publisher that could rewrite the contract', () => {
+    const verified = normalizeRecipientContractV1(input);
+    expect(resolveRequiredRecipientContractApprovalDigestV1(verified))
+      .toBe(createRecipientContractDigestV1(verified));
+
+    // A bundled recipient ships inside the same binary that enforces it, so an
+    // update that changes its mediated operations must not revoke an approval
+    // the user already gave for a contract Happier itself authored.
+    const bundled = normalizeRecipientContractV1({
+      ...input,
+      publisher: { trust: 'bundled' as const, identity: 'happier.dev:first-party-bundle' },
+    });
+    expect(resolveRequiredRecipientContractApprovalDigestV1(bundled)).toBeNull();
   });
 
   it('sorts operation and template sets while retaining every executable security field', () => {

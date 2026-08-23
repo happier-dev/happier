@@ -4,6 +4,7 @@ import { ConnectedAccountPurposeIdSchema } from '../../connect/connectedAccountP
 import {
   QualifiedConnectedAccountPurposeBindingTargetV1Schema,
 } from '../../connect/connectedAccountPurposeBindings.js';
+import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1 } from '../capabilities/v1.js';
 import { ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema, ProviderMachineIdSchema } from '../ids.js';
 import { CustomProviderTemplateV1Schema } from './customTemplateV1.js';
 import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
@@ -57,8 +58,16 @@ export const ProviderConnectionV1Schema = z.object({
   displayName: z.string().trim().min(1).max(128),
   displayNameMode: z.enum(['automatic', 'custom']),
   deployment: ProviderConnectionDeploymentV1Schema.default({ kind: 'external' }),
-  endpointOverrides: z.array(ProviderEndpointOverrideV1Schema).max(4).optional(),
-  endpointOverridesByMachineId: z.record(ProviderMachineIdSchema, z.array(ProviderEndpointOverrideV1Schema).max(4)).optional(),
+  // One override per declared endpoint, and a contribution declares one endpoint per wire
+  // protocol. The persisted contract therefore follows the authoring bound: a smaller number
+  // here would leave endpoints of an admitted Provider permanently un-overridable.
+  endpointOverrides: z.array(ProviderEndpointOverrideV1Schema)
+    .max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration).optional(),
+  endpointOverridesByMachineId: z.record(
+    ProviderMachineIdSchema,
+    z.array(ProviderEndpointOverrideV1Schema)
+      .max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration),
+  ).optional(),
   purposeBindingDefaults: ProviderConnectionPurposeBindingDefaultsV1Schema.optional(),
   revision: z.number().int().nonnegative(),
   createdAt: z.number().finite().nonnegative(),

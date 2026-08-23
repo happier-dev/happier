@@ -13,7 +13,7 @@ import {
 import {
   GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID,
   GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION,
-  buildElevenLabsVoiceAgentPrompt,
+  buildVoiceClientToolAgentPrompt,
   buildGlobalVoiceAgentStartupInstructionsPlanV1,
   buildLocalVoiceAgentSystemPrompt,
 } from './voiceAgentPrompt.js';
@@ -54,7 +54,7 @@ describe('voiceAgentPrompt', () => {
     const prompts = [
       renderPromptPlanV1(buildGlobalVoiceAgentStartupInstructionsPlanV1()),
       buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' }),
-      buildElevenLabsVoiceAgentPrompt({
+      buildVoiceClientToolAgentPrompt({
         initialConversationContextPlaceholder: '{{initialConversationContext}}',
         sessionIdPlaceholder: '{{sessionId}}',
       }),
@@ -68,8 +68,8 @@ describe('voiceAgentPrompt', () => {
     }
   });
 
-  it('prioritizes discovery and hot-path tools in the ElevenLabs prompt instead of inlining the full catalog', () => {
-    const prompt = buildElevenLabsVoiceAgentPrompt({
+  it('prioritizes discovery and hot-path tools in the client-tool prompt instead of inlining the full catalog', () => {
+    const prompt = buildVoiceClientToolAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
       sessionIdPlaceholder: '{{sessionId}}',
     });
@@ -91,8 +91,26 @@ describe('voiceAgentPrompt', () => {
     expect(prompt).not.toContain('- memoryGetWindow:');
   });
 
+  it('renders provider placeholders verbatim and speaks no provider template dialect of its own', () => {
+    const neutral = buildVoiceClientToolAgentPrompt();
+
+    // Action-spec examples legitimately carry their own `{{name}}` fill-ins, so the
+    // discriminating check is that this owner emits neither placeholder-driven line
+    // when the caller supplied no placeholder.
+    expect(neutral).not.toContain('Conversation context');
+    expect(neutral).not.toContain('Active coding session (internal tool target)');
+
+    const templated = buildVoiceClientToolAgentPrompt({
+      initialConversationContextPlaceholder: '<<ctx>>',
+      sessionIdPlaceholder: '<<sid>>',
+    });
+
+    expect(templated).toContain('Active coding session (internal tool target): <<sid>>');
+    expect(templated).toContain('Conversation context (may be empty):\n<<ctx>>');
+  });
+
   it('accepts a validator-neutral action projection for provider prompt rendering', () => {
-    const prompt = buildElevenLabsVoiceAgentPrompt({
+    const prompt = buildVoiceClientToolAgentPrompt({
       actionSpecs: [{
         id: 'session.mode.set',
         title: 'Set session mode',
@@ -105,8 +123,8 @@ describe('voiceAgentPrompt', () => {
     expect(prompt).toContain('- setSessionMode:');
   });
 
-  it('omits disabled voice tool action specs in the ElevenLabs prompt', () => {
-    const prompt = buildElevenLabsVoiceAgentPrompt({
+  it('omits disabled voice tool action specs in the client-tool prompt', () => {
+    const prompt = buildVoiceClientToolAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
       sessionIdPlaceholder: '{{sessionId}}',
       disabledActionIds: ['review.start'],
@@ -168,8 +186,8 @@ describe('voiceAgentPrompt', () => {
     expect(prompt).toContain('Use listMachines to discover machines by label before choosing machineId internally');
   });
 
-  it('includes the same discovery guidance in the ElevenLabs voice prompt', () => {
-    const prompt = buildElevenLabsVoiceAgentPrompt({
+  it('includes the same discovery guidance in the client-tool voice prompt', () => {
+    const prompt = buildVoiceClientToolAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
       sessionIdPlaceholder: '{{sessionId}}',
     });
@@ -212,13 +230,13 @@ describe('voiceAgentPrompt', () => {
     expect(withoutMemory).not.toContain('If the user asks what you remember from earlier conversations or decisions');
   });
 
-  it('appends extra user prompt blocks to local and ElevenLabs voice prompts', () => {
+  it('appends extra user prompt blocks to local and client-tool voice prompts', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
       actionsTag: 'voice_actions',
       sessionId: 's1',
       extraSystemAppendBlocks: ['Voice stack block'],
     });
-    const elevenLabsPrompt = buildElevenLabsVoiceAgentPrompt({
+    const clientToolPrompt = buildVoiceClientToolAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
       sessionIdPlaceholder: '{{sessionId}}',
       extraSystemAppendBlocks: ['Voice stack block'],
@@ -226,8 +244,8 @@ describe('voiceAgentPrompt', () => {
 
     expect(localPrompt).toContain('Voice stack block');
     expect(localPrompt.indexOf('Voice stack block')).toBeGreaterThan(localPrompt.indexOf('Core behavior:'));
-    expect(elevenLabsPrompt).toContain('Voice stack block');
-    expect(elevenLabsPrompt.indexOf('Voice stack block')).toBeGreaterThan(elevenLabsPrompt.indexOf('Core behavior:'));
+    expect(clientToolPrompt).toContain('Voice stack block');
+    expect(clientToolPrompt.indexOf('Voice stack block')).toBeGreaterThan(clientToolPrompt.indexOf('Core behavior:'));
   });
 
   it('tells voice agents to use discovery tools instead of asking the user for opaque ids', () => {
@@ -235,7 +253,7 @@ describe('voiceAgentPrompt', () => {
       actionsTag: 'voice_actions',
       sessionId: 's1',
     });
-    const elevenLabsPrompt = buildElevenLabsVoiceAgentPrompt({
+    const clientToolPrompt = buildVoiceClientToolAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
       sessionIdPlaceholder: '{{sessionId}}',
     });
@@ -248,12 +266,12 @@ describe('voiceAgentPrompt', () => {
     expect(localPrompt).toContain('Speak about session titles, machine labels, workspace names, backend names, model labels, and other human-readable labels instead of raw ids');
     expect(localPrompt).toContain('When you know a session title, workspace name, backend name, machine label, or model label, say that explicit human-readable label instead of saying "the current session"');
 
-    expect(elevenLabsPrompt).toContain('Do not ask the user for opaque internal ids when discovery tools can provide them');
-    expect(elevenLabsPrompt).toContain('When an action accepts a human-readable session title, prefer that session title directly instead of forcing yourself to speak or remember a raw session id');
-    expect(elevenLabsPrompt).not.toContain('openSession');
-    expect(elevenLabsPrompt).not.toContain('setPrimaryActionSession');
-    expect(elevenLabsPrompt).toContain('Speak about session titles, machine labels, workspace names, backend names, model labels, and other human-readable labels instead of raw ids');
-    expect(elevenLabsPrompt).toContain('When you know a session title, workspace name, backend name, machine label, or model label, say that explicit human-readable label instead of saying "the current session"');
+    expect(clientToolPrompt).toContain('Do not ask the user for opaque internal ids when discovery tools can provide them');
+    expect(clientToolPrompt).toContain('When an action accepts a human-readable session title, prefer that session title directly instead of forcing yourself to speak or remember a raw session id');
+    expect(clientToolPrompt).not.toContain('openSession');
+    expect(clientToolPrompt).not.toContain('setPrimaryActionSession');
+    expect(clientToolPrompt).toContain('Speak about session titles, machine labels, workspace names, backend names, model labels, and other human-readable labels instead of raw ids');
+    expect(clientToolPrompt).toContain('When you know a session title, workspace name, backend name, machine label, or model label, say that explicit human-readable label instead of saying "the current session"');
   });
 
   it('tells voice agents to forward coding work via sendSessionMessage and stay terse while waiting', () => {
@@ -261,7 +279,7 @@ describe('voiceAgentPrompt', () => {
       actionsTag: 'voice_actions',
       sessionId: 's1',
     });
-    const elevenLabsPrompt = buildElevenLabsVoiceAgentPrompt({
+    const clientToolPrompt = buildVoiceClientToolAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
       sessionIdPlaceholder: '{{sessionId}}',
     });
@@ -271,11 +289,11 @@ describe('voiceAgentPrompt', () => {
     expect(localPrompt).toContain('Do not add greeting filler like "Hi there"');
     expect(localPrompt).toContain('Do not claim a permission request exists unless a real pending permission or user-action request is present in the current session updates');
     expect(localPrompt).toContain('answerUserActionRequest');
-    expect(elevenLabsPrompt).not.toContain('sendSessionMessage');
-    expect(elevenLabsPrompt).toContain('Do not repeatedly narrate that you are waiting');
-    expect(elevenLabsPrompt).toContain('Do not add greeting filler like "Hi there"');
-    expect(elevenLabsPrompt).toContain('Do not claim a permission request exists unless a real pending permission or user-action request is present in the current session updates');
-    expect(elevenLabsPrompt).not.toContain('answerUserActionRequest');
+    expect(clientToolPrompt).not.toContain('sendSessionMessage');
+    expect(clientToolPrompt).toContain('Do not repeatedly narrate that you are waiting');
+    expect(clientToolPrompt).toContain('Do not add greeting filler like "Hi there"');
+    expect(clientToolPrompt).toContain('Do not claim a permission request exists unless a real pending permission or user-action request is present in the current session updates');
+    expect(clientToolPrompt).not.toContain('answerUserActionRequest');
   });
 
   it('tells voice agents to pause tool use while a permission or user-action request is pending', () => {
@@ -283,13 +301,13 @@ describe('voiceAgentPrompt', () => {
       actionsTag: 'voice_actions',
       sessionId: 's1',
     });
-    const elevenLabsPrompt = buildElevenLabsVoiceAgentPrompt({
+    const clientToolPrompt = buildVoiceClientToolAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
       sessionIdPlaceholder: '{{sessionId}}',
     });
 
     expect(localPrompt).toContain('Do not call discovery tools or send new coding work while a permission or user-action request is pending');
-    expect(elevenLabsPrompt).toContain('Do not call discovery tools or send new coding work while a permission or user-action request is pending');
+    expect(clientToolPrompt).toContain('Do not call discovery tools or send new coding work while a permission or user-action request is pending');
   });
 
   it('tells voice agents to answer active coding-session questions or option prompts before sending more work', () => {
@@ -297,7 +315,7 @@ describe('voiceAgentPrompt', () => {
       actionsTag: 'voice_actions',
       sessionId: 's1',
     });
-    const elevenLabsPrompt = buildElevenLabsVoiceAgentPrompt({
+    const clientToolPrompt = buildVoiceClientToolAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
       sessionIdPlaceholder: '{{sessionId}}',
     });
@@ -305,8 +323,8 @@ describe('voiceAgentPrompt', () => {
     expect(localPrompt).toContain('If the active coding session asks a follow-up question or presents options');
     expect(localPrompt).toContain('answer that question first');
     expect(localPrompt).toContain('before sending more coding work');
-    expect(elevenLabsPrompt).toContain('If the active coding session asks a follow-up question or presents options');
-    expect(elevenLabsPrompt).toContain('answer that question first');
+    expect(clientToolPrompt).toContain('If the active coding session asks a follow-up question or presents options');
+    expect(clientToolPrompt).toContain('answer that question first');
   });
 
   it('tells voice agents to summarize tool results in plain language instead of reading raw JSON', () => {
@@ -314,15 +332,15 @@ describe('voiceAgentPrompt', () => {
       actionsTag: 'voice_actions',
       sessionId: 's1',
     });
-    const elevenLabsPrompt = buildElevenLabsVoiceAgentPrompt({
+    const clientToolPrompt = buildVoiceClientToolAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
       sessionIdPlaceholder: '{{sessionId}}',
     });
 
     expect(localPrompt).toContain('Never read raw JSON, raw tool payloads, or raw ids aloud to the user');
     expect(localPrompt).toContain('Summarize tool results in plain language');
-    expect(elevenLabsPrompt).toContain('Never read raw JSON, raw tool payloads, or raw ids aloud to the user');
-    expect(elevenLabsPrompt).toContain('Summarize tool results in plain language');
+    expect(clientToolPrompt).toContain('Never read raw JSON, raw tool payloads, or raw ids aloud to the user');
+    expect(clientToolPrompt).toContain('Summarize tool results in plain language');
   });
 
   it('tells voice agents to speak as the assistant directly and inspect with tools before answering codebase questions', () => {
@@ -330,7 +348,7 @@ describe('voiceAgentPrompt', () => {
       actionsTag: 'voice_actions',
       sessionId: 's1',
     });
-    const elevenLabsPrompt = buildElevenLabsVoiceAgentPrompt({
+    const clientToolPrompt = buildVoiceClientToolAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
       sessionIdPlaceholder: '{{sessionId}}',
     });
@@ -338,8 +356,8 @@ describe('voiceAgentPrompt', () => {
     expect(localPrompt).toContain('Speak as the coding assistant directly');
     expect(localPrompt).toContain('For codebase questions or actions, use tools first before answering');
     expect(localPrompt).toContain('Do not describe yourself as a coordinator, wrapper, messenger, or separate voice layer');
-    expect(elevenLabsPrompt).toContain('Speak as the coding assistant directly');
-    expect(elevenLabsPrompt).toContain('For codebase questions or actions, use tools first before answering');
+    expect(clientToolPrompt).toContain('Speak as the coding assistant directly');
+    expect(clientToolPrompt).toContain('For codebase questions or actions, use tools first before answering');
   });
 
   it('adds a dynamic discovery checklist ahead of the tool catalog', () => {
@@ -347,7 +365,7 @@ describe('voiceAgentPrompt', () => {
       actionsTag: 'voice_actions',
       sessionId: 's1',
     });
-    const elevenLabsPrompt = buildElevenLabsVoiceAgentPrompt({
+    const clientToolPrompt = buildVoiceClientToolAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
       sessionIdPlaceholder: '{{sessionId}}',
     });
@@ -360,10 +378,10 @@ describe('voiceAgentPrompt', () => {
     expect(localPrompt).toContain('- Use listMachines and listServers before choosing the exact execution target');
     expect(localPrompt).toContain('- Use listAgentBackends before setting agentTarget internally');
 
-    expect(elevenLabsPrompt).toContain('Discovery checklist:');
-    expect(elevenLabsPrompt).toContain('- Use listExecutionRuns before choosing runId internally');
-    expect(elevenLabsPrompt).not.toContain('spawnSession');
-    expect(elevenLabsPrompt).not.toContain('spawnSessionPicker');
+    expect(clientToolPrompt).toContain('Discovery checklist:');
+    expect(clientToolPrompt).toContain('- Use listExecutionRuns before choosing runId internally');
+    expect(clientToolPrompt).not.toContain('spawnSession');
+    expect(clientToolPrompt).not.toContain('spawnSessionPicker');
   });
 
   it('keeps internal ids out of the headline prompt wording', () => {
@@ -371,7 +389,7 @@ describe('voiceAgentPrompt', () => {
       actionsTag: 'voice_actions',
       sessionId: 's1',
     });
-    const elevenLabsPrompt = buildElevenLabsVoiceAgentPrompt({
+    const clientToolPrompt = buildVoiceClientToolAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
       sessionIdPlaceholder: '{{sessionId}}',
     });
@@ -379,8 +397,8 @@ describe('voiceAgentPrompt', () => {
     expect(localPrompt).not.toContain('Active sessionId:');
     expect(localPrompt).toContain('Active coding session (internal tool target)');
 
-    expect(elevenLabsPrompt).not.toContain('Active sessionId (always use this for tool calls):');
-    expect(elevenLabsPrompt).toContain('Active coding session (internal tool target)');
+    expect(clientToolPrompt).not.toContain('Active sessionId (always use this for tool calls):');
+    expect(clientToolPrompt).toContain('Active coding session (internal tool target)');
   });
 
   it('omits discovery steps that depend on unavailable tools', () => {

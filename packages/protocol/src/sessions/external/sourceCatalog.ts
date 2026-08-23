@@ -257,6 +257,13 @@ export type ExternalSessionsSourceKindV1 = keyof typeof EXTERNAL_SESSIONS_AGENT_
 
 export type ExternalSessionsSource = PluginAgentExternalSessionLinkData & Readonly<{ kind: string }>;
 
+/**
+ * The one owner of the external-session source `kind` bound. Hosts and
+ * wrappers read this constant instead of restating a limit that would then
+ * drift from this schema.
+ */
+export const MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS = 128;
+
 export const ExternalSessionsSourceSchema = z.unknown().transform((value, ctx) => {
   const parsed = PluginAgentExternalSessionLinkDataSchema.safeParse(value);
   if (!parsed.success) {
@@ -265,7 +272,7 @@ export const ExternalSessionsSourceSchema = z.unknown().transform((value, ctx) =
   }
   const kind = z.string()
     .min(1)
-    .max(128)
+    .max(MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS)
     .refine(
       (value) => value === value.trim(),
       'External-session source kind must already be trimmed.',

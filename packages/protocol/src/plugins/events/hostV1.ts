@@ -25,6 +25,7 @@ import {
 } from './hostReferencesV1.js';
 
 export {
+  AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1,
   AutomationHostEventScopeV1Schema,
   AutomationRunStateChangedHostEventV1Schema,
   HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,

@@ -11,6 +11,7 @@ import {
   type AccountSettingsVoiceCredentialSourceMutation,
 } from './savedSecretMutationOwner.js';
 import { VoiceProviderContributionSchema } from '../../plugins/contributions/voiceProviders.js';
+import { SAVED_SECRET_COLLECTION_MAX_ENTRIES } from '../../profiles/backendProfileSchema.js';
 
 const voiceContribution = Object.freeze({
   pluginId: 'happier.voice.openai',
@@ -1672,4 +1673,56 @@ describe('Account Settings SavedSecret mutation owner', () => {
     expect(settings).toEqual(before);
   });
 
+});
+
+describe('SavedSecret collection capacity', () => {
+  function savedSecretAt(index: number) {
+    return {
+      id: `secret-${index}`,
+      name: `Secret ${index}`,
+      kind: 'apiKey' as const,
+      encryptedValue: {
+        _isSecretValue: true as const,
+        encryptedValue: { t: 'enc-v1' as const, c: `ciphertext-${index}` },
+      },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+  }
+
+  const fullCollection = Array.from(
+    { length: SAVED_SECRET_COLLECTION_MAX_ENTRIES },
+    (_unused, index) => savedSecretAt(index),
+  );
+
+  it('refuses an add that would push the collection past what canonical parsing exposes', () => {
+    // Accepting the 257th entry persists a record the canonical reader
+    // truncates away, so a previously valid Provider secret silently stops
+    // resolving at spawn. Refuse the write instead.
+    expect(() => applyAccountSettingsSavedSecretMutation(
+      { secrets: fullCollection },
+      { kind: 'add', secret: savedSecretAt(SAVED_SECRET_COLLECTION_MAX_ENTRIES) },
+    )).toThrowError(expect.objectContaining({
+      code: 'saved_secret_collection_full',
+    }));
+  });
+
+  it('accepts an add that exactly reaches the collection maximum', () => {
+    const result = applyAccountSettingsSavedSecretMutation(
+      { secrets: fullCollection.slice(0, SAVED_SECRET_COLLECTION_MAX_ENTRIES - 1) },
+      { kind: 'add', secret: savedSecretAt(SAVED_SECRET_COLLECTION_MAX_ENTRIES) },
+    );
+    expect((result.settings.secrets as readonly unknown[]).length)
+      .toBe(SAVED_SECRET_COLLECTION_MAX_ENTRIES);
+  });
+
+  it('still allows a delete to recover an already oversized collection', () => {
+    const oversized = [...fullCollection, savedSecretAt(SAVED_SECRET_COLLECTION_MAX_ENTRIES)];
+    const result = applyAccountSettingsSavedSecretMutation(
+      { secrets: oversized },
+      { kind: 'delete', secretId: 'secret-0', expectedUpdatedAt: 1 },
+    );
+    expect((result.settings.secrets as readonly unknown[]).length)
+      .toBe(SAVED_SECRET_COLLECTION_MAX_ENTRIES);
+  });
 });

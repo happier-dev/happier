@@ -5,6 +5,27 @@ export const ACCOUNT_SETTING_MAX_COLLECTION_ENTRIES = 256;
 export const ACCOUNT_SETTING_MAX_NESTING_DEPTH = 12;
 export const ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES = 512 * 1024;
 
+/**
+ * The Account-owned persistence ceiling for the Provider settings root. Account
+ * Settings owns the document envelope and this byte budget; the Provider schemas
+ * own Provider semantics and cardinality inside it. The Provider limit owner
+ * advertises this same number so a Provider-accepted write cannot exceed what the
+ * Account document can persist.
+ */
+export const ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES = 256 * 1024;
+
+/**
+ * Who owns the *shape* inside an Account root.
+ *
+ * `accountGeneric` applies the Account document's own node/entry/depth policy,
+ * which is the correct default for compatibility carriers with no domain owner.
+ * `domainOwned` says a named domain schema already enforces the subtree's
+ * cardinality and nesting, so re-imposing the generic node policy here would
+ * reinterpret — and silently discard — a value that domain accepted. The Account
+ * byte ceiling still applies in both cases.
+ */
+export type AccountSettingStructuralBoundsOwner = 'accountGeneric' | 'domainOwned';
+
 function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
@@ -72,6 +93,7 @@ export function inspectAccountSettingJsonStructuralBounds(
 export function inspectAccountSettingValueBounds(
   value: unknown,
   maximumSerializedValueBytes: number,
+  structuralBoundsOwner: AccountSettingStructuralBoundsOwner = 'accountGeneric',
 ): AccountSettingValueBoundIssue | null {
   let serialized: string | undefined;
   try {
@@ -85,6 +107,7 @@ export function inspectAccountSettingValueBounds(
       message: `exceeds ${maximumSerializedValueBytes} serialized UTF-8 bytes`,
     };
   }
+  if (structuralBoundsOwner === 'domainOwned') return null;
   return inspectAccountSettingJsonStructuralBounds(value);
 }
 
@@ -96,6 +119,7 @@ export function inspectAccountSettingValueBounds(
 export function withAccountSettingBounds<TSchema extends z.ZodTypeAny>(
   schema: TSchema,
   maximumSerializedValueBytes: number,
+  structuralBoundsOwner: AccountSettingStructuralBoundsOwner = 'accountGeneric',
 ): TSchema {
   return schema.superRefine((value, ctx) => {
     try {
@@ -104,7 +128,11 @@ export function withAccountSettingBounds<TSchema extends z.ZodTypeAny>(
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'must be JSON serializable' });
       return;
     }
-    const issue = inspectAccountSettingValueBounds(value, maximumSerializedValueBytes);
+    const issue = inspectAccountSettingValueBounds(
+      value,
+      maximumSerializedValueBytes,
+      structuralBoundsOwner,
+    );
     if (issue) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: issue.message });
     }

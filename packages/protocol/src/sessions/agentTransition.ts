@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { AcpConfigOptionOverridesV1Schema } from './metadata/metadataOverridesV1.js';
+import { isSessionAgentTransitionDividerLocalId } from './agentTransitionDivider.js';
 import { PendingLocalIdSchema } from './pending/pendingLocalId.js';
 import { SessionUserMessageSendRequestSchema } from './userMessageRpc.js';
 
@@ -97,7 +98,16 @@ export type SessionAgentTransitionSelectionV1 = z.infer<typeof SessionAgentTrans
  */
 export const SessionAgentTransitionInputV1Schema = SessionUserMessageSendRequestSchema.safeExtend({
   localId: PendingLocalIdSchema,
-}).strict();
+})
+  .strict()
+  .superRefine((input, ctx) => {
+    if (!isSessionAgentTransitionDividerLocalId(input.localId)) return;
+    ctx.addIssue({
+      code: 'custom',
+      path: ['localId'],
+      message: 'The agent-transition localId namespace is reserved for cutover dividers.',
+    });
+  });
 export type SessionAgentTransitionInputV1 = z.infer<typeof SessionAgentTransitionInputV1Schema>;
 
 export const SessionAgentTransitionRequestV1Schema = z
@@ -159,26 +169,17 @@ export const SESSION_AGENT_TRANSITION_SOURCE_STOPPED_CODES_V1 = [
  * now the target Agent. Presentation reconciles this established effect with
  * canonical Session and input-custody facts.
  *
- * `divider_missing` and `divider_conflict` are DIFFERENT states and must not be
- * collapsed. `divider_missing` means no row exists at the reserved localId.
- * `divider_conflict` means a row EXISTS there carrying a different transition
- * payload: the boundary is present but untrustworthy, and the bounded context
- * pass must never treat it as a departure boundary.
- *
- * `divider_unknown` is the third and last boundary state: the row could not be
- * read or decoded at all. It is NOT indeterminate — the Session is observably
- * the target — so it must not degrade to `outcome_unknown`, which would tell
- * the user nothing is established in front of a Session that already switched
- * and leave the armed row alive.
+ * Missing, conflicting, or unreadable/unverifiable divider evidence produces
+ * the one public `divider_unavailable` result. The storage-specific evidence
+ * remains internal to the coordinator, but every such result knows the Session
+ * is the target and must not degrade to `outcome_unknown`.
  *
  * `input_admission_failed` means admission did not happen; `input_rejected` is a
  * definite rejection by the canonical message owner. Both are only reachable
  * after cutover, so neither may ride `rejected`.
  */
 export const SESSION_AGENT_TRANSITION_CURRENT_VIEW_COMMITTED_CODES_V1 = [
-  'divider_missing',
-  'divider_conflict',
-  'divider_unknown',
+  'divider_unavailable',
   'target_start_failed',
   'input_admission_failed',
   'input_rejected',

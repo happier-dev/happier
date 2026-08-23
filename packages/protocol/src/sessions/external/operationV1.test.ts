@@ -914,7 +914,6 @@ describe('External Sessions durable operation contract', () => {
       },
       canonicalOwnerEvidence: {
         linkedSessionRevision: 3,
-        runtimeControlRevision: 8,
         disagreement: {
           owner: 'runtime_control' as const,
           expectedRevision: 7,

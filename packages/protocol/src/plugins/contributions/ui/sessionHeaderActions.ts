@@ -28,6 +28,8 @@ export const PluginUiPageHeaderActionV1Schema = PluginUiHeaderActionPresentation
   action: PluginUiSemanticActionDeclarationV1Schema,
 }).strict();
 export type PluginUiPageHeaderActionV1 = z.infer<typeof PluginUiPageHeaderActionV1Schema>;
+/** Author input: `action` also admits the bare same-plugin Action local id. */
+export type PluginUiPageHeaderActionV1Input = z.input<typeof PluginUiPageHeaderActionV1Schema>;
 
 export const PluginSessionHeaderActionDescriptorV1Schema = PluginUiHeaderActionPresentationV1Schema.extend({
   action: PluginUiSemanticActionDeclarationV1Schema,

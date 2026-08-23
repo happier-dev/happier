@@ -16,8 +16,14 @@ import {
 } from '../bounds.js';
 import { ConversationConnectionSelectableTransportV1ProtocolSchema } from './connections.js';
 import { ConversationEndpointDisplayLabelV1ProtocolSchema } from '../provider/resolution.js';
-import { ConversationQualifiedConnectedAccountRefV1ProtocolSchema } from '../provider/connection.js';
 import {
+    ConversationQualifiedConnectedAccountRefV1ProtocolSchema,
+    ConversationSharedEndpointInputModesV1ProtocolSchema,
+} from '../provider/connection.js';
+import {
+    ConversationConnectionOverlapSafetyV1ProtocolSchema,
+    ConversationConnectionReplayContinuityV1ProtocolSchema,
+    ConversationOutboundTextLimitV1ProtocolSchema,
     ConversationProviderSetupRemediationV1ProtocolSchema,
 } from '../provider/setup.js';
 import { ConversationJsonValueV1ProtocolSchema } from '../json.js';
@@ -53,34 +59,17 @@ export type ConversationConnectionPrepareInputV1 = ReturnType<
 export const ConversationConnectionPrepareInputV1JsonSchema: PluginJsonSchema =
     ConversationConnectionPrepareInputV1Schema.jsonSchema;
 
-const conversationConnectionPrepareOutboundTextLimitV1 = defineProtocolObject({
-    maximum: defineProtocolNumber({
-        integer: true,
-        minimum: 1,
-        maximum: Number.MAX_SAFE_INTEGER,
-    }),
-    unit: defineProtocolUnion([
-        defineProtocolLiteral(CONVERSATION_OUTBOUND_TEXT_UNITS_V1[0]),
-        defineProtocolLiteral(CONVERSATION_OUTBOUND_TEXT_UNITS_V1[1]),
-        defineProtocolLiteral(CONVERSATION_OUTBOUND_TEXT_UNITS_V1[2]),
-    ]),
-}, { policy: 'closed' });
-
 const conversationConnectionPrepareReadyV1 = defineProtocolObject({
     kind: defineProtocolLiteral('ready'),
     supportedTransports: conversationConnectionPrepareSelectableTransportsV1,
     recommendedTransport: ConversationConnectionSelectableTransportV1ProtocolSchema,
-    overlapSafety: defineProtocolUnion([
-        defineProtocolLiteral('safe'),
-        defineProtocolLiteral('providerExclusive'),
-        defineProtocolLiteral('destructive'),
-    ]),
-    replayContinuity: defineProtocolUnion([
-        defineProtocolLiteral('checkpointed'),
-        defineProtocolLiteral('sessionBound'),
-        defineProtocolLiteral('none'),
-    ]),
-    outboundTextLimit: conversationConnectionPrepareOutboundTextLimitV1,
+    overlapSafety: ConversationConnectionOverlapSafetyV1ProtocolSchema,
+    replayContinuity: ConversationConnectionReplayContinuityV1ProtocolSchema,
+    outboundTextLimit: ConversationOutboundTextLimitV1ProtocolSchema,
+    // The provider-authenticated shared-endpoint delivery truth. Preparation
+    // is where a person first sees what this connection could do, so dropping
+    // it here is how a surface ends up offering a policy the platform refuses.
+    sharedEndpointInputModes: ConversationSharedEndpointInputModesV1ProtocolSchema.optional(),
     destinationLabel: ConversationEndpointDisplayLabelV1ProtocolSchema.optional(),
 }, { policy: 'closed' });
 

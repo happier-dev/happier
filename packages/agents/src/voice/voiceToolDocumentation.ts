@@ -1,13 +1,15 @@
 import {
   describeActionForVoiceTool,
-  describeActionInputFieldForVoice,
-  getActionVoiceWorkflowNotes,
   isVoicePromptHotPathSpec,
   listVoiceToolActionSpecs,
   type ActionInputFieldHint,
   type ActionSpec,
+} from '@happier-dev/protocol/actions/actionSpecs';
+import {
+  describeActionInputFieldForVoice,
+  getActionVoiceWorkflowNotes,
   type VoiceGuidanceAvailability,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
 
 export type VoicePromptActionSpec = Pick<
   ActionSpec,

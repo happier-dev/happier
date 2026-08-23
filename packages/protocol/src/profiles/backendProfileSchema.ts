@@ -123,6 +123,16 @@ export const SavedSecretSchema = z.object({
 
 export type SavedSecret = z.infer<typeof SavedSecretSchema>;
 
+/**
+ * How many SavedSecret records the Account-Settings collection can carry.
+ *
+ * The canonical Account-Settings reader parses at most this many entries, so a
+ * write that stores more persists records no reader can ever resolve. The
+ * SavedSecret mutation owner refuses such a write rather than accepting it and
+ * letting the read truncate; both must therefore read the ceiling from here.
+ */
+export const SAVED_SECRET_COLLECTION_MAX_ENTRIES = 256;
+
 export function getProfileEnvironmentVariables(profile: AIBackendProfile): Record<string, string> {
   const envVars: Record<string, string> = {};
 

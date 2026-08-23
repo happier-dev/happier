@@ -109,6 +109,40 @@ describe('createPluginActionInvocation', () => {
     }));
   });
 
+  it('prompts for a safe Action only when the host stamps Action-settings approval', async () => {
+    const present = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => ({
+      status: 'approved' as const,
+      fingerprint,
+    }));
+    const gate = createPluginActionPresentUserGate({
+      resolve: () => ({
+        status: 'resolved' as const,
+        action: Object.freeze({ generation: '7' }),
+        policy: Object.freeze({
+          qualifiedId: 'acme.action/actions/commit',
+          generation: '7',
+          dangerLevel: 'safe' as const,
+          scopes: Object.freeze(['global']),
+          surfaces: Object.freeze(['cli']),
+          approvalRequiredByActionSettings: true as const,
+          authorization: currentIntentAuthorizationFacts(),
+        }),
+      }),
+      requestCurrentIntent: present,
+    });
+
+    await expect(gate.admit({
+      input: { title: 'ship it' },
+      surface: 'cli',
+      invocationSurface: 'cli',
+    })).resolves.toMatchObject({
+      status: 'admitted',
+      action: { generation: '7' },
+    });
+
+    expect(present).toHaveBeenCalledOnce();
+  });
+
   it('does not admit a rejected or retired present-user Action', async () => {
     const rejected = createPluginActionPresentUserGate({
       resolve: () => currentIntentResolution(),

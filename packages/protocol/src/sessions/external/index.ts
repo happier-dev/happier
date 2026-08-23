@@ -34,7 +34,8 @@ export {
   resolveExternalHistoryImportV1FromMetadata,
   readExternalSessionAttentionV1,
   readExternalSessionFollowPolicyV1,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
+  resolveLinkedExternalSessionAuthorityV1,
   resolveLinkedExternalSessionMetadataV1,
   removeLinkedExternalSessionMetadataV1,
   LinkedExternalSessionQualifiedIdentityV1Schema,
@@ -46,7 +47,10 @@ export {
   type ExternalSessionFollowPolicyV1,
   type ExternalSessionObservedProgress,
   type LinkedExternalSessionV1,
+  type LinkedExternalSessionAuthorityV1,
   type LinkedExternalSessionMetadataResolutionV1,
+  type LinkedExternalSessionResolutionErrorV1,
+  type LinkedExternalSessionResolutionReasonV1,
   type LinkedExternalSessionQualifiedIdentityV1,
 } from './linkedSessionMetadata.js';
 
@@ -172,6 +176,7 @@ export {
   ExternalSessionStorageStateV1Schema,
   classifyExternalSessionOperationIdempotencyV1,
   decideExternalSessionOperationUpdateV1,
+  externalSessionOperationRetainsPartialDiscardRecoveryV1,
   projectExternalSessionOperationProgressV1,
   projectExternalSessionOperationSharedPresentationV1,
   resolveExternalSessionOperationTimelineV1,

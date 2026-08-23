@@ -164,10 +164,13 @@ function inspectResultingRoots(
   raw: Readonly<Record<string, unknown>>,
 ): AccountSettingsMutationInvalidReason | null {
   for (const [key, value] of Object.entries(raw)) {
-    const structuralIssue = inspectAccountSettingJsonStructuralBounds(value);
-    if (structuralIssue) return structuralIssue.reason;
-    if (isAccountSettingKey(key)) {
-      const parsed = ACCOUNT_SETTING_DEFINITIONS[key].parseMutationValue(value);
+    const definition = isAccountSettingKey(key) ? ACCOUNT_SETTING_DEFINITIONS[key] : null;
+    if (definition?.structuralBoundsOwner !== 'domainOwned') {
+      const structuralIssue = inspectAccountSettingJsonStructuralBounds(value);
+      if (structuralIssue) return structuralIssue.reason;
+    }
+    if (definition) {
+      const parsed = definition.parseMutationValue(value);
       if (!parsed.success) return classifySettingValueIssues(parsed.issues);
     }
   }
@@ -210,6 +213,7 @@ export function applyAccountSettingMutationV1(
     const boundIssue = inspectAccountSettingValueBounds(
       operation.value,
       definition.maximumSerializedValueBytes,
+      definition.structuralBoundsOwner,
     );
     if (boundIssue) return invalid(boundIssue.reason);
     const parsedValue = definition.parseMutationValue(operation.value);

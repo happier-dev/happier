@@ -1,6 +1,15 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
 
 export {
+  ACTION_OPERATION_SNAPSHOT_PUSH_EVENT_V1,
+  ACTION_OPERATION_SNAPSHOT_EPHEMERAL_TYPE_V1,
+  ActionOperationSnapshotPushV1Schema,
+  ActionOperationSnapshotEphemeralV1Schema,
+  type ActionOperationSnapshotPushV1,
+  type ActionOperationSnapshotEphemeralV1,
+} from './actions/operations/v1.js';
+
+export {
   MachineUpdateMetadataRequestSchema,
   MachineUpdateMetadataResponseSchema,
   type MachineUpdateMetadataRequest,
@@ -29,11 +38,25 @@ export {
 } from './json/strictJsonValue.js';
 export {
   KeyChallengeAuthRequestSchema,
+  KeyChallengeV1AuthRequestSchema,
+  KeyChallengeV2AuthRequestSchema,
+  KeyChallengeV2IssueRequestSchema,
+  KeyChallengeV2IssueResponseSchema,
+  KeyChallengeV2AudienceSchema,
   createExpectedAccountKeyChallengeSigningInputV1,
+  createKeyChallengeV2SigningInput,
+  canonicalizeKeyChallengeV2AudienceOrigin,
+  isKeyChallengeV2AuthRequest,
   type KeyChallengeAuthRequest,
+  type KeyChallengeV1AuthRequest,
+  type KeyChallengeV2AuthRequest,
+  type KeyChallengeV2IssueRequest,
+  type KeyChallengeV2IssueResponse,
+  type KeyChallengeV2Audience,
 } from './auth/keyChallenge.js';
 
 export {
+  PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE,
   PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
   createPluginActionInvocation,
   createPluginActionPresentUserGate,
@@ -628,6 +651,7 @@ export {
   materializeRecipientOperationRequestV1,
   materializeRecipientOperationRequestV1FromOperation,
   normalizeRecipientContractV1,
+  resolveRequiredRecipientContractApprovalDigestV1,
   serializeRecipientContractV1,
   type RecipientContractDigestV1,
   type RecipientContractV1,
@@ -1156,6 +1180,7 @@ export {
   PLUGIN_CONTRIBUTION_CATALOG_V2,
   PLUGIN_CONTRIBUTION_LIFECYCLE_STAGES_V2,
   assertPluginProjectionFamilyIdsV2,
+  declaresProviderManagedRuntimeV1,
   derivePluginContributionRegistrationRights,
   derivePluginClientContributionRegistrationRights,
   derivePluginDaemonContributionRegistrationRights,
@@ -1329,6 +1354,7 @@ export {
   createPluginManifestJsonSchemaV2,
   PLUGIN_MANIFEST_JSON_SCHEMA_V2_ID,
 } from './plugins/manifest/jsonSchema.js';
+export { PUBLIC_TOOLCHAIN_PROTOCOL_FACTS_V1 } from './plugins/publicToolchainFactsV1.js';
 export {
   createPluginInstallationManifestPublisherSigningInputV1,
   PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
@@ -1455,6 +1481,7 @@ export {
   type PluginRuntimeCapabilityFamilyV1,
 } from './plugins/runtime/api.js';
 export {
+  isRegistryCustodiedPluginSourceKind,
   PluginSourceInstallPolicyV1Schema,
   PluginSourceKindV1Schema,
   PluginSourceSpecV1Schema,
@@ -2381,6 +2408,7 @@ export {
 
 export {
   StoredJsonContentEnvelopeSchema,
+  isStoredJsonContentEnvelopeModeCompatible,
   type StoredJsonContentEnvelope,
 } from './storage/storedJsonContentEnvelope.js';
 export {
@@ -4886,6 +4914,7 @@ export {
 } from './daemon/contributionRegistryProjection.js';
 export {
   DaemonVoiceClientCredentialSelectionV1Schema,
+  DaemonVoiceClientMediatedCredentialDeclarationAuthorityV1Schema,
   DaemonVoiceClientRawCredentialMaterializeRequestV1Schema,
   DaemonVoiceClientRawCredentialMaterializeResponseV1Schema,
   DaemonVoiceClientMediatedCredentialMaterializeRequestV1Schema,
@@ -4897,6 +4926,7 @@ export {
   DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1Schema,
   DaemonVoiceClientRawCredentialAuthorizationRequestResponseV1Schema,
   type DaemonVoiceClientCredentialSelectionV1,
+  type DaemonVoiceClientMediatedCredentialDeclarationAuthorityV1,
   type DaemonVoiceClientRawCredentialMaterializeRequestV1,
   type DaemonVoiceClientRawCredentialMaterializeResponseV1,
   type DaemonVoiceClientMediatedCredentialMaterializeRequestV1,
@@ -5025,6 +5055,7 @@ export {
   resolveExternalSessionsSourceKeyForDeclaration,
   resolveLegacyExternalSessionsSourceKey,
   parseExternalSessionsSourceForDeclaration,
+  MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS,
 } from './sessions/external/sourceCatalog.js';
 
 export {
@@ -5106,7 +5137,8 @@ export {
   resolveExternalHistoryImportV1FromMetadata,
   readExternalSessionAttentionV1,
   readExternalSessionFollowPolicyV1,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
+  resolveLinkedExternalSessionAuthorityV1,
   resolveLinkedExternalSessionMetadataV1,
   removeLinkedExternalSessionMetadataV1,
   ExternalHistoryImportV1Schema,
@@ -5117,7 +5149,10 @@ export {
   type ExternalSessionFollowPolicyV1,
   type ExternalSessionObservedProgress,
   type LinkedExternalSessionV1,
+  type LinkedExternalSessionAuthorityV1,
   type LinkedExternalSessionMetadataResolutionV1,
+  type LinkedExternalSessionResolutionErrorV1,
+  type LinkedExternalSessionResolutionReasonV1,
 } from './sessions/external/linkedSessionMetadata.js';
 
 export {
@@ -6691,6 +6726,43 @@ export {
 export { AuthProviderIdSchema, type AuthProviderId } from './auth/providers.js';
 export { AUTH_ERROR_CODES, AuthErrorCodeSchema, type AuthErrorCode } from './auth/errors.js';
 export {
+  ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1,
+  AccountSessionsSignOutEverywhereActionInputV1Schema,
+  AccountSessionsSignOutEverywhereActionOutputV1Schema,
+  AccountSessionsSignOutEverywhereServerErrorV1Schema,
+  AccountSessionsSignOutEverywhereServerOutputV1Schema,
+  type AccountSessionsSignOutEverywhereActionInputV1,
+  type AccountSessionsSignOutEverywhereActionOutputV1,
+  type AccountSessionsSignOutEverywhereServerErrorV1,
+  type AccountSessionsSignOutEverywhereServerOutputV1,
+} from './auth/accountSessions.js';
+export {
+  ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1,
+  ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1,
+  ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1,
+  ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1,
+  AccountApiTokenSummaryV1Schema,
+  AccountApiTokensCreateActionInputV1Schema,
+  AccountApiTokensCreateActionOutputV1Schema,
+  AccountApiTokensListActionInputV1Schema,
+  AccountApiTokensListActionOutputV1Schema,
+  AccountApiTokensRevokeActionInputV1Schema,
+  AccountApiTokensRevokeActionOutputV1Schema,
+  AccountApiTokensRevokeAllActionInputV1Schema,
+  AccountApiTokensRevokeAllActionOutputV1Schema,
+  AccountApiTokensServerErrorV1Schema,
+  type AccountApiTokenSummaryV1,
+  type AccountApiTokensCreateActionInputV1,
+  type AccountApiTokensCreateActionOutputV1,
+  type AccountApiTokensListActionInputV1,
+  type AccountApiTokensListActionOutputV1,
+  type AccountApiTokensRevokeActionInputV1,
+  type AccountApiTokensRevokeActionOutputV1,
+  type AccountApiTokensRevokeAllActionInputV1,
+  type AccountApiTokensRevokeAllActionOutputV1,
+  type AccountApiTokensServerErrorV1,
+} from './auth/accountApiTokens.js';
+export {
   ExternalOAuthErrorResponseSchema,
   ExternalOAuthFinalizeAuthRequestSchema,
   ExternalOAuthFinalizeAuthSuccessResponseSchema,
@@ -6776,6 +6848,7 @@ export {
   resolveVisibleBuiltInAiLaunchProfilesV1,
   EnvVarRequirementSchema,
   EnvironmentVariableSchema,
+  SAVED_SECRET_COLLECTION_MAX_ENTRIES,
   SavedSecretSchema,
   getBuiltInBackendProfile,
   getRequiredConfigEnvVarNames,
@@ -6812,6 +6885,7 @@ export {
 } from './profiles/index.js';
 
 export {
+  AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS,
   AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND,
   AUTOMATION_TEMPLATE_PLAIN_V1_KIND,
   AUTOMATION_TEMPLATE_PAYLOAD_CIPHERTEXT_MAX_CHARS,
@@ -7135,6 +7209,7 @@ export {
   AgentDispatchStructuredInputV1Schema,
   hasRawComposerAttachmentSelectionV1,
   hasRawStructuredInputSemanticContentV1,
+  readIngressComposerAttachmentSelectionV1,
   type AgentDispatchStructuredInputV1,
   type StructuredInputDispatchContextV1,
 } from './runtime/input/structuredInputV1.js';
@@ -7217,11 +7292,22 @@ export {
   PluginAccountStorageRowV1Schema,
   PluginAccountStorageUnavailableV1Schema,
   PluginAccountStorageValueEntryV1Schema,
+  PluginAccountKvRowError,
   PluginAccountStorageEnvelopeModeMismatchError,
+  assertPluginAccountKvExpectedVersionV1,
   assertPluginAccountStorageEnvelopeForModeV1,
+  clonePluginAccountKvRowV1,
+  createEmptyPluginAccountKvRowV1,
+  deletePluginAccountKvEntryV1,
+  listPluginAccountKvEntriesV1,
+  normalizePluginAccountKvLogicalKeyV1,
   normalizePluginAccountStorageJsonValueV1,
   openPluginAccountStoragePrivatePayloadV1,
+  projectPluginAccountKvEntryV1,
+  projectPluginAccountKvListItemV1,
+  readPluginAccountKvEntryV1,
   sealPluginAccountStoragePrivatePayloadV1,
+  setPluginAccountKvEntryV1,
   type PluginAccountStorageEnvelopeV1,
   type PluginAccountStorageEntryV1,
   type PluginAccountStorageDeletedEntryV1,
@@ -7230,6 +7316,9 @@ export {
   type PluginAccountStorageMutationRequestV1,
   type PluginAccountStorageMutationResponseV1,
   type PluginAccountStorageReadResponseV1,
+  type PluginAccountKvProjectedEntryV1,
+  type PluginAccountKvProjectedListItemV1,
+  type PluginAccountKvRowErrorCodeV1,
   type PluginAccountStorageRowV1,
   type PluginAccountStorageValueEntryV1,
 } from './plugins/data/accountKvV1.js';

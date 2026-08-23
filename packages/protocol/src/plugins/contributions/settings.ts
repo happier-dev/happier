@@ -318,11 +318,20 @@ export const PluginSettingsSectionV2Schema = z.object({
   fields: z.array(PluginSettingFieldIdV2Schema).min(1),
 }).strict();
 
+/**
+ * A labelled cross-link from the host Sub-agents screen into the agent settings
+ * screen of the contribution that declares it.
+ *
+ * It carries NO route. A public plugin declaration must not depend on private
+ * host route topology: the destination is the settings contribution's own
+ * `target: { kind: 'agent' }`, and the host owns how that agent's settings
+ * screen is reached. An item declared by a `target: { kind: 'plugin' }`
+ * contribution therefore has no destination and is not presented.
+ */
 export const PluginSettingsSubagentItemV2Schema = z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
-  route: z.string().trim().min(1),
   iconIonName: z.string().trim().min(1).optional(),
 }).strict();
 

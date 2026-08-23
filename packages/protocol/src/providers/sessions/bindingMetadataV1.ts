@@ -30,9 +30,17 @@ import {
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
+import type { AgentProviderBindingLaunchMaterialization } from '../materialization/v1.js';
+import {
+  AgentSessionProviderBindingV1Schema,
+  type AgentSessionProviderBindingV1,
+} from './agentSessionProviderBindingV1.js';
+
 export {
+  AgentSessionProviderBindingUpstreamV1Schema,
   AgentSessionProviderBindingV1Schema,
   type AgentSessionProviderBinding,
+  type AgentSessionProviderBindingUpstream,
   type AgentSessionProviderBindingV1,
 } from './agentSessionProviderBindingV1.js';
 
@@ -264,4 +272,37 @@ export function applySessionProviderBindingMetadataV1<T extends Readonly<Record<
     delete next[SESSION_PROVIDER_BINDING_METADATA_KEY_V1];
   }
   return next as T & Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Projects the public Agent-facing view of one live Provider binding from the
+ * canonical launch metadata. This is the single owner of that projection so
+ * every Agent entry point (Session open and execution-run launch) reports the
+ * same upstream and credential facts.
+ */
+export function projectAgentSessionProviderBindingV1(
+  input: Readonly<{
+    metadata: SessionProviderBindingMetadataV1;
+    materialization: AgentProviderBindingLaunchMaterialization;
+  }>,
+): AgentSessionProviderBindingV1 {
+  const basis = input.metadata.runtimeBindingBasis;
+  if (!basis) {
+    throw new Error('An authorized Provider binding requires its runtime binding basis');
+  }
+  if (!input.metadata.model) {
+    throw new Error('An authorized Provider binding requires its launch model descriptor');
+  }
+  return AgentSessionProviderBindingV1Schema.parse({
+    connectionId: input.metadata.connectionId,
+    model: input.metadata.model,
+    upstream: {
+      protocol: basis.endpoint.protocol,
+      normalizedUrl: 'normalizedUrl' in basis.endpoint
+        ? basis.endpoint.normalizedUrl
+        : null,
+      credential: basis.runtimeCredentialTransport === null ? 'none' : 'apiKey',
+    },
+    materialization: input.materialization,
+  });
 }

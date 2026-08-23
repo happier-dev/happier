@@ -20,6 +20,7 @@ export type ConversationManagementActionDeclarationsV1 = Readonly<{
     connectionCreate: ConversationActionDeclarationV1;
     connectionTransfer: ConversationActionDeclarationV1;
     connectionPrepare: ConversationActionDeclarationV1;
+    connectionRetest: ConversationActionDeclarationV1;
     connectionUpdate: ConversationActionDeclarationV1;
     connectionSetEnabled: ConversationActionDeclarationV1;
     connectionDelete: ConversationActionDeclarationV1;

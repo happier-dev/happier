@@ -104,6 +104,38 @@ export function conversationBindingPolicyForOmittedFieldsV1(
     };
 }
 
+/**
+ * The input modes a binding on this endpoint can actually promise.
+ *
+ * One owner for the surface that offers the choice and the writer that
+ * persists it, so a person can never be shown — or saved with — an incoming
+ * message policy the provider's platform will silently never deliver. A
+ * connection whose provider declared no restriction keeps every mode.
+ */
+export function conversationBindingInputModesForEndpointV1(input: Readonly<{
+    audience: ConversationEndpointAudienceV1;
+    sharedEndpointInputModes?: readonly ConversationBindingInputModeV1[];
+}>): readonly ConversationBindingInputModeV1[] {
+    if (input.audience === 'direct' || input.sharedEndpointInputModes === undefined) {
+        return CONVERSATION_BINDING_INPUT_MODES_V1;
+    }
+    const declared = CONVERSATION_BINDING_INPUT_MODES_V1.filter(
+        (mode) => input.sharedEndpointInputModes!.includes(mode),
+    );
+    // A provider that declares an empty or unrecognized set still leaves the
+    // one mode every conversation platform can deliver: an explicit mention.
+    return declared.length > 0 ? declared : [CONVERSATION_BINDING_INPUT_MODES_V1[0]];
+}
+
+/** Whether this endpoint's provider can actually honour the requested mode. */
+export function isConversationBindingInputModeDeliverableV1(input: Readonly<{
+    audience: ConversationEndpointAudienceV1;
+    inputMode: ConversationBindingInputModeV1;
+    sharedEndpointInputModes?: readonly ConversationBindingInputModeV1[];
+}>): boolean {
+    return conversationBindingInputModesForEndpointV1(input).includes(input.inputMode);
+}
+
 const conversationBindingEndpointSelectionV1 = defineProtocolObject({
     query: ConversationResolutionQueryV1ProtocolSchema,
     kinds: ConversationEndpointResolveKindsV1ProtocolSchema.optional(),

@@ -1,17 +1,41 @@
 import { z } from 'zod';
 
+import { ActionOperationDeclarationV1Schema } from './operations/v1.js';
+import { AgentsBackendsListOutputSchema } from './agentBackendInventory.js';
+import {
+  ActionExecutionPlacementSchema,
+  ActionInputHintsSchema,
+  ActionRequiredAuthoritySchema,
+  ActionSurfaceSchema,
+  ActionToolExposureModeSchema,
+  ActionToolExposureSchema,
+  ActionToolExposureSurfaceSchema,
+  type ActionExecutionPlacement,
+  type ActionInputHints,
+  type ActionRequiredAuthority,
+  type ActionSurfaces,
+  type ActionToolExposure,
+  type ActionToolExposureMode,
+  type ActionToolExposureSurface,
+} from './metadata.js';
+
 import type { ActionCaller } from './executor/types.js';
+import type { ExternalActionTargetV1 } from './externalActionApi.js';
 import { ActionSafetySchema } from './safety.js';
 import {
   ConversationTurnOriginV1Schema,
   type ConversationTurnOriginV1,
 } from '../messages/structured/conversationTurnOriginV1.js';
 import {
+  ACTION_IDS,
   ACTION_ID_FAMILIES_V1,
   ActionIdSchema,
   PLUGIN_DEV_LOOP_ACTION_IDS_V1,
+  RUNTIME_ACTION_IDS_V1,
+  isRuntimeActionIdV1,
   type ActionId,
   type PluginDevLoopActionIdV1,
+  type RuntimeActionIdV1,
 } from './actionIds.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
@@ -30,6 +54,7 @@ import {
 import { PluginPermissionSubjectV1Schema } from '../plugins/permissions/grants.js';
 import {
   PLUGIN_WEBHOOK_ACTION_IDS_V1,
+  PluginWebhookActionHttpPathsV1,
   PluginWebhookActionInputSchemasV1,
   PluginWebhookActionOutputSchemasV1,
   type PluginWebhookActionIdV1,
@@ -39,6 +64,20 @@ import {
   PluginAccountDataEraseActionInputV1Schema,
   PluginAccountDataEraseActionOutputV1Schema,
 } from '../plugins/data/accountEraseV1.js';
+import {
+  AccountSessionsSignOutEverywhereActionInputV1Schema,
+  AccountSessionsSignOutEverywhereActionOutputV1Schema,
+} from '../auth/accountSessions.js';
+import {
+  AccountApiTokensCreateActionInputV1Schema,
+  AccountApiTokensCreateActionOutputV1Schema,
+  AccountApiTokensListActionInputV1Schema,
+  AccountApiTokensListActionOutputV1Schema,
+  AccountApiTokensRevokeActionInputV1Schema,
+  AccountApiTokensRevokeActionOutputV1Schema,
+  AccountApiTokensRevokeAllActionInputV1Schema,
+  AccountApiTokensRevokeAllActionOutputV1Schema,
+} from '../auth/accountApiTokens.js';
 import {
   PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1,
   PluginSettingsAdministrationActionInputSchemasV1,
@@ -63,13 +102,11 @@ import { PluginIdSchema } from '../plugins/pluginId.js';
 import { CurrentUiContextSnapshotV1Schema } from '../plugins/ui/currentUiContext.js';
 import {
   ActionInputFieldHintSchema,
-  ActionInputHintsSchema,
   ActionInputOptionSchema,
   ActionInputOptionValueSchema,
   ActionInputWidgetSchema,
   readActionInputOptionValue,
   type ActionInputFieldHint,
-  type ActionInputHints,
   type ActionInputOption,
   type ActionInputOptionValue,
   type ActionInputWidget,
@@ -130,6 +167,7 @@ import {
   SessionInputAdmissionResultV1Schema,
 } from '../sessions/messages/sessionInputAdmission.js';
 import { ExternalShareableTranscriptPageV1Schema } from '../sessions/messages/sessionExternalShareableTranscriptV1.js';
+import { PendingLocalIdSchema } from '../sessions/pending/pendingLocalId.js';
 import { PendingRequestedActionV1Schema } from '../sessions/pending/pendingRequestedActionV1.js';
 import {
   SessionPermissionRemoteGrantRevokeInputV1Schema,
@@ -305,7 +343,11 @@ import {
 import { SessionContinueWithReplayRpcParamsSchema } from '../sessions/continueWithReplay.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc/methods.js';
 import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
-import { RUNTIME_ACTION_SPECS } from './specs/index.js';
+import {
+  RUNTIME_ACTION_INPUT_SCHEMAS,
+  RUNTIME_ACTION_OUTPUT_SCHEMAS,
+  RUNTIME_ACTION_SPECS,
+} from './specs/index.js';
 import { ActionApprovalSchema, type ActionApproval } from './actionApprovalMetadata.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
@@ -336,10 +378,11 @@ export type ActionSurfaceBindingCaller = ActionCaller;
 
 export type ActionSurfaceBindingContext = Readonly<{
   actionId: ActionId;
-  surface: 'rpc' | 'plugin';
+  surface: 'api' | 'rpc' | 'plugin';
   caller: ActionSurfaceBindingCaller;
   defaultSessionId?: string | null;
   serverId?: string | null;
+  externalActionTarget?: ExternalActionTargetV1;
   signal?: AbortSignal;
   input?: unknown;
 }>;
@@ -355,6 +398,11 @@ const ActionSurfaceBindingTransformSchema = z.custom<ActionSurfaceBindingTransfo
 );
 
 export const ActionSpecSurfaceBindingsSchema = z.object({
+  api: z.object({
+    inputSchema: ZodSchemaLike,
+    bindInput: ActionSurfaceBindingTransformSchema.optional(),
+    inputHints: ActionInputHintsSchema.optional(),
+  }).strict().optional(),
   rpc: z.object({
     inputSchema: ZodSchemaLike,
     decodeInput: ActionSurfaceBindingTransformSchema,
@@ -369,18 +417,6 @@ export const ActionSpecSurfaceBindingsSchema = z.object({
   }).strict().optional(),
 }).strict();
 export type ActionSpecSurfaceBindings = z.infer<typeof ActionSpecSurfaceBindingsSchema>;
-
-export const ActionSurfaceSchema = z.object({
-  ui: z.boolean(),
-  voice: z.boolean(),
-  agent: z.boolean(),
-  mcp: z.boolean(),
-  cli: z.boolean(),
-  rpc: z.boolean(),
-  sdk: z.boolean(),
-  plugin: z.boolean(),
-}).strict();
-export type ActionSurfaces = z.infer<typeof ActionSurfaceSchema>;
 
 const ActionPluginCallerAdministrativeSelectorSchema = z.object({
   pluginId: asProtocolZod(PluginIdSchema),
@@ -411,31 +447,30 @@ export const ActionPluginCallerPolicySchema = z.discriminatedUnion('kind', [
 ]);
 export type ActionPluginCallerPolicy = z.infer<typeof ActionPluginCallerPolicySchema>;
 
-export const ActionToolExposureModeSchema = z.enum(['direct', 'discoverable_only']);
-export type ActionToolExposureMode = z.infer<typeof ActionToolExposureModeSchema>;
-
-export const ActionToolExposureSurfaceSchema = z.enum(['agent', 'mcp', 'cli']);
-export type ActionToolExposureSurface = z.infer<typeof ActionToolExposureSurfaceSchema>;
-
-export const ActionToolExposureSchema = z
-  .object({
-    agent: ActionToolExposureModeSchema.optional(),
-    mcp: ActionToolExposureModeSchema.optional(),
-    cli: ActionToolExposureModeSchema.optional(),
-  })
-  .strict();
-export type ActionToolExposure = z.infer<typeof ActionToolExposureSchema>;
-
 export { ActionSafetySchema, type ActionSafety } from './safety.js';
 export {
-  ActionInputFieldHintSchema,
+  ActionExecutionPlacementSchema,
   ActionInputHintsSchema,
+  ActionRequiredAuthoritySchema,
+  ActionSurfaceSchema,
+  ActionToolExposureModeSchema,
+  ActionToolExposureSchema,
+  ActionToolExposureSurfaceSchema,
+  type ActionExecutionPlacement,
+  type ActionInputHints,
+  type ActionRequiredAuthority,
+  type ActionSurfaces,
+  type ActionToolExposure,
+  type ActionToolExposureMode,
+  type ActionToolExposureSurface,
+} from './metadata.js';
+export {
+  ActionInputFieldHintSchema,
   ActionInputOptionSchema,
   ActionInputOptionValueSchema,
   ActionInputWidgetSchema,
   readActionInputOptionValue,
   type ActionInputFieldHint,
-  type ActionInputHints,
   type ActionInputOption,
   type ActionInputOptionValue,
   type ActionInputWidget,
@@ -465,7 +500,9 @@ export const ActionSpecSchema = z.object({
     voiceClientToolName: z.string().min(1).optional(),
     // Tool name for MCP surface (surface.mcp).
     mcpToolName: z.string().min(1).optional(),
-    // SDK method exposed when surface.sdk is true.
+    // Optional generated SDK method-name override. Most public Actions derive
+    // their path from the canonical Action id; overrides only resolve a real
+    // namespace collision.
     sdkMethod: z.string().min(1).optional(),
     // RPC method exposed when surface.rpc is true.
     rpcMethod: z.string().min(1).optional(),
@@ -477,7 +514,7 @@ export const ActionSpecSchema = z.object({
   execution: z
     .object({
       handler: z.string().min(1).optional(),
-      transport: z.enum(['host', 'plugin', 'rpc', 'sdk']).optional(),
+      transport: z.enum(['host', 'plugin', 'rpc', 'api']).optional(),
     })
     .passthrough()
     .optional(),
@@ -507,6 +544,11 @@ export const ActionSpecSchema = z.object({
     .optional(),
   prompting: ActionPromptingSchema.optional(),
   toolExposure: ActionToolExposureSchema.optional(),
+  operation: ActionOperationDeclarationV1Schema.optional(),
+  /** Host-owned admission floor; public callers never supply this in Action input. */
+  requiredAuthority: ActionRequiredAuthoritySchema.optional(),
+  /** Host-owned routing placement; public callers never supply this in Action input. */
+  executionPlacement: ActionExecutionPlacementSchema.optional(),
   /** Explicit host-stamped caller authority for a Plugin Action. */
   pluginCallerPolicy: ActionPluginCallerPolicySchema.optional(),
   surfaces: ActionSurfaceSchema,
@@ -518,20 +560,6 @@ export const ActionSpecSchema = z.object({
       code: z.ZodIssueCode.custom,
       message: 'placements require surface.ui',
       path: ['surfaces', 'ui'],
-    });
-  }
-  if (value.surfaces.sdk && !value.bindings?.sdkMethod) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'surface.sdk requires bindings.sdkMethod',
-      path: ['bindings', 'sdkMethod'],
-    });
-  }
-  if (value.surfaces.sdk && !value.outputSchema) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'surface.sdk requires outputSchema',
-      path: ['outputSchema'],
     });
   }
   if (value.surfaces.rpc && !value.bindings?.rpcMethod) {
@@ -616,6 +644,8 @@ export const ActionSpecSchema = z.object({
 
 export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
   placements: ActionUiPlacement[];
+  requiredAuthority: ActionRequiredAuthority;
+  executionPlacement: ActionExecutionPlacement;
 }>;
 
 /**
@@ -659,6 +689,9 @@ export type ActionSpecWithoutApproval = Readonly<{
   examples?: ParsedActionSpec['examples'];
   prompting?: ParsedActionSpec['prompting'];
   toolExposure?: ParsedActionSpec['toolExposure'];
+  operation?: ParsedActionSpec['operation'];
+  requiredAuthority?: ParsedActionSpec['requiredAuthority'];
+  executionPlacement?: ParsedActionSpec['executionPlacement'];
   pluginCallerPolicy?: ParsedActionSpec['pluginCallerPolicy'];
   surfaces: ParsedActionSpec['surfaces'];
   inputSchema: ParsedActionSpec['inputSchema'];
@@ -666,11 +699,26 @@ export type ActionSpecWithoutApproval = Readonly<{
 }>;
 
 /**
+ * Author-owned Action rows intentionally omit the derived API and Plugin
+ * exposure bits. Those values are assigned once by normalizeActionPublicExposure
+ * from the canonical internal/provenance classification below.
+ */
+export type PreNormalizedActionSurfaces = Omit<ActionSurfaces, 'api' | 'plugin'> & Readonly<{
+  api?: never;
+  plugin?: never;
+}>;
+export type ActionSpecDefinition = Omit<ActionSpecWithoutApproval, 'surfaces'> & Readonly<{
+  surfaces: PreNormalizedActionSurfaces;
+}>;
+export type PreNormalizedActionSpec = ActionSpecDefinition;
+type NormalizedActionSpec = ActionSpecWithoutApproval;
+
+/**
  * Keeps each registry row's literal id and concrete Zod schema types intact.
  * Runtime validation still goes through ActionSpecSchema; this helper exists so
  * generated author projections do not widen back to ActionId/ZodTypeAny.
  */
-export function defineActionSpecs<const TSpecs extends readonly ActionSpecWithoutApproval[]>(
+export function defineActionSpecs<const TSpecs extends readonly PreNormalizedActionSpec[]>(
   specs: TSpecs,
 ): TSpecs {
   return specs;
@@ -683,14 +731,7 @@ const DAEMON_ADMIN_RPC_SURFACES = Object.freeze({
   mcp: false,
   cli: false,
   rpc: true,
-  sdk: false,
-  plugin: false,
-} satisfies ActionSurfaces);
-
-const DAEMON_PROMPT_PLUGIN_SURFACES = Object.freeze({
-  ...DAEMON_ADMIN_RPC_SURFACES,
-  plugin: true,
-} as const satisfies ActionSurfaces);
+} satisfies PreNormalizedActionSurfaces);
 
 const DAEMON_ADMIN_INPUT_HINTS = Object.freeze({
   fields: [],
@@ -1197,12 +1238,94 @@ const SessionHandoffInputSchema = z.object({
 }).passthrough();
 
 const SessionSpawnNewInputSchema = SessionSpawnNewInputV2Schema;
+const SessionSpawnNewApiInputSchema = SessionSpawnNewInputV2Schema.omit({
+  executionTarget: true,
+}).strict();
+const SessionSpawnNewInputHints = {
+  title: 'Create a new session',
+  fields: [
+    { path: 'creationKey', title: 'Creation key', widget: 'text' },
+    { path: 'executionTarget.serverId', title: 'Server id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.servers.available' },
+    { path: 'executionTarget.machineId', title: 'Machine id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.machines.available' },
+    { path: 'directory', title: 'Directory', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.paths.recent' },
+    { path: 'organizationPlacement', title: 'Organization placement', widget: 'json' },
+    { path: 'agentTarget', title: 'Agent target', widget: 'json', required: true, optionsSourceId: 'agents.backends.enabled' },
+    { path: 'modelSelection', title: 'Model selection', widget: 'json', optionsSourceId: 'agents.models.available' },
+    { path: 'title', title: 'Title', widget: 'text' },
+    { path: 'permissionMode', title: 'Permission mode', widget: 'text' },
+    { path: 'agentModeId', title: 'Agent mode', widget: 'text', optionsSourceId: 'agents.session_modes.available' },
+    { path: 'configuration', title: 'Configuration', widget: 'json', optionsSourceId: 'agents.config_options.available' },
+    { path: 'profileId', title: 'Profile id', widget: 'text', optionsSourceId: 'sessions.spawn.profiles.available' },
+    { path: 'connectedServices', title: 'Connected services', widget: 'json', optionsSourceId: 'sessions.spawn.connected_services.available' },
+    { path: 'mcpSelection', title: 'MCP selection', widget: 'json', optionsSourceId: 'sessions.spawn.mcp_servers.preview' },
+    { path: 'transcriptStorage', title: 'Transcript storage', widget: 'text' },
+    { path: 'terminal', title: 'Terminal', widget: 'json' },
+    { path: 'checkoutCreationDraft', title: 'Checkout creation', widget: 'json' },
+    { path: 'initialMessage', title: 'Initial message', widget: 'textarea' },
+    { path: 'agentSessionStartupInstructionsV1', title: 'Startup instructions', widget: 'json' },
+  ],
+} satisfies ActionInputHints;
+const SessionSpawnNewApiInputHints = {
+  ...SessionSpawnNewInputHints,
+  fields: SessionSpawnNewInputHints.fields.filter((field) => (
+    field.path !== 'executionTarget.serverId' && field.path !== 'executionTarget.machineId'
+  )),
+} satisfies ActionInputHints;
+
+/**
+ * The sole canonical-to-public projection for a Session creation request that
+ * was already admitted on a local Action surface. Execution placement remains
+ * transport metadata: the public input cannot carry it, while the selected
+ * machine reaches the API envelope as its exact target.
+ */
+export function projectSessionSpawnNewApiRequest(
+  value: unknown,
+): Readonly<{
+  input: z.input<typeof SessionSpawnNewApiInputSchema>;
+  target: Extract<ExternalActionTargetV1, { kind: 'machine' }>;
+}> {
+  const canonicalInput = SessionSpawnNewInputV2Schema.parse(value);
+  const { executionTarget, ...apiInput } = canonicalInput;
+  return {
+    input: SessionSpawnNewApiInputSchema.parse(apiInput),
+    target: {
+      kind: 'machine',
+      machineId: executionTarget.machineId,
+    },
+  };
+}
+
 // Action invocations may derive a key from their durable request identity, but
 // RPC retries have no such identity. The transport therefore requires the
 // caller's one logical creation key rather than synthesizing one per attempt.
 const SessionSpawnNewRpcInputSchema = SessionSpawnNewInputV2Schema.extend({
   creationKey: SessionCreationKeyV1Schema,
 });
+
+function bindApiSessionSpawnNewInput(
+  value: unknown,
+  context: ActionSurfaceBindingContext,
+): unknown {
+  const input = SessionSpawnNewApiInputSchema.parse(value);
+  const serverId = context.serverId;
+  const target = context.externalActionTarget;
+  if (
+    context.caller.kind !== 'host'
+    || typeof serverId !== 'string'
+    || serverId.trim().length === 0
+    || target?.kind !== 'machine'
+  ) {
+    throw new Error('API session spawn requires a host-stamped machine target and server id');
+  }
+
+  return {
+    ...input,
+    executionTarget: {
+      serverId,
+      machineId: target.machineId,
+    },
+  };
+}
 
 function validateAgentIdAndBackendTargetKeySelection(
   value: Readonly<{
@@ -1385,6 +1508,13 @@ const SessionSendMessageInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
   message: z.string().min(1),
   requestedAction: PendingRequestedActionV1Schema.optional(),
+  /**
+   * The caller-retained stable identity for this durable input. Resubmitting
+   * the same localId rejoins the existing pending input instead of queueing a
+   * second message, so an ambiguous send can be retried safely. Plugin callers
+   * cannot supply it: their identity is host-derived from `idempotencyKey`.
+   */
+  localId: PendingLocalIdSchema.optional(),
   idempotencyKey: PluginSessionInputIdempotencyKeyV1Schema.optional(),
   source: PluginSessionInputSourceV1Schema.optional(),
   permissionModeOverride: z.string().trim().min(1).optional(),
@@ -1578,6 +1708,11 @@ const TranscriptFollowInputSchema = TranscriptReadAfterInputSchema.extend({
   idleTtlMs: z.number().int().min(1).max(3_600_000).optional(),
 }).passthrough();
 
+const TranscriptUnfollowInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  leaseId: z.string().min(1),
+}).strict();
+
 const TranscriptImportInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
   importId: z.string().trim().min(1).optional(),
@@ -1613,6 +1748,11 @@ const TranscriptReadAfterOutputSchema = z.object({
 const TranscriptFollowOutputSchema = TranscriptReadAfterOutputSchema.extend({
   leaseId: z.string().min(1).optional(),
 }).passthrough();
+
+const TranscriptUnfollowOutputSchema = z.object({
+  ok: z.literal(true),
+  released: z.boolean(),
+}).strict();
 
 const TranscriptImportOutputSchema = z.object({
   ok: z.boolean(),
@@ -1785,6 +1925,11 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'ui.current_context.read',
   'ui.current_context.command.invoke',
   'account.plugins.data.erase',
+  'account.sessions.signOutEverywhere',
+  'account.apiTokens.create',
+  'account.apiTokens.list',
+  'account.apiTokens.revoke',
+  'account.apiTokens.revokeAll',
   'sessions.subagents.list',
   'sessions.subagents.get',
   'sessions.subagents.watch',
@@ -1974,6 +2119,7 @@ const RESULT_NONE_APPROVAL_ACTION_IDS = [
   'session.unarchive',
   'session.goal.set',
   'session.goal.clear',
+  'transcript.unfollow',
   'ui.voice_global.reset',
   'ui.pet.choose',
   'prompt_doc.update',
@@ -2470,12 +2616,11 @@ const PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS: Readonly<Record<PluginDevLoopActionId
   'plugins.change.status': 'Read one daemon-issued pending plugin change without creating or deciding it.',
 });
 
-function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1): ActionSpecWithoutApproval {
+function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1): PreNormalizedActionSpec {
   const isRead = actionId === 'plugins.list' || actionId === 'plugins.change.status';
   const isInspectorUiAction = actionId === 'plugins.list'
     || actionId === 'plugins.reload'
     || actionId === 'plugins.change.status';
-  const isPluginCallable = actionId === 'plugins.list' || actionId === 'plugins.reload';
   const inputSchema = PluginDevLoopActionInputSchemas[actionId];
 
   return {
@@ -2494,8 +2639,6 @@ function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1): Actio
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: isPluginCallable,
     },
     sideEffectClass: actionId === 'plugins.uninstall' ? 'danger' : isRead ? 'read' : 'write',
     outputSchema: PluginDevLoopActionOutputSchema,
@@ -2534,7 +2677,7 @@ const PLUGIN_SETTINGS_ADMINISTRATION_ACTION_DESCRIPTIONS: Readonly<Record<
 
 function createPluginSettingsAdministrationActionSpec(
   actionId: PluginSettingsAdministrationActionIdV1,
-): ActionSpecWithoutApproval {
+): PreNormalizedActionSpec {
   const isRead = actionId === 'plugins.settings.list'
     || actionId === 'plugins.settings.get'
     || actionId === 'plugins.settings.secret.status';
@@ -2552,8 +2695,6 @@ function createPluginSettingsAdministrationActionSpec(
       mcp: false,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: false,
     },
     sideEffectClass: isRead ? 'read' : 'write',
     outputSchema: PluginSettingsAdministrationActionOutputV1Schema,
@@ -2562,11 +2703,8 @@ function createPluginSettingsAdministrationActionSpec(
   };
 }
 
-function createPluginPermissionGrantActionSpec(actionId: PluginPermissionGrantActionIdV1): ActionSpecWithoutApproval {
+function createPluginPermissionGrantActionSpec(actionId: PluginPermissionGrantActionIdV1): PreNormalizedActionSpec {
   const isRead = actionId === 'plugins.permissions.grants.list';
-  const pluginSurface = actionId === 'plugins.permissions.grants.list'
-    || actionId === 'plugins.permissions.grants.request'
-    || actionId === 'plugins.permissions.grants.revoke';
   const pluginBinding = actionId === 'plugins.permissions.grants.list'
     ? {
         inputSchema: PluginPermissionGrantListPluginInputSchema,
@@ -2623,8 +2761,6 @@ function createPluginPermissionGrantActionSpec(actionId: PluginPermissionGrantAc
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: pluginSurface,
     },
     sideEffectClass: isRead ? 'read' : 'write',
     outputSchema: PluginPermissionGrantActionOutputSchemasV1[actionId],
@@ -2645,9 +2781,9 @@ const PLUGIN_WEBHOOK_ACTION_TITLES: Readonly<Record<PluginWebhookActionIdV1, str
   'plugin.webhook.endpoint.credential.finishRotation': 'Finish webhook credential rotation',
 });
 
-function createPluginWebhookActionSpec(actionId: PluginWebhookActionIdV1): ActionSpecWithoutApproval {
-  const pluginSurface = actionId === 'plugin.webhook.endpoint.checkCorrespondence';
-  const readOnly = actionId === 'plugin.webhook.endpoint.read' || pluginSurface;
+function createPluginWebhookActionSpec(actionId: PluginWebhookActionIdV1): PreNormalizedActionSpec {
+  const isCorrespondenceCheck = actionId === 'plugin.webhook.endpoint.checkCorrespondence';
+  const readOnly = actionId === 'plugin.webhook.endpoint.read' || isCorrespondenceCheck;
   return {
     id: actionId,
     title: PLUGIN_WEBHOOK_ACTION_TITLES[actionId],
@@ -2655,14 +2791,12 @@ function createPluginWebhookActionSpec(actionId: PluginWebhookActionIdV1): Actio
     safety: readOnly ? 'safe' : 'danger',
     placements: [],
     surfaces: {
-      ui: !pluginSurface,
+      ui: !isCorrespondenceCheck,
       voice: false,
       agent: false,
       mcp: false,
-      cli: !pluginSurface,
+      cli: !isCorrespondenceCheck,
       rpc: false,
-      sdk: false,
-      plugin: pluginSurface,
     },
     sideEffectClass: readOnly ? 'read' : 'write',
     outputSchema: PluginWebhookActionOutputSchemasV1[actionId],
@@ -2677,7 +2811,7 @@ const AUTOMATION_EVENT_ACTION_TITLES: Readonly<Record<AutomationEventActionIdV1,
   'automation.event.source.status.report': 'Report Automation Event source status',
 });
 
-function createAutomationEventActionSpec(actionId: AutomationEventActionIdV1): ActionSpecWithoutApproval {
+function createAutomationEventActionSpec(actionId: AutomationEventActionIdV1): PreNormalizedActionSpec {
   const readOnly = actionId === 'automation.event.sources.list';
   return {
     id: actionId,
@@ -2692,8 +2826,6 @@ function createAutomationEventActionSpec(actionId: AutomationEventActionIdV1): A
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: readOnly ? 'read' : 'write',
     outputSchema: AutomationEventActionOutputSchemasV1[actionId],
@@ -2712,7 +2844,7 @@ const AUTOMATION_CONVERSATION_ACTION_TITLES: Readonly<
 
 function createAutomationConversationActionSpec(
   actionId: AutomationConversationActionIdV1,
-): ActionSpecWithoutApproval {
+): PreNormalizedActionSpec {
   const readOnly = actionId === 'automation.conversation.targets.list'
     || actionId === 'automation.conversation.target.verify';
   const description = actionId === 'automation.conversation.targets.list'
@@ -2733,8 +2865,6 @@ function createAutomationConversationActionSpec(
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: readOnly ? 'read' : 'write',
     outputSchema: AutomationConversationActionOutputSchemasV1[actionId],
@@ -2743,7 +2873,7 @@ function createAutomationConversationActionSpec(
   };
 }
 
-function createReviewCommentActionSpec(actionId: ReviewCommentActionIdV1): ActionSpecWithoutApproval {
+function createReviewCommentActionSpec(actionId: ReviewCommentActionIdV1): PreNormalizedActionSpec {
   const isRead = actionId === 'reviews.comments.list' || actionId === 'reviews.comments.get';
   return {
     id: actionId,
@@ -2762,8 +2892,6 @@ function createReviewCommentActionSpec(actionId: ReviewCommentActionIdV1): Actio
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: isRead ? 'read' : 'write',
     outputSchema: ReviewCommentActionOutputSchemasV1[actionId],
@@ -2796,8 +2924,6 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: PluginSessionHookStatusResponseV1Schema,
@@ -2830,8 +2956,6 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: PluginSessionHookInstallResponseV1Schema,
@@ -2864,8 +2988,6 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: PluginSessionHookToggleResponseV1Schema,
@@ -2898,8 +3020,6 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: PluginSessionHookToggleResponseV1Schema,
@@ -2932,15 +3052,13 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'danger',
     outputSchema: PluginSessionHookUninstallResponseV1Schema,
     inputSchema: PluginSessionHookInstallationMutationActionInputV1Schema,
     inputHints: { fields: [] },
   },
-] as const satisfies readonly ActionSpecWithoutApproval[];
+] as const satisfies readonly PreNormalizedActionSpec[];
 
 const EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS: ActionInputHints['fields'] = [
   { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -3092,8 +3210,6 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: ExternalSessionMaterializeActionResultV1Schema,
@@ -3125,8 +3241,6 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
     },
     sideEffectClass: 'danger',
     outputSchema: ExternalSessionOperationActionResponseV1Schema,
@@ -3162,8 +3276,6 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: ExternalSessionOperationActionResultV1Schema,
@@ -3199,8 +3311,6 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: ExternalSessionOperationActionResultV1Schema,
@@ -3236,8 +3346,6 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: ExternalSessionOperationActionResultV1Schema,
@@ -3273,8 +3381,6 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: ExternalSessionOperationActionResultV1Schema,
@@ -3310,8 +3416,6 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'danger',
     outputSchema: ExternalSessionOperationActionResultV1Schema,
@@ -3321,7 +3425,7 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       fields: EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS,
     },
   },
-] as const satisfies readonly ActionSpecWithoutApproval[];
+] as const satisfies readonly PreNormalizedActionSpec[];
 
 function resolveApprovalMetadataForActionId(actionId: ActionId): ActionApproval {
   if (RESULT_REQUIRED_APPROVAL_ACTION_ID_SET.has(actionId)) return APPROVAL_RESULT_REQUIRED;
@@ -3368,8 +3472,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: false,
     },
     sideEffectClass: 'danger',
     outputSchema: PluginAccountDataEraseActionOutputV1Schema,
@@ -3380,6 +3482,126 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       fields: [
         { path: 'pluginId', title: 'Plugin id', widget: 'text', required: true },
       ],
+    },
+  },
+  {
+    id: 'account.sessions.signOutEverywhere',
+    title: 'Sign out everywhere',
+    description: 'Invalidate all signed sessions for the current Account. API tokens remain active.',
+    safety: 'danger',
+    placements: [],
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+    },
+    sideEffectClass: 'danger',
+    outputSchema: AccountSessionsSignOutEverywhereActionOutputV1Schema,
+    inputSchema: AccountSessionsSignOutEverywhereActionInputV1Schema,
+    inputHints: {
+      title: 'Sign out everywhere',
+      description: 'This invalidates signed sessions for the current Account. API tokens remain active.',
+      fields: [],
+    },
+  },
+  {
+    id: 'account.apiTokens.create',
+    title: 'Create API token',
+    description: 'Create a named API token for the current Account. The token secret is shown once.',
+    safety: 'danger',
+    placements: [],
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+    },
+    sideEffectClass: 'danger',
+    outputSchema: AccountApiTokensCreateActionOutputV1Schema,
+    inputSchema: AccountApiTokensCreateActionInputV1Schema,
+    inputHints: {
+      title: 'Create API token',
+      description: 'The full token is displayed once after creation.',
+      fields: [
+        { path: 'label', title: 'Label', widget: 'text', required: true },
+        { path: 'expiresAt', title: 'Expiry', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'account.apiTokens.list',
+    title: 'List API tokens',
+    description: 'List non-secret API-token summaries for the current Account.',
+    safety: 'safe',
+    placements: [],
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+    },
+    sideEffectClass: 'read',
+    outputSchema: AccountApiTokensListActionOutputV1Schema,
+    inputSchema: AccountApiTokensListActionInputV1Schema,
+    inputHints: {
+      title: 'List API tokens',
+      description: 'Returns labels, prefixes, and timestamps only; no token secret is returned.',
+      fields: [],
+    },
+  },
+  {
+    id: 'account.apiTokens.revoke',
+    title: 'Revoke API token',
+    description: 'Revoke one API token for the current Account.',
+    safety: 'danger',
+    placements: [],
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+    },
+    sideEffectClass: 'danger',
+    outputSchema: AccountApiTokensRevokeActionOutputV1Schema,
+    inputSchema: AccountApiTokensRevokeActionInputV1Schema,
+    inputHints: {
+      title: 'Revoke API token',
+      description: 'The token stops working on the server’s next verification.',
+      fields: [
+        { path: 'tokenId', title: 'Token id', widget: 'text', required: true },
+      ],
+    },
+  },
+  {
+    id: 'account.apiTokens.revokeAll',
+    title: 'Revoke all API tokens',
+    description: 'Revoke every API token for the current Account. Signed sessions are unaffected.',
+    safety: 'danger',
+    placements: [],
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+    },
+    sideEffectClass: 'danger',
+    outputSchema: AccountApiTokensRevokeAllActionOutputV1Schema,
+    inputSchema: AccountApiTokensRevokeAllActionInputV1Schema,
+    inputHints: {
+      title: 'Revoke all API tokens',
+      description: 'This permanently revokes every API token for the current Account.',
+      fields: [],
     },
   },
   {
@@ -3401,11 +3623,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: false,
       rpc: false,
-      sdk: false,
-      // Directional exclusion: the only real executor opens the in-app picker and
-      // waits for a present UI user. No daemon/plugin host interaction outcome exists.
-      plugin: false,
-      },
+    },
     inputHints: {
       title: 'Search action specs',
       description: 'Use this before guessing action ids or tool names.',
@@ -3436,9 +3654,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
-      },
+    },
     inputHints: {
       title: 'Get action spec',
       fields: [
@@ -3467,9 +3683,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
-      },
+    },
     inputHints: {
       title: 'Resolve action options',
       description: 'Use this when an action field has static options or an optionsSourceId.',
@@ -3488,7 +3702,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
   {
     id: 'action.invoke',
     title: 'Invoke contributed action',
-    description: 'Invoke one currently available contributed Action through the canonical host dispatcher.',
+    description: 'Invoke one currently available contributed Action through the canonical host dispatcher. If the result is `denied`, the person declined the confirmation: report that and do not invoke it again unless they ask.',
     sideEffectClass: 'external',
     safety: 'safe',
     placements: [],
@@ -3503,8 +3717,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: false,
     },
     inputHints: {
       title: 'Invoke contributed action',
@@ -3599,8 +3811,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     outputSchema: StrictJsonValueSchema,
     inputSchema: ReviewStartInputSchema,
@@ -3667,8 +3877,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
 	      mcp: true,
 	      cli: true,
 	      rpc: false,
-	      sdk: false,
-	      plugin: true,
 	      },
 	    outputSchema: StrictJsonValueSchema,
 	    inputSchema: PlanStartInputSchema,
@@ -3742,8 +3950,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
 	      mcp: true,
 	      cli: true,
 	      rpc: false,
-	      sdk: false,
-	      plugin: true,
 	      },
 	    outputSchema: StrictJsonValueSchema,
 	    inputSchema: DelegateStartInputSchema,
@@ -3788,8 +3994,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: false,
       },
     outputSchema: StrictJsonValueSchema,
     inputSchema: VoiceAgentStartInputSchema,
@@ -3809,8 +4013,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
     },
     outputSchema: z.array(SubagentRefV1Schema),
     inputSchema: SubagentListInputSchema,
@@ -3839,8 +4041,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
     },
     outputSchema: SubagentRefV1Schema.nullable(),
     inputSchema: SubagentGetInputSchema,
@@ -3867,8 +4067,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
     },
     outputSchema: SubagentWatchSnapshotOutputSchema,
     inputSchema: SubagentWatchInputSchema,
@@ -3896,8 +4094,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
     },
     outputSchema: SubagentRefV1Schema,
     inputSchema: SubagentRefInputV1Schema,
@@ -3927,8 +4123,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
     },
     outputSchema: SubagentRefV1Schema,
     inputSchema: SubagentStatusUpdateInputSchema,
@@ -3957,8 +4151,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
     },
     outputSchema: SubagentRefV1Schema,
     inputSchema: SubagentCompleteInputSchema,
@@ -3999,8 +4191,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: true,
       },
     surfaceBindings: {
       plugin: {
@@ -4097,8 +4287,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
 	      mcp: true,
 	      cli: true,
 	      rpc: true,
-	      sdk: false,
-	      plugin: true,
 	      },
 	    outputSchema: ExecutionRunListResponseSchema,
     inputSchema: ExecutionRunListRequestSchema.extend({
@@ -4124,8 +4312,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Get a run',
@@ -4156,8 +4342,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Send to run',
@@ -4186,8 +4370,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Ensure a run',
@@ -4218,8 +4400,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Ensure or start a run',
@@ -4248,8 +4428,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Start a run stream',
@@ -4279,8 +4457,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Read a run stream',
@@ -4310,8 +4486,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Cancel a run stream',
@@ -4342,8 +4516,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
 	      mcp: true,
 	      cli: true,
 	      rpc: true,
-	      sdk: false,
-	      plugin: true,
 	      },
 	    inputHints: {
 	      title: 'Stop a run',
@@ -4373,8 +4545,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Run action',
@@ -4405,9 +4575,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
-      },
+    },
     inputHints: {
       title: 'Wait for a run',
       fields: [
@@ -4437,8 +4605,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Open a session',
@@ -4452,6 +4618,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
   },
   {
     id: 'session.fork',
+    operation: {
+      version: 1,
+      visibility: 'activity',
+      progress: 'indeterminate',
+      presentation: { onStart: 'current' },
+    },
     title: 'Fork session',
     sideEffectClass: 'write',
     description: 'Create a new session from the latest state of the selected session.',
@@ -4473,8 +4645,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Fork a session',
@@ -4498,8 +4668,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Continue with replay',
@@ -4526,8 +4694,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Rollback a session conversation',
@@ -4551,8 +4717,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Rollback session code to a checkpoint',
@@ -4580,8 +4744,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Create a session checkpoint',
@@ -4608,8 +4770,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Restore a session checkpoint',
@@ -4625,11 +4785,17 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
   },
   {
     id: 'session.handoff',
+    operation: {
+      version: 1,
+      visibility: 'activity',
+      progress: 'reported',
+      presentation: { onStart: 'current' },
+    },
     title: 'Hand off session',
     description: 'Move the current session to another machine while keeping the same session id.',
     safety: 'safe',
     placements: ['session_action_menu', 'session_info'],
-    bindings: { rpcMethod: 'daemon.sessionHandoff.start' },
+    bindings: { rpcMethod: 'daemon.sessionHandoff.start', sdkMethod: 'session.handoff.start' },
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}","targetMachineId":"{{machineId}}"}' },
     },
@@ -4640,8 +4806,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Hand off a session',
@@ -4660,7 +4824,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     description: 'Prepare a target machine to receive an in-progress session handoff.',
     safety: 'safe',
     placements: [],
-    bindings: { rpcMethod: 'daemon.sessionHandoff.prepareTarget' },
+    bindings: {
+      rpcMethod: 'daemon.sessionHandoff.prepareTarget',
+      sdkMethod: 'session.handoff.prepareTarget.start',
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -4668,8 +4835,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
       },
     inputHints: {
       title: 'Prepare handoff target',
@@ -4696,8 +4861,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
       },
     inputHints: {
       title: 'Get handoff prepare-target result',
@@ -4720,8 +4883,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
     },
     inputHints: {
       title: 'Resume interrupted handoff preparation',
@@ -4749,8 +4910,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
       },
     inputHints: {
       title: 'Commit handoff',
@@ -4773,8 +4932,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
       },
     inputHints: {
       title: 'Abort handoff',
@@ -4800,8 +4957,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
       },
     inputHints: {
       title: 'Get handoff status',
@@ -4812,6 +4967,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
   },
   {
     id: 'session.spawn_new',
+    operation: {
+      version: 1,
+      visibility: 'activity',
+      progress: 'reported',
+      presentation: { onStart: 'current' },
+    },
     title: 'Create session',
     sideEffectClass: 'write',
     safety: 'safe',
@@ -4823,6 +4984,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcpToolName: 'session_spawn_new',
     },
     surfaceBindings: {
+      api: {
+        inputSchema: SessionSpawnNewApiInputSchema,
+        bindInput: bindApiSessionSpawnNewInput,
+        inputHints: SessionSpawnNewApiInputHints,
+      },
       rpc: {
         inputSchema: SessionSpawnNewRpcInputSchema,
         decodeInput: identityActionSurfaceValue,
@@ -4840,33 +5006,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
-    inputHints: {
-      title: 'Create a new session',
-      fields: [
-        { path: 'creationKey', title: 'Creation key', widget: 'text' },
-        { path: 'executionTarget.serverId', title: 'Server id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.servers.available' },
-        { path: 'executionTarget.machineId', title: 'Machine id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.machines.available' },
-        { path: 'directory', title: 'Directory', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.paths.recent' },
-        { path: 'organizationPlacement', title: 'Organization placement', widget: 'json' },
-        { path: 'agentTarget', title: 'Agent target', widget: 'json', required: true, optionsSourceId: 'agents.backends.enabled' },
-        { path: 'modelSelection', title: 'Model selection', widget: 'json', optionsSourceId: 'agents.models.available' },
-        { path: 'title', title: 'Title', widget: 'text' },
-        { path: 'permissionMode', title: 'Permission mode', widget: 'text' },
-        { path: 'agentModeId', title: 'Agent mode', widget: 'text', optionsSourceId: 'agents.session_modes.available' },
-        { path: 'configuration', title: 'Configuration', widget: 'json', optionsSourceId: 'agents.config_options.available' },
-        { path: 'profileId', title: 'Profile id', widget: 'text', optionsSourceId: 'sessions.spawn.profiles.available' },
-        { path: 'connectedServices', title: 'Connected services', widget: 'json', optionsSourceId: 'sessions.spawn.connected_services.available' },
-        { path: 'mcpSelection', title: 'MCP selection', widget: 'json', optionsSourceId: 'sessions.spawn.mcp_servers.preview' },
-        { path: 'transcriptStorage', title: 'Transcript storage', widget: 'text' },
-        { path: 'terminal', title: 'Terminal', widget: 'json' },
-        { path: 'checkoutCreationDraft', title: 'Checkout creation', widget: 'json' },
-        { path: 'initialMessage', title: 'Initial message', widget: 'textarea' },
-        { path: 'agentSessionStartupInstructionsV1', title: 'Startup instructions', widget: 'json' },
-      ],
-    },
+    inputHints: SessionSpawnNewInputHints,
     outputSchema: SessionSpawnNewResultV1Schema,
     inputSchema: SessionSpawnNewInputSchema,
   },
@@ -4888,9 +5029,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
-      },
+    },
     inputHints: {
       title: 'List recent paths',
       fields: [
@@ -4919,8 +5058,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'List machines',
@@ -4947,8 +5084,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'List servers',
@@ -4975,8 +5110,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'List review engines',
@@ -5007,8 +5140,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'List agent backends',
@@ -5018,7 +5149,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
       ],
     },
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: AgentsBackendsListOutputSchema,
     inputSchema: AgentsBackendsListInputSchema,
   },
   {
@@ -5040,8 +5171,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'List agent models',
@@ -5074,8 +5203,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'List agent config options',
@@ -5109,8 +5236,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'List agent session modes',
@@ -5143,8 +5268,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'List spawn profiles',
@@ -5176,8 +5299,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'List spawn connected services',
@@ -5209,8 +5330,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Preview spawn MCP servers',
@@ -5246,8 +5365,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Send a message',
@@ -5287,8 +5404,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Stop a session',
@@ -5318,8 +5433,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Clear terminal composer',
@@ -5348,8 +5461,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Interrupt and run now',
@@ -5379,8 +5490,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Set title',
@@ -5409,8 +5518,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: false,
       },
     inputHints: {
       title: 'Set permission mode',
@@ -5439,8 +5546,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Set session model',
@@ -5470,8 +5575,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Archive a session',
@@ -5497,8 +5600,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Unarchive a session',
@@ -5524,9 +5625,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
-      },
+    },
     inputHints: {
       title: 'Get session status',
       fields: [
@@ -5554,8 +5653,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Get session work state',
@@ -5581,8 +5678,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Get session goal',
@@ -5608,8 +5703,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Set session goal',
@@ -5640,8 +5733,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Clear session goal',
@@ -5667,8 +5758,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Enable usage-limit wait resume',
@@ -5710,8 +5799,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Cancel usage-limit wait resume',
@@ -5742,8 +5829,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Check usage-limit recovery now',
@@ -5796,8 +5881,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Apply reset credit',
@@ -5841,8 +5924,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'List vendor plugins',
@@ -5871,8 +5952,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'List skills',
@@ -5901,8 +5980,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: false,
       },
     inputHints: {
       title: 'Get session history',
@@ -5944,9 +6021,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
-      },
+    },
     inputHints: {
       title: 'Get session transcript',
       fields: [
@@ -5997,8 +6072,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: false,
       },
     inputHints: {
       title: 'Get session events',
@@ -6028,8 +6101,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Wait for idle',
@@ -6056,8 +6127,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: false,
       },
     inputHints: {
       title: 'Respond to permission request',
@@ -6093,8 +6162,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'List remotely mediated permission requests',
@@ -6121,8 +6188,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Respond to a remotely mediated permission request',
@@ -6175,8 +6240,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'List remotely mediated permission grants',
@@ -6204,8 +6267,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     inputHints: {
       title: 'Revoke a remotely mediated permission grant',
@@ -6248,8 +6309,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Respond to user-action request',
@@ -6303,8 +6362,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Set session mode',
@@ -6331,7 +6388,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     safety: 'safe',
     placements: ['voice_panel'],
     prompting: { voiceHotPath: true },
-    bindings: { voiceClientToolName: 'setPrimaryActionSession', mcpToolName: 'session_target_primary_set' },
+      bindings: { voiceClientToolName: 'setPrimaryActionSession', mcpToolName: 'session_target_primary_set' },
     examples: {
       voice: { argsExample: '{"sessionTitle":"Session Setup"}' },
     },
@@ -6340,10 +6397,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       voice: true,
       agent: false,
       mcp: true,
-      cli: true,
+      cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Set primary action session',
@@ -6362,7 +6417,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     description: 'Set which sessions should be treated as tracked for updates/snippets.',
     safety: 'safe',
     placements: ['voice_panel'],
-    bindings: { voiceClientToolName: 'setTrackedSessions', mcpToolName: 'session_target_tracked_set' },
+    bindings: { voiceClientToolName: 'setTrackedSessions' },
     examples: {
       voice: { argsExample: '{"sessionIds":["{{sessionId}}"]}' },
     },
@@ -6370,11 +6425,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       ui: true,
       voice: true,
       agent: false,
-      mcp: true,
-      cli: true,
+      mcp: false,
+      cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Set tracked sessions',
@@ -6402,8 +6455,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'List sessions',
@@ -6434,8 +6485,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     inputHints: {
       title: 'Get session activity',
@@ -6464,8 +6513,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: false,
       },
     inputHints: {
       title: 'Get recent messages',
@@ -6503,8 +6550,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: false,
       },
     outputSchema: StrictJsonValueSchema,
     inputSchema: EmptyObjectSchema,
@@ -6528,8 +6573,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: false,
     },
     outputSchema: StrictJsonValueSchema,
     inputSchema: EmptyObjectSchema,
@@ -6557,8 +6600,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: false,
       },
     outputSchema: StrictJsonValueSchema,
     inputSchema: OptionalSessionIdInputSchema,
@@ -6581,8 +6622,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: false,
     },
     inputHints: {
       title: 'Read current UI context',
@@ -6595,7 +6634,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
   {
     id: 'ui.current_context.command.invoke',
     title: 'Invoke current UI command',
-    description: 'Invoke one currently available opaque command from the local current UI context.',
+    description: 'Invoke one currently available opaque command from the local current UI context. If the result is `denied`, the person declined the confirmation: report that and do not invoke it again unless they ask.',
     sideEffectClass: 'external',
     safety: 'safe',
     placements: [],
@@ -6610,8 +6649,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: false,
     },
     inputHints: {
       title: 'Invoke current UI command',
@@ -6675,8 +6712,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     outputSchema: MemorySearchResultV1Schema,
     inputSchema: MemorySearchInputSchema,
@@ -6706,8 +6741,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     examples: {
       voice: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}","seqFrom":120,"seqTo":124}' },
@@ -6739,8 +6772,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     examples: {
       voice: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}"}' },
@@ -6763,8 +6794,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     outputSchema: StrictJsonValueSchema,
     inputSchema: PromptDocUpdateInputSchema,
@@ -6792,8 +6821,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     outputSchema: StrictJsonValueSchema,
     inputSchema: PromptBundleUpdateInputSchema,
@@ -6821,8 +6848,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     outputSchema: StrictJsonValueSchema,
     inputSchema: PromptAssetExportInputSchema,
@@ -6870,8 +6895,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
-      plugin: true,
       },
     outputSchema: StrictJsonValueSchema,
     inputSchema: PromptRegistryInstallInputSchema,
@@ -6913,7 +6936,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: 'daemon.promptAssets.discover' },
-    surfaces: DAEMON_PROMPT_PLUGIN_SURFACES,
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'read',
     outputSchema: StrictJsonValueSchema,
     inputSchema: PromptAssetDiscoverRequestSchema,
@@ -6926,7 +6949,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: 'daemon.promptAssets.delete' },
-    surfaces: DAEMON_PROMPT_PLUGIN_SURFACES,
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'danger',
     outputSchema: StrictJsonValueSchema,
     inputSchema: PromptAssetDeleteRequestSchema,
@@ -6939,7 +6962,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: 'daemon.promptRegistry.scanSource' },
-    surfaces: DAEMON_PROMPT_PLUGIN_SURFACES,
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'read',
     outputSchema: StrictJsonValueSchema,
     inputSchema: PromptRegistryScanSourceRequestV1Schema,
@@ -6952,7 +6975,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: 'daemon.promptRegistry.install' },
-    surfaces: DAEMON_PROMPT_PLUGIN_SURFACES,
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'danger',
     outputSchema: StrictJsonValueSchema,
     inputSchema: PromptRegistryInstallRequestV1Schema,
@@ -7089,8 +7112,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
       },
     sideEffectClass: 'read',
     outputSchema: StrictJsonValueSchema,
@@ -7130,8 +7151,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
       },
     sideEffectClass: 'read',
     outputSchema: StrictJsonValueSchema,
@@ -7157,8 +7176,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: false,
       },
     sideEffectClass: 'write',
     outputSchema: StrictJsonValueSchema,
@@ -7187,8 +7204,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: true,
       cli: true,
       rpc: true,
-      sdk: false,
-      plugin: false,
       },
     sideEffectClass: 'write',
     outputSchema: StrictJsonValueSchema,
@@ -7224,8 +7239,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: SessionLogTailOutputSchema,
@@ -7253,8 +7266,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: TranscriptPageOutputSchema,
@@ -7283,8 +7294,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: TranscriptReadAfterOutputSchema,
@@ -7313,8 +7322,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: TranscriptFollowOutputSchema,
@@ -7332,6 +7339,32 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     },
   },
   {
+    id: 'transcript.unfollow',
+    title: 'Unfollow session transcript',
+    description: 'Release a retained transcript follow lease.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.TRANSCRIPT_UNFOLLOW },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+    },
+    sideEffectClass: 'write',
+    outputSchema: TranscriptUnfollowOutputSchema,
+    inputSchema: TranscriptUnfollowInputSchema,
+    inputHints: {
+      title: 'Unfollow session transcript',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'leaseId', title: 'Lease id', widget: 'text', required: true },
+      ],
+    },
+  },
+  {
     id: 'transcript.import',
     title: 'Import session transcript rows',
     description: 'Import a bounded batch of transcript rows through the session transcript writer owner.',
@@ -7345,8 +7378,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: TranscriptImportOutputSchema,
@@ -7375,8 +7406,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: TranscriptReadAfterOutputSchema,
@@ -7411,8 +7440,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
     },
     sideEffectClass: 'read',
     outputSchema: ExternalSessionsCandidatesListResponseSchema,
@@ -7446,8 +7473,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
     },
     sideEffectClass: 'write',
     outputSchema: ExternalSessionLinkEnsureResponseSchema,
@@ -7493,8 +7518,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: ExternalSessionViewerFollowActionResultV1Schema,
@@ -7537,8 +7560,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: ExternalSessionViewerUnfollowActionResultV1Schema,
@@ -7579,8 +7600,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: ExternalSessionBackgroundFollowActionResultV1Schema,
@@ -7622,8 +7641,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: ExternalSessionStatusActionResultV1Schema,
@@ -7653,8 +7670,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
     },
     sideEffectClass: 'read',
     outputSchema: ExternalSessionTranscriptPageResponseSchema,
@@ -7694,8 +7709,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
     },
     sideEffectClass: 'read',
     outputSchema: z.union([
@@ -7731,7 +7744,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY,
         RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY,
       ],
-      sdkMethod: 'sessions.external.takeover',
+      sdkMethod: 'sessions.external.takeover.execute',
     },
     surfaces: {
       ui: false,
@@ -7740,8 +7753,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: false,
-      plugin: false,
     },
     sideEffectClass: 'danger',
     outputSchema: ExternalSessionTakeoverResultV1Schema,
@@ -7778,8 +7789,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: ScmPullRequestListResponseSchema,
@@ -7823,8 +7832,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: ScmPullRequestGetResponseSchema,
@@ -7856,8 +7863,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: 'external',
     outputSchema: ScmPullRequestOpenOrReuseResponseSchema,
@@ -7891,8 +7896,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: ScmPullRequestOpenComposeResponseSchema,
@@ -7924,8 +7927,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: ScmPullRequestCheckoutResponseSchema,
@@ -7957,8 +7958,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: ScmPullRequestPrepareWorktreeResponseSchema,
@@ -8000,8 +7999,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: 'danger',
     outputSchema: ScmPullRequestRunStackedResponseSchema,
@@ -8061,8 +8058,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: 'external',
     outputSchema: ScmRepositoryCloneOutputSchema,
@@ -8106,8 +8101,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: ScmRepositoryInitResponseSchema,
@@ -8137,8 +8130,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: 'danger',
     outputSchema: ScmRepositoryRemoveIndexLockResponseSchema,
@@ -8169,8 +8160,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: ScmHostingRepositoryDescribePublishTargetsResponseSchema,
@@ -8211,8 +8200,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: 'external',
     outputSchema: ScmHostingRepositoryPublishResponseSchema,
@@ -8297,8 +8284,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
-      plugin: true,
     },
     sideEffectClass: 'external',
     outputSchema: ScmDiffSummaryGenerateOutputSchema,
@@ -8328,90 +8313,462 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
   },
 ] as const));
 
-type PluginDevLoopPluginInvocableActionId = Extract<
-  PluginDevLoopActionIdV1,
-  'plugins.list' | 'plugins.reload'
->;
-type PluginDevLoopActionSpecDefinition = {
-  [TActionId in PluginDevLoopPluginInvocableActionId]: Readonly<{
-    id: TActionId;
-    surfaces: Readonly<{ plugin: true }>;
-    inputSchema: (typeof PluginDevLoopActionInputSchemas)[TActionId];
-    outputSchema: typeof PluginDevLoopActionOutputSchema;
-  }>;
-}[PluginDevLoopPluginInvocableActionId];
+/**
+ * The only host Actions that are not genuine user operations. Each entry is
+ * deliberately small and names the existing owner that keeps the operation
+ * private; every other host Action is public on the `api` and trusted-plugin
+ * projections by default.
+ */
+export const INTERNAL_ACTION_REASONS = Object.freeze({
+  'session.handoff.prepare_target': 'Private handoff lifecycle preparation phase; users invoke session.handoff instead.',
+  'session.handoff.prepare_target.resume': 'Private handoff lifecycle retry phase; users invoke session.handoff instead.',
+  'session.handoff.prepare_target_result.get': 'Private handoff coordination receipt read; session.handoff.status.get is the user projection.',
+  'session.handoff.commit': 'Private handoff lifecycle commit phase; users invoke session.handoff instead.',
+  'session.handoff.abort': 'Private handoff lifecycle abort phase; users invoke session.handoff instead.',
+  'sessions.subagents.upsert': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
+  'sessions.subagents.updateStatus': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
+  'sessions.subagents.complete': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
+  'sessions.external.takeover': 'Released direct-session compatibility stub; current clients use sessions.external.takeover.start.',
+  'plugin.webhook.delivery.movePending': 'Private webhook delivery plumbing owned by the webhook worker.',
+  'browser.session.create': 'No browser session creator is wired through the ActionExecutor; the runtime owner keeps this fail-closed.',
+  'browser.session.close': 'No browser session closer is wired through the ActionExecutor; the runtime owner keeps this fail-closed.',
+  'devices.simulator.input.orientation': 'Stock scrcpy has no absolute-orientation producer; the simulator backing owner marks this Action statically unbacked.',
+} as const satisfies Readonly<Partial<Record<ActionId, string>>>);
 
-type PluginOwnedPermissionGrantActionId = Exclude<
-  PluginPermissionGrantActionIdV1,
-  'plugins.permissions.grants.grant' | 'plugins.permissions.grants.dismissRequest'
+export type InternalActionId = keyof typeof INTERNAL_ACTION_REASONS;
+
+export const INTERNAL_ACTION_IDS = Object.freeze(
+  Object.keys(INTERNAL_ACTION_REASONS) as InternalActionId[],
+);
+
+const INTERNAL_ACTION_ID_SET = new Set<ActionId>(INTERNAL_ACTION_IDS);
+
+export function isInternalActionId(actionId: string): actionId is InternalActionId {
+  return INTERNAL_ACTION_ID_SET.has(actionId as ActionId);
+}
+
+/**
+ * These are plugin protocol operations, not user-selected API operations: the
+ * canonical input intentionally omits the plugin identity and the existing
+ * owner derives it from host-stamped plugin provenance. A PAT must never
+ * manufacture that omitted identity, so these remain plugin-only until an
+ * owner-local user contract exists.
+ */
+export const PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_REASONS = Object.freeze({
+  'automation.event.sources.list': 'Automation source identity is selected from the host-stamped plugin caller.',
+  'automation.event.admit': 'Automation event admission persists the host-stamped plugin source identity.',
+  'automation.event.source.status.report': 'Automation source status is attributed to the host-stamped plugin caller.',
+  'automation.conversation.targets.list': 'Automation conversation targets are selected from the host-stamped plugin caller.',
+  'automation.conversation.target.verify': 'Automation conversation target verification requires host-stamped plugin provenance.',
+  'automation.conversation.admit': 'Automation conversation admission persists host-stamped plugin provenance.',
+  'session.permission.remote.pending.list': 'The remote-permission mediator identity comes only from the host-stamped plugin caller.',
+  'session.permission.remote.respond': 'The remote-permission mediator identity comes only from the host-stamped plugin caller.',
+  'plugins.permissions.grants.revoke': 'Plugin self-revocation resolves the grant owner from the host-stamped plugin caller.',
+  'sessions.external.materialize.start': 'External-session materialization persists plugin-authored intent from the host-stamped caller.',
+} as const satisfies Readonly<Partial<Record<ActionId, string>>>);
+
+export type PluginProvenanceOnlyActionId = keyof typeof PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_REASONS;
+export type PublicActionId = Exclude<ActionId, InternalActionId | PluginProvenanceOnlyActionId>;
+
+export const PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_IDS = Object.freeze(
+  Object.keys(PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_REASONS) as PluginProvenanceOnlyActionId[],
+);
+
+const PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_ID_SET = new Set<ActionId>(
+  PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_IDS,
+);
+
+export function isPluginProvenanceOnlyActionId(actionId: string): actionId is PluginProvenanceOnlyActionId {
+  return PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_ID_SET.has(actionId as ActionId);
+}
+
+/**
+ * The mirror of `PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_REASONS` and the only
+ * owner of "this Action has no trusted-plugin projection at all". Publishing
+ * an Action here that no plugin caller can ever reach would type an author
+ * call the executor can only reject, so each entry names why the plugin arm
+ * cannot exist. Extend this map rather than adding a second plugin-surface
+ * decision-maker.
+ *
+ * `session.permission.respond` settles an authenticated Account person's own
+ * decision: the present-user authority gate always rejects a plugin caller,
+ * and publishing it would let the projection read as if a plugin decision
+ * were a human one. The plugin-provenance `session.permission.remote.respond`
+ * owns the mediated arm.
+ *
+ * The External Session rows are host-scoped rather than present-user: their
+ * canonical owner selects machine, source, link and contribution-generation
+ * authority from host transport context, which the public contextual
+ * `SessionsService.external` service deliberately hides. That service — not
+ * the raw Action — is the author capability, and the Action executor already
+ * serves these only for a host caller.
+ */
+export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
+  'session.permission.respond': 'Permission approval records an authenticated Account actor; plugins mediate through session.permission.remote.respond.',
+  'sessions.external.candidates.list': 'Machine/source-scoped discovery seam; authors use SessionsService.external.list, which delegates to this same candidate-query owner.',
+  'sessions.external.link.ensure': 'Machine/source-scoped linking seam; authors use SessionsService.external.attach, which delegates to this same idempotent link operation.',
+  'sessions.external.transcript.page': 'Machine/source-scoped transcript seam; authors use SessionsService.external.readTranscript.',
+  'sessions.external.transcript.readAfter': 'Machine/source-scoped transcript seam; authors use SessionsService.external.readTranscript.',
+  'sessions.external.takeover.start': 'Raw durable takeover Start; SessionsService.external.takeover privately delegates to it and is the documented author workflow.',
+} as const satisfies Readonly<Partial<Record<ActionId, string>>>);
+
+export type PluginSurfaceExcludedActionId =
+  keyof typeof PLUGIN_SURFACE_EXCLUSION_REASONS;
+
+export const PLUGIN_SURFACE_EXCLUSION_ACTION_IDS = Object.freeze(
+  Object.keys(PLUGIN_SURFACE_EXCLUSION_REASONS) as PluginSurfaceExcludedActionId[],
+);
+
+const PLUGIN_SURFACE_EXCLUSION_ACTION_ID_SET = new Set<ActionId>(
+  PLUGIN_SURFACE_EXCLUSION_ACTION_IDS,
+);
+
+export function isPluginSurfaceExcludedActionId(
+  actionId: string,
+): actionId is PluginSurfaceExcludedActionId {
+  return PLUGIN_SURFACE_EXCLUSION_ACTION_ID_SET.has(actionId as ActionId);
+}
+
+const PRESENT_USER_REQUIRED_ACTION_IDS = new Set<ActionId>([
+  'approval.request.decide',
+  'session.permission.respond',
+  'account.plugins.data.erase',
+  'account.sessions.signOutEverywhere',
+  'account.apiTokens.create',
+  'account.apiTokens.revoke',
+  'account.apiTokens.revokeAll',
+  'plugins.settings.secret.bind',
+  'plugins.settings.secret.unbind',
+  'plugins.settings.secret.delete',
+  'plugins.install',
+  'plugins.dev',
+  'plugins.author.install',
+  'plugins.permissions.grants.grant',
+  'plugins.permissions.grants.dismissRequest',
+  ...(Object.keys(PluginWebhookActionHttpPathsV1) as PluginWebhookPresentUserActionIdV1[]),
+]);
+
+/**
+ * External ingress routes from this registry fact. These groups are by the
+ * current execution owner, not by Action-id prefix: each exceptional
+ * bootstrap/client/session case is named below so a new Action cannot silently
+ * inherit a machine route merely because it was added to a neighboring family.
+ */
+const RUNTIME_ACTION_IDS_WITHOUT_MACHINE_PLACEMENT = new Set<RuntimeActionIdV1>([
+  // These are intentionally host-internal/fail-closed, so client placement is
+  // retained only to keep the registry total while no external owner exists.
+  'browser.session.create',
+  'browser.session.close',
+  'devices.simulator.input.orientation',
+  // Composer attachment is a Session-media operation, not a machine command.
+  'browser.recording.attachToComposer',
+]);
+
+const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPlacement> = (() => {
+  const placements = new Map<ActionId, ActionExecutionPlacement>();
+  const register = (placement: ActionExecutionPlacement, actionIds: readonly ActionId[]) => {
+    for (const actionId of actionIds) {
+      if (placements.has(actionId)) {
+        throw new Error(`Action ${actionId} has more than one execution placement`);
+      }
+      placements.set(actionId, placement);
+    }
+  };
+
+  // Account/server data can run before an exact machine is known.
+  register('account', [
+    'action.spec.search',
+    'action.spec.get',
+    'machines.list',
+    'session.list',
+    'prompt_doc.update',
+    'prompt_bundle.update',
+    ...ACTION_ID_FAMILIES_V1.approvals,
+    ...ACTION_ID_FAMILIES_V1.plugin_permission_grants,
+    ...ACTION_ID_FAMILIES_V1.plugin_webhooks,
+    ...ACTION_ID_FAMILIES_V1.account_plugin_data,
+    ...ACTION_ID_FAMILIES_V1.account_sessions,
+    ...ACTION_ID_FAMILIES_V1.account_api_tokens,
+    ...ACTION_ID_FAMILIES_V1.automation_events,
+    ...ACTION_ID_FAMILIES_V1.automation_conversation,
+  ]);
+
+  // These actions require a present client/runtime and are deliberately not
+  // forwarded by the public API, even when their input happens to name a Session.
+  register('client', [
+    'servers.list',
+    'session.target.primary.set',
+    'session.target.tracked.set',
+    'browser.session.create',
+    'browser.session.close',
+    'devices.simulator.input.orientation',
+    ...ACTION_ID_FAMILIES_V1.voice_controls,
+    ...ACTION_ID_FAMILIES_V1.current_ui_context,
+    ...ACTION_ID_FAMILIES_V1.companion_controls,
+  ]);
+
+  // A canonical Session resolves its current machine/daemon owner. Execution
+  // runs are intentionally absent: detached runs have no Session owner.
+  register('session', [
+    ...ACTION_ID_FAMILIES_V1.session_lifecycle.filter((actionId) => actionId !== 'session.spawn_new'),
+    'review.engines.list',
+    ...ACTION_ID_FAMILIES_V1.messaging,
+    ...ACTION_ID_FAMILIES_V1.session_control,
+    ...ACTION_ID_FAMILIES_V1.intent_start,
+    ...ACTION_ID_FAMILIES_V1.review_comments,
+    ...ACTION_ID_FAMILIES_V1.subagent_registry,
+    'session.activity.get',
+    'session.messages.recent.get',
+    ...ACTION_ID_FAMILIES_V1.session_transcripts,
+    ...ACTION_ID_FAMILIES_V1.session_permissions,
+    'browser.recording.attachToComposer',
+    'sessions.external.follow',
+    'sessions.external.unfollow',
+    'sessions.external.backgroundFollow.set',
+    'sessions.external.status.get',
+    'sessions.external.transcript.page',
+    'sessions.external.transcript.readAfter',
+  ]);
+
+  // The remaining operations are daemon/machine-owned. This includes detached
+  // execution runs, local indexes/filesystem/plugin/scm owners, and external
+  // session operations whose request selects a concrete daemon runtime.
+  register('machine', [
+    'action.options.resolve',
+    'action.invoke',
+    'session.spawn_new',
+    'paths.list_recent',
+    'agents.backends.list',
+    'agents.models.list',
+    'agents.config_options.list',
+    'agents.session_modes.list',
+    'sessions.spawn.profiles.list',
+    'sessions.spawn.connected_services.list',
+    'sessions.spawn.mcp_servers.preview',
+    ...ACTION_ID_FAMILIES_V1.execution_run_control,
+    ...ACTION_ID_FAMILIES_V1.memory,
+    'prompt_asset.export',
+    'prompt_registry.install',
+    ...ACTION_ID_FAMILIES_V1.daemon_admin,
+    ...ACTION_ID_FAMILIES_V1.plugin_dev_loop,
+    ...ACTION_ID_FAMILIES_V1.plugin_settings_administration,
+    'sessions.external.candidates.list',
+    'sessions.external.link.ensure',
+    'sessions.external.takeover',
+    'sessions.external.materialize.start',
+    'sessions.external.takeover.start',
+    'sessions.external.operation.status.get',
+    'sessions.external.operation.cancel',
+    'sessions.external.operation.resume',
+    'sessions.external.operation.retry',
+    'sessions.external.operation.discard',
+    ...ACTION_ID_FAMILIES_V1.scm_pull_request,
+    ...ACTION_ID_FAMILIES_V1.scm_repository,
+    ...ACTION_ID_FAMILIES_V1.scm_diff_summary,
+    ...RUNTIME_ACTION_IDS_V1.filter(
+      (actionId) => !RUNTIME_ACTION_IDS_WITHOUT_MACHINE_PLACEMENT.has(actionId),
+    ),
+  ]);
+
+  const missing = ACTION_IDS.filter((actionId) => !placements.has(actionId));
+  if (missing.length > 0) {
+    throw new Error(`Action execution placement missing for: ${missing.join(', ')}`);
+  }
+  return placements;
+})();
+
+function resolveActionRequiredAuthority(
+  spec: Pick<PreNormalizedActionSpec, 'id' | 'requiredAuthority'>,
+): ActionRequiredAuthority {
+  return spec.requiredAuthority
+    ?? (PRESENT_USER_REQUIRED_ACTION_IDS.has(spec.id) ? 'present_user' : 'account_automation');
+}
+
+function resolveActionExecutionPlacement(
+  spec: Pick<PreNormalizedActionSpec, 'id' | 'executionPlacement'>,
+): ActionExecutionPlacement {
+  if (spec.executionPlacement) return spec.executionPlacement;
+  const placement = ACTION_EXECUTION_PLACEMENT_BY_ID.get(spec.id);
+  if (!placement) {
+    throw new Error(`Action execution placement missing for: ${spec.id}`);
+  }
+  return placement;
+}
+
+function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): NormalizedActionSpec {
+  const isInternal = isInternalActionId(spec.id);
+  const isPluginProvenanceOnly = isPluginProvenanceOnlyActionId(spec.id);
+  const isPluginSurfaceExcluded = isPluginSurfaceExcludedActionId(spec.id);
+  return {
+    ...spec,
+    requiredAuthority: resolveActionRequiredAuthority(spec),
+    executionPlacement: resolveActionExecutionPlacement(spec),
+    surfaces: {
+      ...spec.surfaces,
+      api: !isInternal && !isPluginProvenanceOnly,
+      plugin: !isInternal && !isPluginSurfaceExcluded,
+    },
+  };
+}
+
+const ACTION_SPECS_WITH_PUBLIC_EXPOSURE = Object.freeze(
+  ACTION_SPECS_WITHOUT_APPROVAL.map(normalizeActionPublicExposure),
+);
+
+/**
+ * The generated-family builders above return a broad registry row at runtime.
+ * Keep their concrete Zod carriers in this one type-only projection so the
+ * public API and Plugin maps remain derived from the same Action ids instead
+ * of retaining a second, surface-specific allowlist. Array map cannot retain
+ * the correlation between a runtime/generated family id and its indexed schema
+ * after the value registry is assembled; changing every builder to a
+ * tuple-aware generic would duplicate that machinery across eight existing
+ * family owners. This projection therefore reads only their existing schema
+ * maps and is constrained below to exact registry-id and runtime-schema
+ * equality. It never decides an Action's runtime behavior, exposure,
+ * authority, placement, or policy.
+ */
+type CanonicalActionSchemaDefinition<
+  TActionId extends ActionId,
+  TInputSchema extends z.ZodTypeAny,
+  TOutputSchema extends z.ZodTypeAny,
+  TSurfaceBindings = never,
+> = Readonly<{
+  id: TActionId;
+  inputSchema: TInputSchema;
+  outputSchema: TOutputSchema;
+  surfaceBindings?: TSurfaceBindings;
+}>;
+
+type LiteralActionSpecDefinition<TSpec> = TSpec extends Readonly<{
+  id: infer TActionId;
+}>
+  ? ActionId extends TActionId
+    ? never
+    : TSpec
+  : never;
+
+type DirectActionSpecDefinition = LiteralActionSpecDefinition<
+  (typeof ACTION_SPECS_WITHOUT_APPROVAL)[number]
 >;
-type PluginPermissionGrantActionSpecDefinition = {
-  [TActionId in PluginOwnedPermissionGrantActionId]: Readonly<{
-    id: TActionId;
-    surfaces: Readonly<{ plugin: true }>;
-    inputSchema: (typeof PluginPermissionGrantActionInputSchemasV1)[TActionId];
-    outputSchema: (typeof PluginPermissionGrantActionOutputSchemasV1)[TActionId];
-    surfaceBindings: Readonly<{
+
+type NonRuntimeActionSpecDefinition<TSpec> = TSpec extends Readonly<{
+  id: infer TActionId;
+}>
+  ? TActionId extends RuntimeActionIdV1
+    ? never
+    : TSpec
+  : never;
+
+type NonRuntimeDirectActionSpecDefinition = NonRuntimeActionSpecDefinition<
+  DirectActionSpecDefinition
+>;
+
+type RuntimeActionSpecDefinition = {
+  [TActionId in RuntimeActionIdV1]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof RUNTIME_ACTION_INPUT_SCHEMAS)[TActionId],
+    (typeof RUNTIME_ACTION_OUTPUT_SCHEMAS)[TActionId]
+  >;
+}[RuntimeActionIdV1];
+
+type PluginDevLoopActionSpecDefinition = {
+  [TActionId in PluginDevLoopActionIdV1]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof PluginDevLoopActionInputSchemas)[TActionId],
+    typeof PluginDevLoopActionOutputSchema
+  >;
+}[PluginDevLoopActionIdV1];
+
+type PluginSettingsAdministrationActionSpecDefinition = {
+  [TActionId in PluginSettingsAdministrationActionIdV1]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof PluginSettingsAdministrationActionInputSchemasV1)[TActionId],
+    typeof PluginSettingsAdministrationActionOutputV1Schema
+  >;
+}[PluginSettingsAdministrationActionIdV1];
+
+type PluginPermissionGrantPluginBoundActionId = keyof typeof PLUGIN_PERMISSION_GRANT_PLUGIN_INPUT_SCHEMAS;
+type PluginPermissionGrantPluginBoundActionSpecDefinition = {
+  [TActionId in PluginPermissionGrantPluginBoundActionId]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof PluginPermissionGrantActionInputSchemasV1)[TActionId],
+    (typeof PluginPermissionGrantActionOutputSchemasV1)[TActionId],
+    Readonly<{
       plugin: Readonly<{
         inputSchema: (typeof PLUGIN_PERMISSION_GRANT_PLUGIN_INPUT_SCHEMAS)[TActionId];
       }>;
-    }>;
-  }>;
-}[PluginOwnedPermissionGrantActionId];
+    }>
+  >;
+}[PluginPermissionGrantPluginBoundActionId];
+type PluginPermissionGrantUnboundActionId = Exclude<
+  PluginPermissionGrantActionIdV1,
+  PluginPermissionGrantPluginBoundActionId
+>;
+type PluginPermissionGrantUnboundActionSpecDefinition = {
+  [TActionId in PluginPermissionGrantUnboundActionId]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof PluginPermissionGrantActionInputSchemasV1)[TActionId],
+    (typeof PluginPermissionGrantActionOutputSchemasV1)[TActionId]
+  >;
+}[PluginPermissionGrantUnboundActionId];
+type PluginPermissionGrantActionSpecDefinition =
+  | PluginPermissionGrantPluginBoundActionSpecDefinition
+  | PluginPermissionGrantUnboundActionSpecDefinition;
 
 type PluginReviewCommentActionSpecDefinition = {
-  [TActionId in ReviewCommentActionIdV1]: Readonly<{
-    id: TActionId;
-    surfaces: Readonly<{ plugin: true }>;
-    inputSchema: (typeof ReviewCommentActionInputSchemasV1)[TActionId];
-    outputSchema: (typeof ReviewCommentActionOutputSchemasV1)[TActionId];
-  }>;
+  [TActionId in ReviewCommentActionIdV1]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof ReviewCommentActionInputSchemasV1)[TActionId],
+    (typeof ReviewCommentActionOutputSchemasV1)[TActionId]
+  >;
 }[ReviewCommentActionIdV1];
 
-type PluginWebhookPluginActionIdV1 = Exclude<
-  PluginWebhookActionIdV1,
-  PluginWebhookPresentUserActionIdV1
->;
 type PluginWebhookActionSpecDefinition = {
-  [TActionId in PluginWebhookPluginActionIdV1]: Readonly<{
-    id: TActionId;
-    surfaces: Readonly<{ plugin: true }>;
-    inputSchema: (typeof PluginWebhookActionInputSchemasV1)[TActionId];
-    outputSchema: (typeof PluginWebhookActionOutputSchemasV1)[TActionId];
-  }>;
-}[PluginWebhookPluginActionIdV1];
+  [TActionId in PluginWebhookActionIdV1]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof PluginWebhookActionInputSchemasV1)[TActionId],
+    (typeof PluginWebhookActionOutputSchemasV1)[TActionId]
+  >;
+}[PluginWebhookActionIdV1];
 
 type PluginAutomationEventActionSpecDefinition = {
-  [TActionId in AutomationEventActionIdV1]: Readonly<{
-    id: TActionId;
-    surfaces: Readonly<{ plugin: true }>;
-    inputSchema: (typeof AutomationEventActionInputSchemasV1)[TActionId];
-    outputSchema: (typeof AutomationEventActionOutputSchemasV1)[TActionId];
-  }>;
+  [TActionId in AutomationEventActionIdV1]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof AutomationEventActionInputSchemasV1)[TActionId],
+    (typeof AutomationEventActionOutputSchemasV1)[TActionId]
+  >;
 }[AutomationEventActionIdV1];
 
 type PluginAutomationConversationActionSpecDefinition = {
-  [TActionId in AutomationConversationActionIdV1]: Readonly<{
-    id: TActionId;
-    surfaces: Readonly<{ plugin: true }>;
-    inputSchema: (typeof AutomationConversationActionInputSchemasV1)[TActionId];
-    outputSchema: (typeof AutomationConversationActionOutputSchemasV1)[TActionId];
-  }>;
+  [TActionId in AutomationConversationActionIdV1]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof AutomationConversationActionInputSchemasV1)[TActionId],
+    (typeof AutomationConversationActionOutputSchemasV1)[TActionId]
+  >;
 }[AutomationConversationActionIdV1];
 
 export type CanonicalActionSpecDefinition =
-  | (typeof ACTION_SPECS_WITHOUT_APPROVAL)[number]
+  | NonRuntimeDirectActionSpecDefinition
+  | RuntimeActionSpecDefinition
   | PluginDevLoopActionSpecDefinition
+  | PluginSettingsAdministrationActionSpecDefinition
   | PluginPermissionGrantActionSpecDefinition
   | PluginReviewCommentActionSpecDefinition
   | PluginWebhookActionSpecDefinition
   | PluginAutomationEventActionSpecDefinition
   | PluginAutomationConversationActionSpecDefinition;
-export type PluginInvocableActionSpecDefinition = Extract<
-  CanonicalActionSpecDefinition,
-  Readonly<{ surfaces: Readonly<{ plugin: true }> }>
+
+export type PluginInvocableActionId = Exclude<
+  ActionId,
+  InternalActionId | PluginSurfaceExcludedActionId
 >;
-export type PluginInvocableActionId = PluginInvocableActionSpecDefinition['id'];
+export type PluginInvocableActionSpecDefinition = {
+  [TActionId in PluginInvocableActionId]: Extract<
+    CanonicalActionSpecDefinition,
+    Readonly<{ id: TActionId }>
+  >;
+}[PluginInvocableActionId];
 
 type PluginActionSpecForId<TActionId extends PluginInvocableActionId> = Extract<
   PluginInvocableActionSpecDefinition,
@@ -8462,6 +8819,8 @@ type IsUnknown<T> = unknown extends T
   ? ([keyof T] extends [never] ? true : false)
   : false;
 
+type IsNever<T> = [T] extends [never] ? true : false;
+
 type UnknownPluginActionInputId = {
   [TActionId in PluginInvocableActionId]: IsUnknown<PluginActionInputById[TActionId]> extends true
     ? TActionId
@@ -8474,6 +8833,18 @@ type UnknownPluginActionResultId = {
     : never;
 }[PluginInvocableActionId];
 
+type NeverPluginActionInputId = {
+  [TActionId in PluginInvocableActionId]: IsNever<PluginActionInputById[TActionId]> extends true
+    ? TActionId
+    : never;
+}[PluginInvocableActionId];
+
+type NeverPluginActionResultId = {
+  [TActionId in PluginInvocableActionId]: IsNever<PluginActionResultById[TActionId]> extends true
+    ? TActionId
+    : never;
+}[PluginInvocableActionId];
+
 type AssertNever<T extends never> = T;
 type AssertTrue<T extends true> = T;
 type IsTypeEqual<TLeft, TRight> = (
@@ -8482,11 +8853,41 @@ type IsTypeEqual<TLeft, TRight> = (
   <T>() => T extends TRight ? 1 : 2
 ) ? true : false;
 
+// The type-only generated-family projection must cover the runtime registry
+// exactly. Otherwise a newly public Action could silently become `never` in
+// the SDK maps even while the runtime array contains it.
+type CanonicalActionIdsMustCoverRegistry = AssertTrue<IsTypeEqual<
+  CanonicalActionSpecDefinition['id'],
+  ActionId
+>>;
+type CanonicalRuntimeActionInputSchemas = Readonly<{
+  [TActionId in RuntimeActionIdV1]: Extract<
+    CanonicalActionSpecDefinition,
+    Readonly<{ id: TActionId }>
+  >['inputSchema'];
+}>;
+type CanonicalRuntimeActionOutputSchemas = Readonly<{
+  [TActionId in RuntimeActionIdV1]: Extract<
+    CanonicalActionSpecDefinition,
+    Readonly<{ id: TActionId }>
+  >['outputSchema'];
+}>;
+type CanonicalRuntimeActionInputsMustMatchSchemaOwner = AssertTrue<IsTypeEqual<
+  CanonicalRuntimeActionInputSchemas,
+  typeof RUNTIME_ACTION_INPUT_SCHEMAS
+>>;
+type CanonicalRuntimeActionOutputsMustMatchSchemaOwner = AssertTrue<IsTypeEqual<
+  CanonicalRuntimeActionOutputSchemas,
+  typeof RUNTIME_ACTION_OUTPUT_SCHEMAS
+>>;
+
 // Plugin-visible author and result carriers are generated from the canonical ActionSpec rows.
 // Keep this invariant in the production compilation lane so adding a plugin-backed `z.unknown()`
 // or an untyped preprocess schema cannot silently widen the public SDK map.
 type PluginActionInputsMustRemainExact = AssertNever<UnknownPluginActionInputId>;
 type PluginActionResultsMustRemainExact = AssertNever<UnknownPluginActionResultId>;
+type PluginActionInputsMustRemainPresent = AssertNever<NeverPluginActionInputId>;
+type PluginActionResultsMustRemainPresent = AssertNever<NeverPluginActionResultId>;
 type PluginSessionTranscriptInputMustRemainExternalShareable = AssertTrue<IsTypeEqual<
   PluginActionInputById['session.transcript.get'],
   SessionTranscriptGetExternalShareableInputV1
@@ -8499,16 +8900,19 @@ type PluginSessionTranscriptResultMustRemainExternalShareable = AssertTrue<IsTyp
   PluginActionResultById['session.transcript.get'],
   SessionTranscriptGetExternalShareableResultV1
 >>;
-type PluginRawSessionReadersMustRemainUnavailable = AssertTrue<IsTypeEqual<
+type PluginRawSessionReadersMustRemainAvailable = AssertTrue<IsTypeEqual<
   Extract<
     PluginInvocableActionId,
     'session.history.get' | 'session.events.get' | 'session.messages.recent.get'
   >,
-  never
+  'session.history.get' | 'session.events.get' | 'session.messages.recent.get'
 >>;
 
-const PLUGIN_INVOCABLE_ACTION_SPECS = ACTION_SPECS_WITHOUT_APPROVAL.filter(
-  (spec): spec is typeof spec & Readonly<{ surfaces: Readonly<{ plugin: true }>; outputSchema: z.ZodTypeAny }> => (
+const PLUGIN_INVOCABLE_ACTION_SPECS = ACTION_SPECS_WITH_PUBLIC_EXPOSURE.filter(
+  (spec): spec is ActionSpecWithoutApproval & Readonly<{
+    surfaces: ActionSpecWithoutApproval['surfaces'] & Readonly<{ plugin: true }>;
+    outputSchema: z.ZodTypeAny;
+  }> => (
     spec.surfaces.plugin === true && spec.outputSchema !== undefined
   ),
 );
@@ -8527,10 +8931,10 @@ export const PluginInvocableActionIdSchema = z.custom<PluginInvocableActionId>(
 );
 
 function projectPluginActionInputSchemas(
-  specs: readonly (typeof ACTION_SPECS_WITHOUT_APPROVAL)[number][],
+  specs: readonly ActionSpecWithoutApproval[],
 ): PluginActionInputSchemaById;
 function projectPluginActionInputSchemas(
-  specs: readonly (typeof ACTION_SPECS_WITHOUT_APPROVAL)[number][],
+  specs: readonly ActionSpecWithoutApproval[],
 ): object {
   return Object.freeze(Object.fromEntries(
     specs.map((spec) => {
@@ -8546,10 +8950,10 @@ function projectPluginActionInputSchemas(
 }
 
 function projectPluginActionOutputSchemas(
-  specs: readonly (typeof ACTION_SPECS_WITHOUT_APPROVAL)[number][],
+  specs: readonly ActionSpecWithoutApproval[],
 ): PluginActionOutputSchemaById;
 function projectPluginActionOutputSchemas(
-  specs: readonly (typeof ACTION_SPECS_WITHOUT_APPROVAL)[number][],
+  specs: readonly ActionSpecWithoutApproval[],
 ): object {
   return Object.freeze(Object.fromEntries(
     specs.map((spec) => {
@@ -8567,11 +8971,11 @@ function projectPluginActionOutputSchemas(
   ));
 }
 
-export const PLUGIN_ACTION_INPUT_SCHEMAS = projectPluginActionInputSchemas(
+export const PLUGIN_ACTION_INPUT_SCHEMAS: PluginActionInputSchemaById = projectPluginActionInputSchemas(
   PLUGIN_INVOCABLE_ACTION_SPECS,
 );
 
-export const PLUGIN_ACTION_OUTPUT_SCHEMAS = projectPluginActionOutputSchemas(
+export const PLUGIN_ACTION_OUTPUT_SCHEMAS: PluginActionOutputSchemaById = projectPluginActionOutputSchemas(
   PLUGIN_INVOCABLE_ACTION_SPECS,
 );
 
@@ -8597,6 +9001,153 @@ type PluginActionInputRuntimeSchemaMapMustRemainExact = AssertTrue<IsTypeEqual<
 type PluginActionResultRuntimeSchemaMapMustRemainExact = AssertTrue<IsTypeEqual<
   PluginActionResultByRuntimeSchemaMap,
   PluginActionResultById
+>>;
+
+/**
+ * The authenticated public API is the API-surface projection of the same
+ * canonical rows. It excludes only host-internal and plugin-provenance-only
+ * Actions, rather than maintaining a second allowlist.
+ */
+export type PublicActionSpecDefinition = {
+  [TActionId in PublicActionId]: Extract<
+    CanonicalActionSpecDefinition,
+    Readonly<{ id: TActionId }>
+  >;
+}[PublicActionId];
+
+type PublicActionSpecForId<TActionId extends PublicActionId> = Extract<
+  PublicActionSpecDefinition,
+  Readonly<{ id: TActionId }>
+>;
+
+export type PublicActionInputById = Readonly<{
+  [TActionId in PublicActionId]: PublicActionSpecForId<TActionId> extends Readonly<{
+    surfaceBindings: Readonly<{ api: Readonly<{ inputSchema: infer TInputSchema extends z.ZodTypeAny }> }>;
+  }>
+    ? z.input<TInputSchema>
+    : z.input<PublicActionSpecForId<TActionId>['inputSchema']>;
+}>;
+
+export type PublicActionResultById = Readonly<{
+  [TActionId in PublicActionId]: z.output<PublicActionSpecForId<TActionId>['outputSchema']>;
+}>;
+
+type PublicActionInputSchemaById = Readonly<{
+  [TActionId in PublicActionId]: PublicActionSpecForId<TActionId> extends Readonly<{
+    surfaceBindings: Readonly<{ api: Readonly<{ inputSchema: infer TInputSchema extends z.ZodTypeAny }> }>;
+  }>
+    ? TInputSchema
+    : PublicActionSpecForId<TActionId>['inputSchema'];
+}>;
+
+type PublicActionOutputSchemaById = Readonly<{
+  [TActionId in PublicActionId]: PublicActionSpecForId<TActionId>['outputSchema'];
+}>;
+
+type UnknownPublicActionInputId = {
+  [TActionId in PublicActionId]: IsUnknown<PublicActionInputById[TActionId]> extends true
+    ? TActionId
+    : never;
+}[PublicActionId];
+
+type UnknownPublicActionResultId = {
+  [TActionId in PublicActionId]: IsUnknown<PublicActionResultById[TActionId]> extends true
+    ? TActionId
+    : never;
+}[PublicActionId];
+
+type NeverPublicActionInputId = {
+  [TActionId in PublicActionId]: IsNever<PublicActionInputById[TActionId]> extends true
+    ? TActionId
+    : never;
+}[PublicActionId];
+
+type NeverPublicActionResultId = {
+  [TActionId in PublicActionId]: IsNever<PublicActionResultById[TActionId]> extends true
+    ? TActionId
+    : never;
+}[PublicActionId];
+
+type PublicActionInputsMustRemainExact = AssertNever<UnknownPublicActionInputId>;
+type PublicActionResultsMustRemainExact = AssertNever<UnknownPublicActionResultId>;
+type PublicActionInputsMustRemainPresent = AssertNever<NeverPublicActionInputId>;
+type PublicActionResultsMustRemainPresent = AssertNever<NeverPublicActionResultId>;
+
+const PUBLIC_ACTION_SPECS = ACTION_SPECS_WITH_PUBLIC_EXPOSURE.filter(
+  (spec): spec is ActionSpecWithoutApproval & Readonly<{
+    surfaces: ActionSpecWithoutApproval['surfaces'] & Readonly<{ api: true }>;
+    outputSchema: z.ZodTypeAny;
+  }> => (
+    spec.surfaces.api === true && spec.outputSchema !== undefined
+  ),
+);
+
+/** Runtime companion generated from the same canonical rows as the API type maps. */
+export const PUBLIC_ACTION_IDS = Object.freeze(
+  PUBLIC_ACTION_SPECS.map((spec) => spec.id),
+) as readonly PublicActionId[];
+
+const PUBLIC_ACTION_ID_SET = new Set<string>(PUBLIC_ACTION_IDS);
+
+/** Runtime parser for the ActionSpec rows explicitly surfaced to authenticated API callers. */
+export const PublicActionIdSchema = z.custom<PublicActionId>(
+  (actionId) => typeof actionId === 'string' && PUBLIC_ACTION_ID_SET.has(actionId),
+  { message: 'Action is not available on the public API surface' },
+);
+
+function projectPublicActionInputSchemas(
+  specs: readonly ActionSpecWithoutApproval[],
+): PublicActionInputSchemaById;
+function projectPublicActionInputSchemas(
+  specs: readonly ActionSpecWithoutApproval[],
+): object {
+  return Object.freeze(Object.fromEntries(specs.map((spec) => {
+    const surfaceBindings = 'surfaceBindings' in spec
+      ? spec.surfaceBindings
+      : undefined;
+    const apiBinding = surfaceBindings && 'api' in surfaceBindings
+      ? surfaceBindings.api
+      : undefined;
+    return [spec.id, apiBinding?.inputSchema ?? spec.inputSchema];
+  })));
+}
+
+function projectPublicActionOutputSchemas(
+  specs: readonly ActionSpecWithoutApproval[],
+): PublicActionOutputSchemaById;
+function projectPublicActionOutputSchemas(
+  specs: readonly ActionSpecWithoutApproval[],
+): object {
+  return Object.freeze(Object.fromEntries(specs.map((spec) => [spec.id, spec.outputSchema])));
+}
+
+export const PUBLIC_ACTION_INPUT_SCHEMAS: PublicActionInputSchemaById = projectPublicActionInputSchemas(
+  PUBLIC_ACTION_SPECS,
+);
+
+export const PUBLIC_ACTION_OUTPUT_SCHEMAS: PublicActionOutputSchemaById = projectPublicActionOutputSchemas(
+  PUBLIC_ACTION_SPECS,
+);
+
+type PublicActionInputByRuntimeSchemaMap = Readonly<{
+  [TActionId in keyof typeof PUBLIC_ACTION_INPUT_SCHEMAS]: z.input<
+    (typeof PUBLIC_ACTION_INPUT_SCHEMAS)[TActionId]
+  >;
+}>;
+
+type PublicActionResultByRuntimeSchemaMap = Readonly<{
+  [TActionId in keyof typeof PUBLIC_ACTION_OUTPUT_SCHEMAS]: z.output<
+    (typeof PUBLIC_ACTION_OUTPUT_SCHEMAS)[TActionId]
+  >;
+}>;
+
+type PublicActionInputRuntimeSchemaMapMustRemainExact = AssertTrue<IsTypeEqual<
+  PublicActionInputByRuntimeSchemaMap,
+  PublicActionInputById
+>>;
+type PublicActionResultRuntimeSchemaMapMustRemainExact = AssertTrue<IsTypeEqual<
+  PublicActionResultByRuntimeSchemaMap,
+  PublicActionResultById
 >>;
 
 const HOST_DOMAIN_PLUGIN_CALLER_POLICY: ActionPluginCallerPolicy = {
@@ -8684,26 +9235,87 @@ function resolveActionPluginCallerPolicy(
 ): ActionPluginCallerPolicy | undefined {
   const policy = ACTION_PLUGIN_CALLER_POLICY_BY_ID[spec.id];
   const requiresPolicy = spec.surfaces.plugin && spec.safety !== 'safe';
-  if (requiresPolicy && !policy) {
-    throw new Error(`Non-safe plugin Action ${spec.id} is missing pluginCallerPolicy`);
-  }
   if (!spec.surfaces.plugin && policy) {
     throw new Error(`Action ${spec.id} declares pluginCallerPolicy without a plugin surface`);
   }
-  return policy;
+  // Backed runtime Actions use the same host-stamped Plugin provenance as
+  // every other non-safe host Action. Their machine/session routing remains
+  // with the runtime owner; callers never supply a plugin identity in input.
+  if (requiresPolicy && isRuntimeActionIdV1(spec.id)) {
+    return HOST_DOMAIN_PLUGIN_CALLER_POLICY;
+  }
+  return requiresPolicy ? policy ?? HOST_DOMAIN_PLUGIN_CALLER_POLICY : policy;
 }
 
 export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze(
-  ACTION_SPECS_WITHOUT_APPROVAL.map((spec): ActionSpec => {
+  ACTION_SPECS_WITH_PUBLIC_EXPOSURE.map((spec): ActionSpec => {
     const pluginCallerPolicy = resolveActionPluginCallerPolicy(spec);
     return {
       ...spec,
+      requiredAuthority: resolveActionRequiredAuthority(spec),
+      executionPlacement: resolveActionExecutionPlacement(spec),
       ...(pluginCallerPolicy ? { pluginCallerPolicy } : {}),
       placements: [...spec.placements],
       approval: resolveApprovalMetadataForActionId(spec.id),
     };
   }),
 );
+
+const SDK_METHOD_RESERVED_ROOTS = new Set(['execute', 'search', 'invoke']);
+const SDK_METHOD_OBJECT_HAZARD_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+const SDK_METHOD_SEGMENT_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
+
+function normalizeActionIdSegmentForSdkMethod(segment: string): string {
+  return segment.replace(/_([a-z0-9])/gu, (_match, character: string) => character.toUpperCase());
+}
+
+/**
+ * Canonical generated-SDK method path. `bindings.sdkMethod` remains the one
+ * owner-local exception seam; normal Action ids require no hand-written name
+ * table.
+ */
+export function resolveActionSdkMethodName(spec: Pick<ActionSpec, 'id' | 'bindings'>): string {
+  const override = spec.bindings?.sdkMethod;
+  if (override) return override;
+  return spec.id.split('.').map(normalizeActionIdSegmentForSdkMethod).join('.');
+}
+
+function assertPublicActionSdkMethodNames(specs: readonly ActionSpec[]): void {
+  const ownerByMethodName = new Map<string, ActionId>();
+  for (const spec of specs) {
+    if (isInternalActionId(spec.id)) continue;
+    const methodName = resolveActionSdkMethodName(spec);
+    const segments = methodName.split('.');
+    if (
+      segments.length === 0
+      || SDK_METHOD_RESERVED_ROOTS.has(segments[0] ?? '')
+      || segments.some((segment) => (
+        !SDK_METHOD_SEGMENT_PATTERN.test(segment)
+        || SDK_METHOD_OBJECT_HAZARD_SEGMENTS.has(segment)
+      ))
+    ) {
+      throw new Error(`Public Action ${spec.id} has an invalid SDK method path: ${methodName}`);
+    }
+    const existing = ownerByMethodName.get(methodName);
+    if (existing) {
+      throw new Error(`Public Actions ${existing} and ${spec.id} share SDK method path ${methodName}`);
+    }
+    ownerByMethodName.set(methodName, spec.id);
+  }
+
+  const methodNames = [...ownerByMethodName.keys()].sort();
+  for (let index = 1; index < methodNames.length; index += 1) {
+    const previous = methodNames[index - 1] as string;
+    const current = methodNames[index] as string;
+    if (current.startsWith(`${previous}.`)) {
+      throw new Error(
+        `Public Actions ${ownerByMethodName.get(previous)} and ${ownerByMethodName.get(current)} conflict at SDK namespace ${previous}`,
+      );
+    }
+  }
+}
+
+assertPublicActionSdkMethodNames(ACTION_SPECS);
 
 export function listActionSpecs(): readonly ActionSpec[] {
   return ACTION_SPECS;

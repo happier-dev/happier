@@ -130,6 +130,10 @@ describe('plugin executable contribution target grammar', () => {
     expect(PluginActionContributionV2Schema.parse(clientAction).execution).toEqual(clientAction.execution);
     expect(PluginActionContributionV2Schema.safeParse({
       ...clientAction,
+      operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
+    }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...clientAction,
       execution: {
         ...clientAction.execution,
         platforms: ['web', 'web'],
@@ -144,6 +148,26 @@ describe('plugin executable contribution target grammar', () => {
           modulePath: '../previewClient',
         },
       },
+    }).success).toBe(false);
+  });
+
+  it('admits the exact operation declaration only for daemon Actions', () => {
+    const daemonAction = {
+      id: 'refresh-index',
+      title: localized,
+      scopes: ['workspace'],
+      surfaces: ['plugin'],
+      execution: daemonExecution,
+      dangerLevel: 'safe' as const,
+      operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } } as const,
+    };
+
+    expect(PluginActionContributionV2Schema.parse(daemonAction).operation).toEqual(
+      daemonAction.operation,
+    );
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...daemonAction,
+      operation: { ...daemonAction.operation, version: 2 },
     }).success).toBe(false);
   });
 

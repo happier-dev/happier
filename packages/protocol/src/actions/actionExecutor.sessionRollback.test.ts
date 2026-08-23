@@ -151,7 +151,12 @@ describe('createActionExecutor (session.checkpoint_code_rollback)', () => {
 
 describe('createActionExecutor (session.checkpoint / session.restore)', () => {
   it('delegates session.checkpoint with request and resolved server id', async () => {
-    const sessionCheckpoint = vi.fn(async () => ({ ok: true, status: 'succeeded', receipts: [] }));
+    const sessionCheckpoint = vi.fn(async () => ({
+      ok: true,
+      status: 'succeeded',
+      source: 'happier_scm',
+      receipts: [],
+    }));
     const deps = createDeps({
       sessionCheckpoint,
       resolveServerIdForSessionId: vi.fn(() => 'server_a'),
@@ -179,7 +184,13 @@ describe('createActionExecutor (session.checkpoint / session.restore)', () => {
   });
 
   it('delegates session.restore with request and resolved server id', async () => {
-    const sessionRestore = vi.fn(async () => ({ ok: true, status: 'succeeded', restoredScopes: ['workspace'], receipts: [] }));
+    const sessionRestore = vi.fn(async () => ({
+      ok: true,
+      status: 'succeeded',
+      source: 'happier_scm',
+      restoredScopes: ['workspace'],
+      receipts: [],
+    }));
     const deps = createDeps({
       sessionRestore,
       resolveServerIdForSessionId: vi.fn(() => 'server_a'),

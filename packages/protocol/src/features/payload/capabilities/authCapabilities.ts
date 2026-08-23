@@ -6,6 +6,13 @@ const AuthMethodActionSchema = z.object({
   mode: z.enum(['keyed', 'keyless', 'either']),
 });
 
+const KeyChallengeCapabilitiesSchema = z.object({
+  v2: z.boolean(),
+});
+const DEFAULT_KEY_CHALLENGE_CAPABILITIES = {
+  v2: false,
+} as const;
+
 export const AuthMethodSchema = z.object({
   id: z.string(),
   actions: z.array(AuthMethodActionSchema),
@@ -19,6 +26,9 @@ export const AuthMethodSchema = z.object({
 
 export const AuthCapabilitiesSchema = z.object({
   methods: z.array(AuthMethodSchema).optional().default([]),
+  keyChallenge: KeyChallengeCapabilitiesSchema.optional().default(
+    DEFAULT_KEY_CHALLENGE_CAPABILITIES,
+  ),
   signup: z.object({
     methods: z.array(z.object({ id: z.string(), enabled: z.boolean() })),
   }),
@@ -109,6 +119,7 @@ export type AuthCapabilities = z.infer<typeof AuthCapabilitiesSchema>;
 
 export const DEFAULT_AUTH_CAPABILITIES: AuthCapabilities = {
   methods: [],
+  keyChallenge: DEFAULT_KEY_CHALLENGE_CAPABILITIES,
   signup: { methods: [] },
   login: { methods: [], requiredProviders: [] },
   recovery: { providerReset: { providers: [] } },

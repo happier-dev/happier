@@ -4,11 +4,14 @@ import type { RuntimeActionIdV1 } from '../actionIds.js';
 
 export type RuntimeActionSpecTextMap = Readonly<Partial<Record<RuntimeActionIdV1, string>>>;
 
+export type RuntimeActionSchemaMap = Readonly<Partial<Record<RuntimeActionIdV1, z.ZodTypeAny>>>;
+
 export type RuntimeActionSpecFamily = Readonly<{
   titles: RuntimeActionSpecTextMap;
   descriptions?: RuntimeActionSpecTextMap;
-  inputSchemaForAction: (actionId: RuntimeActionIdV1) => z.ZodTypeAny | null;
-  outputSchemaForAction: (actionId: RuntimeActionIdV1) => z.ZodTypeAny | null;
+  /** Canonical per-id schema rows for public/runtime projections. */
+  inputSchemas?: RuntimeActionSchemaMap;
+  outputSchemas?: RuntimeActionSchemaMap;
 }>;
 
 export const PassthroughEmptyObjectSchema = z.object({}).passthrough();

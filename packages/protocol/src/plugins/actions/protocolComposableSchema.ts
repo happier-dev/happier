@@ -340,19 +340,35 @@ function createProtocolComposableSchema<TInput, TOutput>(
   });
 }
 
+/**
+ * The one structural recognition of a complete composable schema.
+ *
+ * A composable value crosses realms and independently installed SDK copies, so
+ * it can never be recognized by a local symbol or instanceof check — only by
+ * its five-member surface. That surface is listed here and nowhere else: the
+ * SDK facade's public recognizer and Protocol's own `require` helper both call
+ * this, so a change to the composable contract cannot leave one of them
+ * accepting a value the other rejects.
+ */
+export function isProtocolComposableSchema<TInput, TOutput = TInput>(
+  value: unknown,
+): value is ProtocolComposableSchema<TInput, TOutput> {
+  return isProtocolRecord(value)
+    && isProtocolRecord(value.jsonSchema)
+    && typeof value.parse === 'function'
+    && typeof value.safeParse === 'function'
+    && typeof value.optional === 'function'
+    && typeof value.nullable === 'function';
+}
+
 function requireProtocolComposableSchema<TInput, TOutput>(
   value: unknown,
   label: string,
 ): ProtocolComposableSchema<TInput, TOutput> {
-  if (!isProtocolRecord(value)
-    || !isProtocolRecord(value.jsonSchema)
-    || typeof value.parse !== 'function'
-    || typeof value.safeParse !== 'function'
-    || typeof value.optional !== 'function'
-    || typeof value.nullable !== 'function') {
+  if (!isProtocolComposableSchema<TInput, TOutput>(value)) {
     throw new TypeError(`${label} must be a protocol composable schema`);
   }
-  return value as unknown as ProtocolComposableSchema<TInput, TOutput>;
+  return value;
 }
 
 function protocolComposableProjection(schema: ProtocolComposableSchema<unknown, unknown>): PluginJsonSchemaV2 {

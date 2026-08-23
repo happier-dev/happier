@@ -215,6 +215,19 @@ describe('providerSessionId matched native session-log path', () => {
       value: '   ',
     })).toBe(metadata);
   });
+
+  it('clears only the requested identity and its matched log path', () => {
+    expect(writeProviderSessionIdSessionState({
+      claudeSessionId: 'claude-1',
+      claudeTranscriptPath: '/home/u/.claude/x/claude-1.jsonl',
+      codexSessionId: 'codex-1',
+    }, {
+      metadataKey: 'claudeSessionId',
+      value: null,
+    })).toEqual({
+      codexSessionId: 'codex-1',
+    });
+  });
 });
 
 /**
@@ -270,5 +283,21 @@ describe('providerSessionId binding — external Agent with no catalog-declared 
   it('leaves the descriptor untouched for a blank id', () => {
     const metadata = externalDescriptorMetadata();
     expect(providerSessionIdBinding.write(metadata, { value: '   ' })).toBe(metadata);
+  });
+
+  it('clears only the descriptor provider-session id for an explicit null update', () => {
+    const next = providerSessionIdBinding.write({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'acme',
+        agent: { backendMode: 'custom', providerSessionId: 'acme-native-1' },
+      },
+    }, { value: null }) as Record<string, unknown>;
+
+    expect(next.runtimeDescriptorV1).toEqual({
+      v: 1,
+      agentId: 'acme',
+      agent: { backendMode: 'custom' },
+    });
   });
 });

@@ -7,6 +7,7 @@ import { decodeBase64 } from './base64.js';
  */
 export type AccountScopedBlobKind =
   | 'account_settings'
+  | 'action_operation_snapshot'
   | 'automation_conversation_reply_context'
   | 'automation_reply_handoff_receipt'
   | 'automation_run_result'
@@ -18,6 +19,7 @@ export type AccountScopedBlobKind =
   | 'connected_service_credential'
   | 'connected_service_quota_snapshot'
   | 'provider_account_usage_snapshot'
+  | 'qualified_connected_account_attempt_transaction'
   | 'qualified_connected_account_configuration'
   | 'plugin_declarative_settings'
   | 'plugin_collection_private_payload'
@@ -57,6 +59,8 @@ const ACCOUNT_SCOPED_KIND_BYTE = Object.freeze({
   automation_trigger_definition: 20,
   automation_session_start_request: 21,
   automation_run_failure_detail: 22,
+  action_operation_snapshot: 23,
+  qualified_connected_account_attempt_transaction: 24,
 } satisfies Record<AccountScopedBlobKind, number>);
 
 /**

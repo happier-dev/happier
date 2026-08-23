@@ -10,6 +10,7 @@ import type {
 } from '@happier-dev/protocol';
 import {
   projectSessionModelSelectionIntentToLegacyModelOverrideV1,
+  readSessionModelSelectionIntentSourceV1,
   SessionModelSelectionIntentV1Schema,
 } from '@happier-dev/protocol/providers/model-selection';
 import {
@@ -130,13 +131,23 @@ export function writeStringOverrideIntentToMetadata(params: Readonly<{
   return nextMetadata;
 }
 
+/**
+ * Reads persisted model intent through the Protocol precedence owner.
+ *
+ * This binding must not re-decide canonical-vs-legacy precedence: two
+ * implementations of that rule assign different meaning to one stored payload
+ * (a Provider-bound canonical selection losing to a newer providerless
+ * override, for instance). A canonical carrier that is present but malformed
+ * resolves to `null` rather than to the legacy override, so corrupted state
+ * fails closed instead of silently applying a different model.
+ */
 export function readModelIntentFromMetadata(metadata: SessionMetadata): SessionModelSelectionIntentReadCompatV1 | null {
   const record = metadata as MetadataRecord;
-  const canonical = SessionModelSelectionIntentV1Schema.safeParse(record[MODEL_SELECTION_INTENT_KEY]);
-  const legacy = ModelOverrideV1Schema.safeParse(record[MODEL_OVERRIDE_KEY]);
-  if (!canonical.success) return legacy.success ? legacy.data : null;
-  if (!legacy.success || canonical.data.updatedAt >= legacy.data.updatedAt) return canonical.data;
-  return legacy.data;
+  const source = readSessionModelSelectionIntentSourceV1({
+    canonical: record[MODEL_SELECTION_INTENT_KEY],
+    legacy: record[MODEL_OVERRIDE_KEY],
+  });
+  return source.status === 'canonical' || source.status === 'legacy' ? source.intent : null;
 }
 
 export function writeModelIntentToMetadata(

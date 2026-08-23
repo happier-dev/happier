@@ -35,6 +35,7 @@ export const CONVERSATION_MANAGEMENT_ACTION_IDS_V1 = Object.freeze({
     connectionDelete: 'connection/delete-v1',
     connectionAbandon: 'connection/abandon-v1',
     connectionPrepare: 'connection/prepare-v1',
+    connectionRetest: 'connection/retest-v1',
     connectionPairingCreate: 'connection/pairing-create-v1',
     connectionPairingFinalize: 'connection/pairing-finalize-v1',
     connectionPairingCancel: 'connection/pairing-cancel-v1',

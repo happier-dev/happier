@@ -1,4 +1,5 @@
 import {
+  SAVED_SECRET_COLLECTION_MAX_ENTRIES,
   SavedSecretSchema,
   type SavedSecret,
 } from '../../profiles/backendProfileSchema.js';
@@ -242,7 +243,8 @@ export class AccountSettingsSavedSecretMutationError extends Error {
     | 'saved_secret_not_found'
     | 'saved_secret_in_use'
     | 'saved_secret_referenced_by_connected_account_configuration'
-    | 'saved_secret_reference_invalid';
+    | 'saved_secret_reference_invalid'
+    | 'saved_secret_collection_full';
   readonly references: readonly AccountSettingsSavedSecretReference[];
 
   constructor(
@@ -1779,7 +1781,39 @@ function assertVoiceCredentialSecretExpectation(
   }
 }
 
+/**
+ * Applies one SavedSecret mutation and enforces the collection's capacity in the
+ * same step.
+ *
+ * The canonical Account-Settings reader exposes at most
+ * `SAVED_SECRET_COLLECTION_MAX_ENTRIES` records. A write that stores more is not
+ * a larger collection; it is a collection whose overflow no reader can resolve,
+ * so a still-referenced Provider secret would silently stop satisfying its slot
+ * at spawn. The capacity is therefore refused at the write, not truncated at the
+ * read. A collection that is ALREADY oversized (from a write this owner did not
+ * make) can still shrink, so the only recovery path stays open.
+ */
 export function applyAccountSettingsSavedSecretMutation(
+  settings: Readonly<Record<string, unknown>>,
+  mutation: AccountSettingsSavedSecretMutation,
+): Readonly<{
+  settings: Readonly<Record<string, unknown>>;
+}> {
+  const result = applySavedSecretMutation(settings, mutation);
+  const nextSecrets = result.settings.secrets;
+  const currentSecrets = settings.secrets;
+  const nextCount = Array.isArray(nextSecrets) ? nextSecrets.length : 0;
+  const currentCount = Array.isArray(currentSecrets) ? currentSecrets.length : 0;
+  if (nextCount > SAVED_SECRET_COLLECTION_MAX_ENTRIES && nextCount > currentCount) {
+    throw new AccountSettingsSavedSecretMutationError(
+      'saved_secret_collection_full',
+      'Account Settings cannot hold another SavedSecret',
+    );
+  }
+  return result;
+}
+
+function applySavedSecretMutation(
   settings: Readonly<Record<string, unknown>>,
   mutation: AccountSettingsSavedSecretMutation,
 ): Readonly<{

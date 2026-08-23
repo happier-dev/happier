@@ -23,6 +23,38 @@ import {
   SessionOrganizationPlacementV1Schema,
 } from './sessionSpawnNewResultV1.js';
 
+const SESSION_SPAWN_ENVIRONMENT_VARIABLE_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const SESSION_SPAWN_FORBIDDEN_ENVIRONMENT_VARIABLE_KEYS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+]);
+
+/**
+ * Raw daemon launch environment admitted only at the V2 Session-create
+ * boundary. Its key grammar matches the existing daemon spawn validator;
+ * field bounds reuse the established Session-handoff envelope and launch
+ * profile entry ceiling so invalid input cannot reach process spawning.
+ */
+const SessionSpawnEnvironmentVariablesV1Schema = z.record(
+  z.string()
+    .min(1)
+    .max(128)
+    .regex(SESSION_SPAWN_ENVIRONMENT_VARIABLE_KEY_PATTERN)
+    .refine(
+      (key) => !SESSION_SPAWN_FORBIDDEN_ENVIRONMENT_VARIABLE_KEYS.has(key),
+      'Invalid environment variable name',
+    ),
+  z.string().max(16 * 1024),
+).superRefine((environmentVariables, context) => {
+  if (Object.keys(environmentVariables).length > 256) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Too many environment variables',
+    });
+  }
+});
+
 /**
  * The sole public request for an ordinary authored hosted Session. Legacy flat
  * spawn fields are normalized before this boundary and are never accepted as a
@@ -46,6 +78,7 @@ export const SessionSpawnNewInputV2Schema = z.object({
   checkoutCreationDraft: SessionAuthoringCheckoutCreationDraftV1Schema.nullable().optional(),
   title: z.string().trim().min(1).optional(),
   initialMessage: z.string().trim().min(1).optional(),
+  environmentVariables: SessionSpawnEnvironmentVariablesV1Schema.optional(),
   agentSessionStartupInstructionsV1: AgentSessionStartupInstructionsV1Schema.optional(),
   /**
    * Create this Session as a continuation of an existing one. Because this
@@ -66,9 +99,10 @@ export type SessionSpawnNewInputV2 = z.infer<typeof SessionSpawnNewInputV2Schema
 export const SessionServerStartSpawnDraftV1Schema = SessionSpawnNewInputV2Schema.omit({
   creationKey: true,
   initialMessage: true,
+  environmentVariables: true,
 }).strict();
 
 export type SessionServerStartSpawnDraftV1 = Omit<
   SessionSpawnNewInputV2,
-  'creationKey' | 'initialMessage'
+  'creationKey' | 'initialMessage' | 'environmentVariables'
 >;

@@ -8,6 +8,7 @@ import {
   type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1,
 } from './declarativeDocument.js';
 import { preparePluginJsonSchema } from '../../actions/jsonSchemaValidation.js';
+import { PluginDeclarativeNodeV2Schema } from './v2.js';
 
 describe('declarative document normalizer v1', () => {
   const action = { pluginId: 'com.acme.dashboard', localId: 'refresh' } as const;
@@ -683,5 +684,106 @@ describe('declarative document normalizer v1', () => {
         },
       },
     }), 'plugin_declarative_targeted_surface_fill_root_required');
+  });
+
+  it('rejects a malformed targeted Surface fallback exactly as the static manifest grammar does', () => {
+    const surface = {
+      point: { pointId: 'details', protocol: { id: 'review-detail', version: 1 } },
+      contributor: { pluginId: 'com.acme.review', contributionId: 'detail' },
+      role: 'detail',
+    } as const;
+    const base = {
+      pluginId: 'com.acme.dashboard',
+      generation: 'generation-4',
+      actions: [],
+      preparedTargetedSurfaces: [prepareTargetedSurface({
+        targetPluginId: 'com.acme.dashboard',
+        handle: {
+          ...surface,
+          contributor: { ...surface.contributor, immutableGenerationId: 'review-generation-a' },
+          presentation: 'content',
+        },
+        inputSchema: { type: 'object' },
+      })],
+    };
+    const targetedSurfaceWith = (fallback: unknown) => ({
+      kind: 'targetedSurface',
+      surface,
+      input: {},
+      instanceKey: 'review-42',
+      fallback,
+    });
+
+    // The author's own degradation slot is part of the document. A live
+    // candidate whose fallback is unusable is rejected whole, so the mounted
+    // owner keeps its last-known-good document and reports the diagnostic —
+    // the host never invents replacement plugin content of its own.
+    for (const unusableFallback of [
+      { kind: 'state', state: 'loading', title: 'Loading review', typo: true },
+      { kind: 'text', text: 'Not a state node' },
+    ]) {
+      const root = {
+        kind: 'stack',
+        children: [
+          { kind: 'text', text: 'Sibling' },
+          targetedSurfaceWith(unusableFallback),
+        ],
+      };
+      expectNormalizationFailure(() => normalizePluginDeclarativeDocumentV1({
+        ...base,
+        document: { version: 1, root },
+      }), 'plugin_declarative_document_invalid');
+      // The deciding contract: the manifest grammar an author is validated
+      // against and the live normalizer reach the SAME verdict for the same
+      // bytes, so a document cannot become admissible by arriving at runtime.
+      expect(PluginDeclarativeNodeV2Schema.safeParse(root).success).toBe(false);
+    }
+
+    // A well-formed fallback is still carried through verbatim, by both.
+    const wellFormedRoot = targetedSurfaceWith({ kind: 'state', state: 'loading', title: 'Loading review' });
+    expect(normalizePluginDeclarativeDocumentV1({
+      ...base,
+      document: { version: 1, root: wellFormedRoot },
+    }).root).toMatchObject({
+      kind: 'targetedSurface',
+      fallback: { kind: 'state', state: 'loading', title: 'Loading review' },
+    });
+    expect(PluginDeclarativeNodeV2Schema.safeParse(wellFormedRoot).success).toBe(true);
+
+    // The envelope is still all-or-nothing.
+    expectNormalizationFailure(() => normalizePluginDeclarativeDocumentV1({
+      ...base,
+      document: { version: 2, root: wellFormedRoot },
+    }), 'plugin_declarative_document_invalid');
+    expectNormalizationFailure(() => normalizePluginDeclarativeDocumentV1({
+      ...base,
+      document: {
+        version: 1,
+        root: wellFormedRoot,
+        extra: 'not part of the envelope',
+      },
+    }), 'plugin_declarative_document_invalid');
+
+    // Every other node slot stays atomic too.
+    expectNormalizationFailure(() => normalizePluginDeclarativeDocumentV1({
+      ...base,
+      document: {
+        version: 1,
+        root: {
+          kind: 'stack',
+          children: [
+            { kind: 'text', text: 'Sibling', typo: true },
+            wellFormedRoot,
+          ],
+        },
+      },
+    }), 'plugin_declarative_document_invalid');
+    expectNormalizationFailure(() => normalizePluginDeclarativeDocumentV1({
+      ...base,
+      document: {
+        version: 1,
+        root: { kind: 'targetedSurface', surface, input: {}, instanceKey: 42 },
+      },
+    }), 'plugin_declarative_document_invalid');
   });
 });

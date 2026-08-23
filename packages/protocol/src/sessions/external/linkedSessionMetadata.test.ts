@@ -7,8 +7,9 @@ import {
   markExternalSessionAttentionUnreadV1,
   normalizeLinkedExternalSessionMetadataV1,
   readExternalHistoryImportV1FromMetadata,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   resolveExternalHistoryImportV1FromMetadata,
+  resolveLinkedExternalSessionAuthorityV1,
   resolveLinkedExternalSessionMetadataV1,
 } from '../index.js';
 
@@ -124,7 +125,7 @@ describe('direct session linked metadata helpers', () => {
   });
 
   it('normalizes legacy directSessionV1 metadata to canonical externalSessionV1', () => {
-    expect(typeof (protocol as any).readLinkedExternalSessionV1FromMetadata).toBe('function');
+    expect(typeof (protocol as any).readNonAuthoritativeLinkedExternalSessionV1FromMetadata).toBe('function');
     expect(typeof (protocol as any).normalizeLinkedExternalSessionMetadataV1).toBe('function');
 
     const metadata = {
@@ -138,7 +139,7 @@ describe('direct session linked metadata helpers', () => {
       },
     };
 
-    expect(readLinkedExternalSessionV1FromMetadata(metadata)).toEqual({
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata)).toEqual({
       v: 1,
       agentId: 'claude',
       machineId: 'machine-legacy',
@@ -169,7 +170,7 @@ describe('direct session linked metadata helpers', () => {
       },
     };
 
-    expect(readLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
     expect(normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual(metadata);
   });
 
@@ -188,7 +189,7 @@ describe('direct session linked metadata helpers', () => {
     };
     const metadata = { directSessionV1: releasedLink };
 
-    expect(readLinkedExternalSessionV1FromMetadata(metadata)).toEqual({
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata)).toEqual({
       v: 1,
       agentId: 'claude',
       machineId: 'machine-released',
@@ -233,7 +234,7 @@ describe('direct session linked metadata helpers', () => {
         source: { kind: 'claudeConfig', contractVersion: 1 as const },
       },
     };
-    expect(readLinkedExternalSessionV1FromMetadata({
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata({
       externalSessionV1: qualifiedCurrentLink,
     })).toEqual(qualifiedCurrentLink);
     expect(buildLinkedExternalSessionMetadataV1({}, qualifiedCurrentLink))
@@ -251,7 +252,7 @@ describe('direct session linked metadata helpers', () => {
       agentId: 'claude',
       linkData: { projectId: 'project-canonical' },
     };
-    expect(readLinkedExternalSessionV1FromMetadata({
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata({
       externalSessionV1: existingCanonicalLinkData,
     })).toMatchObject({
       linkData: { projectId: 'project-canonical' },
@@ -281,7 +282,7 @@ describe('direct session linked metadata helpers', () => {
       error: 'linked_session_reconciliation_required',
       reason: 'legacy_invalid',
     });
-    expect((protocol as any).readLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
+    expect((protocol as any).readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
     expect((protocol as any).normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual(metadata);
   });
 
@@ -323,7 +324,7 @@ describe('direct session linked metadata helpers', () => {
         followPolicyV1: metadata.directSessionV1.followPolicyV1,
       },
     });
-    expect(readLinkedExternalSessionV1FromMetadata(metadata)).toMatchObject({
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata)).toMatchObject({
       followPolicyV1: {
         policy: 'background_follow',
         updatedAtMs: 30,
@@ -406,7 +407,7 @@ describe('direct session linked metadata helpers', () => {
       error: 'linked_session_reconciliation_required',
       reason: 'follow_policy_conflict',
     });
-    expect(readLinkedExternalSessionV1FromMetadata({
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata({
       externalSessionV1: canonical,
       directSessionV1: legacy,
     })).toBeNull();
@@ -549,7 +550,7 @@ describe('direct session linked metadata helpers', () => {
   });
 
   it('rejects a qualified identity that disagrees with the link source contract', () => {
-    const read = (protocol as any).readLinkedExternalSessionV1FromMetadata;
+    const read = (protocol as any).readNonAuthoritativeLinkedExternalSessionV1FromMetadata;
     const base = {
       v: 1,
       agentId: 'claude',
@@ -582,7 +583,7 @@ describe('direct session linked metadata helpers', () => {
     };
     const metadata = { externalSessionV1 };
 
-    expect((protocol as any).readLinkedExternalSessionV1FromMetadata(metadata)).toEqual(externalSessionV1);
+    expect((protocol as any).readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata)).toEqual(externalSessionV1);
     expect((protocol as any).normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual({
       externalSessionV1,
     });
@@ -600,7 +601,7 @@ describe('direct session linked metadata helpers', () => {
       },
     };
 
-    expect((protocol as any).readLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
+    expect((protocol as any).readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
   });
 
   it('does not treat a released-only providerId shape as canonical current metadata', () => {
@@ -621,7 +622,7 @@ describe('direct session linked metadata helpers', () => {
       },
     };
 
-    expect(readLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
     expect(normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual(metadata);
   });
 
@@ -636,7 +637,7 @@ describe('direct session linked metadata helpers', () => {
       },
     };
 
-    expect(readLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
     expect(normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual(metadata);
   });
 
@@ -658,7 +659,7 @@ describe('direct session linked metadata helpers', () => {
       },
     };
 
-    expect(readLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
     expect(normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual(metadata);
   });
 
@@ -844,5 +845,63 @@ describe('direct session linked metadata helpers', () => {
       viewedProgressToken: '20:msg-2',
       viewedAtMs: 20,
     });
+  });
+});
+
+describe('linked external session transcript-storage authority', () => {
+  const validLink = {
+    v: 1 as const,
+    agentId: 'codex',
+    machineId: 'machine-1',
+    remoteSessionId: 'remote-1',
+    source: { kind: 'codexHome' as const, home: 'user' as const },
+  };
+
+  /**
+   * `persisted` is the answer that authorises stopping, transitioning and
+   * re-importing a Session, so it must be a POSITIVE fact. The nullable read
+   * cannot express that: it returns the same `null` for "no link was ever
+   * written", "the link is malformed" and "two rows disagree", and every
+   * authority caller read that `null` as "hosted with us".
+   */
+  it('separates a proven absent link from a link that exists but cannot be resolved', () => {
+    const absent = { path: '/repo' };
+    const invalid = {
+      externalSessionV1: {
+        ...validLink,
+        followStatusV1: { v: 1, status: 'not-a-status', updatedAtMs: 10 },
+      },
+    };
+    const reconciliationRequired = {
+      externalSessionV1: validLink,
+      directSessionV1: {
+        v: 1,
+        agentId: 'claude',
+        machineId: 'machine-legacy',
+        remoteSessionId: 'remote-legacy',
+        source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
+      },
+    };
+
+    expect(resolveLinkedExternalSessionAuthorityV1(absent))
+      .toEqual({ ok: true, transcriptStorage: 'persisted' });
+    expect(resolveLinkedExternalSessionAuthorityV1({ externalSessionV1: validLink }))
+      .toEqual({ ok: true, transcriptStorage: 'direct', linkedSession: validLink });
+    expect(resolveLinkedExternalSessionAuthorityV1(invalid)).toEqual({
+      ok: false,
+      error: 'linked_session_invalid',
+      reason: 'canonical_invalid',
+    });
+    expect(resolveLinkedExternalSessionAuthorityV1(reconciliationRequired)).toEqual({
+      ok: false,
+      error: 'linked_session_reconciliation_required',
+      reason: 'legacy_invalid',
+    });
+
+    // The exact collapse this owner exists to prevent: the non-authoritative
+    // read cannot tell any of the three unusable/absent cases apart.
+    for (const metadata of [absent, invalid, reconciliationRequired]) {
+      expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
+    }
   });
 });

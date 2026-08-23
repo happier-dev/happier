@@ -19,6 +19,38 @@ const pluginAttachment = {
   presentation: { label: 'Review #42', typeLabel: 'Review comment', icon: 'info' },
 } as const;
 
+const stagedMediaHandle = {
+  v: 1,
+  id: 'stage-1',
+  executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+  owner: { pluginId: 'acme.media', localId: 'image' },
+  mediaKind: 'image',
+  mimeType: 'image/png',
+  name: 'hero.png',
+  sizeBytes: 42,
+  sha256: 'a'.repeat(64),
+} as const;
+
+const stagedImageAttachment = {
+  v: 1,
+  instanceId: 'attachment-media-1',
+  attachment: { pluginId: 'acme.media', localId: 'image' },
+  key: 'hero-image',
+  value: { alt: 'A mountain lake' },
+  presentation: { label: 'Hero image', typeLabel: 'Image' },
+  content: { kind: 'stagedMedia', handle: stagedMediaHandle },
+} as const;
+
+const stagedVideoAttachment = {
+  ...stagedImageAttachment,
+  instanceId: 'attachment-media-2',
+  key: 'hero-clip',
+  content: {
+    kind: 'stagedMedia',
+    handle: { ...stagedMediaHandle, id: 'stage-2', mediaKind: 'video', mimeType: 'video/webm', name: 'hero.webm' },
+  },
+} as const;
+
 describe('SessionUserMessageSendResponseSchema', () => {
   it('accepts successful ACK payloads', () => {
     expect(SessionUserMessageSendResponseSchema.parse({ ok: true })).toEqual({ ok: true });
@@ -80,6 +112,106 @@ describe('SessionUserMessageSendRequestSchema', () => {
       },
     }).success).toBe(false);
     expect(SessionUserMessageSendRequestSchema.safeParse({ text: '', meta: {} }).success).toBe(false);
+  });
+
+  it('admits an attachment-only send whose staged media the daemon finalizer has not yet replaced', () => {
+    for (const attachment of [stagedImageAttachment, stagedVideoAttachment]) {
+      const parsed = SessionUserMessageSendRequestSchema.safeParse({
+        text: '',
+        meta: {
+          happierStructuredInputV1: {
+            v: 1,
+            composerAttachments: [attachment],
+          },
+        },
+      });
+
+      expect(parsed.success).toBe(true);
+      // The raw ingress arm reaches the daemon finalizer intact; sanitizing it
+      // through the persisted envelope here would delete the staged claim.
+      expect(parsed.success && parsed.data.meta).toEqual({
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [attachment],
+        },
+      });
+    }
+  });
+
+  it('rejects an attachment-only send whose staged media claim is not a readable ingress handle', () => {
+    for (const brokenHandle of [
+      { ...stagedMediaHandle, mimeType: 'application/pdf' },
+      { ...stagedMediaHandle, mediaKind: 'video' },
+      { ...stagedMediaHandle, sha256: 'nope' },
+      { ...stagedMediaHandle, path: '/tmp/hero.png' },
+    ]) {
+      const parsed = SessionUserMessageSendRequestSchema.safeParse({
+        text: '',
+        meta: {
+          happierStructuredInputV1: {
+            v: 1,
+            composerAttachments: [{ ...stagedImageAttachment, content: { kind: 'stagedMedia', handle: brokenHandle } }],
+          },
+        },
+      });
+      expect(parsed.success).toBe(false);
+    }
+  });
+
+  it('keeps a contentful send with staged media intact instead of stripping the attachment', () => {
+    const parsed = SessionUserMessageSendRequestSchema.safeParse({
+      text: 'look at this',
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [stagedImageAttachment],
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data).toEqual({
+      text: 'look at this',
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [stagedImageAttachment],
+        },
+      },
+    });
+  });
+
+  it('rejects a durable SessionMedia reference supplied by an ingress caller', () => {
+    expect(SessionUserMessageSendRequestSchema.safeParse({
+      text: '',
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [{ ...pluginAttachment, content: { kind: 'sessionMedia', mediaId: 'media-1' } }],
+        },
+      },
+    }).success).toBe(false);
+  });
+
+  it('never lets an ingress caller claim a dispatch resolution through the preserved arm', () => {
+    const parsed = SessionUserMessageSendRequestSchema.safeParse({
+      text: 'look at this',
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [stagedImageAttachment],
+          resolvedComposerAttachments: [{ ...pluginAttachment, data: { forged: true } }],
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.meta).toEqual({
+      happierStructuredInputV1: {
+        v: 1,
+        composerAttachments: [stagedImageAttachment],
+      },
+    });
   });
 
   it('rejects whitespace-only text without an admitted composer attachment', () => {

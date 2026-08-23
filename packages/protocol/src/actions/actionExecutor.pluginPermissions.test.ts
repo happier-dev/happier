@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ApprovalRequestV1 } from '../approvals/approvalRequestV1.js';
+import type {
+  PluginPermissionGrantRequestV1,
+  PluginPermissionGrantV1,
+} from '../plugins/permissions/grants.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 
 function createExecutor(
@@ -12,11 +16,69 @@ function createExecutor(
   } as ActionExecutorDeps);
 }
 
+const pendingRequest = {
+  v: 1,
+  id: 'request-1',
+  accountId: 'account-1',
+  pluginId: 'acme.voice',
+  capability: 'credentials.materialize.raw',
+  targetScope: { kind: 'account' },
+  subject: { kind: 'general' },
+  authoritySource: { kind: 'bundled' },
+  requester: { kind: 'plugin', pluginId: 'acme.voice', sessionId: 'session-1' },
+  reason: 'Reach the declared service',
+  status: 'pending',
+  createdAt: 1,
+  updatedAt: 1,
+} as const satisfies PluginPermissionGrantRequestV1;
+
+const activeGrant = {
+  v: 1,
+  id: 'grant-1',
+  accountId: 'account-1',
+  pluginId: 'acme.voice',
+  capability: 'credentials.materialize.raw',
+  targetScope: { kind: 'account' },
+  subject: { kind: 'general' },
+  authoritySource: { kind: 'bundled' },
+  status: 'active',
+  requestId: 'request-1',
+  grantedByUserId: 'user-1',
+  grantedAt: 2,
+  createdAt: 1,
+  updatedAt: 2,
+} as const satisfies PluginPermissionGrantV1;
+
+const revokedGrant = {
+  ...activeGrant,
+  status: 'revoked',
+  revokedByUserId: 'user-1',
+  revokedAt: 3,
+  updatedAt: 3,
+} as const satisfies PluginPermissionGrantV1;
+
+const grantedPendingRequest = {
+  ...pendingRequest,
+  status: 'granted',
+  grantId: activeGrant.id,
+  decidedByUserId: 'user-1',
+  decidedAt: 2,
+  updatedAt: 2,
+} as const satisfies PluginPermissionGrantRequestV1;
+
+const dismissedPendingRequest = {
+  ...pendingRequest,
+  status: 'dismissed',
+  decidedByUserId: 'user-1',
+  decidedAt: 2,
+  updatedAt: 2,
+} as const satisfies PluginPermissionGrantRequestV1;
+
 describe('createActionExecutor (plugin permission grants)', () => {
   it('binds plugin list/request identity before the canonical permission operation', async () => {
     const pluginPermissionGrantAction = vi.fn(async ({ actionId }) => actionId === 'plugins.permissions.grants.list'
       ? { grants: [], pendingRequests: [] }
-      : { pendingRequest: { id: 'request-1' } });
+      : { pendingRequest });
     const executor = createExecutor(pluginPermissionGrantAction);
     const context = {
       surface: 'plugin' as const,
@@ -35,7 +97,7 @@ describe('createActionExecutor (plugin permission grants)', () => {
       targetScope: { kind: 'account' },
       subject: { kind: 'general' },
       reason: 'Reach the declared service',
-    }, context)).resolves.toEqual({ ok: true, result: { pendingRequest: { id: 'request-1' } } });
+    }, context)).resolves.toEqual({ ok: true, result: { pendingRequest } });
 
     expect(pluginPermissionGrantAction).toHaveBeenNthCalledWith(1, {
       actionId: 'plugins.permissions.grants.list',
@@ -53,7 +115,9 @@ describe('createActionExecutor (plugin permission grants)', () => {
   });
 
   it('routes own-grant revoke with host-stamped caller and rejects spoofed plugin identity', async () => {
-    const pluginPermissionGrantAction = vi.fn(async () => ({ grant: { id: 'grant-1' } }));
+    const pluginPermissionGrantAction = vi.fn(async ({ actionId }) => actionId === 'plugins.permissions.grants.revoke'
+      ? { grant: revokedGrant }
+      : { pendingRequest });
     const executor = createExecutor(pluginPermissionGrantAction);
     const context = {
       surface: 'plugin' as const,
@@ -63,7 +127,7 @@ describe('createActionExecutor (plugin permission grants)', () => {
     await expect(executor.execute('plugins.permissions.grants.revoke', {
       grantId: 'grant-1',
       reason: 'No longer needed',
-    }, context)).resolves.toEqual({ ok: true, result: { grant: { id: 'grant-1' } } });
+    }, context)).resolves.toMatchObject({ ok: true, result: { grant: { id: 'grant-1' } } });
     expect(pluginPermissionGrantAction).toHaveBeenCalledWith({
       actionId: 'plugins.permissions.grants.revoke',
       input: { grantId: 'grant-1', reason: 'No longer needed' },
@@ -99,10 +163,23 @@ describe('createActionExecutor (plugin permission grants)', () => {
       }),
       caller: { kind: 'plugin', pluginId: 'acme.voice' },
     });
+
+    await expect(executor.execute('plugins.permissions.grants.revoke', {
+      grantId: 'grant-1',
+    }, {
+      surface: 'api',
+      authority: 'account_automation',
+      actionCaller: { kind: 'host' },
+    })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'action_disabled',
+      details: { reason: 'unsupported_surface', surface: 'api' },
+    });
+    expect(pluginPermissionGrantAction).toHaveBeenCalledTimes(2);
   });
 
   it('preserves host-stamped plugin identity through blocking approval replay', async () => {
-    const pluginPermissionGrantAction = vi.fn(async () => ({ grant: { id: 'grant-1' } }));
+    const pluginPermissionGrantAction = vi.fn(async () => ({ grant: revokedGrant }));
     let storedRequest: ApprovalRequestV1 | null = null;
     const approvalsCreate = vi.fn(async ({ request }: { request: ApprovalRequestV1 }) => {
       storedRequest = request;
@@ -144,7 +221,10 @@ describe('createActionExecutor (plugin permission grants)', () => {
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'approval-1',
       decision: 'approve',
-    }, { surface: 'ui' })).resolves.toMatchObject({
+    }, {
+      surface: 'ui',
+      authority: 'present_user',
+    })).resolves.toMatchObject({
       ok: true,
       result: { status: 'executed', execution: { ok: true } },
     });
@@ -157,8 +237,8 @@ describe('createActionExecutor (plugin permission grants)', () => {
 
   it('keeps grant/dismiss on the deciding side while routing their host UI execution', async () => {
     const pluginPermissionGrantAction = vi.fn(async ({ actionId }) => actionId === 'plugins.permissions.grants.grant'
-      ? { grant: { id: 'grant-1' }, pendingRequest: { id: 'request-1' } }
-      : { pendingRequest: { id: 'request-1' } });
+      ? { grant: activeGrant, pendingRequest: grantedPendingRequest }
+      : { pendingRequest: dismissedPendingRequest });
     const executor = createExecutor(pluginPermissionGrantAction);
     const pluginContext = {
       surface: 'plugin' as const,
@@ -167,18 +247,26 @@ describe('createActionExecutor (plugin permission grants)', () => {
 
     await expect(executor.execute('plugins.permissions.grants.grant', {
       requestId: 'request-1',
-    }, pluginContext)).resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    }, pluginContext)).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
     await expect(executor.execute('plugins.permissions.grants.dismissRequest', {
       requestId: 'request-1',
-    }, pluginContext)).resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    }, pluginContext)).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(pluginPermissionGrantAction).not.toHaveBeenCalled();
 
     await expect(executor.execute('plugins.permissions.grants.grant', {
       requestId: 'request-1',
-    }, { surface: 'ui', actionCaller: { kind: 'host' } })).resolves.toMatchObject({ ok: true });
+    }, {
+      surface: 'ui',
+      actionCaller: { kind: 'host' },
+      authority: 'present_user',
+    })).resolves.toMatchObject({ ok: true });
     await expect(executor.execute('plugins.permissions.grants.dismissRequest', {
       requestId: 'request-1',
-    }, { surface: 'ui', actionCaller: { kind: 'host' } })).resolves.toMatchObject({ ok: true });
+    }, {
+      surface: 'ui',
+      actionCaller: { kind: 'host' },
+      authority: 'present_user',
+    })).resolves.toMatchObject({ ok: true });
     expect(pluginPermissionGrantAction).toHaveBeenCalledTimes(2);
   });
 });

@@ -5,6 +5,7 @@ import {
 } from './builtInBackendProfiles.js';
 import {
   AIBackendProfileSchema,
+  SAVED_SECRET_COLLECTION_MAX_ENTRIES,
   SavedSecretSchema,
   getBuiltInBackendProfile,
   getRequiredConfigEnvVarNames,
@@ -20,6 +21,7 @@ describe('profiles (protocol)', () => {
   it('exports backend profile helpers from index', () => {
     expect({
       AIBackendProfileSchema,
+      SAVED_SECRET_COLLECTION_MAX_ENTRIES,
       SavedSecretSchema,
       getBuiltInBackendProfile,
       resolveBackendProfile,
@@ -31,6 +33,7 @@ describe('profiles (protocol)', () => {
       getProfileEnvironmentVariables,
     }).toMatchObject({
       AIBackendProfileSchema: expect.anything(),
+      SAVED_SECRET_COLLECTION_MAX_ENTRIES: 256,
       SavedSecretSchema: expect.anything(),
       getBuiltInBackendProfile: expect.any(Function),
       resolveBackendProfile: expect.any(Function),

@@ -74,6 +74,16 @@ export type PluginContributionRegistrationRight = Readonly<{
   /** Canonical parsed declaration used to validate the registered Voice runtime. */
   voiceProviderDeclaration?: VoiceProviderContribution;
   connectedAccountDescriptorDeclaration?: PluginConnectedAccountDescriptorContributionV2;
+  /**
+   * The complete set of runtime arms a Provider contribution declares. A
+   * Provider can declare a managed runtime, contributed catalog formats, or
+   * both, so activation must validate the whole composite rather than accept
+   * whichever arm happened to register.
+   */
+  providerArms?: Readonly<{
+    managedRuntime: boolean;
+    catalogParserIds: readonly string[];
+  }>;
 }>;
 
 export const PLUGIN_CONTRIBUTION_LIFECYCLE_STAGES_V2 = Object.freeze([
@@ -650,15 +660,25 @@ function requiresFamilyRegistration(family: string, value: Readonly<Record<strin
     return readComposerAttachmentRuntimeRegistrationFieldsV1(value.runtime).length > 0;
   }
   if (family === 'providers') {
-    const managedRuntime = value.managedRuntime;
-    const declaresManagedRuntime = managedRuntime !== null
-      && typeof managedRuntime === 'object'
-      && !Array.isArray(managedRuntime)
-      && (managedRuntime as Readonly<Record<string, unknown>>).kind === 'managed';
-    return declaresManagedRuntime
+    return declaresProviderManagedRuntimeV1(value)
       || readContributedProviderCatalogParserIds(value).length > 0;
   }
   return false;
+}
+
+/**
+ * Whether a Provider contribution declares the managed-runtime arm. This is the
+ * single owner of that reading: registration rights, activation correspondence,
+ * and projection all consume it rather than re-testing the discriminant.
+ */
+export function declaresProviderManagedRuntimeV1(
+  value: Readonly<Record<string, unknown>>,
+): boolean {
+  const managedRuntime = value.managedRuntime;
+  return managedRuntime !== null
+    && typeof managedRuntime === 'object'
+    && !Array.isArray(managedRuntime)
+    && (managedRuntime as Readonly<Record<string, unknown>>).kind === 'managed';
 }
 
 /**
@@ -977,6 +997,17 @@ function derivePluginContributionRegistrationRightsForHost(
       if (entry.manifestKey === 'composerAttachments') {
         const fields = readComposerAttachmentRuntimeRegistrationFieldsV1(record.runtime);
         return fields.length === 0 ? [] : [{ family, localId, target, requiredFields: fields }];
+      }
+      if (entry.manifestKey === 'providers') {
+        return [{
+          family,
+          localId,
+          target,
+          providerArms: Object.freeze({
+            managedRuntime: declaresProviderManagedRuntimeV1(record),
+            catalogParserIds: readContributedProviderCatalogParserIds(record),
+          }),
+        }];
       }
       if (entry.manifestKey !== 'agents') return [{ family, localId, target }];
       const fields: ('factory' | 'sessionRunnerFactory' | 'externalSessions')[] = [];

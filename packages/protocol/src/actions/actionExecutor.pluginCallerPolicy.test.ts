@@ -28,18 +28,23 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor plugin caller policy', () => {
-  it('classifies every retained non-safe plugin Action and retracts unconsumed plugin administration', () => {
-    for (const actionId of ['plugins.scaffold', 'plugins.install', 'plugins.uninstall'] as const) {
-      expect(getActionSpec(actionId).surfaces.plugin).toBe(false);
+  it('keeps trusted-plugin Actions open while classifying every non-safe plugin Action', () => {
+    for (const [actionId, requiredAuthority] of [
+      ['plugins.scaffold', 'account_automation'],
+      ['plugins.install', 'present_user'],
+      ['plugins.uninstall', 'account_automation'],
+    ] as const) {
+      expect(getActionSpec(actionId).surfaces.plugin).toBe(true);
+      expect(getActionSpec(actionId).requiredAuthority).toBe(requiredAuthority);
     }
 
     const nonSafePluginActions = listActionSpecs().filter((spec) => (
       spec.surfaces.plugin && spec.safety !== 'safe'
     ));
-    expect(nonSafePluginActions).toHaveLength(49);
+    expect(nonSafePluginActions).not.toHaveLength(0);
     expect(nonSafePluginActions.filter((spec) => (
-      spec.pluginCallerPolicy?.kind === 'caller'
-    ))).toHaveLength(48);
+      spec.pluginCallerPolicy?.kind !== 'caller'
+    )).map((spec) => spec.id)).toEqual(['plugins.reload']);
     expect(getActionSpec('plugins.reload').pluginCallerPolicy).toEqual({
       kind: 'self_or_inspector_admin',
       targetPluginIdField: 'pluginId',
@@ -51,7 +56,7 @@ describe('createActionExecutor plugin caller policy', () => {
   });
 
   it('allows a plugin to reload itself, propagating its host-stamped caller and cancellation signal', async () => {
-    const pluginsDevLoopAction = vi.fn(async () => ({ ok: true }));
+    const pluginsDevLoopAction = vi.fn(async () => ({ ok: true, kind: 'plugins_reload' }));
     const executor = createExecutor({ pluginsDevLoopAction });
     const controller = new AbortController();
     const caller = pluginCaller('acme.author');
@@ -60,7 +65,7 @@ describe('createActionExecutor plugin caller policy', () => {
       surface: 'plugin',
       actionCaller: caller,
       signal: controller.signal,
-    })).resolves.toEqual({ ok: true, result: { ok: true } });
+    })).resolves.toEqual({ ok: true, result: { ok: true, kind: 'plugins_reload' } });
 
     expect(pluginsDevLoopAction).toHaveBeenCalledWith({
       actionId: 'plugins.reload',
@@ -74,7 +79,7 @@ describe('createActionExecutor plugin caller policy', () => {
   });
 
   it('still refuses reload from a caller the host never stamped', async () => {
-    const pluginsDevLoopAction = vi.fn(async () => ({ ok: true }));
+    const pluginsDevLoopAction = vi.fn(async () => ({ ok: true, kind: 'plugins_reload' }));
     const executor = createExecutor({ pluginsDevLoopAction });
 
     await expect(executor.execute('plugins.reload', { pluginId: 'acme.author' }, {
@@ -90,13 +95,13 @@ describe('createActionExecutor plugin caller policy', () => {
   });
 
   it('admits cross-plugin reload only from the exact Inspector administrative surface', async () => {
-    const pluginsDevLoopAction = vi.fn(async () => ({ ok: true }));
+    const pluginsDevLoopAction = vi.fn(async () => ({ ok: true, kind: 'plugins_reload' }));
     const executor = createExecutor({ pluginsDevLoopAction });
 
     await expect(executor.execute('plugins.reload', { pluginId: 'acme.target' }, {
       surface: 'plugin',
       actionCaller: pluginCaller('happier.inspector', 'inspector-app'),
-    })).resolves.toEqual({ ok: true, result: { ok: true } });
+    })).resolves.toEqual({ ok: true, result: { ok: true, kind: 'plugins_reload' } });
     expect(pluginsDevLoopAction).toHaveBeenCalledTimes(1);
 
     pluginsDevLoopAction.mockClear();
@@ -123,7 +128,7 @@ describe('createActionExecutor plugin caller policy', () => {
   });
 
   it('rejects a target rewritten to a peer plugin after Action interception', async () => {
-    const pluginsDevLoopAction = vi.fn(async () => ({ ok: true }));
+    const pluginsDevLoopAction = vi.fn(async () => ({ ok: true, kind: 'plugins_reload' }));
     const executor = createExecutor({
       pluginsDevLoopAction,
       interceptActionExecution: async () => ({

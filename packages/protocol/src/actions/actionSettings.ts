@@ -2,6 +2,11 @@ import { z } from 'zod';
 
 import { ActionIdSchema, normalizeLegacyActionId, type ActionId } from './actionIds.js';
 import {
+  formatQualifiedPluginActionId,
+  parseQualifiedPluginActionId,
+  type QualifiedPluginActionId,
+} from '../plugins/actions/invocation.js';
+import {
   ActionSurfaceSchema,
   ActionToolExposureModeSchema,
   type ActionSurfaces,
@@ -99,6 +104,9 @@ const ActionSettingsOverrideSchema = z.preprocess(
 );
 export type ActionSettingsOverride = z.infer<typeof ActionSettingsOverrideSchema>;
 
+/** A host Action id or the canonical qualified contributed-Action identity. */
+export type ActionSettingsActionId = ActionId | QualifiedPluginActionId;
+
 export const ActionsSettingsV1Schema = z
   .object({
     v: z.literal(1),
@@ -108,12 +116,17 @@ export const ActionsSettingsV1Schema = z
   })
   .passthrough()
   .transform((value) => {
-    const next: Record<ActionId, ActionSettingsOverride> = {} as any;
+    const next: Partial<Record<ActionSettingsActionId, ActionSettingsOverride>> = {};
     const actions = value.actions ?? {};
     for (const [rawId, override] of Object.entries(actions)) {
       const parsedId = ActionIdSchema.safeParse(normalizeLegacyActionId(rawId));
-      if (!parsedId.success) continue;
-      next[parsedId.data] = override;
+      if (parsedId.success) {
+        next[parsedId.data] = override;
+        continue;
+      }
+      const contributedAction = parseQualifiedPluginActionId(rawId);
+      if (!contributedAction) continue;
+      next[formatQualifiedPluginActionId(contributedAction)] = override;
     }
     return { v: 1 as const, actions: next };
   });
@@ -130,20 +143,20 @@ export function isActionSettingsOptInPlacement(placement: ActionUiPlacement): bo
 }
 
 export function isActionEnabledByActionsSettings(
-  actionId: ActionId,
+  actionId: ActionSettingsActionId,
   settings: ActionsSettingsV1,
   ctx?: ActionEnablementContext,
 ): boolean {
-  const override = (settings as any)?.actions?.[actionId] as ActionSettingsOverride | undefined;
+  const override = settings.actions[actionId];
   if (override?.enabled === false) return false;
   const surface = ctx?.surface ?? null;
-  if (surface && override?.disabledSurfaces?.includes(surface as any)) return false;
+  if (surface && override?.disabledSurfaces?.includes(surface)) return false;
   const placement = ctx?.placement ?? null;
   if (placement && isActionSettingsOptInPlacement(placement)) {
-    if (override?.disabledPlacements?.includes(placement as any)) return false;
-    if (override?.enabledPlacements?.includes(placement as any)) return true;
+    if (override?.disabledPlacements?.includes(placement)) return false;
+    if (override?.enabledPlacements?.includes(placement)) return true;
     return false;
   }
-  if (placement && override?.disabledPlacements?.includes(placement as any)) return false;
+  if (placement && override?.disabledPlacements?.includes(placement)) return false;
   return true;
 }

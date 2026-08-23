@@ -485,11 +485,40 @@ export type StructuredInputDispatchContextV1 = Readonly<{
  * must first read through `readHappierStructuredInputV1FromMeta`; raw metadata
  * selections, including malformed attachment records, never satisfy this
  * predicate.
+ *
+ * It is therefore NOT the question an ingress boundary asks. The persisted envelope cannot
+ * hold a transfer-owned staged-media claim, so asking this about pre-finalizer input reports
+ * "no attachment" for every image/video message and drops the turn. Use
+ * `readIngressComposerAttachmentSelectionV1` there instead.
  */
 export function hasAdmittedComposerAttachmentSelectionV1(
   structuredInput: HappierStructuredInputV1 | null | undefined,
 ): boolean {
   return (structuredInput?.composerAttachments?.length ?? 0) > 0;
+}
+
+/**
+ * The validated raw-ingress Composer attachment arm of a Session send request.
+ *
+ * Message ingress is the pre-finalizer shape: a media attachment still carries the
+ * transfer-owned staged claim that only the daemon's SessionMedia finalizer can replace
+ * with a durable reference. Reading it through the persisted envelope — which admits only
+ * `sessionMedia` content — deletes exactly that arm, so the ingress boundary reads it
+ * through the ingress envelope owner instead.
+ *
+ * Returns `null` when the metadata carries no readable ingress envelope, so a malformed
+ * selection stays on the fail-closed path to the one admission owner's typed error rather
+ * than being silently downgraded to an empty selection.
+ */
+export function readIngressComposerAttachmentSelectionV1(
+  value: unknown,
+): readonly ComposerAttachmentDraftV1[] | null {
+  const metadata = asRecord(value);
+  if (!metadata || !Object.prototype.hasOwnProperty.call(metadata, HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1)) {
+    return null;
+  }
+  const parsed = RawIngressStructuredInputV1Schema.safeParse(metadata[HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]);
+  return parsed.success ? parsed.data.composerAttachments ?? [] : null;
 }
 
 /**

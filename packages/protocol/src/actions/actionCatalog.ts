@@ -106,31 +106,60 @@ function actionSearchScore(spec: SearchableActionDefinition, query: string): num
   return score;
 }
 
-export function serializeActionSpec(spec: ActionSpec): SerializedActionSpec {
+type ActionCatalogSurfaceParams = Readonly<{
+  surface?: keyof ActionSurfaces | null;
+}>;
+
+function resolveActionCatalogInputProjection(
+  spec: ActionSpec,
+  surface: keyof ActionSurfaces | null | undefined,
+): Readonly<{
+  inputSchema: ActionSpec['inputSchema'];
+  inputHints: ActionSpec['inputHints'];
+}> {
+  const apiBinding = surface === 'api' ? spec.surfaceBindings?.api : undefined;
+  return {
+    inputSchema: apiBinding?.inputSchema ?? spec.inputSchema,
+    inputHints: apiBinding?.inputHints ?? spec.inputHints,
+  };
+}
+
+export function serializeActionSpec(
+  spec: ActionSpec,
+  params?: ActionCatalogSurfaceParams,
+): SerializedActionSpec {
+  const projection = resolveActionCatalogInputProjection(spec, params?.surface);
   return {
     id: spec.id,
     title: spec.title,
     description: spec.description ?? null,
     safety: spec.safety,
     approval: spec.approval,
+    requiredAuthority: spec.requiredAuthority,
+    executionPlacement: spec.executionPlacement,
     placements: spec.placements ?? [],
     slash: spec.slash ?? null,
     bindings: spec.bindings ?? null,
     examples: spec.examples ?? null,
     surfaces: spec.surfaces,
-    inputHints: spec.inputHints ?? null,
+    inputHints: projection.inputHints ?? null,
     ...(spec.toolExposure ? { toolExposure: spec.toolExposure } : {}),
     ...(spec.outputSchema ? { outputSchema: zodSchemaToJsonSchemaObject(spec.outputSchema) } : {}),
     ...(spec.execution ? { execution: spec.execution } : {}),
     ...(spec.sideEffectClass ? { sideEffectClass: spec.sideEffectClass } : {}),
+    ...(spec.operation ? { operation: spec.operation } : {}),
   };
 }
 
-export function actionSpecToActionDefinitionV1(spec: ActionSpec): ActionDefinitionV1 {
+export function actionSpecToActionDefinitionV1(
+  spec: ActionSpec,
+  params?: ActionCatalogSurfaceParams,
+): ActionDefinitionV1 {
+  const projection = resolveActionCatalogInputProjection(spec, params?.surface);
   return {
     kindVersion: 1,
-    ...serializeActionSpec(spec),
-    inputSchema: zodSchemaToJsonSchemaObject(spec.inputSchema),
+    ...serializeActionSpec(spec, params),
+    inputSchema: zodSchemaToJsonSchemaObject(projection.inputSchema),
   };
 }
 
@@ -193,7 +222,8 @@ export function searchSerializedActionSpecsForSurface(params: Readonly<{
   isActionEnabled?: (id: ActionId) => boolean;
   additionalDefinitions?: readonly ActionDefinitionV1[];
 }>): readonly SerializedActionSpec[] {
-  const hostDefinitions = listActionSpecsForCatalogSurface(params).map(serializeActionSpec);
+  const hostDefinitions = listActionSpecsForCatalogSurface(params)
+    .map((spec) => serializeActionSpec(spec, params));
   const hostIds = new Set(hostDefinitions.map((definition) => definition.id));
   const additionalDefinitions = (params.additionalDefinitions ?? [])
     .filter((definition) => (
@@ -226,14 +256,15 @@ export function getSerializedActionSpecForSurface(params: Readonly<{
   isActionEnabled?: (id: ActionId) => boolean;
 }>): SerializedActionSpec | null {
   const spec = getActionSpecForCatalogSurface(params);
-  return spec ? serializeActionSpec(spec) : null;
+  return spec ? serializeActionSpec(spec, params) : null;
 }
 
 export function listActionDefinitionsForCatalogSurface(params: Readonly<{
   surface?: keyof ActionSurfaces | null;
   isActionEnabled?: (id: ActionId) => boolean;
 }>): readonly ActionDefinitionV1[] {
-  return listActionSpecsForCatalogSurface(params).map(actionSpecToActionDefinitionV1);
+  return listActionSpecsForCatalogSurface(params)
+    .map((spec) => actionSpecToActionDefinitionV1(spec, params));
 }
 
 export function getActionDefinitionForCatalogSurface(params: Readonly<{
@@ -242,7 +273,7 @@ export function getActionDefinitionForCatalogSurface(params: Readonly<{
   isActionEnabled?: (id: ActionId) => boolean;
 }>): ActionDefinitionV1 | null {
   const spec = getActionSpecForCatalogSurface(params);
-  return spec ? actionSpecToActionDefinitionV1(spec) : null;
+  return spec ? actionSpecToActionDefinitionV1(spec, params) : null;
 }
 
 export function findActionInputFieldHint(

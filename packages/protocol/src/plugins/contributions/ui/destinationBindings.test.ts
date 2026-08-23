@@ -1,4 +1,7 @@
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
+import ts from 'typescript';
 
 import * as surfaceRegistry from './surfaceRegistry.js';
 import * as tokens from './tokens.js';
@@ -18,6 +21,7 @@ import {
   PluginUiViewV2Schema,
 } from './v2.js';
 import type { PluginUiViewV2Input } from './v2.js';
+import type { PluginUiPageHeaderActionV1Input } from './sessionHeaderActions.js';
 import { PluginSurfaceTargetV1Schema } from './surfaceTargets.js';
 
 if (false) {
@@ -37,8 +41,94 @@ if (false) {
     instancePolicy: 'multiple',
   };
 
-  void [acceptedMultiplePane, rejectedMultipleRightSidebar];
+  const pageHeaderActions: PluginUiPageHeaderActionV1Input[] = [{
+    id: 'refresh',
+    title: 'Refresh',
+    action: { kind: 'executeAction', action: 'refresh-activity' },
+  }];
+  const acceptedAppPageHeaderActions: PluginUiViewV2Input = {
+    id: 'accepted-app-page-header-actions',
+    renderer: 'compare-renderer',
+    container: 'appPage',
+    target: { kind: 'app' },
+    headerActions: pageHeaderActions,
+  };
+  // @ts-expect-error page header actions are an appPage container capability.
+  const rejectedPaneHeaderActions: PluginUiViewV2Input = {
+    id: 'rejected-pane-header-actions',
+    renderer: 'compare-renderer',
+    container: 'rightPane',
+    target: { kind: 'session' },
+    headerActions: pageHeaderActions,
+  };
+  const acceptedEmptyPaneHeaderActions: PluginUiViewV2Input = {
+    id: 'accepted-empty-pane-header-actions',
+    renderer: 'compare-renderer',
+    container: 'rightPane',
+    target: { kind: 'session' },
+    headerActions: [],
+  };
+
+  void [
+    acceptedMultiplePane,
+    rejectedMultipleRightSidebar,
+    acceptedAppPageHeaderActions,
+    rejectedPaneHeaderActions,
+    acceptedEmptyPaneHeaderActions,
+  ];
 }
+
+/**
+ * The declaration cases above are the ONLY statement of the representable
+ * authoring grammar at the TypeScript layer, and the package `tsconfig.json`
+ * excludes every `.test.ts` file — so no compiler read them and every
+ * `@ts-expect-error` in this file was unfalsifiable. Typecheck the file here
+ * instead: a directive that stops matching a real error reports TS2578, and a
+ * grammar that stops rejecting an unadmitted declaration reports it too.
+ */
+function typeCheckThisFile(): readonly string[] {
+  const configPath = fileURLToPath(new URL('../../../../tsconfig.json', import.meta.url));
+  const sourcePath = fileURLToPath(new URL('./destinationBindings.test.ts', import.meta.url));
+  const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic(diagnostic) {
+      throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+    },
+  });
+  if (!parsed) throw new Error(`Unable to parse ${configPath}`);
+
+  const program = ts.createProgram({
+    rootNames: [sourcePath],
+    options: {
+      ...parsed.options,
+      noEmit: true,
+      declaration: false,
+      declarationMap: false,
+      composite: false,
+      incremental: false,
+      tsBuildInfoFile: undefined,
+    },
+    projectReferences: parsed.projectReferences,
+  });
+  const sourceFile = program.getSourceFile(sourcePath);
+  if (!sourceFile) throw new Error(`Missing ${sourcePath}`);
+
+  return [
+    ...program.getSyntacticDiagnostics(sourceFile),
+    ...program.getSemanticDiagnostics(sourceFile),
+  ].map((diagnostic) => {
+    const position = diagnostic.file?.getLineAndCharacterOfPosition(diagnostic.start ?? 0);
+    return `${(position?.line ?? 0) + 1}: TS${diagnostic.code} ${
+      ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')
+    }`;
+  });
+}
+
+describe('plugin UI destination declaration grammar', () => {
+  it('rejects an unadmitted declaration at the TypeScript layer too', () => {
+    expect(typeCheckThisFile()).toEqual([]);
+  }, 180_000);
+});
 
 describe('plugin UI destination binding normalization', () => {
   it('closes retired generic display vocabulary while retaining static destination badges', () => {

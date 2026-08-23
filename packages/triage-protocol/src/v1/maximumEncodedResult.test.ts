@@ -329,7 +329,7 @@ describe('maximum encoded value derivation', () => {
             getInput: 11_496,
             listInstancesResult: 360_213,
             detailInput: 91_691,
-            descriptor: 77_679,
+            descriptor: 77_955,
             prepareReviewWorkspaceInput: 11_993,
             administrationInput: 7_775,
             readConfiguredInstancesResult: 266_066,

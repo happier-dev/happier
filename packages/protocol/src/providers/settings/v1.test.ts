@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import { ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES } from '../../account/settings/catalog/accountSettingBounds.js';
 import { serializeModelVisibilityRefV1 } from '../selection/v1.js';
 import {
   SavedSecretSlotBindingsV1Schema,
   DEFAULT_PROVIDER_SETTINGS_V1,
+  PROVIDER_SETTINGS_LIMITS_V1,
   ProviderSettingsLimitError,
   ProviderSettingsV1Schema,
   ProviderSettingsMigrationPendingConflictV1Schema,
@@ -106,54 +108,111 @@ describe('ProviderSettingsV1Schema', () => {
     expect(parsed.diagnostics.map((entry) => entry.path)).toContain('connections[1]');
   });
 
-  it('accepts valid connection records beyond the retired global count and retains the decoded 4 MiB subtree budget', () => {
+  it('accepts valid connection records beyond the retired global count and advertises the Account-owned subtree budget', () => {
     const oversized = structuredClone(validSettings()) as any;
     oversized.connections = Array.from({ length: 257 }, (_, index) => ({
       ...connection(`pc_${index}`, `plugin/provider-${index}`), id: `pc_${index}`,
     }));
     expect(() => assertProviderSettingsV1WithinLimits(oversized)).not.toThrow();
 
+    // The subtree is persisted inside the Account Settings document, so the advertised
+    // maximum must be exactly what that document can hold for this root. Any larger
+    // allowance produces writes this owner accepts and Account Settings then discards.
+    expect(PROVIDER_SETTINGS_LIMITS_V1.decodedJsonBytes)
+      .toBe(ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES);
+
+    // The byte gate runs before schema validation, so an oversized subtree is reported as a
+    // settings-limit refusal rather than an unrelated semantic failure.
     const overBytes = structuredClone(validSettings()) as any;
-    overBytes.connections[0].displayName = 'x'.repeat(4 * 1024 * 1024);
+    overBytes.connections[0].displayName = 'x'.repeat(
+      ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES + 1,
+    );
     expect(() => assertProviderSettingsV1WithinLimits(overBytes)).toThrow(ProviderSettingsLimitError);
   });
 
-  it('maps every explicit nested count cap to the stable settings-limit error', () => {
-    const atBounds = structuredClone(validSettings()) as any;
-    atBounds.manualModelsByConnectionId.pc_1 = Array.from({ length: 500 }, (_, index) => ({ id: `m-${index}`, addedAt: 1 }));
-    atBounds.secretBindingsByConnectionId.pc_1.account = Object.fromEntries(
-      Array.from({ length: 8 }, (_, index) => [`slot-${index}`, `secret-${index}`]),
-    );
-    atBounds.secretBindingsByConnectionId.pc_1.byMachineId = Object.fromEntries(
-      Array.from({ length: 2_048 }, (_, index) => [`machine-${index}`, { apiKey: `secret-${index}` }]),
-    );
-    atBounds.defaultsByAgentTargetKey = Object.fromEntries(Array.from({ length: 2_048 }, (_, index) => {
-      const agentTargetKey = `agent:${index}`;
-      return [agentTargetKey, {
-        v: 1, ref: { agentTargetKey, providerConnectionId: null, modelId: 'native' }, updatedAt: 1,
-      }];
-    }));
-    atBounds.migration = {
-      v: 1,
-      completedSources: Array.from({ length: 2_048 }, (_, index) => ({
-        sourceProfileId: `completed-${index}`, kind: 'default_environment',
-      })),
-      pendingCustomProfileIds: Array.from({ length: 2_048 }, (_, index) => `pending-${index}`),
-      migratedAt: 1,
-    };
-    expect(() => assertProviderSettingsV1WithinLimits(atBounds)).not.toThrow();
+  // Each nested cap is exercised on its own fixture: the caps are independent defensive
+  // bounds on one node, not a joint allowance, and the Account-owned byte ceiling is the
+  // outer bound every one of them shares.
+  const nestedCountCaps: ReadonlyArray<Readonly<{
+    label: string;
+    atBound: (value: any) => void;
+    over: (value: any) => void;
+  }>> = [
+    {
+      label: 'manual models per connection',
+      atBound: (value) => {
+        value.manualModelsByConnectionId.pc_1 = Array.from({ length: 500 }, (_, index) => ({ id: `m-${index}`, addedAt: 1 }));
+      },
+      over: (value) => { value.manualModelsByConnectionId.pc_1.push({ id: 'over', addedAt: 1 }); },
+    },
+    {
+      label: 'credential slots per scope',
+      atBound: (value) => {
+        value.secretBindingsByConnectionId.pc_1.account = Object.fromEntries(
+          Array.from({ length: 8 }, (_, index) => [`slot-${index}`, `secret-${index}`]),
+        );
+      },
+      over: (value) => { value.secretBindingsByConnectionId.pc_1.account['slot-over'] = 'secret-over'; },
+    },
+    {
+      label: 'defaults by agent target key',
+      atBound: (value) => {
+        value.defaultsByAgentTargetKey = Object.fromEntries(Array.from({ length: 2_048 }, (_, index) => {
+          const agentTargetKey = `agent:${index}`;
+          return [agentTargetKey, {
+            v: 1, ref: { agentTargetKey, providerConnectionId: null, modelId: 'native' }, updatedAt: 1,
+          }];
+        }));
+      },
+      over: (value) => {
+        value.defaultsByAgentTargetKey['agent:over'] = {
+          v: 1, ref: { agentTargetKey: 'agent:over', providerConnectionId: null, modelId: 'native' }, updatedAt: 1,
+        };
+      },
+    },
+    {
+      label: 'migration completed sources',
+      atBound: (value) => {
+        value.migration = {
+          v: 1,
+          completedSources: Array.from({ length: 2_048 }, (_, index) => ({
+            sourceProfileId: `completed-${index}`, kind: 'default_environment',
+          })),
+          pendingCustomProfileIds: [],
+          migratedAt: 1,
+        };
+      },
+      over: (value) => {
+        value.migration.completedSources.push({ sourceProfileId: 'completed-over', kind: 'default_environment' });
+      },
+    },
+    {
+      label: 'migration pending custom profiles',
+      atBound: (value) => {
+        value.migration = {
+          v: 1,
+          completedSources: [],
+          pendingCustomProfileIds: Array.from({ length: 2_048 }, (_, index) => `pending-${index}`),
+          migratedAt: 1,
+        };
+      },
+      over: (value) => { value.migration.pendingCustomProfileIds.push('pending-over'); },
+    },
+  ];
 
-    const overCases = [
-      (() => { const value = structuredClone(atBounds); value.manualModelsByConnectionId.pc_1.push({ id: 'over', addedAt: 1 }); return value; })(),
-      (() => { const value = structuredClone(atBounds); value.secretBindingsByConnectionId.pc_1.account['slot-over'] = 'secret-over'; return value; })(),
-      (() => { const value = structuredClone(atBounds); value.defaultsByAgentTargetKey['agent:over'] = { v: 1, ref: { agentTargetKey: 'agent:over', providerConnectionId: null, modelId: 'native' }, updatedAt: 1 }; return value; })(),
-      (() => { const value = structuredClone(atBounds); value.migration.completedSources.push({ sourceProfileId: 'completed-over', kind: 'default_environment' }); return value; })(),
-      (() => { const value = structuredClone(atBounds); value.migration.pendingCustomProfileIds.push('pending-over'); return value; })(),
-    ];
-    for (const value of overCases) {
-      expect(() => assertProviderSettingsV1WithinLimits(value)).toThrowError(ProviderSettingsLimitError);
-    }
+  it.each(nestedCountCaps)('maps the $label cap to the stable settings-limit error', ({ atBound, over }) => {
+    const value = structuredClone(validSettings()) as any;
+    atBound(value);
+    expect(new TextEncoder().encode(JSON.stringify(value)).byteLength)
+      .toBeLessThanOrEqual(PROVIDER_SETTINGS_LIMITS_V1.decodedJsonBytes);
+    expect(() => assertProviderSettingsV1WithinLimits(value)).not.toThrow();
 
+    const overValue = structuredClone(value);
+    over(overValue);
+    expect(() => assertProviderSettingsV1WithinLimits(overValue)).toThrowError(ProviderSettingsLimitError);
+  });
+
+  it('maps the total manual-model cap to the stable settings-limit error', () => {
     const totalManualOver = structuredClone(DEFAULT_PROVIDER_SETTINGS_V1) as any;
     totalManualOver.connections = Array.from({ length: 11 }, (_, index) =>
       ({ ...connection(`pc_${index}`, `plugin/p-${index}`), role: 'named', displayNameMode: 'custom' }));
@@ -161,7 +220,11 @@ describe('ProviderSettingsV1Schema', () => {
       entry.id,
       Array.from({ length: index === 10 ? 1 : 500 }, (_, modelIndex) => ({ id: `m-${index}-${modelIndex}`, addedAt: 1 })),
     ]));
-    expect(() => assertProviderSettingsV1WithinLimits(totalManualOver)).toThrowError(ProviderSettingsLimitError);
+    // The total cap, not the shared byte ceiling, must be the refusal reason here.
+    expect(new TextEncoder().encode(JSON.stringify(totalManualOver)).byteLength)
+      .toBeLessThanOrEqual(PROVIDER_SETTINGS_LIMITS_V1.decodedJsonBytes);
+    expect(() => assertProviderSettingsV1WithinLimits(totalManualOver))
+      .toThrowError(/total manual-model limit/u);
   });
 
   it('does not mislabel semantic schema failures as settings-limit errors', () => {
@@ -187,8 +250,16 @@ describe('ProviderSettingsV1Schema', () => {
     expect(recovered.diagnostics).toEqual([]);
   });
 
-  it('accepts valid account and machine grants beyond the retired global counts', () => {
+  it('accepts valid account and machine grants beyond the retired global counts, bounded only by the subtree budget', () => {
     const connections = Array.from({ length: 257 }, (_, index) => connection(`pc-${index}`, `plugin/provider-${index}`));
+    const machineGrant = (index: number) => ({
+      v: 1 as const,
+      machineId: `m-${index}`,
+      connectionId: 'pc-0',
+      endpointSetFingerprint: `endpoint-set:v1:${index}`,
+      connectionSecurityFingerprint: 'connection-security:v1:pc-0',
+      confirmedAt: 1,
+    });
     const value = {
       ...DEFAULT_PROVIDER_SETTINGS_V1,
       connections,
@@ -198,18 +269,24 @@ describe('ProviderSettingsV1Schema', () => {
         connectionSecurityFingerprint: `connection-security:v1:${entry.id}`,
         confirmedAt: 1,
       })),
-      machineGrants: Array.from({ length: 2_049 }, (_, index) => ({
-        v: 1 as const,
-        machineId: `machine-${index}`,
-        connectionId: 'pc-0',
-        endpointSetFingerprint: `endpoint-set:v1:${index}`,
-        connectionSecurityFingerprint: 'connection-security:v1:pc-0',
-        confirmedAt: 1,
-      })),
+      machineGrants: Array.from({ length: 513 }, (_, index) => machineGrant(index)),
     };
+    expect(new TextEncoder().encode(JSON.stringify(value)).byteLength)
+      .toBeLessThanOrEqual(PROVIDER_SETTINGS_LIMITS_V1.decodedJsonBytes);
     expect(() => assertProviderSettingsV1WithinLimits(value)).not.toThrow();
     expect(ProviderSettingsV1Schema.parse(value).accountGrants).toHaveLength(257);
-    expect(ProviderSettingsV1Schema.parse(value).machineGrants).toHaveLength(2_049);
+    expect(ProviderSettingsV1Schema.parse(value).machineGrants).toHaveLength(513);
+
+    // Grants carry no count cap of their own; the shared subtree budget is what bounds them,
+    // and it refuses before Account Settings can silently drop the persisted subtree.
+    const overBudget = {
+      ...value,
+      machineGrants: Array.from({ length: 4_096 }, (_, index) => machineGrant(index)),
+    };
+    expect(new TextEncoder().encode(JSON.stringify(overBudget)).byteLength)
+      .toBeGreaterThan(PROVIDER_SETTINGS_LIMITS_V1.decodedJsonBytes);
+    expect(() => assertProviderSettingsV1WithinLimits(overBudget))
+      .toThrowError(/decoded-size limit/u);
   });
 
   it('keeps account and per-machine secret binding precedence explicit', () => {

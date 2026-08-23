@@ -295,6 +295,21 @@ export function buildLinkedExternalSessionMetadataV1(
   };
 }
 
+export type LinkedExternalSessionResolutionErrorV1 =
+  | 'linked_session_not_found'
+  | 'linked_session_invalid'
+  | 'linked_session_reconciliation_required';
+
+export type LinkedExternalSessionResolutionReasonV1 =
+  | 'metadata_not_object'
+  | 'canonical_invalid'
+  | 'legacy_invalid'
+  | 'identity_conflict'
+  | 'source_conflict'
+  | 'runtime_conflict'
+  | 'follow_policy_conflict'
+  | 'unsupported_mutable_field_conflict';
+
 export type LinkedExternalSessionMetadataResolutionV1 =
   | Readonly<{
       ok: true;
@@ -303,16 +318,8 @@ export type LinkedExternalSessionMetadataResolutionV1 =
     }>
   | Readonly<{
       ok: false;
-      error: 'linked_session_not_found' | 'linked_session_invalid' | 'linked_session_reconciliation_required';
-      reason:
-        | 'metadata_not_object'
-        | 'canonical_invalid'
-        | 'legacy_invalid'
-        | 'identity_conflict'
-        | 'source_conflict'
-        | 'runtime_conflict'
-        | 'follow_policy_conflict'
-        | 'unsupported_mutable_field_conflict';
+      error: LinkedExternalSessionResolutionErrorV1;
+      reason: LinkedExternalSessionResolutionReasonV1;
     }>;
 
 function areSemanticallyEqual(left: unknown, right: unknown): boolean {
@@ -337,10 +344,7 @@ function areSemanticallyEqual(left: unknown, right: unknown): boolean {
 }
 
 function reconciliationRequired(
-  reason: Extract<
-    LinkedExternalSessionMetadataResolutionV1,
-    Readonly<{ ok: false }>
-  >['reason'],
+  reason: LinkedExternalSessionResolutionReasonV1,
 ): LinkedExternalSessionMetadataResolutionV1 {
   return {
     ok: false,
@@ -474,7 +478,67 @@ export function resolveLinkedExternalSessionMetadataV1(
   return { ok: true, source, linkedSession };
 }
 
-export function readLinkedExternalSessionV1FromMetadata(metadata: unknown): LinkedExternalSessionV1 | null {
+/**
+ * Transcript-storage authority for one Session, derived from the single
+ * canonical link resolution.
+ *
+ * `persisted` is a POSITIVE fact — the metadata proves no link was ever
+ * written. A link that exists but cannot be trusted (malformed canonical row,
+ * or a dual-row divergence that only an explicit relink can settle) is neither
+ * `direct` nor `persisted`: it is unresolved, and every authority path must
+ * refuse before an effect rather than fall through to "hosted here".
+ */
+export type LinkedExternalSessionAuthorityV1 =
+  | Readonly<{
+      ok: true;
+      transcriptStorage: 'direct';
+      linkedSession: LinkedExternalSessionV1;
+    }>
+  | Readonly<{ ok: true; transcriptStorage: 'persisted' }>
+  | Readonly<{
+      ok: false;
+      error: Exclude<LinkedExternalSessionResolutionErrorV1, 'linked_session_not_found'>;
+      reason: LinkedExternalSessionResolutionReasonV1;
+    }>;
+
+/**
+ * The single owner of "does this Session's transcript live with an external
+ * Agent, or with us?".
+ *
+ * It exists because the nullable read below collapsed `not_found`, `invalid`
+ * and `reconciliation_required` into one `null`, and every authority caller
+ * then read that `null` as "safely hosted/persisted" — at exactly the moments
+ * that stop a runtime, transition an Agent, or import a transcript. Consume
+ * this instead of re-deriving the rule; a second classifier is a second
+ * decision-maker.
+ */
+export function resolveLinkedExternalSessionAuthorityV1(
+  metadata: unknown,
+): LinkedExternalSessionAuthorityV1 {
+  const resolved = resolveLinkedExternalSessionMetadataV1(metadata);
+  if (resolved.ok) {
+    return { ok: true, transcriptStorage: 'direct', linkedSession: resolved.linkedSession };
+  }
+  if (resolved.error === 'linked_session_not_found') {
+    return { ok: true, transcriptStorage: 'persisted' };
+  }
+  return { ok: false, error: resolved.error, reason: resolved.reason };
+}
+
+/**
+ * Best-effort optional read for presentation and other non-authoritative
+ * consumers: an unusable link reads as absent.
+ *
+ * NEVER use this to decide an effect. `null` here means "no usable link",
+ * which is NOT the same fact as "no link exists" — use
+ * {@link resolveLinkedExternalSessionAuthorityV1} (or
+ * {@link resolveLinkedExternalSessionMetadataV1} when the failure reason
+ * matters) anywhere the answer gates a stop, transition, handoff, import,
+ * takeover, or any other mutation.
+ */
+export function readNonAuthoritativeLinkedExternalSessionV1FromMetadata(
+  metadata: unknown,
+): LinkedExternalSessionV1 | null {
   const resolved = resolveLinkedExternalSessionMetadataV1(metadata);
   return resolved.ok ? resolved.linkedSession : null;
 }

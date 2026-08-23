@@ -1,15 +1,29 @@
 import { z } from 'zod';
 
 import {
+  DaemonPluginStructuredMessageActionExecuteRequestSchema,
+} from '../plugins/actions/daemonInvocationV1.js';
+export {
+  DaemonPluginHostPresentedComposerCurrentIntentV1Schema,
+  DaemonPluginStructuredMessageActionExecuteRequestSchema,
+  DaemonPluginStructuredMessageActionInvocationV1Schema,
+  DaemonPluginStructuredMessageActionMountedBindingSchema,
+  type DaemonPluginHostPresentedComposerCurrentIntentV1,
+  type DaemonPluginStructuredMessageActionExecuteRequest,
+  type DaemonPluginStructuredMessageActionInvocationV1,
+  type DaemonPluginStructuredMessageActionMountedBinding,
+} from '../plugins/actions/daemonInvocationV1.js';
+
+import {
   ActionInputHintsSchema,
   ActionInputOptionValueSchema,
   ActionInputPathSchema,
   createActionInputHintsSchemas,
 } from '../actions/actionInputHints.js';
+import { ActionOperationDeclarationV1Schema } from '../actions/operations/v1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { QualifiedConnectedAccountRefSchema as CanonicalQualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { ConnectedServiceIdSchema } from '../connect/connectedServiceBindings.js';
-import { MessageActionReferenceV1Schema } from '../sessions/messages/messageActionReferenceV1.js';
 import {
   PluginActionConfirmationV2Schema,
   PluginActionDangerLevelV2Schema,
@@ -26,13 +40,10 @@ import {
 import { PluginActionPresentUserAuthorizationFactsSchema } from '../plugins/actions/invocation.js';
 import { PluginUiArtifactDigestV1Schema } from '../plugins/ui/artifactIntegrity.js';
 import { PluginUiHostMethodV1Schema } from '../plugins/ui/hostApiDefinition.js';
-import { PluginUiSelectedActionInputCarrierV1Schema } from '../plugins/ui/selectedActionInput.js';
 import { PluginUiResourceSubscriptionEventV1Schema } from '../plugins/ui/subscriptions.js';
 import { PluginUiResolvedSemanticCommandV1Schema } from '../plugins/ui/semanticCommands.js';
 import {
-  ComposerRefV1Schema,
   ComposerSurfaceRoleV1Schema,
-  type ComposerRefV1,
 } from '../plugins/ui/composer.js';
 import {
   PluginAgentCapabilitiesV2Schema,
@@ -83,7 +94,6 @@ import {
   PluginContributionLocalIdSchema as CanonicalPluginContributionLocalIdSchema,
   buildQualifiedPluginContributionKey,
 } from '../plugins/contributionIdentity.js';
-import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
 import {
   ComposerReferenceCandidatePageV1Schema,
   ComposerReferenceTriggerV1Schema,
@@ -758,194 +768,6 @@ function isCanonicalBase64(value: string): boolean {
   const lastSextet = BASE64_ALPHABET.indexOf(value[value.length - padding - 1] ?? '');
   return padding === 2 ? lastSextet % 16 === 0 : lastSextet % 4 === 0;
 }
-
-/**
- * The mounted UI host's observed binding. This is not a caller credential: the
- * daemon matches it against the exact current registry lease, then derives the
- * invocation caller itself. It is transport metadata, never action input or a
- * target-surface selector.
- */
-export const DaemonPluginStructuredMessageActionMountedBindingSchema = z.object({
-  contributionLocalId: PluginContributionLocalIdSchema,
-  materializationRef: PluginMachineMaterializationRefV1Schema,
-}).strict();
-export type DaemonPluginStructuredMessageActionMountedBinding = z.infer<
-  typeof DaemonPluginStructuredMessageActionMountedBindingSchema
->;
-
-/**
- * The bounded current Composer snapshot fact a host stamps only while handling
- * a present-user Composer interaction. It is a currentness witness, not a
- * durable grant, caller credential, or reusable capability: the dispatcher
- * and daemon still revalidate cancellation, generation, and Action policy at
- * execution time.
- */
-export const DaemonPluginHostPresentedComposerCurrentIntentV1Schema = z.object({
-  composer: asProtocolZod(ComposerRefV1Schema),
-  revision: z.number().int().nonnegative(),
-}).strict();
-export type DaemonPluginHostPresentedComposerCurrentIntentV1 = z.infer<
-  typeof DaemonPluginHostPresentedComposerCurrentIntentV1Schema
->;
-
-/**
- * One closed provenance carrier for a contributed Action execution request.
- *
- * A host-presented Composer or Message control carries only a present-user
- * currentness witness. It MUST NOT manufacture a mounted plugin caller. A
- * mounted plugin surface instead carries the exact producer-owned mount
- * binding; the daemon derives its caller only after revalidating that binding
- * against the current registry lease.
- */
-export const DaemonPluginStructuredMessageActionInvocationV1Schema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('hostPresentedComposer'),
-    currentComposerIntent: DaemonPluginHostPresentedComposerCurrentIntentV1Schema,
-  }).strict(),
-  z.object({
-    kind: z.literal('hostPresentedMessage'),
-    currentMessageIntent: MessageActionReferenceV1Schema,
-  }).strict(),
-  z.object({
-    kind: z.literal('mountedPluginSurface'),
-    mountedBinding: DaemonPluginStructuredMessageActionMountedBindingSchema,
-  }).strict(),
-]);
-export type DaemonPluginStructuredMessageActionInvocationV1 = z.infer<
-  typeof DaemonPluginStructuredMessageActionInvocationV1Schema
->;
-
-function messageActionReferencesMatch(
-  left: z.infer<typeof MessageActionReferenceV1Schema>,
-  right: z.infer<typeof MessageActionReferenceV1Schema>,
-): boolean {
-  return left.v === right.v
-    && left.sessionId === right.sessionId
-    && left.messageId === right.messageId
-    && left.observedRevision === right.observedRevision;
-}
-
-function composerRefSessionId(ref: ComposerRefV1): string | null {
-  return ref.kind === 'newSession' ? null : ref.sessionId;
-}
-
-export const DaemonPluginStructuredMessageActionExecuteRequestSchema = z.object({
-    machineId: z.string().trim().min(1),
-    expectedGeneration: z.string().trim().min(1),
-    qualifiedActionId: z.string().trim().min(1),
-  // Absence is meaningful for declarative actions. An explicit JSON `null`
-  // remains an authored input value, so do not normalize absence into it.
-  input: PluginJsonValueV2Schema.optional(),
-  sessionId: z.string().trim().min(1).optional(),
-  /**
-   * Host-issued opaque Message identity from the mounted transcript row. The
-   * daemon re-resolves it immediately before target Action dispatch; neither
-   * UI payload nor plugin Action input carries a Message object or snapshot.
-   */
-  messageActionReference: MessageActionReferenceV1Schema.optional(),
-  /**
-   * The surface the caller is executing on. It is REQUIRED because
-   * `evaluateTargetActionPolicy` compares it against the target action's
-   * declared `surfaces`: a default here would both deny `surfaces: ['ui']`
-   * actions and falsely admit agent-only ones (UI-D26). No released tag and no
-   * predecessor revision carries this RPC, so there is no omitting client to
-   * keep compatible with.
-   */
-  executionSurface: z.enum(['cli', 'ui', 'voice']),
-  /**
-   * Host-private currentness expectation retained from a selected targeted
-   * contribution operation. It is never Action input, mounted caller
-   * provenance, or a materialization identity.
-   */
-  expectedContributorImmutableGenerationId: PluginUiImmutableGenerationIdV1Schema.optional(),
-  /**
-   * One untrusted, host-private selected-operation settlement. It is not Action
-   * input and does not itself grant invocation authority: the mounted caller
-   * and exact admitted target operation revalidate it before reconstruction.
-   */
-  selectedActionInputCarrier: PluginUiSelectedActionInputCarrierV1Schema.optional(),
-  /**
-   * A strict host-presented or mounted-surface provenance carrier. It is
-   * optional only for existing non-Composer callers. A host-presented semantic
-   * Composer or `message.menu` control must use one of the host-presented arms;
-   * an independently mounted plugin surface instead uses its exact mounted arm.
-   * No predecessor version of this unreleased RPC needs a compatibility alias.
-   */
-  invocation: DaemonPluginStructuredMessageActionInvocationV1Schema.optional(),
-}).strict().superRefine((request, context) => {
-  if (request.invocation !== undefined && request.executionSurface !== 'ui') {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['invocation'],
-      message: 'An Action invocation provenance carrier is valid only for the UI execution surface.',
-    });
-  }
-  if (
-    request.selectedActionInputCarrier !== undefined
-    && (
-      request.executionSurface !== 'ui'
-      || request.invocation?.kind !== 'mountedPluginSurface'
-    )
-  ) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['selectedActionInputCarrier'],
-      message: 'A selected Action settlement is valid only for a bound UI mount.',
-    });
-  }
-  if (request.invocation?.kind === 'hostPresentedComposer') {
-    const intentSessionId = composerRefSessionId(request.invocation.currentComposerIntent.composer);
-    if (
-      request.sessionId !== undefined
-      && intentSessionId !== null
-      && request.sessionId !== intentSessionId
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['sessionId'],
-        message: 'A host-presented Composer Action must retain its current Composer Session.',
-      });
-    }
-    if (request.messageActionReference !== undefined) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['messageActionReference'],
-        message: 'A host-presented Composer Action cannot carry a Message Action reference.',
-      });
-    }
-  }
-  if (request.invocation?.kind === 'hostPresentedMessage') {
-    if (request.messageActionReference === undefined) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['messageActionReference'],
-        message: 'A host-presented Message Action requires its current Message reference.',
-      });
-    } else if (!messageActionReferencesMatch(
-      request.messageActionReference,
-      request.invocation.currentMessageIntent,
-    )) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['invocation', 'currentMessageIntent'],
-        message: 'A host-presented Message Action must retain its current Message reference.',
-      });
-    }
-    if (
-      request.sessionId !== undefined
-      && request.sessionId !== request.invocation.currentMessageIntent.sessionId
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['sessionId'],
-        message: 'A host-presented Message Action must retain its current Message Session.',
-      });
-    }
-  }
-});
-export type DaemonPluginStructuredMessageActionExecuteRequest = z.infer<
-  typeof DaemonPluginStructuredMessageActionExecuteRequestSchema
->;
 
 export const DaemonPluginStructuredMessageActionExecuteResponseSchema = z.union([
   z.object({ ok: z.literal(true), result: PluginJsonValueV2Schema }).strict(),
@@ -1628,8 +1450,6 @@ export type DaemonPluginUiResourceWatchCloseResponse = z.infer<
 
 export const DaemonPluginReactNativeCrashFailureV1Schema = z.enum([
   'render_error',
-  // Legacy persisted/wire value. New UI loader failures use `load_timeout`.
-  'startup_ack_timeout',
   'load_timeout',
   'invalid_surface_module',
   'load_error',
@@ -1845,6 +1665,7 @@ export const PluginProjectedActionV2Schema = PluginProjectedContributionBaseV2Sc
   scopes: z.array(PluginActionScopeV2Schema).min(1),
   surfaces: z.array(PluginActionSurfaceV2Schema).min(1),
   execution: PluginActionExecutionV2Schema,
+  operation: ActionOperationDeclarationV1Schema.optional(),
   // The Action projection retains the producer-owned exact origin used by
   // client projection admission. Consumers must not derive this from a
   // package/member identity or replace it with a coarser machine fact.
@@ -1888,6 +1709,13 @@ export const PluginProjectedActionV2Schema = PluginProjectedContributionBaseV2Sc
       code: z.ZodIssueCode.custom,
       path: ['placementBindings'],
       message: 'UI projected actions must carry their declared placement bindings.',
+    });
+  }
+  if (value.operation && value.execution.target !== 'daemon') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['operation'],
+      message: 'Tracked operations require daemon Action execution.',
     });
   }
   if (value.slash && !value.surfaces.includes('ui')) {

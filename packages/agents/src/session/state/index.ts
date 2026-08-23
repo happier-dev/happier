@@ -125,7 +125,9 @@ export {
 export {
   isProviderBoundSessionMetadata,
   readActiveSessionModelSelectionFromMetadata,
+  resolveAmbientProviderConnectionForModelIntent,
   resolveModelSelectionIntentFromSessionMetadata,
   resolveMetadataStringOverrideV1,
   resolvePermissionIntentFromSessionMetadata,
+  type AmbientProviderConnectionForModelIntent,
 } from './metadataReaders.js';

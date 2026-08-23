@@ -193,10 +193,39 @@ describe('AccountSettingMutationV1', () => {
     expect(applyAccountSettingMutationV1({}, {
       operations: [{
         op: 'set',
-        key: 'providerSettingsV1',
+        key: 'voiceDiagnosticsV1',
         value: tooDeep,
       }],
     })).toEqual({ status: 'invalid', reason: 'tooDeep' });
+  });
+
+  it('leaves Provider-owned subtree cardinality and nesting to the Provider schemas', () => {
+    // The Provider settings root is the Provider owner's document. Applying the Account
+    // document's generic node policy to it discards configurations Provider validation
+    // accepts, so only the Account byte ceiling may refuse this root.
+    let deeperThanAccountGeneric: unknown = 'leaf';
+    for (let depth = 0; depth < 14; depth += 1) {
+      deeperThanAccountGeneric = { child: deeperThanAccountGeneric };
+    }
+    const wideRecord = Object.fromEntries(
+      Array.from({ length: 300 }, (_, index) => [`entry-${index}`, index]),
+    );
+
+    for (const value of [deeperThanAccountGeneric, wideRecord]) {
+      const applied = applyAccountSettingMutationV1({}, {
+        operations: [{ op: 'set', key: 'providerSettingsV1', value }],
+      });
+      expect(applied.status).toBe('applied');
+      expect(applied.status === 'applied' ? applied.raw.providerSettingsV1 : null).toEqual(value);
+    }
+
+    expect(applyAccountSettingMutationV1({}, {
+      operations: [{
+        op: 'set',
+        key: 'providerSettingsV1',
+        value: { oversized: 'x'.repeat((256 * 1024) + 1) },
+      }],
+    })).toEqual({ status: 'invalid', reason: 'tooLarge' });
   });
 
   it('sets and resets only named persisted keys while preserving structurally valid future raw neighbors', () => {
@@ -261,7 +290,7 @@ describe('AccountSettingMutationV1', () => {
     let overdeep: unknown = 'leaf';
     for (let depth = 0; depth < 14; depth += 1) overdeep = { child: overdeep };
     const overdeepRaw = {
-      providerSettingsV1: overdeep,
+      voiceDiagnosticsV1: overdeep,
       sessionPendingQueueDeliveryTiming: 'after_foreground_ready',
     };
     expect(applyAccountSettingMutationV1(overdeepRaw, {
@@ -287,7 +316,7 @@ describe('AccountSettingMutationV1', () => {
     expect(oversizedRaw.sessionPendingQueueDeliveryTiming).toBe('after_foreground_ready');
 
     expect(applyAccountSettingMutationV1(overdeepRaw, {
-      operations: [{ op: 'reset', key: 'providerSettingsV1' }],
+      operations: [{ op: 'reset', key: 'voiceDiagnosticsV1' }],
     })).toEqual({
       status: 'applied',
       raw: { sessionPendingQueueDeliveryTiming: 'after_foreground_ready' },

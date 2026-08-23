@@ -278,8 +278,19 @@ export const PluginAgentCatalogV2Schema = z.object({
   vendorResume: z.object({
     support: PluginAgentVendorResumeSupportV2Schema,
   }).strict().optional(),
+  /**
+   * Binds this Agent's own CLI to a system tool the same plugin declares, so
+   * `exec.systemTools.resolve({ toolId })` reaches the canonical Agent CLI
+   * launch resolution — managed install, source preference and JavaScript-file
+   * override included — instead of a bare executable-name lookup. The host
+   * resolves the launch from this Agent's declared `cli` metadata, so the
+   * binding requires that block and a matching `systemTools` declaration.
+   */
+  agentCliSystemTool: z.object({
+    toolId: asProtocolZod(PluginContributionLocalIdSchema),
+  }).strict().optional(),
 }).strict().refine(
-  (value) => value.vendorResume !== undefined,
+  (value) => value.vendorResume !== undefined || value.agentCliSystemTool !== undefined,
   'At least one Agent catalog declaration is required.',
 );
 export type PluginAgentCatalogV2 = z.infer<typeof PluginAgentCatalogV2Schema>;

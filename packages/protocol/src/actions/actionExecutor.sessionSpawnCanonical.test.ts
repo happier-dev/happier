@@ -17,7 +17,219 @@ const canonicalInput = {
   },
 } as const;
 
+const apiSpawnInput = {
+  creationKey: 'api-operation-7',
+  directory: '/workspace/project',
+  organizationPlacement: { folderId: null, tagIds: [] },
+  agentTarget: {
+    kind: 'agent',
+    identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+  },
+} as const;
+
 describe('session.spawn_new canonical execution', () => {
+  it('binds API session spawn placement only from host-stamped daemon context', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({
+      type: 'pending' as const,
+      retryWithSameCreationKey: true as const,
+      outcome: 'accepted' as const,
+    }));
+    const executor = createActionExecutor({
+      sessionSpawnNew,
+      isActionApprovalRequired: () => false,
+    } as unknown as ActionExecutorDeps);
+
+    await expect(executor.execute('session.spawn_new', apiSpawnInput, {
+      surface: 'api',
+      actionCaller: { kind: 'host' },
+      serverId: 'server-host',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-host' },
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
+      executionTarget: { serverId: 'server-host', machineId: 'machine-host' },
+    }));
+  });
+
+  it.each([
+    ['missing target', {}],
+    ['Session target', { externalActionTarget: { kind: 'session' as const, sessionId: 'session-1' } }],
+  ])('rejects API session spawn with a %s before creating a Session', async (_name, targetContext) => {
+    const sessionSpawnNew = vi.fn();
+    const executor = createActionExecutor({
+      sessionSpawnNew,
+      isActionApprovalRequired: () => false,
+    } as unknown as ActionExecutorDeps);
+
+    await expect(executor.execute('session.spawn_new', apiSpawnInput, {
+      surface: 'api',
+      actionCaller: { kind: 'host' },
+      serverId: 'server-host',
+      ...targetContext,
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+
+    expect(sessionSpawnNew).not.toHaveBeenCalled();
+  });
+
+  it('persists and replays the host-bound canonical target for an API spawn approval', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({
+      type: 'pending' as const,
+      retryWithSameCreationKey: true as const,
+      outcome: 'accepted' as const,
+    }));
+    let persistedApproval: unknown = null;
+    const approvalsCreate = vi.fn(async ({ request }: Readonly<{ request: unknown }>) => {
+      persistedApproval = request;
+      return { artifactId: 'approval-api-spawn-1' };
+    });
+    const approvalsGet = vi.fn(async () => persistedApproval);
+    const approvalsUpdate = vi.fn(async ({ request }: Readonly<{ request: unknown }>) => {
+      persistedApproval = request;
+      return { ok: true as const };
+    });
+    const executor = createActionExecutor({
+      sessionSpawnNew,
+      approvalsCreate,
+      approvalsGet,
+      approvalsUpdate,
+      isActionApprovalRequired: (actionId, context) => (
+        actionId === 'session.spawn_new' && context.surface === 'api'
+      ),
+    } as unknown as ActionExecutorDeps);
+
+    await expect(executor.execute('session.spawn_new', apiSpawnInput, {
+      surface: 'api',
+      actionCaller: { kind: 'host' },
+      serverId: 'server-host',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-host' },
+    })).resolves.toMatchObject({
+      ok: true,
+      result: { kind: 'approval_request_created', artifactId: 'approval-api-spawn-1' },
+    });
+    expect(persistedApproval).toMatchObject({
+      actionId: 'session.spawn_new',
+      actionArgs: expect.objectContaining({
+        executionTarget: { serverId: 'server-host', machineId: 'machine-host' },
+      }),
+    });
+
+    await expect(executor.execute('approval.request.decide', {
+      artifactId: 'approval-api-spawn-1',
+      decision: 'approve',
+    }, { surface: 'cli' })).resolves.toMatchObject({ ok: true });
+    expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
+      executionTarget: { serverId: 'server-host', machineId: 'machine-host' },
+    }));
+  });
+
+  it('projects compact spawn input schemas and hints when API callers discover Action specs', async () => {
+    const executor = createActionExecutor({
+      isActionApprovalRequired: () => false,
+    } as unknown as ActionExecutorDeps);
+    const context = {
+      surface: 'api' as const,
+      authority: 'account_automation' as const,
+      actionCaller: { kind: 'host' as const },
+    };
+
+    const getResult = await executor.execute('action.spec.get', {
+      id: 'session.spawn_new',
+    }, context);
+    const searchResult = await executor.execute('action.spec.search', {
+      query: 'session.spawn_new',
+      limit: 1,
+    }, context);
+
+    expect(getResult).toMatchObject({
+      ok: true,
+      result: {
+        actionSpec: {
+          kindVersion: 1,
+          inputSchema: {
+            properties: {
+              directory: expect.objectContaining({ type: 'string' }),
+            },
+          },
+          inputHints: {
+            fields: expect.arrayContaining([
+              expect.objectContaining({ path: 'directory' }),
+            ]),
+          },
+        },
+      },
+    });
+    expect(getResult).not.toMatchObject({
+      result: {
+        actionSpec: {
+          inputSchema: { properties: { executionTarget: expect.anything() } },
+        },
+      },
+    });
+    expect(getResult).not.toMatchObject({
+      result: {
+        actionSpec: {
+          inputHints: {
+            fields: expect.arrayContaining([
+              expect.objectContaining({ path: 'executionTarget.serverId' }),
+            ]),
+          },
+        },
+      },
+    });
+    expect(getResult).not.toMatchObject({
+      result: {
+        actionSpec: {
+          inputHints: {
+            fields: expect.arrayContaining([
+              expect.objectContaining({ path: 'executionTarget.machineId' }),
+            ]),
+          },
+        },
+      },
+    });
+    expect(searchResult).toMatchObject({
+      ok: true,
+      result: {
+        actionSpecs: [expect.objectContaining({
+          id: 'session.spawn_new',
+          inputHints: expect.objectContaining({
+            fields: expect.arrayContaining([
+              expect.objectContaining({ path: 'directory' }),
+            ]),
+          }),
+        })],
+      },
+    });
+    expect(searchResult).not.toMatchObject({
+      result: {
+        actionSpecs: [expect.objectContaining({
+          id: 'session.spawn_new',
+          inputHints: {
+            fields: expect.arrayContaining([
+              expect.objectContaining({ path: 'executionTarget.serverId' }),
+            ]),
+          },
+        })],
+      },
+    });
+    expect(searchResult).not.toMatchObject({
+      result: {
+        actionSpecs: [expect.objectContaining({
+          id: 'session.spawn_new',
+          inputHints: {
+            fields: expect.arrayContaining([
+              expect.objectContaining({ path: 'executionTarget.machineId' }),
+            ]),
+          },
+        })],
+      },
+    });
+  });
+
   it('host-stamps plugin creation identity and forwards only canonical intent', async () => {
     const sessionSpawnNew = vi.fn(async () => ({
       type: 'pending' as const,

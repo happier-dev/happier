@@ -393,6 +393,30 @@ export function createRecipientContractDigestV1(input: unknown): RecipientContra
 }
 
 /**
+ * The digest a persisted approval must still match before this recipient
+ * contract may reach its credential, or `null` when no re-approval fence
+ * applies.
+ *
+ * The fence exists because a recipient contract says where the user's raw
+ * credential is sent, and an untrusted publisher can rewrite that between the
+ * approval and the call. A `bundled` publisher cannot: the contract is authored
+ * by Happier and ships inside the same signed binary that enforces it, so a
+ * digest change means "Happier shipped an update", never "somebody else
+ * rewrote where your key goes". Fencing it would make every release that
+ * touches a first-party provider's mediated operations revoke that provider
+ * for every user who already approved it, to re-collect consent for a contract
+ * Happier itself wrote. Disclosure at the single binding gesture stays: the
+ * approval modal is driven by the contract's presence, not by this fence.
+ */
+export function resolveRequiredRecipientContractApprovalDigestV1(
+  contract: RecipientContractV1,
+): RecipientContractDigestV1 | null {
+  return contract.publisher.trust === 'bundled'
+    ? null
+    : createRecipientContractDigestV1(contract);
+}
+
+/**
  * Final Voice declaration projection. The credential slot and mediated
  * operations stay owned by `credentials`; callers do not reconstruct the
  * retired top-level account-mediation shape.

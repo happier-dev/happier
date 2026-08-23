@@ -12,15 +12,48 @@ export {
   type PluginDevLoopActionIdV1,
   type RuntimeActionIdV1,
 } from './actionIds.js';
-export type { ActionExecuteResult } from './actionExecutionResult.js';
+export {
+  ActionExecuteFailureSchema,
+  projectActionExecuteFailure,
+  type ActionExecuteFailure,
+  type ActionExecuteResult,
+} from './actionExecutionResult.js';
+export { resolveLocalServiceActionKindForRuntimeActionId } from './specs/localServices.js';
+export {
+  EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
+  EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1,
+  EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+  ExternalActionHttpErrorV1Schema,
+  ExternalActionDaemonDispatchRequestV1Schema,
+  ExternalActionDaemonPlacementV1Schema,
+  ExternalActionRequestEnvelopeV1Schema,
+  ExternalActionServerPrincipalV1Schema,
+  ExternalActionTargetV1Schema,
+  type ExternalActionDaemonDispatchRequestV1,
+  type ExternalActionDaemonPlacementV1,
+  type ExternalActionHttpErrorCodeV1,
+  type ExternalActionHttpErrorV1,
+  type ExternalActionRequestEnvelopeV1,
+  type ExternalActionResponseEnvelopeV1,
+  type ExternalActionServerPrincipalV1,
+  type ExternalActionTargetV1,
+  projectExternalActionHttpErrorV1,
+} from './externalActionApi.js';
+export * from './operations/index.js';
 export { ACTION_UI_PLACEMENTS, ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 export {
   ACTION_SETTINGS_OPT_IN_PLACEMENTS,
   ActionsSettingsV1Schema,
   isActionSettingsOptInPlacement,
   isActionEnabledByActionsSettings,
+  type ActionSettingsActionId,
   type ActionsSettingsV1,
 } from './actionSettings.js';
+export {
+  formatQualifiedPluginActionId,
+  parseQualifiedPluginActionId,
+  type QualifiedPluginActionId,
+} from '../plugins/actions/invocation.js';
 export {
   isAgentInitiatedApprovalRequiredByDefault,
   isApprovalRequiredByActionsSettings,
@@ -31,11 +64,21 @@ export {
   type ResolveActionApprovalRoutingArgs,
 } from './actionApprovalPolicy.js';
 export {
+  AgentBackendInventoryItemSchema,
+  AgentsBackendsListOutputSchema,
+  type AgentBackendInventoryItem,
+  type AgentsBackendsListOutput,
+} from './agentBackendInventory.js';
+export {
   ACTION_SPECS,
   PLUGIN_ACTION_INPUT_SCHEMAS,
   PLUGIN_ACTION_OUTPUT_SCHEMAS,
   PLUGIN_INVOCABLE_ACTION_IDS,
+  PUBLIC_ACTION_INPUT_SCHEMAS,
+  PUBLIC_ACTION_OUTPUT_SCHEMAS,
+  PUBLIC_ACTION_IDS,
   PluginInvocableActionIdSchema,
+  PublicActionIdSchema,
   ActionApprovalFlowSchema,
   ActionApprovalResultSchema,
   ActionApprovalSchema,
@@ -59,6 +102,9 @@ export {
   SessionTranscriptGetInputSchema,
   SessionTranscriptGetResultSchema,
   getActionSpec,
+  isInternalActionId,
+  isPluginProvenanceOnlyActionId,
+  projectSessionSpawnNewApiRequest,
   actionAcceptsContextualSessionId,
   isVoicePromptHotPathSpec,
   isVoiceSdkSafeActionSpec,
@@ -71,6 +117,7 @@ export {
   listVoiceSdkSafeToolActionSpecs,
   listVoiceToolActionSpecs,
   resolveActionApprovalFlow,
+  resolveActionSdkMethodName,
   type ActionApproval,
   type ActionApprovalFlow,
   type ActionApprovalResult,
@@ -94,6 +141,10 @@ export {
   type PluginActionResultById,
   type PluginInvocableActionId,
   type PluginInvocableActionSpecDefinition,
+  type PublicActionId,
+  type PublicActionInputById,
+  type PublicActionResultById,
+  type PublicActionSpecDefinition,
   type PluginScaffoldUiMode,
   type SessionEventsGetInput,
   type SessionEventsGetItem,
@@ -141,6 +192,8 @@ export {
   type ActionCaller,
   type ActionExecutorContext,
   type ActionExecutorDeps,
+  type ActionPreparedInvocation,
+  type ActionPrepareResult,
   type ActionPluginCaller,
   type ScmActionExecute,
   type ScmActionId,

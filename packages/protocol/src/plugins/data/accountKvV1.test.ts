@@ -8,7 +8,15 @@ import {
   PluginAccountStorageMutationResponseV1Schema,
   PluginAccountStorageReadResponseV1Schema,
   PluginAccountStorageRowV1Schema,
+  assertPluginAccountKvExpectedVersionV1,
   assertPluginAccountStorageEnvelopeForModeV1,
+  createEmptyPluginAccountKvRowV1,
+  deletePluginAccountKvEntryV1,
+  listPluginAccountKvEntriesV1,
+  normalizePluginAccountKvLogicalKeyV1,
+  projectPluginAccountKvEntryV1,
+  readPluginAccountKvEntryV1,
+  setPluginAccountKvEntryV1,
   openPluginAccountStoragePrivatePayloadV1,
   sealPluginAccountStoragePrivatePayloadV1,
 } from './accountKvV1.js';
@@ -192,5 +200,94 @@ describe('Plugin Account KV v1', () => {
       revision: 4,
       content,
     }).success).toBe(false);
+  });
+});
+
+describe('Plugin Account KV logical-key row algebra', () => {
+  it('advances one key version per write and keeps a deleted key revivable at its next version', () => {
+    const row = createEmptyPluginAccountKvRowV1();
+
+    const first = setPluginAccountKvEntryV1(row, 'theme', 'dark', assertPluginAccountKvExpectedVersionV1(row, 'theme', 'absent'));
+    expect(first).toBe(0);
+    const second = setPluginAccountKvEntryV1(row, 'theme', 'light', assertPluginAccountKvExpectedVersionV1(row, 'theme', 0));
+    expect(second).toBe(1);
+
+    const previous = assertPluginAccountKvExpectedVersionV1(row, 'theme', 1);
+    expect(previous).toBeDefined();
+    expect(deletePluginAccountKvEntryV1(row, 'theme', previous!)).toBe(2);
+
+    expect(projectPluginAccountKvEntryV1(readPluginAccountKvEntryV1(row, 'theme')!))
+      .toEqual({ version: 2, deleted: true });
+
+    // A stale `absent` writer must not resurrect the key at version 0.
+    expect(() => assertPluginAccountKvExpectedVersionV1(row, 'theme', 'absent'))
+      .toThrowError(expect.objectContaining({ code: 'plugin_account_kv_conflict' }));
+    expect(setPluginAccountKvEntryV1(row, 'theme', 'dark', assertPluginAccountKvExpectedVersionV1(row, 'theme', 2)))
+      .toBe(3);
+  });
+
+  it('refuses a reserved key, an invalid expected version, and a second delete', () => {
+    const row = createEmptyPluginAccountKvRowV1();
+    expect(() => normalizePluginAccountKvLogicalKeyV1('@happier/reserved'))
+      .toThrowError(expect.objectContaining({ code: 'plugin_account_kv_invalid' }));
+    expect(() => assertPluginAccountKvExpectedVersionV1(row, 'theme', -1))
+      .toThrowError(expect.objectContaining({ code: 'plugin_account_kv_invalid' }));
+
+    setPluginAccountKvEntryV1(row, 'theme', 'dark', undefined);
+    const entry = readPluginAccountKvEntryV1(row, 'theme')!;
+    deletePluginAccountKvEntryV1(row, 'theme', entry);
+    expect(() => deletePluginAccountKvEntryV1(row, 'theme', readPluginAccountKvEntryV1(row, 'theme')!))
+      .toThrowError(expect.objectContaining({ code: 'plugin_account_kv_conflict' }));
+  });
+
+  it('pages the sorted key set and refuses a cursor from another revision or prefix', () => {
+    const row = createEmptyPluginAccountKvRowV1();
+    for (const key of ['b/2', 'a/1', 'b/1', 'b/3']) {
+      setPluginAccountKvEntryV1(row, key, key, undefined);
+    }
+
+    const first = listPluginAccountKvEntriesV1({ row, revision: 7, prefix: 'b/', limit: 2 });
+    expect(first.items.map((item) => item.key)).toEqual(['b/1', 'b/2']);
+    expect(first.nextCursor).toBeDefined();
+
+    const second = listPluginAccountKvEntriesV1({
+      row,
+      revision: 7,
+      prefix: 'b/',
+      limit: 2,
+      cursor: first.nextCursor!,
+    });
+    expect(second.items.map((item) => item.key)).toEqual(['b/3']);
+    expect(second.nextCursor).toBeUndefined();
+
+    expect(() => listPluginAccountKvEntriesV1({
+      row,
+      revision: 8,
+      prefix: 'b/',
+      limit: 2,
+      cursor: first.nextCursor!,
+    })).toThrowError(expect.objectContaining({ code: 'plugin_account_kv_cursor_stale' }));
+
+    expect(() => listPluginAccountKvEntriesV1({
+      row,
+      revision: 7,
+      limit: 2,
+      cursor: first.nextCursor!,
+    })).toThrowError(expect.objectContaining({ code: 'plugin_account_kv_invalid' }));
+
+    expect(() => listPluginAccountKvEntriesV1({ row, revision: 7, prefix: '@happier/x' }))
+      .toThrowError(expect.objectContaining({ code: 'plugin_account_kv_invalid' }));
+    expect(() => listPluginAccountKvEntriesV1({ row, revision: 7, limit: 0 }))
+      .toThrowError(expect.objectContaining({ code: 'plugin_account_kv_invalid' }));
+  });
+
+  it('encodes a list cursor without a Node Buffer so every shipped realm can page', () => {
+    const row = createEmptyPluginAccountKvRowV1();
+    for (const key of ['k1', 'k2']) setPluginAccountKvEntryV1(row, key, key, undefined);
+    const page = listPluginAccountKvEntriesV1({ row, revision: 1, limit: 1 });
+
+    expect(page.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/u);
+    expect(listPluginAccountKvEntriesV1({ row, revision: 1, limit: 1, cursor: page.nextCursor! })
+      .items.map((item) => item.key)).toEqual(['k2']);
   });
 });

@@ -62,6 +62,10 @@
       "types": "./dist/runtime/facets/transcriptDispatch.d.ts",
       "default": "./dist/runtime/facets/transcriptDispatch.js"
     },
+    "./runtime/facets/transcriptSource": {
+      "types": "./dist/runtime/facets/transcriptSource.d.ts",
+      "default": "./dist/runtime/facets/transcriptSource.js"
+    },
     "./runtime/terminal/control": {
       "types": "./dist/runtime/terminal/control.d.ts",
       "default": "./dist/runtime/terminal/control.js"
@@ -101,6 +105,10 @@
     "./request-auth": {
       "types": "./dist/requestAuth/index.d.ts",
       "default": "./dist/requestAuth/index.js"
+    },
+    "./voice": {
+      "types": "./dist/voice/index.d.ts",
+      "default": "./dist/voice/index.js"
     },
     "./runtime/connected-services-adapter": {
       "types": "./dist/runtime/adjunctAdapters/connectedServices.d.ts",

@@ -368,6 +368,39 @@ describe('createPluginManifestJsonSchemaV2', () => {
     },
   );
 
+  it('admits page header actions only on appPage at both author boundaries', () => {
+    const headerAction = {
+      id: 'refresh',
+      title: 'Refresh',
+      action: { kind: 'executeAction', action: 'refresh-activity' },
+    };
+    const manifestWithHeaderActions = (
+      slot: typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number],
+    ) => {
+      const base = manifestForDestinationBindingSlot(slot);
+      return {
+        ...base,
+        contributes: {
+          ui: {
+            ...base.contributes.ui,
+            views: base.contributes.ui.views!.map((view) => ({ ...view, headerActions: [headerAction] })),
+          },
+        },
+      };
+    };
+
+    for (const slot of PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1) {
+      if (slot.container === 'settingsPage') continue;
+      const candidate = manifestWithHeaderActions(slot);
+      const admitted = slot.container === 'appPage';
+      const label = `${slot.container}/${slot.targetKind}`;
+      expect(PluginManifestV2Schema.safeParse(candidate).success, label).toBe(admitted);
+      // The generated authoring schema is the external editor's only source of
+      // truth. It must reject exactly what the canonical parser rejects.
+      expect(validateExternalManifest(candidate), label).toBe(admitted);
+    }
+  });
+
   it('keeps Settings pages out of ui.views at both canonical and generated boundaries', () => {
     const settingsPageAsView = {
       ...validManifest,

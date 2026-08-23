@@ -16,6 +16,7 @@ export {
   PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
   PluginUiHostApiWireEnvelopeV1Schema,
   PluginUiHostApiWireIdentityV1Schema,
+  pluginUiHostApiWireIdentitiesEqual,
   type PluginUiHostApiWireEnvelopeV1,
   type PluginUiHostApiWireIdentityV1,
 } from './hostApiWire.js';

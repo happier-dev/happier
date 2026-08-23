@@ -5,6 +5,7 @@ import type { PluginJsonValueV2 } from './publicTypes.js';
 import {
   type PluginSettingFieldSchemaV2,
   PluginSettingsContributionV2Schema,
+  PluginSettingsSubagentItemV2Schema,
   readPluginSettingSecretCustody,
 } from './settings.js';
 
@@ -302,7 +303,6 @@ describe('canonical settings contributions', () => {
           items: [{
             id: 'teammates',
             title: { key: 'settings.agent.teammates', fallback: 'Teammates' },
-            route: '/settings/agents/reviewer/teammates',
             iconIonName: 'people-outline',
           }],
         }],
@@ -348,9 +348,20 @@ describe('canonical settings contributions', () => {
     expect(settings.scope).toBe('account');
     expect(settings.presentation.sections[0]?.fields).toEqual(['runtimeMode', 'debugCategories']);
     expect(settings.fields[0]?.presentation?.options).toHaveLength(2);
-    expect(settings.presentation.subagentSections[0]?.items[0]?.route).toBe(
-      '/settings/agents/reviewer/teammates',
-    );
+    // A public plugin declaration must not depend on private host route
+    // topology: the destination IS this contribution's own agent target, and
+    // the host owns how that agent's settings screen is reached. A declared
+    // route is therefore rejected outright, not silently carried or ignored.
+    expect(settings.presentation.subagentSections[0]?.items[0]).toEqual({
+      id: 'teammates',
+      title: { key: 'settings.agent.teammates', fallback: 'Teammates' },
+      iconIonName: 'people-outline',
+    });
+    expect(PluginSettingsSubagentItemV2Schema.safeParse({
+      id: 'teammates',
+      title: { key: 'settings.agent.teammates', fallback: 'Teammates' },
+      route: '/settings/agents/reviewer/teammates',
+    }).success).toBe(false);
   });
 
   it('rejects presentation references and options that diverge from the typed field schema', () => {

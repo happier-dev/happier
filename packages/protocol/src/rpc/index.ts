@@ -49,6 +49,7 @@ export const SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS = {
   SESSION_PERMISSION_RESPOND: 'session.permission.respond',
   AUTOMATION_REPLY_HANDOFF_SERVER_ORIGIN: 'automation.replyHandoff.serverOrigin',
   SESSION_SERVER_START_SERVER_ORIGIN: 'session.serverStart.serverOrigin',
+  ACTION_API_SERVER_ORIGIN: 'action.api.serverOrigin',
 } as const;
 
 export type SocketRpcAuthorizationContextKind =
@@ -89,6 +90,20 @@ export type SocketRpcSessionServerStartServerOriginAuthorizationContext = Readon
 }>;
 
 /**
+ * A server-only transport origin for the reserved external Action dispatch.
+ * Generic client `CALL` rejects that method before forwarding, so a
+ * caller-supplied marker never becomes Action API authority at the daemon.
+ */
+export type SocketRpcActionApiServerOriginAuthorizationContext = Readonly<{
+  kind: typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.ACTION_API_SERVER_ORIGIN;
+}>;
+
+/** The exact server stamp for the closed external Action RPC seam. */
+export const ACTION_API_SERVER_ORIGIN: SocketRpcActionApiServerOriginAuthorizationContext = Object.freeze({
+  kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.ACTION_API_SERVER_ORIGIN,
+});
+
+/**
  * Generic client-call authorization is deliberately limited to the shapes
  * carrying a session id. The server-only Automation origin is transported in
  * the broader union but must never be accepted by this parser.
@@ -100,7 +115,8 @@ export type SocketRpcSessionAuthorizationContext =
 export type SocketRpcAuthorizationContext =
   | SocketRpcSessionAuthorizationContext
   | SocketRpcAutomationReplyHandoffServerOriginAuthorizationContext
-  | SocketRpcSessionServerStartServerOriginAuthorizationContext;
+  | SocketRpcSessionServerStartServerOriginAuthorizationContext
+  | SocketRpcActionApiServerOriginAuthorizationContext;
 
 const SOCKET_RPC_AUTHORIZATION_SESSION_ID_MAX_LENGTH = 512;
 
@@ -181,6 +197,16 @@ export function isSocketRpcSessionServerStartServerOriginAuthorizationContext(
   return Object.hasOwn(candidate, 'kind')
     && Object.keys(candidate).length === 1
     && candidate.kind === SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_SERVER_START_SERVER_ORIGIN;
+}
+
+export function isSocketRpcActionApiServerOriginAuthorizationContext(
+  value: unknown,
+): value is SocketRpcActionApiServerOriginAuthorizationContext {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as { kind?: unknown };
+  return Object.hasOwn(candidate, 'kind')
+    && Object.keys(candidate).length === 1
+    && candidate.kind === SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.ACTION_API_SERVER_ORIGIN;
 }
 
 export function parseSocketRpcAuthorizationContext(value: unknown): SocketRpcSessionAuthorizationContext | null {

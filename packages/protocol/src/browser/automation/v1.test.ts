@@ -223,6 +223,52 @@ describe('browser automation protocol contracts', () => {
     }).success).toBe(true);
   });
 
+  it('models cancel-active as a bounded cancellation outcome, not an automation result', async () => {
+    const mod = await loadAutomationModule();
+
+    expect(mod?.BrowserAutomationCancelActiveInputV1Schema).toBeTypeOf('object');
+    expect(mod?.BrowserAutomationCancelActiveResultV1Schema).toBeTypeOf('object');
+    if (!mod?.BrowserAutomationCancelActiveInputV1Schema
+      || !mod.BrowserAutomationCancelActiveResultV1Schema) return;
+
+    const inputSchema = mod.BrowserAutomationCancelActiveInputV1Schema as {
+      safeParse: (value: unknown) => { success: boolean; data?: unknown };
+    };
+    const resultSchema = mod.BrowserAutomationCancelActiveResultV1Schema as {
+      safeParse: (value: unknown) => { success: boolean; data?: unknown };
+    };
+
+    expect(inputSchema.safeParse({
+      browserSessionId: 'browser_session_1',
+      viewId: 'browser_view_1',
+    }).success).toBe(true);
+    expect(inputSchema.safeParse({
+      browserSessionId: 'browser_session_1',
+      viewId: 'browser_view_1',
+      requestedBy: 'spoofed-caller',
+    }).success).toBe(false);
+    expect(resultSchema.safeParse({
+      v: 1,
+      outcome: 'canceled',
+      canceledCount: 2,
+    }).success).toBe(true);
+    expect(resultSchema.safeParse({
+      v: 1,
+      outcome: 'no_active',
+      canceledCount: 0,
+    }).success).toBe(true);
+    expect(resultSchema.safeParse({
+      v: 1,
+      outcome: 'owner_mismatch',
+      canceledCount: 0,
+    }).success).toBe(true);
+    expect(resultSchema.safeParse({
+      v: 1,
+      outcome: 'no_active',
+      canceledCount: 1,
+    }).success).toBe(false);
+  });
+
   it('redacts action details before timeline storage', async () => {
     const mod = await loadAutomationModule();
 

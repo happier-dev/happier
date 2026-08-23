@@ -1858,12 +1858,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "nonAcpApplyScope": "next_prompt",
     "supportsSelection": true
   },
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "COPILOT_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/runtime"
-    }
-  },
   "sessionModeDescriptor": {
     "runtimeSwitch": "acp-setSessionMode",
     "semantics": "agent-modes",

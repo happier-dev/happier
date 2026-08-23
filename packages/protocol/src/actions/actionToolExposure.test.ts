@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import { searchSerializedActionSpecsForSurface } from './actionCatalog.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { getActionSpec } from './actionSpecs.js';
+import {
+  ActionSpecSchema,
+  INTERNAL_ACTION_IDS,
+  INTERNAL_ACTION_REASONS,
+  PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_IDS,
+  getActionSpec,
+  listActionSpecs,
+  resolveActionSdkMethodName,
+} from './actionSpecs.js';
 import {
   ACTION_SURFACE_POLICIES,
   getActionSurfacePolicy,
@@ -144,22 +152,112 @@ describe('actionToolExposure', () => {
       'mcp',
       'cli',
       'rpc',
-      'sdk',
+      'api',
       'plugin',
     ]);
     expect(getActionSurfacePolicy('rpc')).toEqual(expect.objectContaining({
       settingsConfigurable: false,
       classification: 'internal',
     }));
-    expect(getActionSurfacePolicy('sdk')).toEqual(expect.objectContaining({
-      settingsConfigurable: false,
-      classification: 'internal',
+    expect(getActionSurfacePolicy('api')).toEqual(expect.objectContaining({
+      settingsConfigurable: true,
+      classification: 'settings_configurable',
     }));
     expect(getActionSurfacePolicy('plugin')).toEqual(expect.objectContaining({
-      settingsConfigurable: false,
-      classification: 'internal',
+      settingsConfigurable: true,
+      classification: 'settings_configurable',
     }));
     expect(ACTION_SURFACE_POLICIES.every((policy) => typeof policy.settingsConfigurable === 'boolean')).toBe(true);
+  });
+
+  it('makes ordinary user Actions available through the configurable external API by default', () => {
+    expect(resolveActionSurfaceAvailability({
+      actionId: 'session.spawn_new',
+      surface: 'api',
+    })).toEqual(expect.objectContaining({
+      available: true,
+      reason: 'available',
+      surface: 'api',
+    }));
+
+    const settings = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'session.spawn_new': {
+          disabledSurfaces: ['api'],
+        },
+      },
+    });
+    expect(resolveActionSurfaceAvailability({
+      actionId: 'session.spawn_new',
+      surface: 'api',
+      settings,
+    })).toEqual(expect.objectContaining({
+      available: false,
+      reason: 'disabled_by_settings',
+      settingsState: 'disabled',
+    }));
+  });
+
+  it('keeps only reasoned internal Actions off public projections and provenance-only Actions off API', () => {
+    const internalActionIds = new Set(INTERNAL_ACTION_IDS);
+    const pluginProvenanceOnlyActionIds = new Set(PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_IDS);
+
+    expect(INTERNAL_ACTION_IDS).toContain('plugin.webhook.delivery.movePending');
+    for (const actionId of INTERNAL_ACTION_IDS) {
+      expect(INTERNAL_ACTION_REASONS[actionId]).toMatch(/\S/);
+    }
+
+    for (const spec of listActionSpecs()) {
+      if (internalActionIds.has(spec.id)) {
+        expect(spec.surfaces.api).toBe(false);
+        expect(spec.surfaces.plugin).toBe(false);
+      } else if (pluginProvenanceOnlyActionIds.has(spec.id)) {
+        expect(spec.surfaces.api).toBe(false);
+        expect(spec.surfaces.plugin).toBe(true);
+      } else {
+        expect(spec.surfaces.api).toBe(true);
+        expect(spec.surfaces.plugin).toBe(true);
+      }
+    }
+  });
+
+  it('stamps action execution placement at the registry owner', () => {
+    expect(getActionSpec('machines.list').executionPlacement).toBe('account');
+    expect(getActionSpec('servers.list').executionPlacement).toBe('client');
+    expect(getActionSpec('session.spawn_new').executionPlacement).toBe('machine');
+    expect(getActionSpec('approval.request.decide').executionPlacement).toBe('account');
+    expect(getActionSpec('session.activity.get').executionPlacement).toBe('session');
+    expect(getActionSpec('execution.run.start').executionPlacement).toBe('machine');
+    expect(getActionSpec('ui.current_context.read').executionPlacement).toBe('client');
+  });
+
+  it('keeps every final public projection valid after openness and caller-policy normalization', () => {
+    const invalidActionIds = listActionSpecs()
+      .filter((spec) => !ActionSpecSchema.safeParse(spec).success)
+      .map((spec) => spec.id);
+
+    expect(invalidActionIds).toEqual([]);
+  });
+
+  it('projects collision-free SDK method paths without reserved or object-hazard segments', () => {
+    const methodNames = listActionSpecs()
+      .filter((spec) => spec.surfaces.api)
+      .map(resolveActionSdkMethodName);
+
+    expect(methodNames).toContain('session.handoff.start');
+    expect(methodNames).not.toContain('sessions.external.takeover.execute');
+    expect(resolveActionSdkMethodName(getActionSpec('sessions.external.takeover')))
+      .toBe('sessions.external.takeover.execute');
+    expect(resolveActionSdkMethodName(getActionSpec('session.handoff.prepare_target')))
+      .toBe('session.handoff.prepareTarget.start');
+    expect(new Set(methodNames).size).toBe(methodNames.length);
+    for (const methodName of methodNames) {
+      expect(methodName.split('.')).not.toContain('__proto__');
+      expect(methodName.split('.')).not.toContain('constructor');
+      expect(methodName.split('.')).not.toContain('prototype');
+      expect(['execute', 'search', 'invoke']).not.toContain(methodName);
+    }
   });
 
   it('keeps discoverable-only agent actions in action search results', () => {

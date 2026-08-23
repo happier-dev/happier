@@ -632,6 +632,7 @@ describe('daemon contribution registry projection (wire)', () => {
       scopes: ['session'],
       surfaces: ['plugin'],
       execution: { target: 'daemon' },
+      operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
       dangerLevel: 'writesRemote',
     } as const;
 
@@ -639,6 +640,14 @@ describe('daemon contribution registry projection (wire)', () => {
     expect(PluginProjectedActionV2Schema.safeParse({
       ...pluginOnly,
       surfaces: ['ui'],
+    }).success).toBe(false);
+    expect(PluginProjectedActionV2Schema.safeParse({
+      ...pluginOnly,
+      execution: {
+        target: 'client',
+        client: { artifactId: 'bundle', modulePath: './action', exportName: 'run' },
+        platforms: ['web'],
+      },
     }).success).toBe(false);
   });
 
@@ -2608,9 +2617,10 @@ describe('daemon contribution registry projection (wire)', () => {
     expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('load_timeout').success).toBe(true);
     expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('invalid_surface_module').success).toBe(true);
     expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('load_error').success).toBe(true);
-    // Existing daemon crash-state records can retain the previously emitted
-    // timeout classification; new UI writers use `load_timeout` instead.
-    expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('startup_ack_timeout').success).toBe(true);
+    expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('render_error').success).toBe(true);
+    // The retired unreleased startup-acknowledgement classification has no
+    // producer and no persisted record; the closed enum must reject it.
+    expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('startup_ack_timeout').success).toBe(false);
 
     expect(DaemonPluginReactNativeCrashReportRequestV1Schema.safeParse({
       protocolVersion: 1,

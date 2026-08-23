@@ -209,7 +209,7 @@ describe('session agent transition — result union', () => {
 
     // Known: the Session IS the target.
     const committed = SessionAgentTransitionResultV1Schema.parse(
-      V.result.valid.partialDividerMissing,
+      V.result.valid.partialDividerUnavailable,
     );
     expect(committed).toMatchObject({
       type: 'partially_applied',
@@ -344,18 +344,19 @@ describe('session agent transition divider', () => {
     })).toBe(false);
   });
 
-  it('keeps a conflicting divider distinct from a missing one', () => {
-    // Both are committed-view outcomes, but they are different states with
-    // different safe recoveries: `divider_missing` may resume and send
-    // normally, `divider_conflict` may not and must not be retried into the
-    // same conflict. Collapsing them loses that distinction.
+  it('exposes one committed-view code for an unavailable divider', () => {
     expect(
-      SessionAgentTransitionResultV1Schema.safeParse(V.result.valid.partialDividerConflict).success,
+      SessionAgentTransitionResultV1Schema.safeParse(
+        V.result.valid.partialDividerUnavailable,
+      ).success,
     ).toBe(true);
     expect(SESSION_AGENT_TRANSITION_CURRENT_VIEW_COMMITTED_CODES_V1)
-      .toEqual(expect.arrayContaining(['divider_missing', 'divider_conflict']));
-    expect(V.result.valid.partialDividerConflict.code)
-      .not.toBe(V.result.valid.partialDividerMissing.code);
+      .toEqual([
+        'divider_unavailable',
+        'target_start_failed',
+        'input_admission_failed',
+        'input_rejected',
+      ]);
   });
 
   it('requires the source cutoff and rejects a sidecar that omits it', () => {

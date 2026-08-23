@@ -5,6 +5,9 @@ import type {
   PluginActionInputById,
   PluginActionResultById,
   PluginInvocableActionId,
+  PublicActionId,
+  PublicActionInputById,
+  PublicActionResultById,
   SessionTranscriptGetExternalShareableInputV1,
   SessionTranscriptGetExternalShareableResultV1,
 } from './actionSpecs.js';
@@ -12,6 +15,9 @@ import {
   getActionSpec,
   PLUGIN_ACTION_INPUT_SCHEMAS,
   PLUGIN_ACTION_OUTPUT_SCHEMAS,
+  PUBLIC_ACTION_INPUT_SCHEMAS,
+  PUBLIC_ACTION_OUTPUT_SCHEMAS,
+  PublicActionIdSchema,
 } from './actionSpecs.js';
 import type {
   BrowserCommandDispatchResultV1,
@@ -32,6 +38,7 @@ import {
   SessionInputAdmissionResultV1Schema,
   type SessionInputAdmissionResultV1,
 } from '../sessions/messages/sessionInputAdmission.js';
+import type { SessionSpawnNewInputV2 } from '../sessions/creation/sessionSpawnNewInputV2.js';
 
 type BrowserNavigateCommandV1 = z.infer<typeof BrowserNavigateCommandV1Schema>;
 
@@ -47,6 +54,14 @@ type UnknownPluginResultIds = {
   [K in PluginInvocableActionId]: IsUnknown<PluginActionResultById[K]> extends true ? K : never;
 }[PluginInvocableActionId];
 
+type UnknownPublicInputIds = {
+  [K in PublicActionId]: IsUnknown<PublicActionInputById[K]> extends true ? K : never;
+}[PublicActionId];
+
+type UnknownPublicResultIds = {
+  [K in PublicActionId]: IsUnknown<PublicActionResultById[K]> extends true ? K : never;
+}[PublicActionId];
+
 type PluginActionInputByRuntimeSchemaMap = Readonly<{
   [K in keyof typeof PLUGIN_ACTION_INPUT_SCHEMAS]: z.input<
     (typeof PLUGIN_ACTION_INPUT_SCHEMAS)[K]
@@ -56,6 +71,18 @@ type PluginActionInputByRuntimeSchemaMap = Readonly<{
 type PluginActionResultByRuntimeSchemaMap = Readonly<{
   [K in keyof typeof PLUGIN_ACTION_OUTPUT_SCHEMAS]: z.output<
     (typeof PLUGIN_ACTION_OUTPUT_SCHEMAS)[K]
+  >;
+}>;
+
+type PublicActionInputByRuntimeSchemaMap = Readonly<{
+  [K in keyof typeof PUBLIC_ACTION_INPUT_SCHEMAS]: z.input<
+    (typeof PUBLIC_ACTION_INPUT_SCHEMAS)[K]
+  >;
+}>;
+
+type PublicActionResultByRuntimeSchemaMap = Readonly<{
+  [K in keyof typeof PUBLIC_ACTION_OUTPUT_SCHEMAS]: z.output<
+    (typeof PUBLIC_ACTION_OUTPUT_SCHEMAS)[K]
   >;
 }>;
 
@@ -331,6 +358,54 @@ describe('ActionSpec-generated plugin action types', () => {
   it('does not degrade any generated plugin row to unknown', () => {
     expectTypeOf<UnknownPluginInputIds>().toEqualTypeOf<never>();
     expectTypeOf<UnknownPluginResultIds>().toEqualTypeOf<never>();
+  });
+
+  it('projects exact API schemas only for public Actions', () => {
+    expect(PublicActionIdSchema.parse('session.spawn_new')).toBe('session.spawn_new');
+    expect(PublicActionIdSchema.safeParse('sessions.external.materialize.start').success).toBe(false);
+    expect(PublicActionIdSchema.safeParse('plugins.permissions.grants.revoke').success).toBe(false);
+    expect(PublicActionIdSchema.safeParse('browser.session.create').success).toBe(false);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'session.spawn_new')).toBe(true);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'sessions.external.materialize.start')).toBe(false);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'plugins.permissions.grants.revoke')).toBe(false);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'browser.session.create')).toBe(false);
+
+    expectTypeOf<Extract<PublicActionId, 'session.spawn_new'>>().toEqualTypeOf<'session.spawn_new'>();
+    expectTypeOf<Extract<PublicActionId, 'sessions.external.materialize.start'>>().toEqualTypeOf<never>();
+    expectTypeOf<Extract<PublicActionId, 'plugins.permissions.grants.revoke'>>().toEqualTypeOf<never>();
+    expectTypeOf<Extract<PublicActionId, 'browser.session.create'>>().toEqualTypeOf<never>();
+    expectTypeOf<UnknownPublicInputIds>().toEqualTypeOf<never>();
+    expectTypeOf<UnknownPublicResultIds>().toEqualTypeOf<never>();
+    expectTypeOf<keyof typeof PUBLIC_ACTION_INPUT_SCHEMAS>().toEqualTypeOf<PublicActionId>();
+    expectTypeOf<keyof typeof PUBLIC_ACTION_OUTPUT_SCHEMAS>().toEqualTypeOf<PublicActionId>();
+    expectTypeOf<PublicActionInputByRuntimeSchemaMap>().toEqualTypeOf<PublicActionInputById>();
+    expectTypeOf<PublicActionResultByRuntimeSchemaMap>().toEqualTypeOf<PublicActionResultById>();
+
+    const apiSpawnInput: PublicActionInputById['session.spawn_new'] = {
+      directory: '/workspace/project',
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      },
+    };
+    expect(PUBLIC_ACTION_INPUT_SCHEMAS['session.spawn_new'].safeParse(apiSpawnInput).success).toBe(true);
+    expect(PUBLIC_ACTION_INPUT_SCHEMAS['session.spawn_new'].safeParse({
+      ...apiSpawnInput,
+      executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+    }).success).toBe(false);
+    // @ts-expect-error API callers cannot supply host-owned execution placement.
+    const callerSuppliedTarget: PublicActionInputById['session.spawn_new'] = {
+      ...apiSpawnInput,
+      executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+    };
+    // @ts-expect-error CLI and other canonical Action callers still supply executionTarget.
+    const canonicalInputWithoutTarget: SessionSpawnNewInputV2 = apiSpawnInput;
+    void callerSuppliedTarget;
+    void canonicalInputWithoutTarget;
+
+    // @ts-expect-error only public API Actions have a generated input schema.
+    const unavailableSchema = PUBLIC_ACTION_INPUT_SCHEMAS['sessions.external.materialize.start'];
+    expectTypeOf(unavailableSchema).toEqualTypeOf<never>();
   });
 
   it('retains every exact action schema in its single runtime projection map', () => {

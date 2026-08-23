@@ -13,6 +13,10 @@ import {
   MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
 } from './automationEventV1.js';
 import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
+import {
+  PluginWebhookEndpointIdV1Schema,
+  PluginWebhookEndpointSetupV1Schema,
+} from '../plugins/webhooks/endpointV1.js';
 import { AutomationEventPositiveSafeIntegerV1Schema } from './automationEventDeclarationV1.js';
 import {
   AutomationOriginOccurredAtV1Schema,
@@ -27,6 +31,7 @@ import {
   AutomationStoredDefinitionExecutionRecipeV1Schema,
 } from './automationRunExecutionRecipeV1.js';
 import { ExecutionRunWaitResultSchema } from '../execution/runs/index.js';
+import { AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS } from './automationTemplateEnvelope.js';
 
 const PREDECESSOR_TIMESTAMP_SCHEMA = z.number().int();
 const TIMESTAMP_SCHEMA = z.number().int().nonnegative().safe();
@@ -251,6 +256,32 @@ export type AutomationV3ManualDefinitionPatchRequest = z.infer<
   typeof AutomationV3ManualDefinitionPatchRequestSchema
 >;
 
+/**
+ * Exactly one selected observation transport per AUTO-19. The pull arm names
+ * the watcher materialization; the push arm names the generic
+ * `PluginWebhookEndpointIdV1` scalar returned by `WH-ENDPOINT` together with
+ * the exact endpoint materialization, the endpoint-routing source instance,
+ * and the setup identity the endpoint was ensured with. The declared webhook
+ * contribution and the delivery-time observation boundary are server-owned and
+ * are never accepted from an authoring client.
+ */
+export const AutomationV3PluginEventObservationTransportInputSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('checkpointedPull'),
+    watcherMaterializationRef: PluginMachineMaterializationRefV1Schema,
+  }).strict(),
+  z.object({
+    kind: z.literal('durablePush'),
+    webhookEndpointId: PluginWebhookEndpointIdV1Schema,
+    endpointMaterializationRef: PluginMachineMaterializationRefV1Schema,
+    webhookRoutingSourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
+    setup: PluginWebhookEndpointSetupV1Schema,
+  }).strict(),
+]);
+export type AutomationV3PluginEventObservationTransportInput = z.infer<
+  typeof AutomationV3PluginEventObservationTransportInputSchema
+>;
+
 export const AutomationV3PluginEventDefinitionTriggerInputSchema = z.object({
   kind: z.literal('pluginEvent'),
   eventRef: z.object({
@@ -261,10 +292,7 @@ export const AutomationV3PluginEventDefinitionTriggerInputSchema = z.object({
   sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
   sourceConfig: asProtocolZod(AutomationEventSourceConfigV1Schema),
   displayLabel: AutomationEventSourceDisplayLabelV1Schema,
-  observationTransport: z.object({
-    kind: z.literal('checkpointedPull'),
-    watcherMaterializationRef: PluginMachineMaterializationRefV1Schema,
-  }).strict(),
+  observationTransport: AutomationV3PluginEventObservationTransportInputSchema,
   filter: AutomationEventFilterV1Schema.nullable(),
   maximumObservationAgeMs: z.number().int().nonnegative().safe().nullable(),
 }).strict();
@@ -508,7 +536,7 @@ export const AutomationRunExecutionInputV1Schema = z.object({
   kind: z.literal('happier_automation_run_execution_input_v1'),
   targetType: AutomationTargetTypeV2Schema,
   templateVersion: z.number().int().nonnegative().safe(),
-  templateCiphertext: z.string().min(1).max(220_000),
+  templateCiphertext: z.string().min(1).max(AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS),
   origin: AutomationRunOriginV1Schema,
 }).strict().superRefine((value, context) => {
   if (
@@ -735,6 +763,36 @@ export const AutomationV3WorkerStartResponseSchema = z.object({
 export type AutomationV3WorkerStartResponse = z.infer<typeof AutomationV3WorkerStartResponseSchema>;
 
 /**
+ * One committed Run lifecycle transition, as the user can read it. Every field
+ * is a server-authored, bounded, non-secret fact: no envelope bytes, prompt
+ * text, provider payload, or free-form message ever reaches this projection.
+ */
+export const AutomationV3RunEventSchema = z.object({
+  at: TIMESTAMP_SCHEMA,
+  /** Server-authored transition name, e.g. `run_started`, `run_outcome_uncertain`. */
+  type: z.string().min(1).max(64),
+  machineId: IDENTIFIER_SCHEMA.nullable(),
+  /** Bounded rejection/outcome code exactly as the Run recorded it. */
+  errorCode: z.string().min(1).max(128).nullable(),
+  /** Dispatch attempt this transition belongs to; the Run's own claim attempt stays on the Run. */
+  executionAttempt: z.number().int().nonnegative().safe().nullable(),
+  /** Which dispatch result the settlement owner committed. */
+  outcome: z.string().min(1).max(64).nullable(),
+  /** Why a lifecycle owner other than the worker terminalized the Run. */
+  reason: z.string().min(1).max(128).nullable(),
+}).strict();
+export type AutomationV3RunEvent = z.infer<typeof AutomationV3RunEventSchema>;
+
+/**
+ * How much ordered transition history one Run detail carries. Claim attempts
+ * are not themselves bounded — lease recovery may requeue a Run indefinitely —
+ * so the detail keeps the most recent transitions rather than an unbounded
+ * history, which holds this array under ~20 KB at the ~200-byte ceiling each
+ * projected event above can reach.
+ */
+export const AUTOMATION_V3_RUN_DETAIL_MAX_EVENTS = 100;
+
+/**
  * Exact Run detail deliberately permits only direct user request/result and
  * private failure-detail envelopes. Opaque reply routing/receipt content
  * remains Channels-owned.
@@ -744,6 +802,16 @@ export const AutomationV3RunDetailSchema = AutomationV3RunListItemSchema.extend(
   executionInputEnvelope: z.string().min(1).nullable(),
   resultEnvelope: z.string().min(1).nullable(),
   legacySummaryCiphertext: z.string().min(1).nullable(),
+  /**
+   * The native execution this Run started. It is the only pointer back to work
+   * that may still be running when the Run itself is uncertain, so the detail
+   * shows it instead of leaving the user with an unexplained outcome.
+   */
+  executionNativeRunId: IDENTIFIER_SCHEMA.nullable(),
+  executionNativeCallId: IDENTIFIER_SCHEMA.nullable(),
+  executionNativeSidechainId: IDENTIFIER_SCHEMA.nullable(),
+  /** Committed lifecycle transitions in ascending time order. */
+  events: z.array(AutomationV3RunEventSchema).max(AUTOMATION_V3_RUN_DETAIL_MAX_EVENTS),
   /** Exact private Run failure detail; never emitted by list or mutation projections. */
   errorDetailEnvelope: z.string().min(1).max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES).nullable().optional(),
 }).strict().superRefine((value, context) => {

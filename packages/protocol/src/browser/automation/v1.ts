@@ -207,6 +207,40 @@ export const BrowserAutomationActionResultV1Schema = z
   .strict();
 export type BrowserAutomationActionResultV1 = z.infer<typeof BrowserAutomationActionResultV1Schema>;
 
+/**
+ * Canceling is a command over the active automation set, not a result for one
+ * request. Caller provenance remains host-stamped at the action admission
+ * boundary, so this contract carries only the target browser view.
+ */
+export const BrowserAutomationCancelActiveInputV1Schema = z.object({
+  browserSessionId: IdSchema,
+  viewId: IdSchema,
+}).strict();
+export type BrowserAutomationCancelActiveInputV1 = z.infer<
+  typeof BrowserAutomationCancelActiveInputV1Schema
+>;
+
+export const BrowserAutomationCancelActiveResultV1Schema = z.discriminatedUnion('outcome', [
+  z.object({
+    v: z.literal(1),
+    outcome: z.literal('canceled'),
+    canceledCount: z.number().int().positive(),
+  }).strict(),
+  z.object({
+    v: z.literal(1),
+    outcome: z.literal('no_active'),
+    canceledCount: z.literal(0),
+  }).strict(),
+  z.object({
+    v: z.literal(1),
+    outcome: z.literal('owner_mismatch'),
+    canceledCount: z.literal(0),
+  }).strict(),
+]);
+export type BrowserAutomationCancelActiveResultV1 = z.infer<
+  typeof BrowserAutomationCancelActiveResultV1Schema
+>;
+
 export const BrowserAutomationTimelineEntryV1Schema = z
   .object({
     v: z.literal(1),

@@ -127,6 +127,20 @@ function writeRuntimeDescriptorProviderSessionId<TMetadata extends Record<string
   }) as TMetadata;
 }
 
+function clearRuntimeDescriptorProviderSessionId<TMetadata extends Record<string, unknown>>(
+  metadata: TMetadata,
+): TMetadata {
+  const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
+  if (!descriptor) return metadata;
+  const agent = descriptor.agent as Readonly<Record<string, unknown>>;
+  if (!asTrimmedString(agent.providerSessionId)) return metadata;
+  const { providerSessionId: _providerSessionId, ...withoutProviderSessionId } = agent;
+  return writeRuntimeDescriptorV1ToMetadata(metadata, {
+    ...descriptor,
+    agent: withoutProviderSessionId,
+  }) as TMetadata;
+}
+
 export function writeProviderSessionIdSessionState<TMetadata extends Record<string, unknown>>(
   metadata: TMetadata,
   update: Readonly<{
@@ -137,7 +151,23 @@ export function writeProviderSessionIdSessionState<TMetadata extends Record<stri
 ): TMetadata {
   const next = typeof update.value === 'string' ? update.value.trim() : '';
   if (!next) {
-    return metadata;
+    // `null` is the explicit clear operation. It must only remove the selected
+    // Agent's id (and its paired log path), never every provider's identity.
+    // `undefined` and blank strings remain no-ops so an incomplete publisher
+    // cannot erase an established native conversation.
+    if (update.value !== null) return metadata;
+    if (!update.metadataKey) {
+      return clearRuntimeDescriptorProviderSessionId(metadata);
+    }
+
+    const withoutProviderSessionId: Record<string, unknown> = { ...metadata };
+    delete withoutProviderSessionId[update.metadataKey];
+    const logPathMetadataKey = getAgentNativeSessionLogPathMetadataKey(update.metadataKey);
+    if (!logPathMetadataKey) {
+      return withoutProviderSessionId as TMetadata;
+    }
+    delete withoutProviderSessionId[logPathMetadataKey];
+    return withoutProviderSessionId as TMetadata;
   }
 
   if (!update.metadataKey) {

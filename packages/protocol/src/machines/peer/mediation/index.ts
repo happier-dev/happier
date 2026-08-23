@@ -95,6 +95,7 @@ export {
   type PeerLoopbackProbeResponseV1,
 } from './loopbackEndpointV1.js';
 export { PeerFlowKindV1Schema, type PeerFlowKindV1 } from './flowKind.js';
+export { resolvePeerRouteFeatureId } from './routeFeature.js';
 export { PeerRouteKindV1Schema, DirectPeerRouteKindV1Schema, type PeerRouteKindV1, type DirectPeerRouteKindV1 } from './routeKind.js';
 export { PEER_MEDIATION_RECEIPTS, type PeerMediationReceipt } from './receipts.js';
 export * from './observability/index.js';

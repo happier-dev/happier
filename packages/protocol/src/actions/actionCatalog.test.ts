@@ -23,6 +23,10 @@ describe('actionCatalog action-definition adapter', () => {
         type: 'string',
       },
     });
+    expect(definition).toMatchObject({
+      requiredAuthority: 'account_automation',
+      executionPlacement: 'account',
+    });
   });
 
   it('projects A.6 action metadata into exported action definitions when present', () => {
@@ -51,7 +55,7 @@ describe('actionCatalog action-definition adapter', () => {
         mcp: true,
         cli: false,
         rpc: true,
-        sdk: true,
+        api: true,
         plugin: true,
       },
       inputHints: null,
@@ -62,6 +66,11 @@ describe('actionCatalog action-definition adapter', () => {
         transport: 'host',
       },
       sideEffectClass: 'read',
+      operation: {
+        version: 1,
+        visibility: 'activity',
+        progress: 'indeterminate',
+      },
     } satisfies ActionSpec;
 
     const definition = actionSpecToActionDefinitionV1(spec);
@@ -72,6 +81,11 @@ describe('actionCatalog action-definition adapter', () => {
       transport: 'host',
     }));
     expect(definition.sideEffectClass).toBe('read');
+    expect(definition.operation).toEqual({
+      version: 1,
+      visibility: 'activity',
+      progress: 'indeterminate',
+    });
     expect(definition.approval).toEqual({ result: 'required' });
     expect(definition.bindings).toEqual(expect.objectContaining({
       mcpToolName: 'action_spec_get',
@@ -83,6 +97,25 @@ describe('actionCatalog action-definition adapter', () => {
         codeExample: 'await ctx.actions.actionSpecGet({ id: "session.list" })',
       },
     }));
+  });
+
+  it('declares only the public fork, spawn, and handoff Actions as tracked core operations', () => {
+    expect(getActionSpec('session.fork').operation).toEqual({
+      version: 1,
+      visibility: 'activity',
+      progress: 'indeterminate',
+    });
+    expect(getActionSpec('session.spawn_new').operation).toEqual({
+      version: 1,
+      visibility: 'activity',
+      progress: 'reported',
+    });
+    expect(getActionSpec('session.handoff').operation).toEqual({
+      version: 1,
+      visibility: 'activity',
+      progress: 'reported',
+    });
+    expect(getActionSpec('session.handoff.prepare_target').operation).toBeUndefined();
   });
 
   it('normalizes supported predecessor surfaces at the serialized read seam only', () => {
@@ -108,7 +141,7 @@ describe('actionCatalog action-definition adapter', () => {
       mcp: true,
       cli: false,
       rpc: false,
-      sdk: false,
+      api: false,
       plugin: false,
     });
   });

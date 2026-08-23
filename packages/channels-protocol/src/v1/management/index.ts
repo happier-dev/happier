@@ -42,6 +42,9 @@ import {
     ConversationConnectionPrepareResultV1Schema,
 } from './prepare.js';
 import {
+    ConversationConnectionRetestManagementActionDeclarationV1,
+} from './retest.js';
+import {
     ConversationDeliveryResolveInputV1Schema,
     ConversationDeliveryResolveResultV1Schema,
     ConversationIngressRetryInputV1Schema,
@@ -53,7 +56,9 @@ import type {
 } from '../actionDeclarations.js';
 
 export {
+    conversationBindingInputModesForEndpointV1,
     conversationBindingPolicyForOmittedFieldsV1,
+    isConversationBindingInputModeDeliverableV1,
     ConversationAutomationTargetNotVerifiedResultV1JsonSchema,
     ConversationAutomationTargetNotVerifiedResultV1Schema,
     ConversationBindingCreateInputV1JsonSchema,
@@ -187,6 +192,17 @@ export type {
     ConversationConnectionPrepareResultV1,
     ConversationProviderSetupRemediationV1,
 } from './prepare.js';
+export {
+    ConversationConnectionRetestInputV1JsonSchema,
+    ConversationConnectionRetestInputV1Schema,
+    ConversationConnectionRetestManagementActionDeclarationV1,
+    ConversationConnectionRetestResultV1JsonSchema,
+    ConversationConnectionRetestResultV1Schema,
+} from './retest.js';
+export type {
+    ConversationConnectionRetestInputV1,
+    ConversationConnectionRetestResultV1,
+} from './retest.js';
 export {
     ConversationDeliveryResolveInputV1JsonSchema,
     ConversationDeliveryResolveInputV1Schema,
@@ -353,6 +369,7 @@ export const CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1: ConversationManagem
     connectionCreate: ConversationConnectionCreateManagementActionDeclarationV1,
     connectionTransfer: ConversationConnectionTransferManagementActionDeclarationV1,
     connectionPrepare: ConversationConnectionPrepareManagementActionDeclarationV1,
+    connectionRetest: ConversationConnectionRetestManagementActionDeclarationV1,
     connectionUpdate: ConversationConnectionUpdateManagementActionDeclarationV1,
     connectionSetEnabled: ConversationConnectionSetEnabledManagementActionDeclarationV1,
     connectionDelete: ConversationConnectionDeleteManagementActionDeclarationV1,

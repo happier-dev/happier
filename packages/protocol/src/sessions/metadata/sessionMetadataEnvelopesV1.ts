@@ -1042,6 +1042,7 @@ const SessionOwnerHistoryV1Schema = z.object({
     parentCutoffSeqInclusive: z.number().int().nonnegative(),
     createdAtMs: TimestampSchema,
     strategy: z.string().trim().min(1).max(256),
+    requestId: OptionalOwnerIdentifierSchema.optional(),
     agentHint: z.object({
       agentId: BoundedIdentifierSchema.optional(),
       backendMode: BoundedIdentifierSchema.optional(),

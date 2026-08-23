@@ -345,9 +345,38 @@ describe('plugin contribution catalog', () => {
         },
       ],
     })).toEqual([
-      { family: 'providers', localId: 'managed', target: { realm: 'daemon' } },
-      { family: 'providers', localId: 'contributed-format', target: { realm: 'daemon' } },
+      {
+        family: 'providers',
+        localId: 'managed',
+        target: { realm: 'daemon' },
+        providerArms: { managedRuntime: true, catalogParserIds: [] },
+      },
+      {
+        family: 'providers',
+        localId: 'contributed-format',
+        target: { realm: 'daemon' },
+        providerArms: { managedRuntime: false, catalogParserIds: ['acme-catalog-v3'] },
+      },
     ]);
+
+    // A Provider declaring BOTH arms must carry BOTH in its registration right,
+    // so activation can refuse a plugin that implements only one of them.
+    expect(derivePluginDaemonContributionRegistrationRights({
+      providers: [{
+        id: 'dual',
+        managedRuntime: { kind: 'managed' },
+        catalog: { source: 'probe', probes: [{ parser: 'acme-catalog-v3' }, { parser: 'openai-models' }] },
+        discovery: { catalogFallback: { parser: 'acme-command-v1' } },
+      }],
+    })).toEqual([{
+      family: 'providers',
+      localId: 'dual',
+      target: { realm: 'daemon' },
+      providerArms: {
+        managedRuntime: true,
+        catalogParserIds: ['acme-catalog-v3', 'acme-command-v1'],
+      },
+    }]);
 
     expect(derivePluginDaemonContributionRegistrationRights({
       agents: [

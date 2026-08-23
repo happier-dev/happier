@@ -34,6 +34,73 @@ export type TranscriptSourceWindowState = Readonly<{
   truncated: boolean;
 }>;
 
+export type TranscriptSourceFiniteActionFollowState = Readonly<{
+  tailCursor: string;
+  stopped: 'inactive' | 'aborted';
+}>;
+
+/**
+ * Follows a transcript through the finite `transcript.follow` Action contract.
+ * The caller owns action invocation, session-status interpretation, output, and
+ * poll cadence; this owner keeps the cursor and terminal-drain rules shared.
+ */
+export async function followTranscriptSourceWithFiniteActions<TItem>(params: Readonly<{
+  initialCursor: string;
+  leaseId: string;
+  follow: (params: Readonly<{ cursor: string; leaseId: string }>) => Promise<TranscriptSourceReadAfter<TItem>>;
+  release: (params: Readonly<{ leaseId: string }>) => Promise<void>;
+  isSessionActive: () => Promise<boolean>;
+  waitForNextPoll: () => Promise<void>;
+  onItems?: (page: Readonly<{ items: TItem[]; nextCursor: string }>) => Promise<void> | void;
+  shouldContinue?: () => boolean;
+}>): Promise<TranscriptSourceFiniteActionFollowState> {
+  let cursor = params.initialCursor;
+  let finalDrain = false;
+  let failed = false;
+
+  try {
+    while (params.shouldContinue?.() ?? true) {
+      const page = await params.follow({ cursor, leaseId: params.leaseId });
+      const nextCursor = page.nextCursor ?? cursor;
+      if (!(params.shouldContinue?.() ?? true)) {
+        return { tailCursor: nextCursor, stopped: 'aborted' };
+      }
+
+      if (page.items.length > 0) {
+        await params.onItems?.({ items: page.items, nextCursor });
+        if (!(params.shouldContinue?.() ?? true)) {
+          return { tailCursor: nextCursor, stopped: 'aborted' };
+        }
+      }
+      cursor = nextCursor;
+
+      if (page.truncated === true || page.items.length > 0) {
+        continue;
+      }
+      if (finalDrain) {
+        return { tailCursor: cursor, stopped: 'inactive' };
+      }
+      if (!await params.isSessionActive()) {
+        finalDrain = true;
+        continue;
+      }
+
+      await params.waitForNextPoll();
+    }
+
+    return { tailCursor: cursor, stopped: 'aborted' };
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    try {
+      await params.release({ leaseId: params.leaseId });
+    } catch (releaseError) {
+      if (!failed) throw releaseError;
+    }
+  }
+}
+
 export async function readInitialTranscriptSourceWindow<TItem>(params: Readonly<{
   pageOlder: (params: Readonly<{ cursor?: string }>) => Promise<TranscriptSourcePage<TItem>>;
   readAfter: (params: Readonly<{ cursor: string }>) => Promise<TranscriptSourceReadAfter<TItem>>;

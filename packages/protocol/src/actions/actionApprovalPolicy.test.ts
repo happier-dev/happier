@@ -63,6 +63,24 @@ describe('isApprovalRequiredByActionsSettings', () => {
     expect(isApprovalRequiredByActionsSettings('session.title.set' as any, settings, { surface: 'mcp' } as any)).toBe(true);
   });
 
+  it('uses the exact canonical contributed-Action id for settings-required approval', () => {
+    const actionId = 'acme.notes/actions/save-note' as const;
+    const settings: ActionsSettingsV1 = {
+      v: 1,
+      actions: {
+        [actionId]: {
+          enabledPlacements: [],
+          disabledSurfaces: [],
+          disabledPlacements: [],
+          approvalRequiredSurfaces: ['cli'],
+        },
+      } as any,
+    };
+
+    expect(isApprovalRequiredByActionsSettings(actionId, settings, { surface: 'cli' } as any)).toBe(true);
+    expect(isApprovalRequiredByActionsSettings(actionId, settings, { surface: 'mcp' } as any)).toBe(false);
+  });
+
   it('returns a non-required routing decision when settings do not require the surface', async () => {
     const resolveActionApprovalRouting = await loadRoutingResolver();
     if (!resolveActionApprovalRouting) return;
@@ -148,6 +166,18 @@ describe('isApprovalRequiredByActionsSettings', () => {
       flow: 'deferred',
       result: 'none',
     });
+  });
+
+  it('does not recursively require approval while creating an approval request', async () => {
+    const resolveActionApprovalRouting = await loadRoutingResolver();
+    if (!resolveActionApprovalRouting) return;
+
+    expect(resolveActionApprovalRouting({
+      actionId: 'approval.request.create',
+      spec: getActionSpec('approval.request.create'),
+      requiredByPolicy: true,
+      context: { surface: 'agent' } as any,
+    }).required).toBe(false);
   });
 });
 
@@ -364,14 +394,12 @@ describe('agent approval floor is derived from the danger SSOT (CON-1..3/6)', ()
   // The agent-browser consent hole: every mutating/navigating browser verb surfaced on the agent
   // must reach human consent before MANAGED-CHROMIUM makes the daemon sidecar reachable headless.
   const FLOORED_BROWSER_NAV_INPUT_VERBS = [
-    // browser_control navigation + lifecycle
+    // browser_control navigation + view mutation
     'browser.navigate',
     'browser.reload',
     'browser.goBack',
     'browser.goForward',
     'browser.stop',
-    'browser.session.create',
-    'browser.session.close',
     'browser.view.open',
     'browser.view.close',
     // browser_automation navigation + input + mutation
@@ -566,12 +594,16 @@ describe('plugin-surface approval posture (§4.1)', () => {
   it('still prompts the same danger-class rows on the agent surface', () => {
     const dangerAgentAndPluginActionIds = pluginSurfacedActionIds.filter((id) => {
       const spec = getActionSpec(id);
-      return spec.safety === 'danger' && spec.surfaces.agent === true;
+      return spec.safety === 'danger'
+        && spec.surfaces.agent === true
+        // Approval requests are intentionally unprompted, so a request cannot
+        // recursively create another request before the existing flow decides it.
+        && id !== 'approval.request.create';
     });
 
     expect(dangerAgentAndPluginActionIds.length).toBeGreaterThan(0);
     for (const actionId of dangerAgentAndPluginActionIds) {
-      expect(routingRequired(actionId, 'agent')).toBe(true);
+      expect(routingRequired(actionId, 'agent'), actionId).toBe(true);
     }
   });
 

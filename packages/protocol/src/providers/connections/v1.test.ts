@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1 } from '../capabilities/v1.js';
 import { ProviderConnectionV1Schema } from './v1.js';
 
 describe('ProviderConnectionV1Schema endpoint overrides', () => {
@@ -121,6 +122,30 @@ describe('ProviderConnectionV1Schema endpoint overrides', () => {
     expect(ProviderConnectionV1Schema.safeParse({
       ...base, endpointOverridesByMachineId: { ...atLimit, 'machine-over': [] },
     }).success).toBe(true);
+  });
+
+  it('admits one endpoint override per endpoint a contribution-backed Provider may declare', () => {
+    const base = {
+      v: 1, id: 'pc_1', source: { kind: 'contribution', contributionKey: 'plugin/p' },
+      role: 'default', displayName: 'P', displayNameMode: 'automatic', revision: 0, createdAt: 1, updatedAt: 1,
+    } as const;
+    // A contribution declares up to `maxProtocolsPerDeclaration` endpoint templates, one per
+    // wire protocol. The persisted override contract must reach every one of them, otherwise a
+    // Provider the platform admits cannot have all of its endpoints overridden.
+    const overrides = Array.from(
+      { length: PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration },
+      (_, index) => ({ endpointTemplateId: `endpoint-${index}`, baseUrl: `https://example.test/v${index}` }),
+    );
+    expect(ProviderConnectionV1Schema.safeParse({ ...base, endpointOverrides: overrides }).success).toBe(true);
+    expect(ProviderConnectionV1Schema.safeParse({
+      ...base, endpointOverridesByMachineId: { machine_a: overrides },
+    }).success).toBe(true);
+
+    const over = [...overrides, { endpointTemplateId: 'endpoint-over', baseUrl: 'https://example.test/over' }];
+    expect(ProviderConnectionV1Schema.safeParse({ ...base, endpointOverrides: over }).success).toBe(false);
+    expect(ProviderConnectionV1Schema.safeParse({
+      ...base, endpointOverridesByMachineId: { machine_a: over },
+    }).success).toBe(false);
   });
 
   it('enforces embedded custom-template override references for account and machine scopes', () => {

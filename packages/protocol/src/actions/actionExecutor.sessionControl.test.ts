@@ -64,6 +64,7 @@ describe('createActionExecutor (session control)', () => {
         modelOverride: 'gpt-4o',
         providerConnectionId: 'pc_work',
         requestedAction: { v: 1, kind: 'send_now' },
+        localId: 'caller-retained-1',
         wait: true,
         timeoutSeconds: 42,
       },
@@ -78,6 +79,7 @@ describe('createActionExecutor (session control)', () => {
       modelOverride: 'gpt-4o',
       providerConnectionId: 'pc_work',
       requestedAction: { v: 1, kind: 'send_now' },
+      localId: 'caller-retained-1',
       wait: true,
       timeoutSeconds: 42,
       signal: cancellation.signal,
@@ -144,6 +146,34 @@ describe('createActionExecutor (session control)', () => {
         contentProvenance: 'forwarded',
       },
     }));
+  });
+
+  it('never lets a plugin caller retain its own durable input identity', async () => {
+    const sessionSendMessage = vi.fn(async () => ({ status: 'accepted', localId: 'plugin-input-v1:test' }));
+    const executor = createExecutor({ sessionSendMessage });
+    const actionCaller = {
+      kind: 'plugin' as const,
+      pluginId: 'acme.channels',
+      contributionLocalId: 'inbound',
+    };
+
+    // The strict plugin surface binding refuses the field outright.
+    await expect(executor.execute(
+      'session.message.send' as any,
+      { sessionId: 's1', message: 'Hello', idempotencyKey: 'message-42', localId: 'forged-1' },
+      { surface: 'plugin', actionCaller },
+    )).resolves.toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+    expect(sessionSendMessage).not.toHaveBeenCalled();
+
+    // A plugin caller reaching the generic input schema through another surface
+    // still gets a host-derived identity: its localId is dropped, not forwarded.
+    await executor.execute(
+      'session.message.send' as any,
+      { sessionId: 's1', message: 'Hello', idempotencyKey: 'message-42', localId: 'forged-1' },
+      { surface: 'agent', actionCaller },
+    );
+    expect(sessionSendMessage).toHaveBeenCalledTimes(1);
+    expect(sessionSendMessage.mock.calls[0]?.[0]).not.toHaveProperty('localId');
   });
 
   it('rejects plugin Session permission overrides before admission can persist them', async () => {
@@ -569,7 +599,20 @@ describe('createActionExecutor (session control)', () => {
   });
 
   it('executes session.transcript.get via deps.sessionTranscriptGet', async () => {
-    const sessionTranscriptGet = vi.fn(async () => ({ ok: true }));
+    const transcriptResult = {
+      ok: true,
+      sessionId: 's1',
+      items: [],
+      nextCursor: null,
+      hasMore: false,
+      diagnostics: {
+        rawRowsScanned: 0,
+        pagesFetched: 0,
+        scanLimitReached: false,
+        payloadTruncations: 0,
+      },
+    } as const;
+    const sessionTranscriptGet = vi.fn(async () => transcriptResult);
     const executor = createExecutor({
       sessionTranscriptGet,
       resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
@@ -581,7 +624,7 @@ describe('createActionExecutor (session control)', () => {
       { surface: 'cli', defaultSessionId: null },
     );
 
-    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(res).toEqual({ ok: true, result: transcriptResult });
     expect(sessionTranscriptGet).toHaveBeenCalledWith({
       sessionId: 's1',
       limit: 25,
@@ -630,7 +673,28 @@ describe('createActionExecutor (session control)', () => {
     });
   });
 
-  it('rejects raw transcript and permission-control Actions on the plugin surface', async () => {
+  it('keeps Plugin transcript reads on the external-shareable input contract', async () => {
+    const sessionTranscriptGet = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionTranscriptGet } as any);
+    const pluginContext = {
+      surface: 'plugin' as const,
+      actionCaller: { kind: 'plugin' as const, pluginId: 'acme.channels', contributionLocalId: 'inbound' },
+    };
+
+    await expect(executor.execute(
+      'session.transcript.get',
+      { sessionId: 's1', includeRaw: true },
+      pluginContext,
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+
+    expect(sessionTranscriptGet).not.toHaveBeenCalled();
+  });
+
+  it('routes other public Session reads and permission-mode control for plugin callers', async () => {
     const sessionTranscriptGet = vi.fn(async () => ({ ok: true }));
     const sessionEventsGet = vi.fn(async () => ({ ok: true }));
     const sessionPermissionModeSet = vi.fn(async () => ({ ok: true }));
@@ -644,22 +708,21 @@ describe('createActionExecutor (session control)', () => {
       actionCaller: { kind: 'plugin' as const, pluginId: 'acme.channels', contributionLocalId: 'inbound' },
     };
 
-    for (const [actionId, input, errorCode] of [
-      ['session.transcript.get', { sessionId: 's1', includeRaw: true }, 'invalid_parameters'],
-      ['session.history.get', { sessionId: 's1', format: 'raw' }, 'action_disabled'],
-      ['session.events.get', { sessionId: 's1', includeRaw: true }, 'action_disabled'],
-      ['session.messages.recent.get', { sessionId: 's1', limit: 1 }, 'action_disabled'],
-      ['session.permission_mode.set', { sessionId: 's1', permissionMode: 'yolo' }, 'action_disabled'],
+    for (const [actionId, input] of [
+      ['session.history.get', { sessionId: 's1', format: 'raw' }],
+      ['session.events.get', { sessionId: 's1', includeRaw: true }],
+      ['session.messages.recent.get', { sessionId: 's1', limit: 1 }],
+      ['session.permission_mode.set', { sessionId: 's1', permissionMode: 'yolo' }],
     ] as const) {
-      await expect(executor.execute(actionId, input, pluginContext)).resolves.toMatchObject({
-        ok: false,
-        errorCode,
+      await expect(executor.execute(actionId, input, pluginContext)).resolves.toEqual({
+        ok: true,
+        result: { ok: true },
       });
     }
 
-    expect(sessionTranscriptGet).not.toHaveBeenCalled();
-    expect(sessionEventsGet).not.toHaveBeenCalled();
-    expect(sessionPermissionModeSet).not.toHaveBeenCalled();
+    expect(sessionTranscriptGet).toHaveBeenCalledTimes(1);
+    expect(sessionEventsGet).toHaveBeenCalledTimes(2);
+    expect(sessionPermissionModeSet).toHaveBeenCalledTimes(1);
   });
 
   it('executes session.events.get via deps.sessionEventsGet', async () => {
@@ -1264,11 +1327,18 @@ describe('createActionExecutor (session control)', () => {
     expect(res).toEqual({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.permission.respond' });
   });
 
-  it('forwards a remote mediation response only with host-stamped plugin provenance', async () => {
-    const sessionPermissionRemoteAction = vi.fn(async () => ({
-      status: 'rejected' as const,
-      code: 'mediationStateUnavailable' as const,
-    }));
+  it('routes a host-stamped mediator plugin to the canonical remote permission owner', async () => {
+    // PERM-03: the mediated arm is the plugin's only way to answer, so the
+    // Action authority minimum must be Account automation. A present-user
+    // requirement here makes the whole remote-permission vertical unreachable.
+    const settlement = {
+      status: 'applied' as const,
+      settlementId: 'settlement-1',
+      requestId: 'request-1',
+      decision: 'allow' as const,
+      effect: { kind: 'allowOnce' as const },
+    };
+    const sessionPermissionRemoteAction = vi.fn(async () => settlement);
     const executor = createExecutor({
       sessionPermissionRemoteAction,
       resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
@@ -1284,64 +1354,88 @@ describe('createActionExecutor (session control)', () => {
       decision: 'allow' as const,
       scope: 'request' as const,
     };
+    const caller = {
+      kind: 'plugin' as const,
+      pluginId: 'happier.channels',
+      contributionLocalId: 'discord',
+    };
 
     const res = await executor.execute(
       'session.permission.remote.respond' as any,
       input,
-      {
-        surface: 'plugin',
-        actionCaller: {
-          kind: 'plugin',
-          pluginId: 'happier.channels',
-          contributionLocalId: 'discord',
-        },
-      },
+      { surface: 'plugin', actionCaller: caller },
     );
 
-    expect(res).toEqual({
-      ok: true,
-      result: { status: 'rejected', code: 'mediationStateUnavailable' },
-    });
-    expect(sessionPermissionRemoteAction).toHaveBeenCalledWith({
+    expect(res).toEqual({ ok: true, result: settlement });
+    expect(sessionPermissionRemoteAction).toHaveBeenCalledWith(expect.objectContaining({
       actionId: 'session.permission.remote.respond',
-      input,
-      caller: {
-        kind: 'plugin',
-        pluginId: 'happier.channels',
-        contributionLocalId: 'discord',
-      },
+      caller,
       serverId: 'server-a',
-    });
-  });
-
-  it.each([
-    [
-      'session.permission.remote.pending.list',
-      {
-        sessionId: 's1',
-        sourceRef: 'binding-1',
-        sourceRevisionOrEpoch: 'rev-1',
-      },
-    ],
-    [
-      'session.permission.remote.respond',
-      {
+      input: expect.objectContaining({
         sessionId: 's1',
         turnId: 'turn-1',
         requestId: 'request-1',
-        sourceRef: 'binding-1',
-        sourceRevisionOrEpoch: 'rev-1',
-        idempotencyKey: 'retry-1',
-        actor: { namespace: 'discord', principalId: 'user-1' },
         decision: 'allow',
         scope: 'request',
+      }),
+    }));
+    // The mediator identity still comes only from host-stamped provenance:
+    // an anonymous plugin caller never reaches the owner.
+    expect(await executor.execute(
+      'session.permission.remote.respond' as any,
+      input,
+      {
+        surface: 'plugin',
+        actionCaller: { kind: 'plugin', pluginId: 'happier.channels' },
       },
-    ],
-  ] as const)('rejects %s without an attributable plugin contribution', async (actionId, input) => {
+    )).toEqual({
+      ok: false,
+      errorCode: 'plugin_action_caller_required',
+      error: 'plugin_action_caller_required',
+    });
+    expect(sessionPermissionRemoteAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a host-stamped mediator plugin revoke its own remote grant', async () => {
+    // PERM-10: owner UI and the stamped mediator share this Action; the
+    // caller-scoping decision belongs to the owner below the authority gate.
+    const sessionPermissionRemoteAction = vi.fn(async () => ({
+      status: 'revoked' as const,
+      grantId: 'grant-1',
+    }));
+    const executor = createExecutor({
+      sessionPermissionRemoteAction,
+      resolveServerIdForSessionId: () => null,
+    } as Partial<ActionExecutorDeps>);
+    const caller = {
+      kind: 'plugin' as const,
+      pluginId: 'happier.channels',
+      contributionLocalId: 'discord',
+    };
+
+    await expect(executor.execute(
+      'session.permission.remote.grants.revoke' as any,
+      { sessionId: 's1', turnId: 'turn-1', requestId: 'request-1', grantId: 'grant-1' },
+      { surface: 'plugin', actionCaller: caller },
+    )).resolves.toEqual({
+      ok: true,
+      result: { status: 'revoked', grantId: 'grant-1' },
+    });
+    expect(sessionPermissionRemoteAction).toHaveBeenCalledWith(expect.objectContaining({
+      actionId: 'session.permission.remote.grants.revoke',
+      caller,
+    }));
+  });
+
+  it('requires an attributable plugin contribution for remote permission pending reads', async () => {
     const sessionPermissionRemoteAction = vi.fn(async () => ({ requests: [], truncated: false }));
     const executor = createExecutor({ sessionPermissionRemoteAction } as Partial<ActionExecutorDeps>);
 
-    await expect(executor.execute(actionId as any, input, {
+    await expect(executor.execute('session.permission.remote.pending.list' as any, {
+      sessionId: 's1',
+      sourceRef: 'binding-1',
+      sourceRevisionOrEpoch: 'rev-1',
+    }, {
       surface: 'plugin',
       actionCaller: { kind: 'plugin', pluginId: 'happier.channels' },
     })).resolves.toEqual({
@@ -1353,7 +1447,7 @@ describe('createActionExecutor (session control)', () => {
   });
 
   it.each(['plugin', 'agent', 'mcp'] as const)(
-    'does not let %s invoke session.permission.respond',
+    'rejects %s automation from responding to session permissions',
     async (surface) => {
       const sessionPermissionRespond = vi.fn(async () => ({ ok: true }));
       const executor = createExecutor({ sessionPermissionRespond });
@@ -1368,10 +1462,10 @@ describe('createActionExecutor (session control)', () => {
         } as any,
       );
 
-      expect(res).toMatchObject({
+      expect(res).toEqual({
         ok: false,
-        errorCode: 'action_disabled',
-        details: { reason: 'unsupported_surface', surface },
+        errorCode: 'present_user_required',
+        error: 'present_user_required',
       });
       expect(sessionPermissionRespond).not.toHaveBeenCalled();
     },

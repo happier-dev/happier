@@ -4,7 +4,10 @@ import { buildSettingArtifacts } from '../../settings/registry/buildSettingArtif
 import { BackendTargetKeyV2InputSchema } from '../../backends/targets/backendTargetRefV2.js';
 import { LlmTaskRunnerConfigV1Schema } from '../../llm/tasks/llmTaskRunnerConfigV1.js';
 import { InstallableAutoUpdateModeSchema } from '../../installables/descriptor.js';
-import { SavedSecretSchema } from '../../profiles/backendProfileSchema.js';
+import {
+  SAVED_SECRET_COLLECTION_MAX_ENTRIES,
+  SavedSecretSchema,
+} from '../../profiles/backendProfileSchema.js';
 import { ExternalSessionsSettingsV1Schema } from '../../sessions/external/followLifecycleV1.js';
 import {
   HappierReplayRecentMessagesCountSchema,
@@ -78,8 +81,10 @@ import {
   WorkspaceFileViewerPreferencesV1Schema,
 } from './workspaceFileViewerPreferencesV1.js';
 import {
+  ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES,
   inspectAccountSettingValueBounds,
   withAccountSettingBounds,
+  type AccountSettingStructuralBoundsOwner,
 } from './catalog/accountSettingBounds.js';
 import {
   defineAccountSettingDefinitions,
@@ -529,6 +534,12 @@ type AccountCatalogDefinitionOptions = Readonly<{
   semanticDomain: string;
   classification: AccountSettingClassification;
   maximumSerializedValueBytes: number;
+  /**
+   * Defaults to the Account document's generic node/entry/depth policy. Set to
+   * `domainOwned` only when a named domain schema is the cardinality authority for
+   * the whole subtree; the Account byte ceiling above still applies.
+   */
+  structuralBoundsOwner?: AccountSettingStructuralBoundsOwner;
   compatibility?: Readonly<{ provenance: string; removalCondition: string }>;
 }>;
 
@@ -555,14 +566,23 @@ export function accountCatalogDefinition<TSchema extends z.ZodTypeAny>(
   defaultValue: z.input<TSchema>,
   options: AccountCatalogDefinitionOptions,
 ) {
-  const boundedSchema = withAccountSettingBounds(schema, options.maximumSerializedValueBytes);
+  const structuralBoundsOwner = options.structuralBoundsOwner ?? 'accountGeneric';
+  const boundedSchema = withAccountSettingBounds(
+    schema,
+    options.maximumSerializedValueBytes,
+    structuralBoundsOwner,
+  );
   const parsedDefault = boundedSchema.parse(defaultValue);
   const recoverySchema = boundedSchema.catch(parsedDefault);
   const missingValueDefaultSchema = z.undefined().transform(() => parsedDefault);
   const parseMutationValue = (value: unknown):
     | Readonly<{ success: true; data: unknown }>
     | Readonly<{ success: false; issues: readonly string[] }> => {
-    const boundIssue = inspectAccountSettingValueBounds(value, options.maximumSerializedValueBytes);
+    const boundIssue = inspectAccountSettingValueBounds(
+      value,
+      options.maximumSerializedValueBytes,
+      structuralBoundsOwner,
+    );
     return boundIssue
       ? { success: false, issues: [boundIssue.message] }
       : parseAccountSettingMutationValue(schema, value);
@@ -578,6 +598,7 @@ export function accountCatalogDefinition<TSchema extends z.ZodTypeAny>(
     semanticDomain: options.semanticDomain,
     classification: options.classification,
     maximumSerializedValueBytes: options.maximumSerializedValueBytes,
+    structuralBoundsOwner,
     ...(options.compatibility ? { compatibility: options.compatibility } : {}),
   };
 }
@@ -934,11 +955,11 @@ const BoundedLegacyRecordSchema = z.record(z.string().max(64 * 1024), BoundedLeg
 const SavedSecretsSchema = z.preprocess((value) => {
   if (!Array.isArray(value)) return [];
 
-  return value.slice(0, 256).flatMap((candidate) => {
+  return value.slice(0, SAVED_SECRET_COLLECTION_MAX_ENTRIES).flatMap((candidate) => {
     const parsed = SavedSecretSchema.safeParse(candidate);
     return parsed.success ? [parsed.data] : [];
   });
-}, z.array(SavedSecretSchema).max(256));
+}, z.array(SavedSecretSchema).max(SAVED_SECRET_COLLECTION_MAX_ENTRIES));
 
 const ACCOUNT_LEGACY_ROOT_CATALOG_DEFINITIONS = {
   profiles: accountLegacy(BoundedLegacyArraySchema, [], 'profile entities', 128 * 1024),
@@ -1659,7 +1680,12 @@ export const ACCOUNT_SETTING_DEFINITIONS = defineAccountSettingDefinitions({
     {
       semanticDomain: 'provider connection state',
       classification: 'legacy',
-      maximumSerializedValueBytes: 256 * 1024,
+      maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES,
+      // `packages/protocol/src/providers/settings/v1.ts` is the cardinality authority for
+      // this subtree. Applying the Account document's generic 256-entry node policy here
+      // reinterprets Provider-internal nodes and drops a configuration Provider validation
+      // already accepted and the server already persisted.
+      structuralBoundsOwner: 'domainOwned',
       compatibility: LEGACY_COMPATIBILITY,
     },
   ),

@@ -134,4 +134,23 @@ describe('ActionsSettingsV1Schema', () => {
       cli: 'direct',
     });
   });
+
+  it('retains a canonical qualified contributed-Action identity as a settings key', () => {
+    const parsed = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'acme.notes/actions/save-note': {
+          disabledSurfaces: ['api'],
+        },
+      },
+    });
+
+    expect(parsed.actions['acme.notes/actions/save-note' as keyof typeof parsed.actions]).toEqual({
+      enabledPlacements: [],
+      disabledSurfaces: ['api'],
+      disabledPlacements: [],
+      approvalRequiredSurfaces: [],
+      toolExposureModes: {},
+    });
+  });
 });

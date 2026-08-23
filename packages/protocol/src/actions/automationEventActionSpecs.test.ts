@@ -89,7 +89,7 @@ describe('Event Automation ActionSpecs', () => {
         mcp: false,
         cli: false,
         rpc: false,
-        sdk: false,
+        api: false,
         plugin: true,
       }));
     }

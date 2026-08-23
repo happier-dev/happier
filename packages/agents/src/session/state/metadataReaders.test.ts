@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isProviderBoundSessionMetadata,
   readActiveSessionModelSelectionFromMetadata,
+  resolveAmbientProviderConnectionForModelIntent,
   resolveModelSelectionIntentFromSessionMetadata,
 } from './metadataReaders.js';
 
@@ -208,5 +209,107 @@ describe('readActiveSessionModelSelectionFromMetadata', () => {
       pid: 456,
       processStartTimeMs: 2_000,
     })).toBeNull();
+  });
+});
+
+describe('resolveAmbientProviderConnectionForModelIntent', () => {
+  const validBinding = {
+    v: 1,
+    connectionId: 'pc_active',
+    contributionKey: null,
+    connectionRevision: 1,
+    model: { id: 'active-model', name: 'Active model' },
+    protocol: 'openai-responses',
+    materialization: 'engineConfig',
+    compatibilityFingerprint: 'compatibility:v1:active',
+    bindingSecurityFingerprint: 'binding-security:v1:active',
+    displaySnapshot: {
+      providerName: 'Gateway',
+      connectionName: 'Active',
+      connectionRole: 'named',
+      connectionDisplayNameMode: 'custom',
+    },
+  } as const;
+
+  it('answers an active Session from its applied binding and an absent binding as native', () => {
+    expect(resolveAmbientProviderConnectionForModelIntent({
+      metadata: { flavor: 'codex', providerBindingV1: validBinding },
+      agentTargetKey: 'backend:codex',
+      sessionActive: true,
+    })).toEqual({ status: 'resolved', providerConnectionId: 'pc_active' });
+    expect(resolveAmbientProviderConnectionForModelIntent({
+      metadata: { flavor: 'codex' },
+      agentTargetKey: 'backend:codex',
+      sessionActive: true,
+    })).toEqual({ status: 'resolved', providerConnectionId: null });
+  });
+
+  it('refuses an active Session whose applied binding is present but unreadable', () => {
+    expect(resolveAmbientProviderConnectionForModelIntent({
+      metadata: {
+        flavor: 'codex',
+        providerBindingV1: { ...validBinding, connectionRevision: 'not-a-number' },
+      },
+      agentTargetKey: 'backend:codex',
+      sessionActive: true,
+    })).toEqual({
+      status: 'unreadable',
+      code: 'model_selection_session_provider_state_unreadable',
+    });
+  });
+
+  it('answers an inactive Session from its persisted intent and an absent intent as native', () => {
+    expect(resolveAmbientProviderConnectionForModelIntent({
+      metadata: {
+        flavor: 'codex',
+        modelSelectionIntentV1: {
+          v: 1,
+          updatedAt: 10,
+          selection: {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: 'pc_persisted',
+            modelId: 'persisted-model',
+          },
+        },
+      },
+      agentTargetKey: 'backend:codex',
+      sessionActive: false,
+    })).toEqual({ status: 'resolved', providerConnectionId: 'pc_persisted' });
+    expect(resolveAmbientProviderConnectionForModelIntent({
+      metadata: { flavor: 'codex' },
+      agentTargetKey: 'backend:codex',
+      sessionActive: false,
+    })).toEqual({ status: 'resolved', providerConnectionId: null });
+  });
+
+  it('refuses an inactive Session whose canonical intent is present but unreadable', () => {
+    expect(resolveAmbientProviderConnectionForModelIntent({
+      metadata: {
+        flavor: 'codex',
+        modelSelectionIntentV1: { selection: { providerConnectionId: 'pc_work' } },
+      },
+      agentTargetKey: 'backend:codex',
+      sessionActive: false,
+    })).toEqual({
+      status: 'unreadable',
+      code: 'model_selection_session_provider_state_unreadable',
+    });
+  });
+
+  it('does not let a corrupted canonical intent fall back to the legacy override', () => {
+    // The Protocol precedence owner reports `invalid` rather than reinterpreting
+    // the deployed carrier, and the ambient reader must not soften that.
+    expect(resolveAmbientProviderConnectionForModelIntent({
+      metadata: {
+        flavor: 'codex',
+        modelSelectionIntentV1: { v: 2, selection: 'nonsense' },
+        modelOverrideV1: { v: 1, updatedAt: 99, modelId: 'legacy-native' },
+      },
+      agentTargetKey: 'backend:codex',
+      sessionActive: false,
+    })).toEqual({
+      status: 'unreadable',
+      code: 'model_selection_session_provider_state_unreadable',
+    });
   });
 });

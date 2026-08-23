@@ -8,7 +8,7 @@ import {
   readExternalSessionFollowIssueV1,
   readExternalSessionFollowPolicyV1,
   readExternalSessionFollowStatusV1,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   type ExternalSessionFollowIssueV1,
   type ExternalSessionFollowPolicyV1,
   type ExternalSessionFollowStatusV1,
@@ -263,7 +263,7 @@ export function updateLinkedExternalSessionFollowMetadataV1(
     lastFollowIssueV1?: ExternalSessionFollowIssueV1 | null;
   }>,
 ): Record<string, unknown> {
-  const current = readLinkedExternalSessionV1FromMetadata(metadata);
+  const current = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
   if (!current) return metadata;
 
   const next: LinkedExternalSessionV1 = { ...current };

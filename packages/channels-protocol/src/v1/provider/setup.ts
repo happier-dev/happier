@@ -21,6 +21,7 @@ import {
 import {
     ConversationProviderConnectionKeyV1ProtocolSchema,
     ConversationQualifiedConnectedAccountRefV1ProtocolSchema,
+    ConversationSharedEndpointInputModesV1ProtocolSchema,
 } from './connection.js';
 import {
     ConversationIntegrationPrincipalV1ProtocolSchema,
@@ -48,6 +49,39 @@ const pairingDeepLinkTemplateV1 = defineProtocolUtf8String({
     pattern: '^(?:(?!\\{\\{token\\}\\})[\\s\\S])*\\{\\{token\\}\\}(?:(?!\\{\\{token\\}\\})[\\s\\S])*$',
 });
 
+/**
+ * @internal The three provider-declared connection facts that transport-free
+ * preparation re-projects verbatim. Preparation reads them from this one owner
+ * so a new safety level, continuity mode, or text unit cannot reach the setup
+ * result while the prepare projection keeps rejecting it.
+ */
+export const ConversationConnectionOverlapSafetyV1ProtocolSchema = defineProtocolUnion([
+    defineProtocolLiteral('safe'),
+    defineProtocolLiteral('providerExclusive'),
+    defineProtocolLiteral('destructive'),
+]);
+
+/** @internal Replay guarantee the provider's transport can offer after a gap. */
+export const ConversationConnectionReplayContinuityV1ProtocolSchema = defineProtocolUnion([
+    defineProtocolLiteral('checkpointed'),
+    defineProtocolLiteral('sessionBound'),
+    defineProtocolLiteral('none'),
+]);
+
+/** @internal One outbound text ceiling in the provider's own counting unit. */
+export const ConversationOutboundTextLimitV1ProtocolSchema = defineProtocolObject({
+    maximum: defineProtocolNumber({
+        integer: true,
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+    }),
+    unit: defineProtocolUnion([
+        defineProtocolLiteral(CONVERSATION_OUTBOUND_TEXT_UNITS_V1[0]),
+        defineProtocolLiteral(CONVERSATION_OUTBOUND_TEXT_UNITS_V1[1]),
+        defineProtocolLiteral(CONVERSATION_OUTBOUND_TEXT_UNITS_V1[2]),
+    ]),
+}, { policy: 'closed' });
+
 /** @internal Relative-only input for the contributed setup result. */
 export const ConversationProviderSetupResultV1ProtocolSchema = defineProtocolObject({
     v: defineProtocolLiteral(1),
@@ -58,28 +92,10 @@ export const ConversationProviderSetupResultV1ProtocolSchema = defineProtocolObj
     integrationPrincipal: ConversationIntegrationPrincipalV1ProtocolSchema,
     supportedTransports: ConversationSupportedTransportsV1ProtocolSchema,
     recommendedTransport: conversationTransportKindV1,
-    overlapSafety: defineProtocolUnion([
-        defineProtocolLiteral('safe'),
-        defineProtocolLiteral('providerExclusive'),
-        defineProtocolLiteral('destructive'),
-    ]),
-    replayContinuity: defineProtocolUnion([
-        defineProtocolLiteral('checkpointed'),
-        defineProtocolLiteral('sessionBound'),
-        defineProtocolLiteral('none'),
-    ]),
-    outboundTextLimit: defineProtocolObject({
-        maximum: defineProtocolNumber({
-            integer: true,
-            minimum: 1,
-            maximum: Number.MAX_SAFE_INTEGER,
-        }),
-        unit: defineProtocolUnion([
-            defineProtocolLiteral(CONVERSATION_OUTBOUND_TEXT_UNITS_V1[0]),
-            defineProtocolLiteral(CONVERSATION_OUTBOUND_TEXT_UNITS_V1[1]),
-            defineProtocolLiteral(CONVERSATION_OUTBOUND_TEXT_UNITS_V1[2]),
-        ]),
-    }, { policy: 'closed' }),
+    overlapSafety: ConversationConnectionOverlapSafetyV1ProtocolSchema,
+    replayContinuity: ConversationConnectionReplayContinuityV1ProtocolSchema,
+    outboundTextLimit: ConversationOutboundTextLimitV1ProtocolSchema,
+    sharedEndpointInputModes: ConversationSharedEndpointInputModesV1ProtocolSchema.optional(),
     pairingDeepLinkTemplate: pairingDeepLinkTemplateV1.optional(),
     webhookContributionRef: conversationPluginContributionRefV1.optional(),
 }, { policy: 'closed' });

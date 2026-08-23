@@ -1,5 +1,6 @@
 export {
   AIBackendProfileSchema,
+  SAVED_SECRET_COLLECTION_MAX_ENTRIES,
   SavedSecretSchema,
   getProfileEnvironmentVariables,
   type AIBackendProfile,

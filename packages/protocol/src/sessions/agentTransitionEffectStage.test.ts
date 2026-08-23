@@ -109,8 +109,7 @@ describe('session agent transition effect stages', () => {
     const arms = [
       stopped.sourceStopped('cutover_conflict'),
       stopped.outcomeUnknown(),
-      committed.committed('divider_conflict'),
-      committed.committed('divider_unknown'),
+      committed.committed('divider_unavailable'),
       committed.committed('input_admission_failed'),
       committed.accepted(),
     ];
@@ -132,11 +131,11 @@ describe('session agent transition effect stages', () => {
     // operation's own cutover seen again — never a no-effect rejection.
     const committed = beginSessionAgentTransitionEffects({ localId: LOCAL_ID })
       .cutoverObservedCommitted();
-    expect(committed.committed('divider_missing')).toEqual({
+    expect(committed.committed('divider_unavailable')).toEqual({
       type: 'partially_applied',
       localId: LOCAL_ID,
       applied: 'current_view_committed',
-      code: 'divider_missing',
+      code: 'divider_unavailable',
     });
   });
 });

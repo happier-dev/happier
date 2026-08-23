@@ -126,4 +126,110 @@ describe('createActionExecutor (public External Session actions)', () => {
     });
     expect(externalSessionAction).not.toHaveBeenCalled();
   });
+
+  it('returns typed missing provenance for an API call rather than treating API as a plugin surface', async () => {
+    const externalSessionAction = vi.fn();
+    const executor = createActionExecutor(createDeps(externalSessionAction));
+
+    await expect(executor.execute(
+      'sessions.external.status.get',
+      { sessionId: 'session-1' },
+      { surface: 'api', authority: 'account_automation' },
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'plugin_action_caller_required',
+      error: 'plugin_action_caller_required',
+    });
+    expect(externalSessionAction).not.toHaveBeenCalled();
+  });
+
+  it('routes a host-stamped API call through the existing host external-session owner', async () => {
+    const pluginExternalSessionAction = vi.fn();
+    const hostExternalSessionAction = vi.fn(async () => ({
+      ok: true as const,
+      result: {
+        ok: true,
+        machineOnline: true,
+        runnerActive: false,
+        activity: 'idle',
+        canTakeOverDirect: false,
+        canTakeOverPersist: true,
+        canForceStop: false,
+      },
+    }));
+    const executor = createActionExecutor({
+      ...createDeps(pluginExternalSessionAction),
+      hostExternalSessionAction,
+    } as ActionExecutorDeps & Readonly<{
+      hostExternalSessionAction: typeof hostExternalSessionAction;
+    }>);
+    const signal = new AbortController().signal;
+
+    await expect(executor.execute(
+      'sessions.external.status.get',
+      { sessionId: 'session-1' },
+      {
+        surface: 'api',
+        authority: 'account_automation',
+        actionCaller: { kind: 'host' },
+        signal,
+      },
+    )).resolves.toMatchObject({ ok: true });
+
+    expect(hostExternalSessionAction).toHaveBeenCalledWith({
+      actionId: 'sessions.external.status.get',
+      input: { sessionId: 'session-1' },
+      context: {
+        surface: 'api',
+        authority: 'account_automation',
+        actionCaller: { kind: 'host' },
+        signal,
+      },
+      signal,
+    });
+    expect(pluginExternalSessionAction).not.toHaveBeenCalled();
+  });
+
+  it('routes host API external-session discovery through the fenced host owner without plugin provenance', async () => {
+    const pluginExternalSessionAction = vi.fn();
+    const hostExternalSessionAction = vi.fn(async () => ({
+      ok: true as const,
+      result: { ok: true, candidates: [] },
+    }));
+    const executor = createActionExecutor({
+      ...createDeps(pluginExternalSessionAction),
+      hostExternalSessionAction,
+    } as ActionExecutorDeps & Readonly<{
+      hostExternalSessionAction: typeof hostExternalSessionAction;
+    }>);
+
+    await expect(executor.execute(
+      'sessions.external.candidates.list',
+      {
+        machineId: 'machine-1',
+        providerId: 'codex',
+        source: { kind: 'codexHome', home: 'user' },
+      },
+      {
+        surface: 'api',
+        authority: 'account_automation',
+        actionCaller: { kind: 'host' },
+      },
+    )).resolves.toEqual({ ok: true, result: { ok: true, candidates: [] } });
+
+    expect(hostExternalSessionAction).toHaveBeenCalledWith({
+      actionId: 'sessions.external.candidates.list',
+      input: {
+        machineId: 'machine-1',
+        agentId: 'codex',
+        source: { kind: 'codexHome', home: 'user' },
+      },
+      context: {
+        surface: 'api',
+        authority: 'account_automation',
+        actionCaller: { kind: 'host' },
+      },
+    });
+    expect(pluginExternalSessionAction).not.toHaveBeenCalled();
+  });
 });

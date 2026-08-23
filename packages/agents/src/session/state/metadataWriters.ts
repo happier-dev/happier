@@ -81,7 +81,7 @@ export function buildRuntimeDescriptorSessionMetadata(
 export function applyProviderSessionIdSessionMetadata<TMetadata extends Record<string, unknown>>(
   metadata: TMetadata,
   update: Readonly<{
-    metadataKey: ProviderSessionIdMetadataKey;
+    metadataKey: ProviderSessionIdMetadataKey | null;
     value: string | null | undefined;
   }>,
 ): TMetadata {

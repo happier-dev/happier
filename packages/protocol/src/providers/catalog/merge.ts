@@ -291,6 +291,22 @@ export type ProviderCatalogReferenceResolutionV1 =
     }>
   | Readonly<{ status: 'not_found'; errorCode: 'provider_model_not_found' }>;
 
+/**
+ * The two-sided freeform policy: whether a model id the catalog does not list is
+ * still a real selection for this Provider and Agent pair.
+ *
+ * Both sides must permit it — the Provider by allowing manual ids, the Agent by
+ * accepting ids it cannot verify against a catalog. Every owner that decides
+ * whether an unlisted Provider model exists consumes this, so catalog membership
+ * never becomes a second, stricter authority.
+ */
+export function providerCatalogPermitsUnlistedModelIdV1(input: Readonly<{
+  manualModelPolicy: 'allowed' | 'catalog-only';
+  agentSupportsFreeformModelIds: boolean;
+}>): boolean {
+  return input.manualModelPolicy === 'allowed' && input.agentSupportsFreeformModelIds;
+}
+
 export function resolveProviderCatalogReferenceV1(input: Readonly<{
   modelId: string;
   activeRows: readonly ProviderMergedCatalogRowV1[];
@@ -322,7 +338,7 @@ export function resolveProviderCatalogReferenceV1(input: Readonly<{
   }
   const active = activeRows.find((row) => row.descriptor.id === modelId);
   if (active) return { status: 'listed', row: active };
-  if (manualModelPolicy !== 'allowed' || !agentSupportsFreeformModelIds) {
+  if (!providerCatalogPermitsUnlistedModelIdV1({ manualModelPolicy, agentSupportsFreeformModelIds })) {
     return { status: 'not_found', errorCode: 'provider_model_not_found' };
   }
   const stale = staleRows.find((row) => row.descriptor.id === modelId);

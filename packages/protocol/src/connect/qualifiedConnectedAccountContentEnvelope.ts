@@ -4,6 +4,7 @@ import {
   openAccountScopedBlobCiphertext,
   resealAccountScopedHistoricalAliasCiphertext,
   sealAccountScopedBlobCiphertext,
+  type AccountScopedBlobKind,
   type AccountScopedCryptoMaterial,
 } from '../crypto/accountScopedCipher.js';
 import {
@@ -16,6 +17,7 @@ import {
 } from './connectedServiceCipher.js';
 
 export type QualifiedConnectedAccountContentKind =
+  | 'attempt'
   | 'credential'
   | 'configuration';
 
@@ -78,6 +80,18 @@ export type QualifiedConnectedAccountCredentialPayloadV1 = z.infer<
   typeof QualifiedConnectedAccountCredentialPayloadV1Schema
 >;
 
+/**
+ * Each non-credential Connected Account content kind owns its own ciphertext domain
+ * byte, so an attempt transaction can never be opened as a configuration.
+ */
+function accountScopedBlobKindFor(
+  kind: Exclude<QualifiedConnectedAccountContentKind, 'credential'>,
+): AccountScopedBlobKind {
+  return kind === 'attempt'
+    ? 'qualified_connected_account_attempt_transaction'
+    : 'qualified_connected_account_configuration';
+}
+
 type SealParams =
   | Readonly<{
       kind: QualifiedConnectedAccountContentKind;
@@ -122,7 +136,7 @@ export function sealQualifiedConnectedAccountContentEnvelope(
         randomBytes: params.randomBytes,
       })
     : sealAccountScopedBlobCiphertext({
-        kind: 'qualified_connected_account_configuration',
+        kind: accountScopedBlobKindFor(params.kind),
         material: params.material,
         payload: params.payload,
         randomBytes: params.randomBytes,
@@ -147,7 +161,7 @@ export function openQualifiedConnectedAccountContentEnvelope(
         ciphertext: envelope.c,
       })
     : openAccountScopedBlobCiphertext({
-        kind: 'qualified_connected_account_configuration',
+        kind: accountScopedBlobKindFor(params.kind),
         material: params.material,
         ciphertext: envelope.c,
       });

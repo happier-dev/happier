@@ -15,8 +15,13 @@ describe('current UI context host ActionSpecs', () => {
       mcp: false,
       cli: false,
       rpc: false,
-      sdk: false,
+      api: false,
       plugin: false,
+    };
+    const voiceAndPublic = {
+      ...voiceOnly,
+      api: true,
+      plugin: true,
     };
 
     expect(read).toMatchObject({
@@ -25,7 +30,7 @@ describe('current UI context host ActionSpecs', () => {
       safety: 'safe',
       bindings: { voiceClientToolName: 'readCurrentUiContext' },
     });
-    expect(read.surfaces).toEqual(voiceOnly);
+    expect(read.surfaces).toEqual(voiceAndPublic);
     expect(read.inputSchema.safeParse({}).success).toBe(true);
     expect(read.outputSchema?.safeParse({
       navigation: { area: 'workspace', screen: 'session', title: 'Current session' },
@@ -38,7 +43,7 @@ describe('current UI context host ActionSpecs', () => {
       safety: 'safe',
       bindings: { voiceClientToolName: 'invokeCurrentUiCommand' },
     });
-    expect(invoke.surfaces).toEqual(voiceOnly);
+    expect(invoke.surfaces).toEqual(voiceAndPublic);
     expect(invoke.inputSchema.safeParse({ commandId: 'current-ui:1:0' }).success).toBe(true);
     expect(invoke.inputSchema.safeParse({ command: { kind: 'executeAction' } }).success).toBe(false);
 
@@ -48,7 +53,7 @@ describe('current UI context host ActionSpecs', () => {
       safety: 'safe',
       bindings: { voiceClientToolName: 'invokeAction' },
     });
-    expect(invokeAction.surfaces).toEqual(voiceOnly);
+    expect(invokeAction.surfaces).toEqual(voiceAndPublic);
     expect(invokeAction.inputSchema.safeParse({
       action: { pluginId: 'acme.plugin', localId: 'open-details' },
       input: { source: 'voice' },

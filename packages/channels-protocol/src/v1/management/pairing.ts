@@ -61,32 +61,13 @@ const conversationPairingCancelResultV1 = defineProtocolUnion([
     }, { policy: 'closed' }),
 ]);
 
-const conversationPairingCreateResultV1 = defineProtocolUnion([
-    defineProtocolObject({
-        kind: defineProtocolLiteral('created'),
-        generationId: pairingIdentifier,
-        challengeId: pairingIdentifier,
-        expiresAt: defineProtocolNumber({
-            integer: true,
-            minimum: 0,
-            maximum: Number.MAX_SAFE_INTEGER,
-        }),
-        attemptsRemaining: defineProtocolNumber({ integer: true, minimum: 0, maximum: 5 }),
-        destinationLabel: ConversationEndpointDisplayLabelV1ProtocolSchema,
-        manualToken: defineProtocolString({ pattern: '^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{8}$' }),
-        deepLinkUrl: defineProtocolUtf8String({
-            maxUtf8Bytes: MAX_CONVERSATION_PAIRING_DEEP_LINK_TEMPLATE_UTF8_BYTES,
-            minLength: 1,
-        }).nullable(),
-    }, { policy: 'closed' }),
-    ConversationAutomationTargetNotVerifiedResultV1ProtocolSchema,
-]);
-
-/** One active challenge remains readable only through its authenticated owner Resource. */
-const conversationPairingChallengeResourceEntryV1 = defineProtocolObject({
-    challengeId: pairingIdentifier,
-    connectionId: ConversationConnectionIdV1ProtocolSchema,
-    expectedConnectionRevision: positiveSafeInteger,
+/**
+ * One live challenge's presentation, projected identically by the create result
+ * and by the authenticated challenge Resource entry. A person sees the same
+ * deadline, remaining attempts, destination, manual token, and deep link in
+ * both, so the two projections read one declaration instead of drifting apart.
+ */
+const conversationPairingChallengePresentationV1 = {
     expiresAt: defineProtocolNumber({
         integer: true,
         minimum: 0,
@@ -99,6 +80,24 @@ const conversationPairingChallengeResourceEntryV1 = defineProtocolObject({
         maxUtf8Bytes: MAX_CONVERSATION_PAIRING_DEEP_LINK_TEMPLATE_UTF8_BYTES,
         minLength: 1,
     }).nullable(),
+} as const;
+
+const conversationPairingCreateResultV1 = defineProtocolUnion([
+    defineProtocolObject({
+        kind: defineProtocolLiteral('created'),
+        generationId: pairingIdentifier,
+        challengeId: pairingIdentifier,
+        ...conversationPairingChallengePresentationV1,
+    }, { policy: 'closed' }),
+    ConversationAutomationTargetNotVerifiedResultV1ProtocolSchema,
+]);
+
+/** One active challenge remains readable only through its authenticated owner Resource. */
+const conversationPairingChallengeResourceEntryV1 = defineProtocolObject({
+    challengeId: pairingIdentifier,
+    connectionId: ConversationConnectionIdV1ProtocolSchema,
+    expectedConnectionRevision: positiveSafeInteger,
+    ...conversationPairingChallengePresentationV1,
 }, { policy: 'closed' });
 
 /** The proposal omits frozen target, endpoint identity, materialization, and binding custody. */

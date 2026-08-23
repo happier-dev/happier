@@ -4,10 +4,13 @@ import { ActionUiPlacementSchema } from './actionUiPlacements.js';
 import { ActionApprovalSchema } from './actionApprovalMetadata.js';
 import {
   ActionInputHintsSchema,
+  ActionExecutionPlacementSchema,
+  ActionRequiredAuthoritySchema,
   ActionSurfaceSchema,
   ActionToolExposureSchema,
-} from './actionSpecs.js';
+} from './metadata.js';
 import { ActionSafetySchema } from './safety.js';
+import { ActionOperationDeclarationV1Schema } from './operations/v1.js';
 import { PluginLooseJsonObjectSchema, PluginOptionalStringSchema } from '../plugins/_shared.js';
 
 const LooseJsonObjectSchema = PluginLooseJsonObjectSchema;
@@ -23,7 +26,7 @@ function normalizeSerializedActionSurfaces(value: unknown): unknown {
     mcp: raw.mcp === true,
     cli: raw.cli === true,
     rpc: raw.rpc === true,
-    sdk: raw.sdk === true,
+    api: raw.api === true,
     // Supported predecessor writers do not know this surface. Omission never
     // grants plugin invocation authority.
     plugin: raw.plugin === true,
@@ -100,7 +103,7 @@ export type ActionExecutionHandlerRefV1 = z.infer<typeof ActionExecutionHandlerR
 export const ActionExecutionDescriptorV1Schema = z
   .object({
     handler: ActionExecutionHandlerRefV1Schema.optional(),
-    transport: z.enum(['host', 'plugin', 'rpc', 'sdk']).optional(),
+    transport: z.enum(['host', 'plugin', 'rpc', 'api']).optional(),
     routing: OptionalStringSchema,
     approvalPolicy: OptionalStringSchema,
     resultSchema: LooseJsonObjectSchema.optional(),
@@ -115,6 +118,8 @@ export const ActionDefinitionSummaryV1Schema = z
     description: z.string().min(1).nullable(),
     safety: ActionSafetySchema,
     approval: ActionApprovalSchema.optional(),
+    requiredAuthority: ActionRequiredAuthoritySchema.optional(),
+    executionPlacement: ActionExecutionPlacementSchema.optional(),
     placements: z.array(ActionUiPlacementSchema),
     slash: ActionDefinitionSlashV1Schema,
     bindings: ActionDefinitionBindingsV1Schema,
@@ -125,6 +130,7 @@ export const ActionDefinitionSummaryV1Schema = z
     outputSchema: LooseJsonObjectSchema.optional(),
     execution: ActionExecutionDescriptorV1Schema.optional(),
     sideEffectClass: z.enum(['none', 'read', 'write', 'external', 'danger']).optional(),
+    operation: ActionOperationDeclarationV1Schema.optional(),
   })
   .passthrough();
 export type ActionDefinitionSummaryV1 = z.infer<typeof ActionDefinitionSummaryV1Schema>;

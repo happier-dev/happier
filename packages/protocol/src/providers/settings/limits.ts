@@ -1,3 +1,5 @@
+import { ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES } from '../../account/settings/catalog/accountSettingBounds.js';
+
 export const PROVIDER_SETTINGS_LIMITS_V1 = Object.freeze({
   connectionTombstones: 256,
   experimentalBindingConfirmations: 2_048,
@@ -9,6 +11,10 @@ export const PROVIDER_SETTINGS_LIMITS_V1 = Object.freeze({
   migrationCompletedSources: 2_048,
   migrationPendingCustomProfiles: 2_048,
   migrationPendingConflicts: 2_048,
-  decodedJsonBytes: 4 * 1024 * 1024,
+  // The Provider subtree is persisted inside the Account Settings document, so the
+  // advertised maximum must be the ceiling that document can actually hold. A larger
+  // advertised allowance produces writes Provider validation accepts and the canonical
+  // Account write path then refuses.
+  decodedJsonBytes: ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES,
   readDiagnostics: 256,
 } as const);

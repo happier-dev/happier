@@ -179,8 +179,10 @@ async function installIsolatedConsumer(
             include: ['src/**/*.ts'],
         }, null, 2)}\n`, 'utf8'),
         writeFile(join(consumerRoot, 'src', 'consumer.ts'), `
+import type { QualifiedConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
     TriageEntryRefV1,
+    TriageSourceAccountBindingV1,
     TriageSourceObservationV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -203,6 +205,16 @@ type V1ConformanceResult = import('@happier-dev/triage-protocol/testing/v1')
 
 declare const entryRef: TriageEntryRefV1;
 declare const observation: TriageSourceObservationV1;
+
+// The emitted account member must BE the canonical Connected Account ref, not a
+// look-alike. Assignability both ways is what a restated local shape can lose:
+// a copy that drops, renames, or widens a field still compiles at the schema
+// binding (the composable schema is covariant in its parsed type) and would
+// silently publish a different public contract.
+declare const boundAccount: TriageSourceAccountBindingV1['account'];
+declare const canonicalAccount: QualifiedConnectedAccountRef;
+export const emittedAccountIsCanonical: QualifiedConnectedAccountRef = boundAccount;
+export const canonicalIsEmittedAccount: TriageSourceAccountBindingV1['account'] = canonicalAccount;
 
 export type TriageProtocolExternalConsumerProof = readonly [
     typeof entryRef.source.pluginId,

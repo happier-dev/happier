@@ -1,8 +1,27 @@
 import { z } from 'zod';
 
 import type { RuntimeActionIdV1 } from '../actionIds.js';
-import { BrowserAutomationActionRequestV1Schema, BrowserAutomationActionResultV1Schema, BrowserAutomationTimelineV1Schema } from '../../browser/automation/v1.js';
-import { BrowserCommandDispatchResultV1Schema, BrowserCommandV1Schema } from '../../browser/control/v1.js';
+import {
+  BrowserAutomationActionRequestV1Schema,
+  BrowserAutomationActionResultV1Schema,
+  BrowserAutomationCancelActiveInputV1Schema,
+  BrowserAutomationCancelActiveResultV1Schema,
+  BrowserAutomationTimelineV1Schema,
+} from '../../browser/automation/v1.js';
+import type { BrowserAutomationActionKindV1 } from '../../browser/automation/v1.js';
+import {
+  BrowserCloseViewCommandV1Schema,
+  BrowserCommandDispatchResultV1Schema,
+  BrowserCommandV1Schema,
+  BrowserFocusViewCommandV1Schema,
+  BrowserGoBackCommandV1Schema,
+  BrowserGoForwardCommandV1Schema,
+  BrowserNavigateCommandV1Schema,
+  BrowserOpenViewCommandV1Schema,
+  BrowserReloadCommandV1Schema,
+  BrowserSetTargetCommandV1Schema,
+  BrowserStopCommandV1Schema,
+} from '../../browser/control/v1.js';
 import {
   BrowserAnnotationStyleIntentV1Schema,
   BrowserContextAttachmentV1Schema,
@@ -21,7 +40,7 @@ import {
   BrowserDiagnosticsSnapshotV1Schema,
 } from '../../browser/diagnostics/v1.js';
 import {
-  BrowserEvidenceArtifactV1Schema,
+  BrowserRecordingSessionV1Schema,
   DaemonBrowserRecordingCancelInputV1Schema,
   DaemonBrowserRecordingCleanupInputV1Schema,
   DaemonBrowserRecordingCleanupResultV1Schema,
@@ -33,7 +52,41 @@ import {
   DaemonBrowserRecordingStopResultV1Schema,
   DaemonBrowserRecordingTerminalResultV1Schema,
 } from '../../browser/recording/v1.js';
-import { refineKindSchema, type RuntimeActionSpecFamily } from './common.js';
+import type { RuntimeActionSpecFamily } from './common.js';
+
+const BrowserDiagnosticsClearResultV1Schema = z.object({
+  ok: z.literal(true),
+}).strict();
+
+const BrowserDiagnosticsPauseResultV1Schema = z.object({
+  ok: z.literal(true),
+  status: z.literal('paused'),
+  viewId: z.string().trim().min(1).max(256),
+}).strict();
+
+const BrowserDiagnosticsResumeResultV1Schema = z.object({
+  ok: z.literal(true),
+  status: z.literal('resumed'),
+  viewId: z.string().trim().min(1).max(256),
+}).strict();
+
+const BrowserRecordingAttachToComposerResultV1Schema = z.object({
+  ok: z.literal(true),
+  attachmentId: z.string().trim().min(1).max(256),
+}).strict();
+
+const BrowserRecordingListResultV1Schema = z.array(BrowserRecordingSessionV1Schema);
+
+type BrowserRuntimeActionId = Extract<RuntimeActionIdV1, `browser.${string}`>;
+
+function createBrowserAutomationActionInputSchema<
+  const TActionKind extends BrowserAutomationActionKindV1,
+>(actionKind: TActionKind) {
+  return z.intersection(
+    BrowserAutomationActionRequestV1Schema,
+    z.object({ actionKind: z.literal(actionKind) }).passthrough(),
+  );
+}
 
 const RuntimeBrowserViewInputSchema = z
   .object({
@@ -171,101 +224,146 @@ export const BROWSER_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<Runtim
   'browser.recording.attachToComposer': 'Attach a captured browser recording to the message composer.',
 });
 
-export const BROWSER_COMMAND_KINDS_BY_RUNTIME_ACTION: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
-  'browser.session.create': 'createSession',
-  'browser.session.close': 'closeSession',
-  'browser.view.open': 'openView',
-  'browser.view.close': 'closeView',
-  'browser.view.focus': 'focusView',
-  'browser.target.set': 'setTarget',
-  'browser.navigate': 'navigate',
-  'browser.reload': 'reload',
-  'browser.goBack': 'goBack',
-  'browser.goForward': 'goForward',
-  'browser.stop': 'stop',
-});
+/**
+ * One concrete schema row per backed browser Action. This is deliberately a
+ * data projection rather than a prefix switch so a newly public Action keeps
+ * its exact Zod input/output carrier in generated API and Plugin maps.
+ */
+export const BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
+  'browser.session.create': BrowserCommandV1Schema,
+  'browser.session.close': BrowserCommandV1Schema,
+  'browser.view.open': BrowserOpenViewCommandV1Schema,
+  'browser.view.close': BrowserCloseViewCommandV1Schema,
+  'browser.view.focus': BrowserFocusViewCommandV1Schema,
+  'browser.target.set': BrowserSetTargetCommandV1Schema,
+  'browser.navigate': BrowserNavigateCommandV1Schema,
+  'browser.reload': BrowserReloadCommandV1Schema,
+  'browser.goBack': BrowserGoBackCommandV1Schema,
+  'browser.goForward': BrowserGoForwardCommandV1Schema,
+  'browser.stop': BrowserStopCommandV1Schema,
+  'browser.diagnostics.snapshot': RuntimeBrowserViewInputSchema,
+  'browser.diagnostics.clear': RuntimeBrowserViewInputSchema,
+  'browser.diagnostics.pause': RuntimeBrowserViewInputSchema,
+  'browser.diagnostics.resume': RuntimeBrowserViewInputSchema,
+  'browser.diagnostics.eval': BrowserDiagnosticsEvalRequestV1Schema,
+  'browser.diagnostics.getProperties': BrowserDiagnosticsGetPropertiesRequestV1Schema,
+  'browser.diagnostics.releaseObjectGroup': BrowserDiagnosticsReleaseObjectGroupRequestV1Schema,
+  'browser.diagnostics.elementPicker.start': BrowserDiagnosticsElementPickerRequestV1Schema,
+  'browser.diagnostics.elementPicker.cancel': BrowserDiagnosticsElementPickerRequestV1Schema,
+  'browser.context.capturePage': RuntimeBrowserContextActionInputSchema,
+  'browser.context.captureScreenshot': RuntimeBrowserContextActionInputSchema,
+  'browser.context.captureSelectedElement': RuntimeBrowserContextActionInputSchema,
+  'browser.context.captureNetworkSummary': RuntimeBrowserContextActionInputSchema,
+  'browser.context.captureConsoleSummary': RuntimeBrowserContextActionInputSchema,
+  'browser.context.annotation.start': RuntimeBrowserContextActionInputSchema,
+  'browser.context.annotation.cancel': RuntimeBrowserContextActionInputSchema,
+  'browser.context.annotation.captureRegion': RuntimeBrowserContextActionInputSchema,
+  'browser.context.annotation.captureElement': RuntimeBrowserContextActionInputSchema,
+  'browser.context.annotation.attachComment': RuntimeBrowserContextActionInputSchema,
+  'browser.context.annotation.attachStroke': RuntimeBrowserContextActionInputSchema,
+  'browser.context.annotation.attachStyleIntent': RuntimeBrowserContextActionInputSchema,
+  'browser.context.attachToComposer': RuntimeBrowserContextActionInputSchema,
+  'browser.context.attachToAgentTurn': RuntimeBrowserContextActionInputSchema,
+  'browser.context.clear': RuntimeBrowserContextActionInputSchema,
+  'browser.automation.status': createBrowserAutomationActionInputSchema('getStatus'),
+  'browser.automation.snapshot': createBrowserAutomationActionInputSchema('snapshot'),
+  'browser.automation.semanticSnapshot': createBrowserAutomationActionInputSchema('semanticSnapshot'),
+  'browser.automation.queryElements': createBrowserAutomationActionInputSchema('queryElements'),
+  'browser.automation.waitFor': createBrowserAutomationActionInputSchema('waitFor'),
+  'browser.automation.timeline.get': createBrowserAutomationActionInputSchema('getActionTimeline'),
+  'browser.automation.cancelActive': BrowserAutomationCancelActiveInputV1Schema,
+  'browser.automation.navigate': createBrowserAutomationActionInputSchema('navigate'),
+  'browser.automation.reload': createBrowserAutomationActionInputSchema('reload'),
+  'browser.automation.goBack': createBrowserAutomationActionInputSchema('goBack'),
+  'browser.automation.goForward': createBrowserAutomationActionInputSchema('goForward'),
+  'browser.automation.click': createBrowserAutomationActionInputSchema('click'),
+  'browser.automation.tap': createBrowserAutomationActionInputSchema('tap'),
+  'browser.automation.type': createBrowserAutomationActionInputSchema('type'),
+  'browser.automation.press': createBrowserAutomationActionInputSchema('press'),
+  'browser.automation.scroll': createBrowserAutomationActionInputSchema('scroll'),
+  'browser.automation.hover': createBrowserAutomationActionInputSchema('hover'),
+  'browser.automation.focus': createBrowserAutomationActionInputSchema('focus'),
+  'browser.automation.select': createBrowserAutomationActionInputSchema('select'),
+  'browser.automation.setValue': createBrowserAutomationActionInputSchema('setValue'),
+  'browser.recording.start': DaemonBrowserRecordingStartInputV1Schema,
+  'browser.recording.stop': DaemonBrowserRecordingStopInputV1Schema,
+  'browser.recording.cancel': DaemonBrowserRecordingCancelInputV1Schema,
+  'browser.recording.status': DaemonBrowserRecordingStatusInputV1Schema,
+  'browser.recording.listForView': DaemonBrowserRecordingListInputV1Schema,
+  'browser.recording.discard': DaemonBrowserRecordingCancelInputV1Schema,
+  'browser.recording.cleanupExpired': DaemonBrowserRecordingCleanupInputV1Schema,
+  'browser.recording.attachToComposer': RuntimeBrowserRecordingAttachInputSchema,
+} as const satisfies Readonly<Record<BrowserRuntimeActionId, z.ZodTypeAny>>);
 
-const BROWSER_AUTOMATION_KINDS_BY_RUNTIME_ACTION: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
-  'browser.automation.status': 'getStatus',
-  'browser.automation.snapshot': 'snapshot',
-  'browser.automation.semanticSnapshot': 'semanticSnapshot',
-  'browser.automation.queryElements': 'queryElements',
-  'browser.automation.waitFor': 'waitFor',
-  'browser.automation.timeline.get': 'getActionTimeline',
-  'browser.automation.navigate': 'navigate',
-  'browser.automation.reload': 'reload',
-  'browser.automation.goBack': 'goBack',
-  'browser.automation.goForward': 'goForward',
-  'browser.automation.click': 'click',
-  'browser.automation.tap': 'tap',
-  'browser.automation.type': 'type',
-  'browser.automation.press': 'press',
-  'browser.automation.scroll': 'scroll',
-  'browser.automation.hover': 'hover',
-  'browser.automation.focus': 'focus',
-  'browser.automation.select': 'select',
-  'browser.automation.setValue': 'setValue',
-});
-
-function refineAutomationActionSchema(actionId: RuntimeActionIdV1): z.ZodTypeAny {
-  const expected = BROWSER_AUTOMATION_KINDS_BY_RUNTIME_ACTION[actionId];
-  if (!expected) return RuntimeBrowserViewInputSchema;
-  return refineKindSchema(BrowserAutomationActionRequestV1Schema, 'actionKind', expected, 'Browser automation actionKind');
-}
-
-function browserRuntimeActionInputSchema(actionId: RuntimeActionIdV1): z.ZodTypeAny | null {
-  const browserCommandKind = BROWSER_COMMAND_KINDS_BY_RUNTIME_ACTION[actionId];
-  if (browserCommandKind) {
-    return refineKindSchema(BrowserCommandV1Schema, 'kind', browserCommandKind, 'Browser command kind');
-  }
-
-  if (actionId === 'browser.diagnostics.eval') return BrowserDiagnosticsEvalRequestV1Schema;
-  if (actionId === 'browser.diagnostics.getProperties') return BrowserDiagnosticsGetPropertiesRequestV1Schema;
-  if (actionId === 'browser.diagnostics.releaseObjectGroup') return BrowserDiagnosticsReleaseObjectGroupRequestV1Schema;
-  if (actionId === 'browser.diagnostics.elementPicker.start') {
-    return refineKindSchema(BrowserDiagnosticsElementPickerRequestV1Schema, 'action', 'start', 'Browser element-picker action');
-  }
-  if (actionId === 'browser.diagnostics.elementPicker.cancel') {
-    return refineKindSchema(BrowserDiagnosticsElementPickerRequestV1Schema, 'action', 'cancel', 'Browser element-picker action');
-  }
-  if (actionId.startsWith('browser.diagnostics.')) return RuntimeBrowserViewInputSchema;
-  if (actionId.startsWith('browser.context.')) return RuntimeBrowserContextActionInputSchema;
-  if (actionId.startsWith('browser.automation.')) return refineAutomationActionSchema(actionId);
-  if (actionId === 'browser.recording.start') return DaemonBrowserRecordingStartInputV1Schema;
-  if (actionId === 'browser.recording.stop') return DaemonBrowserRecordingStopInputV1Schema;
-  if (actionId === 'browser.recording.cancel' || actionId === 'browser.recording.discard') {
-    return DaemonBrowserRecordingCancelInputV1Schema;
-  }
-  if (actionId === 'browser.recording.status') return DaemonBrowserRecordingStatusInputV1Schema;
-  if (actionId === 'browser.recording.listForView') return DaemonBrowserRecordingListInputV1Schema;
-  if (actionId === 'browser.recording.cleanupExpired') return DaemonBrowserRecordingCleanupInputV1Schema;
-  if (actionId === 'browser.recording.attachToComposer') return RuntimeBrowserRecordingAttachInputSchema;
-  return null;
-}
-
-function browserRuntimeActionOutputSchema(actionId: RuntimeActionIdV1): z.ZodTypeAny | null {
-  if (BROWSER_COMMAND_KINDS_BY_RUNTIME_ACTION[actionId]) return BrowserCommandDispatchResultV1Schema;
-  if (actionId.startsWith('browser.diagnostics.snapshot')) return BrowserDiagnosticsSnapshotV1Schema;
-  if (actionId === 'browser.diagnostics.eval') return BrowserDiagnosticsEvalResultV1Schema;
-  if (actionId === 'browser.diagnostics.getProperties') return BrowserDiagnosticsGetPropertiesResultV1Schema;
-  if (actionId === 'browser.diagnostics.releaseObjectGroup') return BrowserDiagnosticsReleaseObjectGroupResultV1Schema;
-  if (actionId.startsWith('browser.diagnostics.elementPicker.')) return BrowserDiagnosticsElementPickerResultV1Schema;
-  if (actionId.startsWith('browser.context.attach')) return BrowserContextAttachmentV1Schema;
-  if (actionId.startsWith('browser.context.')) return BrowserContextRouteResultV1Schema;
-  if (actionId === 'browser.automation.timeline.get') return BrowserAutomationTimelineV1Schema;
-  if (actionId.startsWith('browser.automation.')) return BrowserAutomationActionResultV1Schema;
-  if (actionId === 'browser.recording.start') return DaemonBrowserRecordingStartResultV1Schema;
-  if (actionId === 'browser.recording.stop') return DaemonBrowserRecordingStopResultV1Schema;
-  if (actionId === 'browser.recording.cancel' || actionId === 'browser.recording.discard') return DaemonBrowserRecordingTerminalResultV1Schema;
-  if (actionId === 'browser.recording.status') return z.unknown();
-  if (actionId === 'browser.recording.listForView') return z.array(BrowserEvidenceArtifactV1Schema).or(z.unknown());
-  if (actionId === 'browser.recording.cleanupExpired') return DaemonBrowserRecordingCleanupResultV1Schema;
-  return null;
-}
+export const BROWSER_RUNTIME_ACTION_OUTPUT_SCHEMAS = Object.freeze({
+  'browser.session.create': BrowserCommandDispatchResultV1Schema,
+  'browser.session.close': BrowserCommandDispatchResultV1Schema,
+  'browser.view.open': BrowserCommandDispatchResultV1Schema,
+  'browser.view.close': BrowserCommandDispatchResultV1Schema,
+  'browser.view.focus': BrowserCommandDispatchResultV1Schema,
+  'browser.target.set': BrowserCommandDispatchResultV1Schema,
+  'browser.navigate': BrowserCommandDispatchResultV1Schema,
+  'browser.reload': BrowserCommandDispatchResultV1Schema,
+  'browser.goBack': BrowserCommandDispatchResultV1Schema,
+  'browser.goForward': BrowserCommandDispatchResultV1Schema,
+  'browser.stop': BrowserCommandDispatchResultV1Schema,
+  'browser.diagnostics.snapshot': BrowserDiagnosticsSnapshotV1Schema,
+  'browser.diagnostics.clear': BrowserDiagnosticsClearResultV1Schema,
+  'browser.diagnostics.pause': BrowserDiagnosticsPauseResultV1Schema,
+  'browser.diagnostics.resume': BrowserDiagnosticsResumeResultV1Schema,
+  'browser.diagnostics.eval': BrowserDiagnosticsEvalResultV1Schema,
+  'browser.diagnostics.getProperties': BrowserDiagnosticsGetPropertiesResultV1Schema,
+  'browser.diagnostics.releaseObjectGroup': BrowserDiagnosticsReleaseObjectGroupResultV1Schema,
+  'browser.diagnostics.elementPicker.start': BrowserDiagnosticsElementPickerResultV1Schema,
+  'browser.diagnostics.elementPicker.cancel': BrowserDiagnosticsElementPickerResultV1Schema,
+  'browser.context.capturePage': BrowserContextRouteResultV1Schema,
+  'browser.context.captureScreenshot': BrowserContextRouteResultV1Schema,
+  'browser.context.captureSelectedElement': BrowserContextRouteResultV1Schema,
+  'browser.context.captureNetworkSummary': BrowserContextRouteResultV1Schema,
+  'browser.context.captureConsoleSummary': BrowserContextRouteResultV1Schema,
+  'browser.context.annotation.start': BrowserContextRouteResultV1Schema,
+  'browser.context.annotation.cancel': BrowserContextRouteResultV1Schema,
+  'browser.context.annotation.captureRegion': BrowserContextRouteResultV1Schema,
+  'browser.context.annotation.captureElement': BrowserContextRouteResultV1Schema,
+  'browser.context.annotation.attachComment': BrowserContextRouteResultV1Schema,
+  'browser.context.annotation.attachStroke': BrowserContextRouteResultV1Schema,
+  'browser.context.annotation.attachStyleIntent': BrowserContextRouteResultV1Schema,
+  'browser.context.attachToComposer': BrowserContextAttachmentV1Schema,
+  'browser.context.attachToAgentTurn': BrowserContextAttachmentV1Schema,
+  'browser.context.clear': BrowserContextRouteResultV1Schema,
+  'browser.automation.status': BrowserAutomationActionResultV1Schema,
+  'browser.automation.snapshot': BrowserAutomationActionResultV1Schema,
+  'browser.automation.semanticSnapshot': BrowserAutomationActionResultV1Schema,
+  'browser.automation.queryElements': BrowserAutomationActionResultV1Schema,
+  'browser.automation.waitFor': BrowserAutomationActionResultV1Schema,
+  'browser.automation.timeline.get': BrowserAutomationTimelineV1Schema,
+  'browser.automation.cancelActive': BrowserAutomationCancelActiveResultV1Schema,
+  'browser.automation.navigate': BrowserAutomationActionResultV1Schema,
+  'browser.automation.reload': BrowserAutomationActionResultV1Schema,
+  'browser.automation.goBack': BrowserAutomationActionResultV1Schema,
+  'browser.automation.goForward': BrowserAutomationActionResultV1Schema,
+  'browser.automation.click': BrowserAutomationActionResultV1Schema,
+  'browser.automation.tap': BrowserAutomationActionResultV1Schema,
+  'browser.automation.type': BrowserAutomationActionResultV1Schema,
+  'browser.automation.press': BrowserAutomationActionResultV1Schema,
+  'browser.automation.scroll': BrowserAutomationActionResultV1Schema,
+  'browser.automation.hover': BrowserAutomationActionResultV1Schema,
+  'browser.automation.focus': BrowserAutomationActionResultV1Schema,
+  'browser.automation.select': BrowserAutomationActionResultV1Schema,
+  'browser.automation.setValue': BrowserAutomationActionResultV1Schema,
+  'browser.recording.start': DaemonBrowserRecordingStartResultV1Schema,
+  'browser.recording.stop': DaemonBrowserRecordingStopResultV1Schema,
+  'browser.recording.cancel': DaemonBrowserRecordingTerminalResultV1Schema,
+  'browser.recording.status': BrowserRecordingSessionV1Schema.nullable(),
+  'browser.recording.listForView': BrowserRecordingListResultV1Schema,
+  'browser.recording.discard': DaemonBrowserRecordingTerminalResultV1Schema,
+  'browser.recording.cleanupExpired': DaemonBrowserRecordingCleanupResultV1Schema,
+  'browser.recording.attachToComposer': BrowserRecordingAttachToComposerResultV1Schema,
+} as const satisfies Readonly<Record<BrowserRuntimeActionId, z.ZodTypeAny>>);
 
 export const BROWSER_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
   titles: BROWSER_RUNTIME_ACTION_TITLES,
   descriptions: BROWSER_RUNTIME_ACTION_DESCRIPTIONS,
-  inputSchemaForAction: browserRuntimeActionInputSchema,
-  outputSchemaForAction: browserRuntimeActionOutputSchema,
+  inputSchemas: BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS,
+  outputSchemas: BROWSER_RUNTIME_ACTION_OUTPUT_SCHEMAS,
 } satisfies RuntimeActionSpecFamily);

@@ -257,6 +257,84 @@ describe('Automation versioned API schemas', () => {
     expect(AutomationV3PluginEventDefinitionPatchRequestSchema.safeParse(create).success).toBe(false);
   });
 
+  it('accepts the durable-push authoring arm without any server-owned endpoint fact', () => {
+    const pushTrigger = {
+      kind: 'pluginEvent',
+      eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
+      sourceInstanceId: 'github:repository:1234',
+      sourceContractVersion: 1,
+      sourceConfig: { credentialRef: 'github:account:1', repository: 'happier-dev/happier' },
+      displayLabel: 'happier-dev/happier',
+      observationTransport: {
+        kind: 'durablePush',
+        webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
+        endpointMaterializationRef: {
+          machineId: 'machine-1',
+          materializationId: 'materialization-1',
+          pluginId: 'happier.scm.github',
+        },
+        webhookRoutingSourceInstanceId: 'github:installation:2200',
+        setup: { kind: 'githubAccountEndpointV1', credential: 'serverGenerated' },
+      },
+      filter: null,
+      maximumObservationAgeMs: 60_000,
+    };
+    const create = {
+      name: 'Repository webhooks',
+      description: null,
+      enabled: true,
+      trigger: pushTrigger,
+      executionRecipe: { ...currentScheduleRecipe, templateVersion: 1 },
+      assignments: [{ machineId: 'machine-1' }],
+    };
+    expect(
+      AutomationV3PluginEventDefinitionCreateRequestSchema.parse(create).trigger.observationTransport,
+    ).toEqual(pushTrigger.observationTransport);
+    expect(AutomationV3PluginEventDefinitionPatchRequestSchema.parse({
+      ...create,
+      expectedTemplateVersion: 1,
+    }).trigger.observationTransport).toEqual(pushTrigger.observationTransport);
+
+    // Server-owned endpoint facts and the other transport arm's watcher are
+    // never accepted from an authoring client.
+    for (const forbidden of [
+      { observationStartsAt: timestamp },
+      { webhookContribution: { pluginId: 'happier.scm.github', localId: 'github-events' } },
+      {
+        watcherMaterializationRef: {
+          machineId: 'machine-1',
+          materializationId: 'materialization-1',
+          pluginId: 'happier.scm.github',
+        },
+      },
+    ]) {
+      expect(AutomationV3PluginEventDefinitionCreateRequestSchema.safeParse({
+        ...create,
+        trigger: {
+          ...pushTrigger,
+          observationTransport: { ...pushTrigger.observationTransport, ...forbidden },
+        },
+      }).success).toBe(false);
+    }
+
+    // The endpoint scalar keeps its canonical 128-bit identity shape, and the
+    // push arm may not omit the routing source or setup identity.
+    expect(AutomationV3PluginEventDefinitionCreateRequestSchema.safeParse({
+      ...create,
+      trigger: {
+        ...pushTrigger,
+        observationTransport: { ...pushTrigger.observationTransport, webhookEndpointId: 'endpoint-1' },
+      },
+    }).success).toBe(false);
+    for (const omitted of ['webhookRoutingSourceInstanceId', 'setup'] as const) {
+      const { [omitted]: _dropped, ...rest } = pushTrigger.observationTransport;
+      expect(AutomationV3PluginEventDefinitionCreateRequestSchema.safeParse({
+        ...create,
+        trigger: { ...pushTrigger, observationTransport: rest },
+      }).success).toBe(false);
+    }
+  });
+
   it('keeps exact predecessor V2 definition and scheduled/manual Run key sets', () => {
     expect(AutomationApiV2Schema.parse(v2Definition)).toEqual(v2Definition);
     expect(AutomationRunApiV2Schema.parse(v2Run)).toEqual(v2Run);
@@ -427,6 +505,10 @@ describe('Automation versioned API schemas', () => {
       executionInputEnvelope: '{"t":"plain","v":{"prompt":"private"}}',
       resultEnvelope: '{"t":"plain","v":{"text":"private"}}',
       legacySummaryCiphertext: null,
+      executionNativeRunId: null,
+      executionNativeCallId: null,
+      executionNativeSidechainId: null,
+      events: [],
       errorDetailEnvelope: privateFailureEnvelope,
     };
     expect(AutomationV3RunDetailSchema.parse(detail)).toEqual(detail);

@@ -21,6 +21,15 @@ export type HostEventScopeV1 =
 
 export type AutomationHostEventScopeV1 = Readonly<{ kind: 'account' }>;
 
+/**
+ * The one authoritative cause a machine observer may act on: the user
+ * cancelled a Run whose external execution was already permitted to dispatch,
+ * so the Run can only be published as uncertain even though cancellation is
+ * the authoritative intent.
+ */
+export const AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1 =
+  'cancelledAfterDispatchPermitted' as const;
+
 export const AutomationRunStateChangedHostEventV1Schema = z.object({
   runId: z.string().min(1),
   automationId: z.string().min(1),
@@ -29,6 +38,13 @@ export const AutomationRunStateChangedHostEventV1Schema = z.object({
   currentState: AutomationRunStateV3Schema,
   transitionedAt: z.number().int().min(0),
   claimedByMachineId: z.string().min(1).nullable(),
+  /**
+   * Why the transition happened, when the state alone is ambiguous. Readers
+   * act only on causes they know and treat any other bounded value as absent,
+   * so a newer producer cause degrades to the generic lifecycle handling
+   * instead of invalidating the whole observation.
+   */
+  cause: z.string().min(1).max(64).optional(),
 }).strict().superRefine((payload, context) => {
   if (payload.previousState === null) {
     if (payload.currentState === 'queued') return;

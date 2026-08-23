@@ -39,12 +39,20 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
 }
 
 describe('ActionExecutor subagent registry actions', () => {
-  it('delegates subagent registry actions through provider-neutral deps', async () => {
+  it('delegates subagent registry actions through provider-neutral deps and projects valid output', async () => {
     const calls: unknown[] = [];
     const deps = createDeps({
       subagentsList: async (args) => {
         calls.push({ kind: 'list', args });
-        return [{ id: 'subagent-1', parentSessionId: args.parentSessionId }];
+        return [{
+          id: 'subagent-1',
+          parentSessionId: args.parentSessionId,
+          origin: 'agent' as const,
+          kind: 'native' as const,
+          agentRef: { agentId: ' codex ' },
+          status: 'pending' as const,
+          createdAt: 123,
+        }];
       },
       subagentsUpsert: async (args) => {
         calls.push({ kind: 'upsert', args });
@@ -69,7 +77,15 @@ describe('ActionExecutor subagent registry actions', () => {
 
     expect(listResult).toEqual({
       ok: true,
-      result: [{ id: 'subagent-1', parentSessionId: 'session-1' }],
+      result: [{
+        id: 'subagent-1',
+        parentSessionId: 'session-1',
+        origin: 'agent',
+        kind: 'native',
+        agentRef: { agentId: 'codex' },
+        status: 'pending',
+        createdAt: 123,
+      }],
     });
     expect(upsertResult).toEqual({
       ok: true,
@@ -97,6 +113,40 @@ describe('ActionExecutor subagent registry actions', () => {
         },
       },
     ]);
+  });
+
+  it('fails closed when a non-runtime subagent producer returns schema-invalid JSON', async () => {
+    const executor = createActionExecutor(createDeps({
+      // The host dependency is the external boundary under test: this value is JSON-serializable
+      // but omits the required provider-neutral subagent fields.
+      subagentsList: async () => [{ id: 'subagent-1' }],
+    }));
+
+    await expect(executor.execute(ActionIdSchema.parse('sessions.subagents.list'), {
+      parentSessionId: 'session-1',
+    }, { surface: 'rpc' })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_action_output',
+      error: 'invalid_action_output',
+    });
+  });
+
+  it('preserves a canonical returned failure envelope instead of classifying it as invalid output', async () => {
+    const executor = createActionExecutor(createDeps({
+      subagentsList: async () => ({
+        ok: false,
+        errorCode: 'subagent_store_unavailable',
+        error: 'subagent_store_unavailable',
+      }),
+    }));
+
+    await expect(executor.execute(ActionIdSchema.parse('sessions.subagents.list'), {
+      parentSessionId: 'session-1',
+    }, { surface: 'rpc' })).resolves.toEqual({
+      ok: false,
+      errorCode: 'subagent_store_unavailable',
+      error: 'subagent_store_unavailable',
+    });
   });
 
   it('surfaces stable subagent mutation authority errors from deps', async () => {

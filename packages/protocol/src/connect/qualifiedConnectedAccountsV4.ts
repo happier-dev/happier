@@ -194,6 +194,11 @@ export const QualifiedConnectedAccountCredentialErrorV4Schema = z.union([
   z.object({
     error: z.literal('connect_credential_referenced_by_group'),
   }).strict(),
+  // The Account already holds every credential the unpaginated list wire shape can
+  // carry. Refused before persistence so the Account keeps a readable credential list.
+  z.object({
+    error: z.literal('connect_connected_account_capacity_exhausted'),
+  }).strict(),
   QualifiedConnectedAccountCredentialMutationSupersededV4Schema,
 ]);
 

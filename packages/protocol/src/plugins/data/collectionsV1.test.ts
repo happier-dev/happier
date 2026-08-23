@@ -56,6 +56,10 @@ import {
   validatePluginCollectionUiQueryResultV1,
 } from './collectionsV1.js';
 import { sealAccountScopedBlobCiphertext } from '../../crypto/accountScopedCipher.js';
+import {
+  cloneStrictPluginJsonValue,
+  measureSerializedStrictPluginJsonUtf8Bytes,
+} from '../contributions/strictJsonValue.js';
 import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '../contributions/catalog.js';
 import { PluginContributesV2Schema } from '../contributions/v2.js';
 import { MAX_PLUGIN_IDENTIFIER_BYTES } from '../pluginId.js';
@@ -124,6 +128,40 @@ describe('Plugin Account Collection contracts', () => {
     expect(PluginCollectionQuotaRequestV1Schema.safeParse({
       maxRowEncodedBytes: PLUGIN_COLLECTION_LIMITS_V1.maximumStoredRowEncodedBytes + 1,
     }).success).toBe(false);
+  });
+
+  it('admits deeply nested valid Collection JSON that fits the private envelope ceiling', () => {
+    // ~36 KiB of ordinary JSON nested well past the JavaScript call-stack depth
+    // a recursive schema walk can carry. It is inside the published 512 KiB
+    // private-envelope ceiling, so admission is the only thing under test.
+    //
+    // The size precondition deliberately uses Protocol's iterative serialized-byte
+    // owner rather than `JSON.stringify`, which is recursive in V8 and throws
+    // `RangeError: Maximum call stack size exceeded` well before this depth
+    // (measured: 6,082 levels on a fresh Node 22 stack, 3,747 at 3,000 frames
+    // deep). Measuring the precondition with the host serializer would make this
+    // test fail for a reason that has nothing to do with envelope admission.
+    let nested: unknown = 1;
+    for (let depth = 0; depth < 6_000; depth += 1) nested = { n: nested };
+    const payload = { field: nested };
+    const encodedBytes = measureSerializedStrictPluginJsonUtf8Bytes(
+      cloneStrictPluginJsonValue(payload, 'value'),
+      'value',
+    );
+    expect(encodedBytes).toBeGreaterThan(0);
+    expect(encodedBytes).toBeLessThan(PLUGIN_COLLECTION_LIMITS_V1.maximumPrivateEnvelopeEncodedBytes);
+
+    const envelope = PluginCollectionContentEnvelopeV1Schema.parse({ t: 'plain', v: payload });
+    expect(envelope.t).toBe('plain');
+
+    // The same value one byte over the ceiling is still refused, so the
+    // iterative admission did not become a hole in the envelope bound.
+    const oversized = {
+      field: nested,
+      filler: 'x'.repeat(PLUGIN_COLLECTION_LIMITS_V1.maximumPrivateEnvelopeEncodedBytes),
+    };
+    expect(PluginCollectionContentEnvelopeV1Schema.safeParse({ t: 'plain', v: oversized }).success)
+      .toBe(false);
   });
 
   it('rejects a collection schema version the persisted integer column cannot hold', () => {

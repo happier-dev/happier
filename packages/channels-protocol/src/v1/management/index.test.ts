@@ -16,6 +16,10 @@ describe('Channels V1 public management barrel', () => {
             inputSchema: management.ConversationConnectionPrepareInputV1JsonSchema,
             resultSchema: management.ConversationConnectionPrepareResultV1JsonSchema,
         });
+        expect(management.ConversationConnectionRetestManagementActionDeclarationV1).toEqual({
+            inputSchema: management.ConversationConnectionRetestInputV1JsonSchema,
+            resultSchema: management.ConversationConnectionRetestResultV1JsonSchema,
+        });
         expect(management.ConversationPairingCreateManagementActionDeclarationV1).toEqual({
             inputSchema: management.ConversationPairingCreateInputV1JsonSchema,
             resultSchema: management.ConversationPairingCreateResultV1JsonSchema,
@@ -60,6 +64,7 @@ describe('Channels V1 public management barrel', () => {
             connectionCreate: management.ConversationConnectionCreateManagementActionDeclarationV1,
             connectionTransfer: management.ConversationConnectionTransferManagementActionDeclarationV1,
             connectionPrepare: management.ConversationConnectionPrepareManagementActionDeclarationV1,
+            connectionRetest: management.ConversationConnectionRetestManagementActionDeclarationV1,
             connectionUpdate: management.ConversationConnectionUpdateManagementActionDeclarationV1,
             connectionSetEnabled: management.ConversationConnectionSetEnabledManagementActionDeclarationV1,
             connectionDelete: management.ConversationConnectionDeleteManagementActionDeclarationV1,

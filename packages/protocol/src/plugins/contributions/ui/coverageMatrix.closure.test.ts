@@ -677,6 +677,83 @@ const REJECTED_APP_WHOLE_PANE_SLOT_KEYS = [
   'bottomPane:app',
 ] as const satisfies readonly DestinationSlotKey[];
 
+/**
+ * Every destination slot a MAINTAINED first-party or public-example producer
+ * actually authors, pinned to the exact container/target tuple in its source.
+ *
+ * The `declaration` stage above proves only that the manifest GRAMMAR can
+ * express a slot: `PluginUiViewV2Schema` backs thirteen of fifteen rows, so
+ * deleting the last real author of a container/target pair could not fail it.
+ * This relation is the missing half — an authored declaration a reader can
+ * delete and watch the closure go red.
+ */
+const MAINTAINED_AUTHORED_DESTINATION_DECLARATIONS_V1 = [
+  {
+    slotKey: 'appPage:app',
+    sourcePath: 'packages/plugin-sdk/examples/public-authoring/definition.ts',
+    codeIdentifier: ["                container: 'appPage',", "                target: { kind: 'app' },"].join('\n'),
+  },
+  {
+    slotKey: 'settingsPage:app',
+    sourcePath: 'packages/plugins/channels/src/manifest.ts',
+    codeIdentifier: '  settingsPages: [{',
+  },
+  {
+    slotKey: 'rightSidebarTab:app',
+    sourcePath: 'packages/plugins/inspector/src/manifest.ts',
+    codeIdentifier: ["    container: 'rightSidebarTab' as const,", "    target: { kind: 'app' as const },"].join('\n'),
+  },
+  {
+    slotKey: 'rightSidebarTab:session',
+    sourcePath: 'packages/plugins/triage/src/manifest.ts',
+    codeIdentifier: ["        container: 'rightSidebarTab',", "        target: { kind: 'session' },"].join('\n'),
+  },
+  {
+    slotKey: 'rightPane:session',
+    sourcePath: 'packages/plugin-sdk/examples/public-authoring/definition.ts',
+    codeIdentifier: ["                container: 'rightPane',", "                target: { kind: 'session' },"].join('\n'),
+  },
+  {
+    slotKey: 'detailsTab:session',
+    sourcePath: 'packages/plugin-sdk/examples/public-authoring/definition.ts',
+    codeIdentifier: ["                container: 'detailsTab',", "                target: { kind: 'session' },"].join('\n'),
+  },
+  {
+    slotKey: 'bottomPane:session',
+    sourcePath: 'packages/plugin-sdk/examples/public-authoring/definition.ts',
+    codeIdentifier: ["                container: 'bottomPane',", "                target: { kind: 'session' },"].join('\n'),
+  },
+  {
+    slotKey: 'bottomPane:project',
+    sourcePath: 'packages/plugin-sdk/examples/public-authoring/definition.ts',
+    codeIdentifier: ["                container: 'bottomPane',", "                target: { kind: 'project' },"].join('\n'),
+  },
+] as const satisfies readonly Readonly<{
+  slotKey: DestinationSlotKey;
+  sourcePath: string;
+  codeIdentifier: string;
+}>[];
+
+/**
+ * Admitted slots that NO maintained producer authors today. They still pass the
+ * declaration/projection/launcher/shell/deciding-test relation above, so this
+ * is the honest statement of what that relation cannot prove for them: the host
+ * side exists, the author side is unexercised.
+ *
+ * This list is a ceiling, not a permit. Authoring one of these — or dropping the
+ * last author of a slot that is currently proven — moves the computed set and
+ * fails the closure, which is the point.
+ */
+const DESTINATION_SLOTS_WITHOUT_MAINTAINED_AUTHORED_DECLARATION = [
+  'rightSidebarTab:project',
+  'rightPane:project',
+  'detailsTab:project',
+  'detailsPane:session',
+  'detailsPane:project',
+  'browserPanel:browser',
+  'servicesPanel:services',
+] as const satisfies readonly DestinationSlotKey[];
+
 // ---------------------------------------------------------------------------
 // Historical placement-ID disposition. These strings are deliberately
 // TEST-ONLY: L1 removed their production schema, parser, and mounted-placement
@@ -1106,6 +1183,45 @@ describe('coverage matrix — Stage B (enforcement)', () => {
     }
 
     expect([...usedProofKeys].sort()).toEqual([...proofsByStageAndRef.keys()].sort());
+  });
+
+  it('keeps every claimed destination slot bound to a maintained producer that actually authors it', () => {
+    const repoRoot = resolve(import.meta.dirname, '../../../../../..');
+    const sourceByPath = new Map<string, string>();
+    const admittedSlotKeys = new Set(PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1.map(
+      (slot) => destinationSlotKey(slot.container, slot.targetKind),
+    ));
+
+    const authoredSlotKeys = new Set<DestinationSlotKey>();
+    for (const declaration of MAINTAINED_AUTHORED_DESTINATION_DECLARATIONS_V1) {
+      expect(
+        admittedSlotKeys.has(declaration.slotKey),
+        `${declaration.slotKey} is authored but is not an admitted destination slot`,
+      ).toBe(true);
+      expect(
+        authoredSlotKeys.has(declaration.slotKey),
+        `${declaration.slotKey} must name exactly one maintained authored declaration`,
+      ).toBe(false);
+      authoredSlotKeys.add(declaration.slotKey);
+
+      const source = sourceByPath.get(declaration.sourcePath)
+        ?? readFileSync(resolve(repoRoot, ...declaration.sourcePath.split('/')), 'utf8');
+      sourceByPath.set(declaration.sourcePath, source);
+      // The whole point of this row: the exact container/target TUPLE, not a
+      // container name that a nearby unrelated view could satisfy.
+      expect(
+        source,
+        `${declaration.slotKey} claims a maintained author at ${declaration.sourcePath}, but that declaration is gone`,
+      ).toContain(declaration.codeIdentifier);
+    }
+
+    const unauthoredSlotKeys = [...admittedSlotKeys]
+      .filter((slotKey) => !authoredSlotKeys.has(slotKey))
+      .sort();
+    expect(
+      unauthoredSlotKeys,
+      'a destination slot gained or lost its maintained author; update the authored-declaration relation',
+    ).toEqual([...DESTINATION_SLOTS_WITHOUT_MAINTAINED_AUTHORED_DECLARATION].sort());
   });
 
   it('no contribution family remains unimplemented', () => {

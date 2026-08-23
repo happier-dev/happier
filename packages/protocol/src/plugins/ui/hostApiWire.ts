@@ -24,6 +24,28 @@ export const PluginUiHostApiWireIdentityV1Schema = z.object({
 }).strict();
 export type PluginUiHostApiWireIdentityV1 = z.infer<typeof PluginUiHostApiWireIdentityV1Schema>;
 
+/**
+ * The one wire-identity equality operation. Every realm that addresses a
+ * mounted surface — the host bridge adapter, the client transport, and the
+ * hosted-web guest — answers "is this envelope mine?" with exactly this
+ * comparison, so adding an identity member cannot leave one realm accepting
+ * an envelope the other two reject.
+ *
+ * `sessionId` is compared including its absent state: a Session-scoped mount
+ * and an Account-scoped mount of the same plugin/view/generation are different
+ * addressees, not the same one with a missing field.
+ */
+export function pluginUiHostApiWireIdentitiesEqual(
+  expected: PluginUiHostApiWireIdentityV1,
+  actual: PluginUiHostApiWireIdentityV1,
+): boolean {
+  return expected.pluginId === actual.pluginId
+    && expected.pluginVersion === actual.pluginVersion
+    && expected.viewId === actual.viewId
+    && expected.generation === actual.generation
+    && expected.sessionId === actual.sessionId;
+}
+
 const WireBase = z.object({ wireVersion: z.literal(PLUGIN_UI_HOST_API_WIRE_VERSION_V1), identity: PluginUiHostApiWireIdentityV1Schema });
 const RequestBase = WireBase.extend({ requestId: z.string().trim().min(1) });
 

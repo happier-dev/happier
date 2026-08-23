@@ -12,9 +12,13 @@ import { PluginIdSchema } from '../pluginId.js';
 import { PluginUiArtifactDigestV1Schema } from '../ui/artifactIntegrity.js';
 import {
   PluginJsonSchemaV2Schema,
-  PluginJsonValueV2Schema,
   type PluginJsonSchemaV2,
+  type PluginJsonValueV2,
 } from '../contributions/publicTypes.js';
+import {
+  assertStrictPluginJsonValue,
+  measureSerializedValidatedStrictPluginJsonUtf8Bytes,
+} from '../contributions/strictJsonValue.js';
 import {
   PluginAccountCollectionContributionV1Schema,
   PluginCollectionFiniteNumberV1Schema,
@@ -125,14 +129,19 @@ export {
   PLUGIN_COLLECTION_SCHEMA_VERSION_MAX,
 } from './collectionLimitsV1.js';
 
-function utf8ByteLength(value: string): number {
-  return new TextEncoder().encode(value).length;
-}
-
+/**
+ * `JSON.stringify` abandons its iterative fast path once the serialization
+ * grows past a threshold and finishes recursively, so measuring a large,
+ * deeply nested — but perfectly valid and in-budget — Collection payload that
+ * way throws `RangeError`. Protocol's serialized-byte owner walks with an
+ * explicit stack and produces the same spelling, so the ceilings below refuse
+ * or admit on bytes rather than on the shape of the host's serializer.
+ */
 function encodedJsonUtf8ByteLength(value: unknown): number {
-  const encoded = JSON.stringify(value);
-  if (encoded === undefined) throw new Error('Collection values must be JSON serializable.');
-  return utf8ByteLength(encoded);
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
+    throw new Error('Collection values must be JSON serializable.');
+  }
+  return measureSerializedValidatedStrictPluginJsonUtf8Bytes(value, 'Collection value');
 }
 
 /**
@@ -269,9 +278,37 @@ export type PluginCollectionWriterContextV1 = z.infer<typeof PluginCollectionWri
 export const PLUGIN_COLLECTION_PRIVATE_PAYLOAD_ACCOUNT_SCOPED_BLOB_KIND_V1 =
   'plugin_collection_private_payload' as const;
 
+/**
+ * Member values are admitted by Protocol's strict-JSON owner, which walks with
+ * an explicit work stack. The declaration-facing `PluginJsonValueV2Schema`
+ * describes the same grammar but descends recursively, so a payload nested
+ * deeper than the JavaScript call stack throws `RangeError` there instead of
+ * being admitted or refused on its merits — and a Collection payload can be
+ * that deep while staying far inside the encoded envelope ceiling below.
+ *
+ * The admitted value is the caller's own already-validated data rather than a
+ * copy: this boundary hands the payload straight to sealing or to the request
+ * it was built for, and the strict walker reads own data descriptors only, so
+ * nothing observes the value between the check and its use.
+ */
+const PluginCollectionMemberValueV1Schema = z.unknown().transform(
+  (value, context): PluginJsonValueV2 => {
+    try {
+      assertStrictPluginJsonValue(value, 'Collection member value');
+      return value as PluginJsonValueV2;
+    } catch (error) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: error instanceof Error ? error.message : 'Invalid Collection member value',
+      });
+      return z.NEVER;
+    }
+  },
+);
+
 export const PluginCollectionPrivatePayloadV1Schema = z.record(
   PluginCollectionMemberNameV1Schema,
-  PluginJsonValueV2Schema,
+  PluginCollectionMemberValueV1Schema,
 );
 export type PluginCollectionPrivatePayloadV1 = z.infer<typeof PluginCollectionPrivatePayloadV1Schema>;
 

@@ -52,6 +52,13 @@ describe('SessionServerStartSpawnDraftV1Schema', () => {
     }).success).toBe(false);
   });
 
+  it('excludes raw launch environment from the browser-safe server-start draft', () => {
+    expect(SessionServerStartSpawnDraftV1Schema.safeParse({
+      ...draft,
+      environmentVariables: { TOKEN: 'must-not-enter-server-metadata' },
+    }).success).toBe(false);
+  });
+
   it('defines the canonical start handler over exact V2 input and result', () => {
     const handler: SessionServerStartHandlerV1 = async (input) => {
       SessionSpawnNewInputV2Schema.parse(input);

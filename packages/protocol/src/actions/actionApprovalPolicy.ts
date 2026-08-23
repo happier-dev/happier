@@ -1,7 +1,11 @@
 import { ACTION_IDS } from './actionIds.js';
-import type { ActionId } from './actionIds.js';
+import { ActionIdSchema, type ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './actionExecutor.js';
-import type { ActionsSettingsV1, ActionSettingsOverride } from './actionSettings.js';
+import type {
+  ActionSettingsActionId,
+  ActionsSettingsV1,
+  ActionSettingsOverride,
+} from './actionSettings.js';
 import { resolveActionApprovalFlow, type ActionApprovalFlow, type ActionApprovalResult } from './actionApprovalMetadata.js';
 import { getActionSpec, type ActionSpec, type ActionSurfaces } from './actionSpecs.js';
 
@@ -107,7 +111,7 @@ const NON_AGENT_ACTION_SURFACE_KEY_RECORD = {
   mcp: true,
   cli: true,
   rpc: true,
-  sdk: true,
+  api: true,
   plugin: true,
 } satisfies Record<NonAgentActionSurfaceKey, true>;
 
@@ -160,7 +164,7 @@ function requiresAgentApprovalFloor(
  *   unless a persisted override requires them.
  */
 export function isApprovalRequiredByActionsSettings(
-  actionId: ActionId,
+  actionId: ActionSettingsActionId,
   settings: ActionsSettingsV1,
   ctx?: Pick<ActionExecutorContext, 'surface'> | null,
 ): boolean {
@@ -170,7 +174,8 @@ export function isApprovalRequiredByActionsSettings(
   const required = Array.isArray(override?.approvalRequiredSurfaces) ? override.approvalRequiredSurfaces : [];
   if (typeof rawSurface === 'string' && required.some((requiredSurface) => requiredSurface === rawSurface)) return true;
 
-  return requiresAgentApprovalFloor(actionId, ctx);
+  const builtInActionId = ActionIdSchema.safeParse(actionId);
+  return builtInActionId.success && requiresAgentApprovalFloor(builtInActionId.data, ctx);
 }
 
 /**

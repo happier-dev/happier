@@ -104,17 +104,23 @@ function normalizeReleasedExternalSessionRequest(
   return normalized;
 }
 
-export const ExternalSessionsCandidatesListRequestSchema = z.preprocess(
+const ExternalSessionsCandidatesListCanonicalRequestSchema = z.object({
+  machineId: z.string().min(1),
+  agentId: ExternalSessionsAgentIdSchema,
+  source: ExternalSessionsSourceSchema,
+  cursor: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+  searchTerm: z.string().min(1).max(2000).optional(),
+  searchMode: ExternalSessionsSearchModeSchema.optional(),
+}).strict();
+
+export const ExternalSessionsCandidatesListRequestSchema = z.preprocess<
+  unknown,
+  typeof ExternalSessionsCandidatesListCanonicalRequestSchema,
+  z.input<typeof ExternalSessionsCandidatesListCanonicalRequestSchema>
+>(
   (value) => normalizeReleasedExternalSessionRequest(value),
-  z.object({
-    machineId: z.string().min(1),
-    agentId: ExternalSessionsAgentIdSchema,
-    source: ExternalSessionsSourceSchema,
-    cursor: z.string().min(1).optional(),
-    limit: z.number().int().min(1).max(500).optional(),
-    searchTerm: z.string().min(1).max(2000).optional(),
-    searchMode: ExternalSessionsSearchModeSchema.optional(),
-  }).strict(),
+  ExternalSessionsCandidatesListCanonicalRequestSchema,
 );
 export type ExternalSessionsCandidatesListRequest = z.infer<typeof ExternalSessionsCandidatesListRequestSchema>;
 
@@ -152,6 +158,16 @@ export const ExternalSessionsCandidatesListResponseSchema = z.union([
        * cover every matching owner record.
        */
       annotationsIncomplete: z.boolean().optional(),
+      /**
+       * The continuation cursor the request carried can no longer address a
+       * page: its generation was rebuilt, retired with the Agent runtime that
+       * built it, or its body no longer verifies. This is not a listing failure
+       * and not an empty last page — the only recovery is to drop that
+       * continuation and rebuild the listing from the root, so retrying the
+       * same cursor can never succeed. Rows already on screen stay visible but
+       * stop being authoritative until the rebuild publishes.
+       */
+      cursorReset: z.boolean().optional(),
       preparation: ExternalSessionsCandidatePreparationSchema.optional(),
       autoLinkPolicyScopeV1: ExternalSessionsAutoLinkPolicyScopeV1Schema.optional(),
     })
@@ -170,20 +186,26 @@ export const ExternalSessionsCandidatesListResponseSchema = z.union([
 ]);
 export type ExternalSessionsCandidatesListResponse = z.infer<typeof ExternalSessionsCandidatesListResponseSchema>;
 
-export const ExternalSessionLinkEnsureRequestSchema = z.preprocess(
+const ExternalSessionLinkEnsureCanonicalRequestSchema = z.object({
+  machineId: z.string().min(1),
+  agentId: ExternalSessionsAgentIdSchema,
+  remoteSessionId: z.string().min(1).max(2000),
+  titleHint: z.string().min(1).max(10_000).optional(),
+  directoryHint: z.string().min(1).max(10_000).optional(),
+  // Shared wire parsing stays forward-compatible; the Codex plugin validates this in resolveLinkIdentity.
+  codexBackendMode: z.string().optional(),
+  runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
+  linkData: PluginAgentExternalSessionLinkDataSchema.optional(),
+  source: ExternalSessionsSourceSchema,
+}).strict();
+
+export const ExternalSessionLinkEnsureRequestSchema = z.preprocess<
+  unknown,
+  typeof ExternalSessionLinkEnsureCanonicalRequestSchema,
+  z.input<typeof ExternalSessionLinkEnsureCanonicalRequestSchema>
+>(
   (value) => normalizeReleasedExternalSessionRequest(value, { runtimeDescriptor: true }),
-  z.object({
-    machineId: z.string().min(1),
-    agentId: ExternalSessionsAgentIdSchema,
-    remoteSessionId: z.string().min(1).max(2000),
-    titleHint: z.string().min(1).max(10_000).optional(),
-    directoryHint: z.string().min(1).max(10_000).optional(),
-    // Shared wire parsing stays forward-compatible; the Codex plugin validates this in resolveLinkIdentity.
-    codexBackendMode: z.string().optional(),
-    runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
-    linkData: PluginAgentExternalSessionLinkDataSchema.optional(),
-    source: ExternalSessionsSourceSchema,
-  }).strict(),
+  ExternalSessionLinkEnsureCanonicalRequestSchema,
 );
 export type ExternalSessionLinkEnsureRequest = z.infer<typeof ExternalSessionLinkEnsureRequestSchema>;
 
@@ -227,31 +249,43 @@ export const ExternalSessionCandidateV1Schema = z
   .passthrough();
 export type ExternalSessionCandidateV1 = z.infer<typeof ExternalSessionCandidateV1Schema>;
 
-export const ExternalSessionStatusGetRequestSchema = z.preprocess(
+const ExternalSessionStatusGetCanonicalRequestSchema = z.object({
+  machineId: z.string().min(1),
+  sessionId: z.string().min(1),
+  agentId: ExternalSessionsAgentIdSchema,
+  remoteSessionId: z.string().min(1).max(2000),
+  source: ExternalSessionsSourceSchema,
+  takeoverReadiness: z.literal('fresh').optional(),
+}).strict();
+
+export const ExternalSessionStatusGetRequestSchema = z.preprocess<
+  unknown,
+  typeof ExternalSessionStatusGetCanonicalRequestSchema,
+  z.input<typeof ExternalSessionStatusGetCanonicalRequestSchema>
+>(
   (value) => normalizeReleasedExternalSessionRequest(value),
-  z.object({
-    machineId: z.string().min(1),
-    sessionId: z.string().min(1),
-    agentId: ExternalSessionsAgentIdSchema,
-    remoteSessionId: z.string().min(1).max(2000),
-    source: ExternalSessionsSourceSchema,
-    takeoverReadiness: z.literal('fresh').optional(),
-  }).strict(),
+  ExternalSessionStatusGetCanonicalRequestSchema,
 );
 export type ExternalSessionStatusGetRequest = z.infer<typeof ExternalSessionStatusGetRequestSchema>;
 
-export const ExternalSessionAttachRequestSchema = z.preprocess(
+const ExternalSessionAttachCanonicalRequestSchema = z.object({
+  machineId: z.string().min(1),
+  sessionId: z.string().min(1),
+  agentId: ExternalSessionsAgentIdSchema,
+  remoteSessionId: z.string().min(1).max(2000),
+  source: ExternalSessionsSourceSchema,
+  leaseId: z.string().min(1).max(2000).optional(),
+  ttlMs: z.number().int().min(1_000).max(15 * 60_000).optional(),
+  acceptedTailCursor: ExternalSessionRefreshCursorV1Schema.optional(),
+}).strict();
+
+export const ExternalSessionAttachRequestSchema = z.preprocess<
+  unknown,
+  typeof ExternalSessionAttachCanonicalRequestSchema,
+  z.input<typeof ExternalSessionAttachCanonicalRequestSchema>
+>(
   (value) => normalizeReleasedExternalSessionRequest(value),
-  z.object({
-    machineId: z.string().min(1),
-    sessionId: z.string().min(1),
-    agentId: ExternalSessionsAgentIdSchema,
-    remoteSessionId: z.string().min(1).max(2000),
-    source: ExternalSessionsSourceSchema,
-    leaseId: z.string().min(1).max(2000).optional(),
-    ttlMs: z.number().int().min(1_000).max(15 * 60_000).optional(),
-    acceptedTailCursor: ExternalSessionRefreshCursorV1Schema.optional(),
-  }).strict(),
+  ExternalSessionAttachCanonicalRequestSchema,
 );
 export type ExternalSessionAttachRequest = z.infer<typeof ExternalSessionAttachRequestSchema>;
 
@@ -307,16 +341,22 @@ export const ExternalSessionDetachResponseSchema = z.union([
 ]);
 export type ExternalSessionDetachResponse = z.infer<typeof ExternalSessionDetachResponseSchema>;
 
-export const ExternalSessionFollowPolicySetRequestSchema = z.preprocess(
+const ExternalSessionFollowPolicySetCanonicalRequestSchema = z.object({
+  machineId: z.string().min(1),
+  sessionId: z.string().min(1),
+  agentId: ExternalSessionsAgentIdSchema,
+  remoteSessionId: z.string().min(1).max(2000),
+  source: ExternalSessionsSourceSchema,
+  enabled: z.boolean(),
+}).strict();
+
+export const ExternalSessionFollowPolicySetRequestSchema = z.preprocess<
+  unknown,
+  typeof ExternalSessionFollowPolicySetCanonicalRequestSchema,
+  z.input<typeof ExternalSessionFollowPolicySetCanonicalRequestSchema>
+>(
   (value) => normalizeReleasedExternalSessionRequest(value),
-  z.object({
-    machineId: z.string().min(1),
-    sessionId: z.string().min(1),
-    agentId: ExternalSessionsAgentIdSchema,
-    remoteSessionId: z.string().min(1).max(2000),
-    source: ExternalSessionsSourceSchema,
-    enabled: z.boolean(),
-  }).strict(),
+  ExternalSessionFollowPolicySetCanonicalRequestSchema,
 );
 export type ExternalSessionFollowPolicySetRequest = z.infer<typeof ExternalSessionFollowPolicySetRequestSchema>;
 
@@ -476,18 +516,24 @@ export const ExternalSessionTranscriptRawMessageV1Schema =
   .passthrough();
 export type ExternalSessionTranscriptRawMessageV1 = z.infer<typeof ExternalSessionTranscriptRawMessageV1Schema>;
 
-export const ExternalSessionTranscriptPageRequestSchema = z.preprocess(
+const ExternalSessionTranscriptPageCanonicalRequestSchema = z.object({
+  machineId: z.string().min(1),
+  agentId: ExternalSessionsAgentIdSchema,
+  remoteSessionId: z.string().min(1).max(2000),
+  source: ExternalSessionsSourceSchema,
+  direction: z.enum(['older', 'newer']),
+  cursor: z.string().min(1).optional(),
+  maxBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
+  maxItems: z.number().int().min(1).max(5000).optional(),
+}).strict();
+
+export const ExternalSessionTranscriptPageRequestSchema = z.preprocess<
+  unknown,
+  typeof ExternalSessionTranscriptPageCanonicalRequestSchema,
+  z.input<typeof ExternalSessionTranscriptPageCanonicalRequestSchema>
+>(
   (value) => normalizeReleasedExternalSessionRequest(value),
-  z.object({
-    machineId: z.string().min(1),
-    agentId: ExternalSessionsAgentIdSchema,
-    remoteSessionId: z.string().min(1).max(2000),
-    source: ExternalSessionsSourceSchema,
-    direction: z.enum(['older', 'newer']),
-    cursor: z.string().min(1).optional(),
-    maxBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
-    maxItems: z.number().int().min(1).max(5000).optional(),
-  }).strict(),
+  ExternalSessionTranscriptPageCanonicalRequestSchema,
 );
 export type ExternalSessionTranscriptPageRequest = z.infer<typeof ExternalSessionTranscriptPageRequestSchema>;
 
@@ -512,17 +558,23 @@ export const ExternalSessionTranscriptPageResponseSchema = z.union([
 ]);
 export type ExternalSessionTranscriptPageResponse = z.infer<typeof ExternalSessionTranscriptPageResponseSchema>;
 
-export const ExternalSessionTranscriptReadAfterRequestSchema = z.preprocess(
+const ExternalSessionTranscriptReadAfterCanonicalRequestSchema = z.object({
+  machineId: z.string().min(1),
+  agentId: ExternalSessionsAgentIdSchema,
+  remoteSessionId: z.string().min(1).max(2000),
+  source: ExternalSessionsSourceSchema,
+  cursor: z.string().min(1),
+  maxBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
+  maxItems: z.number().int().min(1).max(5000).optional(),
+}).strict();
+
+export const ExternalSessionTranscriptReadAfterRequestSchema = z.preprocess<
+  unknown,
+  typeof ExternalSessionTranscriptReadAfterCanonicalRequestSchema,
+  z.input<typeof ExternalSessionTranscriptReadAfterCanonicalRequestSchema>
+>(
   (value) => normalizeReleasedExternalSessionRequest(value),
-  z.object({
-    machineId: z.string().min(1),
-    agentId: ExternalSessionsAgentIdSchema,
-    remoteSessionId: z.string().min(1).max(2000),
-    source: ExternalSessionsSourceSchema,
-    cursor: z.string().min(1),
-    maxBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
-    maxItems: z.number().int().min(1).max(5000).optional(),
-  }).strict(),
+  ExternalSessionTranscriptReadAfterCanonicalRequestSchema,
 );
 export type ExternalSessionTranscriptReadAfterRequest = z.infer<typeof ExternalSessionTranscriptReadAfterRequestSchema>;
 

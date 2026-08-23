@@ -26,8 +26,13 @@ import {
 import {
   PluginUiDestinationInstancePolicyV1Schema,
   PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1,
+  type PluginUiDestinationInstancePolicyV1,
 } from './surfaceRegistry.js';
-import { PluginUiPageHeaderActionV1Schema } from './sessionHeaderActions.js';
+import {
+  PluginUiPageHeaderActionV1Schema,
+  type PluginUiPageHeaderActionV1,
+  type PluginUiPageHeaderActionV1Input,
+} from './sessionHeaderActions.js';
 import {
   PluginSurfaceAppTargetV1Schema,
   PluginSurfaceBrowserTargetV1Schema,
@@ -136,7 +141,7 @@ const DeclarativeActionNodeSchema = z.object({
   }
 });
 const DeclarativeItemNodeSchema = z.object({ kind: z.literal('item'), title: PluginLocalizedStringV2Schema, subtitle: PluginLocalizedStringV2Schema.optional(), detail: PluginLocalizedStringV2Schema.optional(), icon: PluginUiIconTokenV1Schema.optional(), tone: PluginDeclarativeToneV2Schema.optional(), action: asProtocolZod(PluginContributionReferenceV2Schema).optional(), input: PluginJsonValueV2Schema.optional() }).strict();
-const DeclarativeStateNodeSchema = z.object({ kind: z.literal('state'), state: PluginDeclarativeStateV2Schema, title: PluginLocalizedStringV2Schema, description: PluginLocalizedStringV2Schema.optional(), icon: PluginUiIconTokenV1Schema.optional() }).strict();
+export const PluginDeclarativeStateNodeV2Schema = z.object({ kind: z.literal('state'), state: PluginDeclarativeStateV2Schema, title: PluginLocalizedStringV2Schema, description: PluginLocalizedStringV2Schema.optional(), icon: PluginUiIconTokenV1Schema.optional() }).strict();
 /**
  * A symbolic target-local reference. The mounted target is ambient and the
  * normalizer later supplies the admitted contributor generation; authored
@@ -158,11 +163,11 @@ export const PluginDeclarativeTargetedSurfaceNodeV2Schema = z.object({
   surface: PluginDeclarativeTargetedSurfaceReferenceV1Schema,
   input: PluginUiLaunchInputV1Schema,
   instanceKey: PluginUiInstanceKeyV1Schema,
-  fallback: DeclarativeStateNodeSchema.optional(),
+  fallback: PluginDeclarativeStateNodeV2Schema.optional(),
 }).strict();
-const DeclarativeRowNodeSchema = z.discriminatedUnion('kind', [DeclarativeItemNodeSchema, DeclarativeStateNodeSchema]);
+const DeclarativeRowNodeSchema = z.discriminatedUnion('kind', [DeclarativeItemNodeSchema, PluginDeclarativeStateNodeV2Schema]);
 const DeclarativeSectionNodeSchema = z.object({ kind: z.literal('section'), title: PluginLocalizedStringV2Schema.optional(), footer: PluginLocalizedStringV2Schema.optional(), children: z.array(DeclarativeRowNodeSchema) }).strict();
-const DeclarativeListNodeSchema = z.object({ kind: z.literal('list'), label: PluginLocalizedStringV2Schema.optional(), children: z.array(z.discriminatedUnion('kind', [DeclarativeSectionNodeSchema, DeclarativeItemNodeSchema, DeclarativeStateNodeSchema])) }).strict();
+const DeclarativeListNodeSchema = z.object({ kind: z.literal('list'), label: PluginLocalizedStringV2Schema.optional(), children: z.array(z.discriminatedUnion('kind', [DeclarativeSectionNodeSchema, DeclarativeItemNodeSchema, PluginDeclarativeStateNodeV2Schema])) }).strict();
 const DeclarativeActionPanelNodeSchema = z.object({ kind: z.literal('actionPanel'), title: PluginLocalizedStringV2Schema.optional(), children: z.array(DeclarativeActionNodeSchema) }).strict();
 const DeclarativeMetadataNodeSchema = z.object({ kind: z.literal('metadata'), title: PluginLocalizedStringV2Schema.optional(), entries: z.array(PluginDeclarativeMetadataEntryV2Schema).min(1).max(MAX_PLUGIN_DECLARATIVE_METADATA_ENTRIES_V2) }).strict();
 const PluginDeclarativeCollectionListParametersV1Schema = z.record(
@@ -220,7 +225,7 @@ const DeclarativeCollectionListNodeSchema = z.object({
 
 export type PluginDeclarativeActionNodeV2 = z.infer<typeof DeclarativeActionNodeSchema>;
 export type PluginDeclarativeItemNodeV2 = z.infer<typeof DeclarativeItemNodeSchema>;
-export type PluginDeclarativeStateNodeV2 = z.infer<typeof DeclarativeStateNodeSchema>;
+export type PluginDeclarativeStateNodeV2 = z.infer<typeof PluginDeclarativeStateNodeV2Schema>;
 export type PluginDeclarativeTargetedSurfaceNodeV2 = z.infer<typeof PluginDeclarativeTargetedSurfaceNodeV2Schema>;
 export type PluginDeclarativeRowNodeV2 = z.infer<typeof DeclarativeRowNodeSchema>;
 export type PluginDeclarativeSectionNodeV2 = z.infer<typeof DeclarativeSectionNodeSchema>;
@@ -269,7 +274,7 @@ export const PluginDeclarativeNodeV2Schema: z.ZodType<PluginDeclarativeNodeV2> =
   DeclarativeListNodeSchema,
   DeclarativeSectionNodeSchema,
   DeclarativeItemNodeSchema,
-  DeclarativeStateNodeSchema,
+  PluginDeclarativeStateNodeV2Schema,
   PluginDeclarativeTargetedSurfaceNodeV2Schema,
   DeclarativeMetadataNodeSchema,
   DeclarativeActionPanelNodeSchema,
@@ -361,10 +366,21 @@ const PluginUiViewCommonShapeV2 = {
   groupHint: PluginUiDestinationGroupHintV1Schema.optional(),
   rankHint: PluginUiDestinationRankHintV1Schema,
   instancePolicy: PluginUiDestinationInstancePolicyV1Schema.default('singleton'),
-  headerActions: z.array(PluginUiPageHeaderActionV1Schema)
+};
+
+/**
+ * Page header actions are an `appPage` container capability, not a property of
+ * every destination. Every other container declares the empty tuple so the one
+ * grammar stays representable: TypeScript, the generated authoring JSON Schema
+ * and this canonical parser then admit exactly the same declarations. A
+ * `superRefine` here would be invisible to both other layers.
+ */
+const PluginUiViewHeaderActionsSchemaV2 = Object.freeze({
+  appPage: z.array(PluginUiPageHeaderActionV1Schema)
     .max(MAX_PLUGIN_UI_PAGE_HEADER_ACTIONS_V1)
     .default([]),
-};
+  unsupported: z.array(z.never()).max(0).default([]),
+});
 
 /**
  * JSON Schema cannot represent a `superRefine` slot lookup. Build the input
@@ -379,9 +395,12 @@ function createPluginUiViewDestinationBindingSchemaV2() {
       // The generated authoring schema derives its policy from the same
       // registry row as parser/projection/wire validation. A singleton-only
       // host therefore cannot publish a declaration that no launcher can key.
-      instancePolicy: slot.instancePolicies.includes('multiple')
+      instancePolicy: (slot.instancePolicies as readonly PluginUiDestinationInstancePolicyV1[]).includes('multiple')
         ? PluginUiDestinationInstancePolicyV1Schema.default('singleton')
         : z.literal('singleton').default('singleton'),
+      headerActions: slot.container === 'appPage'
+        ? PluginUiViewHeaderActionsSchemaV2.appPage
+        : PluginUiViewHeaderActionsSchemaV2.unsupported,
       container: z.literal(slot.container),
       target: PluginUiViewTargetSchemaByKindV1[slot.targetKind],
     }).strict());
@@ -403,20 +422,17 @@ const PluginUiViewV2SchemaRaw = createPluginUiViewDestinationBindingSchemaV2().s
       path: issue.path,
     }));
   }
-  if (view.headerActions.length > 0 && view.container !== 'appPage') {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['headerActions'],
-      message: 'Page header actions are supported only by appPage destinations.',
-    });
-  }
 });
 
 /**
- * `Array#map` necessarily widens the dynamic Zod union above. Keep its full
- * schema-derived shape, then intersect it with the correlated rows from the
- * same Registry tuple so public declaration input/output cannot form an
- * unadmitted container/target cross-product. The mapped registry relation is
+ * `Array#map` necessarily widens the dynamic Zod union above: the mapped
+ * element type collapses every slot's container, target, instance policy and
+ * header-action capability into one object with union-typed fields. Keep its
+ * full schema-derived shape, then intersect it with the correlated rows from
+ * the same Registry tuple so public declaration input/output cannot form an
+ * unadmitted cross-product. Every correlated field below is derived from the
+ * same Registry row the parser and the generated authoring schema read, so the
+ * three layers admit one grammar. The mapped registry relation is
  * deliberately inline: this exported author declaration must not name a
  * Protocol-private helper from SDK manifest and testkit signatures.
  */
@@ -427,6 +443,10 @@ export type PluginUiViewDestinationBindingInputV2 = {
   > as `${TSlot['container']}:${TSlot['targetKind']}`]: Readonly<{
     container: TSlot['container'];
     target: z.input<typeof PluginUiViewTargetSchemaByKindV1[TSlot['targetKind']]>;
+    instancePolicy?: TSlot['instancePolicies'][number];
+    headerActions?: TSlot['container'] extends 'appPage'
+      ? PluginUiPageHeaderActionV1Input[]
+      : [];
   }>;
 }[keyof {
   [TSlot in Exclude<
@@ -443,6 +463,10 @@ export type PluginUiViewV2 = z.output<typeof PluginUiViewV2SchemaRaw> & {
   > as `${TSlot['container']}:${TSlot['targetKind']}`]: Readonly<{
     container: TSlot['container'];
     target: z.output<typeof PluginUiViewTargetSchemaByKindV1[TSlot['targetKind']]>;
+    instancePolicy: TSlot['instancePolicies'][number];
+    headerActions: TSlot['container'] extends 'appPage'
+      ? PluginUiPageHeaderActionV1[]
+      : [];
   }>;
 }[keyof {
   [TSlot in Exclude<

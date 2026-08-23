@@ -10,6 +10,10 @@ import { computeCanonicalDomainSeparatedHexDigest } from '../../crypto/canonical
 import { z } from 'zod';
 import { isPluginError } from '../errors.js';
 import {
+  PluginContributionIdentityV1Schema,
+  type PluginContributionIdentityV1,
+} from '../contributionIdentity.js';
+import {
   compilePluginJsonSchema,
   isValidPluginJsonSchemaValue,
 } from './jsonSchemaValidation.js';
@@ -29,6 +33,35 @@ type StrictJsonValue =
   | string
   | readonly StrictJsonValue[]
   | { readonly [key: string]: StrictJsonValue };
+
+/** Canonical durable/settings key for one contributed Action. */
+export type QualifiedPluginActionId = `${string}/actions/${string}`;
+
+/**
+ * Formats the only supported qualified contributed-Action identity. Settings,
+ * discovery, and invocation share this owner instead of reconstructing the
+ * slash grammar at each boundary.
+ */
+export function formatQualifiedPluginActionId(
+  identity: PluginContributionIdentityV1,
+): QualifiedPluginActionId {
+  const parsed = PluginContributionIdentityV1Schema.parse(identity);
+  return `${parsed.pluginId}/actions/${parsed.localId}`;
+}
+
+/** Reads only the canonical qualified contributed-Action spelling. */
+export function parseQualifiedPluginActionId(value: unknown): PluginContributionIdentityV1 | null {
+  if (typeof value !== 'string') return null;
+  const separator = '/actions/';
+  const separatorIndex = value.indexOf(separator);
+  if (separatorIndex <= 0) return null;
+  const parsed = PluginContributionIdentityV1Schema.safeParse({
+    pluginId: value.slice(0, separatorIndex),
+    localId: value.slice(separatorIndex + separator.length),
+  });
+  if (!parsed.success || formatQualifiedPluginActionId(parsed.data) !== value) return null;
+  return parsed.data;
+}
 
 export type PluginActionInvocationResult = Readonly<
   | { status: 'executed'; value: StrictJsonValue | null }
@@ -62,6 +95,17 @@ export type PluginActionInvocationResult = Readonly<
 
 /** Canonical terminal code when cancellation races an already-started Action. */
 export const PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE = 'plugin_action_outcome_unknown';
+
+/**
+ * Canonical terminal code for a present user who DECLINED the confirmation.
+ *
+ * A decline is a decision, not an absence: it must stay distinguishable from
+ * "this Action is not available" all the way to the caller, otherwise an
+ * autonomous caller (Voice) reads a deliberate "no" as a transient gap and
+ * asks again. Every realm that reports a rejected current intent uses this
+ * one spelling so the projection at each caller boundary can recognize it.
+ */
+export const PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE = 'plugin_action_current_intent_rejected';
 
 /**
  * Projects only an unavailable cancellation/retirement outcome. A proved
@@ -411,6 +455,12 @@ export type PluginActionPresentUserGatePolicy = Readonly<{
   scopes: readonly string[];
   surfaces: readonly string[];
   confirmation?: PluginActionConfirmationV2;
+  /**
+   * Host-stamped Action-settings policy. This is deliberately distinct from
+   * plugin-declared confirmation: a plugin cannot manufacture user consent by
+   * supplying it as Action input or manifest presentation.
+   */
+  approvalRequiredByActionSettings?: true;
   availability?: PluginActionPolicyInput['availability'];
   authorization: PluginActionPresentUserAuthorizationFacts;
   /** Exact realm-owned facts not otherwise represented in the policy evaluator. */
@@ -476,7 +526,11 @@ function requiresPresentUserIntent(
   // execution realm must bind a non-safe Action to one live decision.
   return invocationSurface !== 'plugin'
     && invocationSurface !== 'background'
-    && (policy.dangerLevel !== 'safe' || policy.confirmation !== undefined);
+    && (
+      policy.dangerLevel !== 'safe'
+      || policy.confirmation !== undefined
+      || policy.approvalRequiredByActionSettings === true
+    );
 }
 
 function evaluatePresentUserPolicy(
@@ -528,6 +582,9 @@ export function fingerprintPluginActionCurrentIntent(params: Readonly<{
       ...(params.policy.confirmation === undefined
         ? {}
         : { confirmation: params.policy.confirmation }),
+      ...(params.policy.approvalRequiredByActionSettings === true
+        ? { approvalRequiredByActionSettings: true }
+        : {}),
       ...(params.policy.availability === undefined
         ? {}
         : { availability: params.policy.availability }),
@@ -669,7 +726,10 @@ export function createPluginActionInvocation(params: Readonly<{
     handler(input: PluginActionInvocationHandlerInput): unknown | Promise<unknown>;
   }>): Promise<PluginActionInvocationResult>;
 }> {
-  const qualifiedId = `${params.pluginId}/actions/${params.localId}`;
+  const qualifiedId = formatQualifiedPluginActionId({
+    pluginId: params.pluginId,
+    localId: params.localId,
+  });
   const inputValidator = compileSchema(params.inputSchema);
   const resultValidator = compileSchema(params.resultSchema);
 

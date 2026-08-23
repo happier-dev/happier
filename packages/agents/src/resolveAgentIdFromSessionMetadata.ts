@@ -1,5 +1,5 @@
 import {
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   readRuntimeDescriptorV1FromMetadata,
   type ExternalSessionAgentId,
 } from '@happier-dev/protocol';
@@ -55,7 +55,7 @@ export function resolveDeclaredAgentIdFromSessionMetadata(
   }
 
   const linkedAgentId = normalizeResolvedAgentId(
-    readLinkedExternalSessionV1FromMetadata(record)?.agentId,
+    readNonAuthoritativeLinkedExternalSessionV1FromMetadata(record)?.agentId,
   );
   if (linkedAgentId) {
     return linkedAgentId;

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  readSessionModelSelectionIntentSourceV1,
+  resolveSessionModelSelectionIntentV1,
+} from '@happier-dev/protocol/providers/model-selection';
+
+import {
   acpConfigOptionIntentBinding,
   readAcpConfigOptionIntentFromMetadata,
   readAcpSessionModeIntentFromMetadata,
@@ -31,10 +36,58 @@ describe('intent session-state bindings', () => {
       modelSelectionIntentV1: canonical,
       modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'legacy-native' },
     })).toEqual(canonical);
+    const nativeCanonical = {
+      v: 1 as const,
+      updatedAt: 10,
+      selection: {
+        agentTargetKey: 'agent:codex',
+        providerConnectionId: null,
+        modelId: 'gpt-5-codex',
+      },
+    };
     expect(readModelIntentFromMetadata({
-      modelSelectionIntentV1: canonical,
+      modelSelectionIntentV1: nativeCanonical,
       modelOverrideV1: { v: 1, updatedAt: 11, modelId: null },
     })).toEqual({ v: 1, updatedAt: 11, modelId: null });
+  });
+
+  it('applies the Protocol precedence owner so Agent-side reads cannot disagree with it', () => {
+    const providerBound = {
+      v: 1 as const,
+      updatedAt: 10,
+      selection: {
+        agentTargetKey: 'agent:codex',
+        providerConnectionId: 'pc_work',
+        modelId: 'vendor/model',
+      },
+    };
+    // A Provider-bound canonical selection outranks ANY legacy override, however
+    // recent: `modelOverrideV1` cannot express a connection, so preferring it
+    // would silently re-point the Session at a different model authority.
+    const newerLegacy = { modelSelectionIntentV1: providerBound, modelOverrideV1: { v: 1, updatedAt: 999, modelId: 'gpt-5' } };
+    expect(readModelIntentFromMetadata(newerLegacy)).toEqual(providerBound);
+    expect(resolveSessionModelSelectionIntentV1({
+      canonical: newerLegacy.modelSelectionIntentV1,
+      legacy: newerLegacy.modelOverrideV1,
+      agentTargetKey: 'agent:codex',
+    })).toEqual(providerBound);
+
+    // A canonical carrier that is PRESENT but malformed is corrupted state. It
+    // must never be reinterpreted as the legacy override.
+    const malformed = {
+      modelSelectionIntentV1: { v: 1, updatedAt: 10, selection: { agentTargetKey: 'agent:codex', providerConnectionId: 'pc_work' } },
+      modelOverrideV1: { v: 1, updatedAt: 5, modelId: 'gpt-5' },
+    };
+    expect(readSessionModelSelectionIntentSourceV1({
+      canonical: malformed.modelSelectionIntentV1,
+      legacy: malformed.modelOverrideV1,
+    })).toEqual({ status: 'invalid' });
+    expect(readModelIntentFromMetadata(malformed)).toBeNull();
+    expect(resolveSessionModelSelectionIntentV1({
+      canonical: malformed.modelSelectionIntentV1,
+      legacy: malformed.modelOverrideV1,
+      agentTargetKey: 'agent:codex',
+    })).toBeNull();
   });
 
   it('removes stale legacy model state for provider-bound intent while projecting native and clear intent', () => {

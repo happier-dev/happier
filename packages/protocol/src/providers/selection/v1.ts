@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
+import {
+  ModelOverrideV1Schema,
+  type ModelOverrideV1,
+} from '../../sessions/metadata/metadataOverridesV1.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../ids.js';
 
 const NativeModelRefSchema = z.object({
@@ -193,58 +197,100 @@ export function resolveSessionModelSelectionInputRefV1(input: Readonly<{
   });
 }
 
-const LegacyModelOverrideV1Schema = z.object({
-  v: z.literal(1),
-  updatedAt: z.number().finite().nonnegative(),
-  modelId: z.string().nullable(),
-}).passthrough();
-
 type NormalizedLegacyModelSelectionIntentV1 = Readonly<{
   updatedAt: number;
   modelId: string | null;
 }>;
 
-function normalizeLegacyModelSelectionIntentV1(value: unknown): NormalizedLegacyModelSelectionIntentV1 | null {
-  const legacy = LegacyModelOverrideV1Schema.safeParse(value);
-  if (!legacy.success) return null;
-
+/**
+ * A deployed `modelOverrideV1` record is usable only when it names a clear or a
+ * syntactically valid model id. An unreadable one is skipped rather than
+ * competing for precedence, exactly as an absent carrier would be.
+ */
+function readUsableLegacyModelOverrideV1(value: unknown): ModelOverrideV1 | null {
+  const legacy = ModelOverrideV1Schema.safeParse(value);
+  if (!legacy.success || legacy.data.updatedAt < 0) return null;
   const modelId = legacy.data.modelId?.trim() ?? null;
-  if (modelId === null || modelId === 'default') {
-    return { updatedAt: legacy.data.updatedAt, modelId: null };
-  }
+  if (modelId === null || modelId === 'default') return legacy.data;
   if (!modelId) return null;
+  return ProviderModelIdSchema.safeParse(modelId).success ? legacy.data : null;
+}
 
-  const parsedModelId = ProviderModelIdSchema.safeParse(modelId);
-  return parsedModelId.success
-    ? { updatedAt: legacy.data.updatedAt, modelId: parsedModelId.data }
+function normalizeUsableLegacyModelOverrideV1(
+  legacy: ModelOverrideV1,
+): NormalizedLegacyModelSelectionIntentV1 {
+  const modelId = legacy.modelId?.trim() ?? null;
+  return {
+    updatedAt: legacy.updatedAt,
+    modelId: modelId === null || modelId === 'default' ? null : modelId,
+  };
+}
+
+/**
+ * The single canonical-vs-legacy precedence decision for persisted model intent.
+ *
+ * Every reader — Protocol, Agent session state, and the hosts above them — must
+ * consume this owner rather than re-deciding, because two implementations can
+ * assign different meaning to one stored payload.
+ *
+ * - `absent`: neither carrier holds a usable intent.
+ * - `invalid`: the canonical carrier is PRESENT but does not parse. That is
+ *   corrupted state; it is never reinterpreted as the legacy override, because
+ *   doing so hides the corruption and silently applies a different model.
+ * - `canonical`: a Provider-bound canonical selection always wins (the legacy
+ *   carrier cannot express a connection at all, so a newer one would silently
+ *   re-point the Session at a different model authority); otherwise the newer
+ *   carrier wins, with ties going to canonical.
+ * - `legacy`: the deployed providerless override is the newest usable intent.
+ */
+export type SessionModelSelectionIntentSourceV1 =
+  | Readonly<{ status: 'absent' }>
+  | Readonly<{ status: 'invalid' }>
+  | Readonly<{ status: 'canonical'; intent: SessionModelSelectionIntentV1 }>
+  | Readonly<{ status: 'legacy'; intent: ModelOverrideV1 }>;
+
+export function readSessionModelSelectionIntentSourceV1(input: Readonly<{
+  canonical: unknown;
+  legacy: unknown;
+}>): SessionModelSelectionIntentSourceV1 {
+  const canonicalPresent = input.canonical !== undefined && input.canonical !== null;
+  const canonicalParse = canonicalPresent
+    ? SessionModelSelectionIntentV1Schema.safeParse(input.canonical)
     : null;
+  if (canonicalParse && !canonicalParse.success) return { status: 'invalid' };
+  const canonical = canonicalParse?.success ? canonicalParse.data : null;
+  const legacy = readUsableLegacyModelOverrideV1(input.legacy);
+
+  if (canonical?.selection && canonical.selection.providerConnectionId !== null) {
+    return { status: 'canonical', intent: canonical };
+  }
+  if (canonical && (!legacy || canonical.updatedAt >= legacy.updatedAt)) {
+    return { status: 'canonical', intent: canonical };
+  }
+  return legacy ? { status: 'legacy', intent: legacy } : { status: 'absent' };
 }
 
 type EffectiveModelSelectionIntentSourceV1 =
   | Readonly<{ kind: 'canonical'; intent: SessionModelSelectionIntentV1 }>
   | Readonly<{ kind: 'legacy'; intent: NormalizedLegacyModelSelectionIntentV1 }>;
 
-function selectEffectiveModelSelectionIntentSourceV1(
-  canonical: SessionModelSelectionIntentV1 | null,
-  legacy: NormalizedLegacyModelSelectionIntentV1 | null,
-): EffectiveModelSelectionIntentSourceV1 | null {
-  if (canonical?.selection && canonical.selection.providerConnectionId !== null) {
-    return { kind: 'canonical', intent: canonical };
+function selectEffectiveModelSelectionIntentSourceV1(input: Readonly<{
+  canonical: unknown;
+  legacy: unknown;
+}>): EffectiveModelSelectionIntentSourceV1 | null {
+  const source = readSessionModelSelectionIntentSourceV1(input);
+  if (source.status === 'canonical') return { kind: 'canonical', intent: source.intent };
+  if (source.status === 'legacy') {
+    return { kind: 'legacy', intent: normalizeUsableLegacyModelOverrideV1(source.intent) };
   }
-  if (canonical && (!legacy || canonical.updatedAt >= legacy.updatedAt)) {
-    return { kind: 'canonical', intent: canonical };
-  }
-  return legacy ? { kind: 'legacy', intent: legacy } : null;
+  return null;
 }
 
 export function sessionModelSelectionIntentRequiresAgentTargetV1(input: Readonly<{
   canonical: unknown;
   legacy: unknown;
 }>): boolean {
-  const canonical = SessionModelSelectionIntentV1Schema.safeParse(input.canonical);
-  const normalizedCanonical = canonical.success ? canonical.data : null;
-  const legacy = normalizeLegacyModelSelectionIntentV1(input.legacy);
-  const source = selectEffectiveModelSelectionIntentSourceV1(normalizedCanonical, legacy);
+  const source = selectEffectiveModelSelectionIntentSourceV1(input);
   if (!source) return false;
   return source.kind === 'canonical'
     ? source.intent.selection !== null
@@ -253,15 +299,30 @@ export function sessionModelSelectionIntentRequiresAgentTargetV1(input: Readonly
 
 export type SessionModelSelectionResolutionErrorCode =
   | 'model_selection_agent_target_unknown'
-  | 'model_selection_agent_target_mismatch';
+  | 'model_selection_agent_target_mismatch'
+  /**
+   * The Session's own Provider state — the applied runner binding for an active
+   * Session, the persisted canonical intent for an inactive one — is present but
+   * unreadable, so the Session cannot say which Provider connection an omitted
+   * connection means. Absent state means native; corrupted state means unknown,
+   * and the two must never collapse into the same answer.
+   */
+  | 'model_selection_session_provider_state_unreadable';
+
+const SESSION_MODEL_SELECTION_RESOLUTION_MESSAGES: Readonly<
+  Record<SessionModelSelectionResolutionErrorCode, string>
+> = {
+  model_selection_agent_target_unknown: 'Model selection agent target is unavailable',
+  model_selection_agent_target_mismatch: 'Model selection agent target mismatch',
+  model_selection_session_provider_state_unreadable:
+    'Session Provider state is unreadable',
+};
 
 export class SessionModelSelectionResolutionError extends Error {
   readonly code: SessionModelSelectionResolutionErrorCode;
 
   constructor(code: SessionModelSelectionResolutionErrorCode) {
-    super(code === 'model_selection_agent_target_unknown'
-      ? 'Model selection agent target is unavailable'
-      : 'Model selection agent target mismatch');
+    super(SESSION_MODEL_SELECTION_RESOLUTION_MESSAGES[code]);
     this.name = 'SessionModelSelectionResolutionError';
     this.code = code;
   }
@@ -272,10 +333,7 @@ export function resolveSessionModelSelectionIntentV1(input: Readonly<{
   legacy: unknown;
   agentTargetKey: string;
 }>): SessionModelSelectionIntentV1 | null {
-  const canonical = SessionModelSelectionIntentV1Schema.safeParse(input.canonical);
-  const normalizedCanonical = canonical.success ? canonical.data : null;
-  const legacy = normalizeLegacyModelSelectionIntentV1(input.legacy);
-  const source = selectEffectiveModelSelectionIntentSourceV1(normalizedCanonical, legacy);
+  const source = selectEffectiveModelSelectionIntentSourceV1(input);
   if (!source) return null;
   if (source.kind === 'canonical' && source.intent.selection === null) return source.intent;
   if (source.kind === 'legacy' && source.intent.modelId === null) {

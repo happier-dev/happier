@@ -799,7 +799,7 @@ describe('plugin-generic session-hook management contracts', () => {
       const spec = getActionSpec(actionId);
       expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
       expect(spec.sideEffectClass).toBe(sideEffectClass);
-      expect(spec.surfaces).toMatchObject({ rpc: true, sdk: false, plugin: true });
+      expect(spec.surfaces).toMatchObject({ rpc: true, api: true, plugin: true });
       expect(resolveMachineRpcGovernance(rpcMethod)).toEqual({
         rpcClassification: 'action_spec_bound',
         actionSpecId: actionId,

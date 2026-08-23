@@ -47,6 +47,11 @@ describe('Agent session VB4 open inputs', () => {
       providerBinding: {
         connectionId: 'pc_gateway',
         model: { id: 'gpt-5', name: 'GPT-5' },
+        upstream: {
+          protocol: 'openai-responses',
+          normalizedUrl: 'https://provider.example/v1',
+          credential: 'apiKey',
+        },
         materialization: { v: 1, kind: 'spawnEnv' },
       },
     } as const;

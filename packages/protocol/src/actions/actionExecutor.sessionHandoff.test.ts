@@ -166,10 +166,28 @@ describe('createActionExecutor (session.handoff)', () => {
   });
 
   it('delegates session.handoff.prepare_target_result.get to the prepare-target-result dependency', async () => {
-    const sessionHandoffPrepareTargetResultGet = vi.fn(async () => ({
+    const prepareTargetResult = {
       handoffId: 'handoff_1',
-      status: 'prepared',
-    }));
+      status: {
+        handoffId: 'handoff_1',
+        status: 'ready_for_cutover',
+        phase: 'staging_target',
+        recoveryActions: [],
+      },
+      remoteSessionId: 'remote_session_1',
+      directSource: {
+        kind: 'ohMyPiAgentDir',
+        agentDir: '/tmp/ohmypi',
+      },
+      resume: {
+        directory: '/repo',
+        agent: 'pi',
+        resume: 'resume-token',
+        transcriptStorage: 'persisted',
+        approvedNewDirectoryCreation: true,
+      },
+    } as const;
+    const sessionHandoffPrepareTargetResultGet = vi.fn(async () => prepareTargetResult);
     const deps = createDeps({
       sessionHandoffPrepareTargetResultGet,
     });
@@ -181,7 +199,7 @@ describe('createActionExecutor (session.handoff)', () => {
       { surface: 'rpc' },
     );
 
-    expect(result).toEqual({ ok: true, result: { handoffId: 'handoff_1', status: 'prepared' } });
+    expect(result).toEqual({ ok: true, result: prepareTargetResult });
     expect(sessionHandoffPrepareTargetResultGet).toHaveBeenCalledWith({ handoffId: 'handoff_1' });
   });
 

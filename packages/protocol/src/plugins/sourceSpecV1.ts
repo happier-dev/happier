@@ -9,6 +9,24 @@ export type PluginSourceTrustPolicyV1 = z.infer<typeof PluginSourceTrustPolicyV1
 export const PluginSourceInstallPolicyV1Schema = z.enum(['link', 'copy', 'managed_install']);
 export type PluginSourceInstallPolicyV1 = z.infer<typeof PluginSourceInstallPolicyV1Schema>;
 
+/**
+ * Provenance of an installed plugin record, derived from what the record IS.
+ *
+ * `marketplace`, `package` and `archive` records were materialized from a
+ * published artifact: their declared id and engine range are third-party
+ * claims about bytes this machine did not author, so impersonation and
+ * host-version rules apply to them. `bundled` ships inside the host, and
+ * `path` points at a working tree on this machine — a dev loop, where those
+ * two rules only block the maintainer from developing their own plugin.
+ *
+ * This scopes registry-lifecycle rules only. Containment, trust, entrypoint
+ * and schema validation are provenance-independent and stay enforced for
+ * every kind.
+ */
+export function isRegistryCustodiedPluginSourceKind(kind: PluginSourceKindV1): boolean {
+  return kind === 'marketplace' || kind === 'package' || kind === 'archive';
+}
+
 export const PluginSourceSpecV1Schema = z.object({
   kind: PluginSourceKindV1Schema,
   locator: z.string().trim().min(1),

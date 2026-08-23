@@ -130,7 +130,7 @@ const PluginExecutionOutcomeSchema = z.discriminatedUnion('status', [
 ]);
 
 const PluginActionExecutionInvocationSchema = z.object({
-  surface: z.enum(['ui', 'voice', 'agent', 'mcp', 'cli', 'rpc', 'sdk', 'plugin']),
+  surface: z.enum(['ui', 'voice', 'agent', 'mcp', 'cli', 'rpc', 'api', 'plugin']),
   sessionId: z.string().trim().min(1).optional(),
   caller: PluginExecutionCallerSchema,
 }).strict();

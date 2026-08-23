@@ -7,9 +7,9 @@ import { SPAWN_SESSION_ERROR_CODES } from '../sessions/spawnSession.js';
 function createDeps(): ActionExecutorDeps {
   return {
     executionRunStart: vi.fn(async () => ({})),
-    executionRunList: vi.fn(async () => ({})),
+    executionRunList: vi.fn(async () => ({ runs: [] })),
     executionRunGet: vi.fn(async () => ({})),
-    executionRunSend: vi.fn(async () => ({})),
+    executionRunSend: vi.fn(async () => ({ ok: true })),
     executionRunStop: vi.fn(async () => ({})),
     executionRunAction: vi.fn(async () => ({})),
     executionRunWait: vi.fn(async () => ({})),
@@ -33,7 +33,7 @@ function createDeps(): ActionExecutorDeps {
 
     sessionSendMessage: vi.fn(async () => ({})),
     sessionPermissionRespond: vi.fn(async () => ({})),
-    sessionUserActionAnswer: vi.fn(async () => ({})),
+    sessionUserActionAnswer: vi.fn(async () => ({ ok: true })),
     sessionModeSet: vi.fn(async () => ({})),
     sessionModesList: vi.fn(async () => ({ items: [] })),
 
@@ -784,6 +784,34 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.sessionTargetPrimarySet).not.toHaveBeenCalled();
   });
 
+  it('rejects session targeting when no client target owner is supplied', async () => {
+    const deps: ActionExecutorDeps = {
+      ...createDeps(),
+      sessionTargetPrimarySet: undefined,
+      sessionTargetTrackedSet: undefined,
+    };
+    const executor = createActionExecutor(deps);
+
+    await expect(executor.execute(
+      'session.target.primary.set',
+      { sessionId: 's2' },
+      { surface: 'ui' },
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'unsupported_action',
+      error: 'unsupported_action:session.target.primary.set',
+    });
+    await expect(executor.execute(
+      'session.target.tracked.set',
+      { sessionIds: ['s2'] },
+      { surface: 'ui' },
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'unsupported_action',
+      error: 'unsupported_action:session.target.tracked.set',
+    });
+  });
+
   it('routes session.user_action.answer to deps.sessionUserActionAnswer', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
@@ -881,7 +909,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
         mcp: false,
         cli: false,
         rpc: false,
-        sdk: false,
+        api: false,
         plugin: false,
       },
       inputHints: {

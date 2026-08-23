@@ -41,5 +41,27 @@ export const TriageSourceDescriptorV1Schema = defineProtocolObject({
         minItems: 1,
         maxItems: MAX_TRIAGE_KINDS_V1,
     }),
+    /**
+     * The local id of the source's OWN `settingsPages[]` entry for putting
+     * itself into PRs & Issues.
+     *
+     * It is a bare local id rather than a qualified reference because the only
+     * page a source may nominate is one of its own: the target qualifies it
+     * with the contributor identity it already holds for the admitted
+     * contribution, so a source cannot name another plugin's page and the
+     * target never has to trust a plugin id a descriptor supplied.
+     *
+     * It exists because a target with nothing configured has nowhere to send
+     * the reader. The descriptor named no page, so the empty screen could only
+     * describe the remedy in prose while every source already shipped the page
+     * it was describing.
+     *
+     * **Optional, and it has to stay optional.** A source that ships no such
+     * page is a source with no offer to make, not one the target refuses to
+     * admit — and a required field would have made every descriptor already in
+     * the wild inadmissible. A target that reads it renders the offer only
+     * when it is present.
+     */
+    settingsPageId: TriageIdentifierV1ProtocolSchema.optional(),
 }, { policy: 'additive-open/drop' });
 export type TriageSourceDescriptorV1 = ReturnType<typeof TriageSourceDescriptorV1Schema.parse>;

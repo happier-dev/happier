@@ -93,6 +93,14 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
         selection: { v: 1, agentId: 'claude' },
         input: { text: 'keep going', localId: '   ', meta: {} },
       },
+      /** The transition service alone owns the divider localId namespace. */
+      reservedDividerInputLocalId: {
+        v: 1,
+        sessionId: 'sess_01',
+        expectedCurrentAgentId: 'codex',
+        selection: { v: 1, agentId: 'claude' },
+        input: { text: 'keep going', localId: 'agent-transition:local_01', meta: {} },
+      },
       /** The outer request is closed: no native path, resume id, or snapshot. */
       unknownOuterKey: {
         v: 1,
@@ -162,29 +170,17 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
       },
 
       /** Session IS the target Agent. */
-      partialDividerMissing: {
+      partialDividerUnavailable: {
         type: 'partially_applied',
         localId: 'local_01',
         applied: 'current_view_committed',
-        code: 'divider_missing',
+        code: 'divider_unavailable',
       },
       partialTargetStartFailed: {
         type: 'partially_applied',
         localId: 'local_01',
         applied: 'current_view_committed',
         code: 'target_start_failed',
-      },
-      /**
-       * A row EXISTS at the reserved localId carrying a different transition
-       * payload. Distinct from `divider_missing`: the boundary is present but
-       * untrustworthy, so retry re-derives the same conflict and the bounded
-       * context pass must not stop at it.
-       */
-      partialDividerConflict: {
-        type: 'partially_applied',
-        localId: 'local_01',
-        applied: 'current_view_committed',
-        code: 'divider_conflict',
       },
       partialInputAdmissionFailed: {
         type: 'partially_applied',
@@ -244,7 +240,7 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
       },
       /** A partial outcome always identifies the input it was carrying. */
       partialWithoutLocalId: {
-        type: 'partially_applied', applied: 'current_view_committed', code: 'divider_missing',
+        type: 'partially_applied', applied: 'current_view_committed', code: 'divider_unavailable',
       },
       /** `outcome_unknown` carries no code at all — it cannot name a cause. */
       unknownCarryingRejectedCode: {

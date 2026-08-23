@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import type { ActionDefinitionSlashV1 } from '../../actions/actionDefinitionV1.js';
 import { ActionSafetySchema } from '../../actions/safety.js';
+import { ActionOperationDeclarationV1Schema } from '../../actions/operations/v1.js';
 import {
   createActionInputHintsSchemasWithStaticOptionsOnly,
   createActionInputHintsSchemasWithoutOptionsSource,
@@ -489,6 +490,7 @@ export const PluginActionContributionV2Schema = z.object({
   scopes: z.array(PluginActionScopeV2Schema).min(1),
   surfaces: z.array(PluginActionSurfaceV2Schema).min(1),
   execution: PluginActionDeclaredExecutionV2Schema,
+  operation: ActionOperationDeclarationV1Schema.optional(),
   placementBindings: PluginActionPlacementBindingsV2Schema.optional(),
   slash: PluginActionSlashV2Schema.optional(),
   inputSchema: PluginJsonSchemaV2Schema.optional(),
@@ -510,6 +512,13 @@ export const PluginActionContributionV2Schema = z.object({
   confirmation: PluginActionConfirmationV2Schema.optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
 }).strict().superRefine((value, ctx) => {
+  if (value.operation && value.execution.target !== 'daemon') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['operation'],
+      message: 'Tracked operations require daemon Action execution.',
+    });
+  }
   if (pluginActionRequiresPlacement(value.surfaces) && !value.placementBindings) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

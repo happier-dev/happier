@@ -8,6 +8,7 @@ import {
     defineProtocolNumber,
     defineProtocolObject,
     defineProtocolUnion,
+    defineProtocolUniqueArray,
     defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
@@ -18,6 +19,7 @@ import type {
 } from '@happier-dev/plugin-sdk/manifest';
 
 import {
+    CONVERSATION_BINDING_INPUT_MODES_V1,
     CONVERSATION_TRANSPORT_KINDS_V1,
     MAX_CONVERSATION_PROVIDER_CONNECTION_KEY_UTF8_BYTES,
 } from '../bounds.js';
@@ -64,6 +66,34 @@ const protocolBoolean = defineProtocolUnion([
     defineProtocolLiteral(true),
     defineProtocolLiteral(false),
 ]);
+
+/**
+ * The input modes a provider can actually deliver on a SHARED endpoint,
+ * authenticated against the integration's own account.
+ *
+ * A provider that omits this asserts no delivery restriction. A provider that
+ * knows one must declare it: an integration whose platform withholds ordinary
+ * shared-conversation messages (a Telegram bot with group privacy enabled, for
+ * example) can never satisfy `allAllowedMessages`, and offering it would
+ * persist a binding policy the platform will silently never honour.
+ *
+ * Direct endpoints are deliberately outside this capability: an integration
+ * addressed in a one-to-one conversation receives every message by definition.
+ *
+ * It lives on the shared connection base because it is one connection-level
+ * capability observed by two roles — `setup` states it when the connection is
+ * created or transferred, and `connectionTest` restates the CURRENT value so a
+ * later platform-side narrowing cannot leave a saved binding apparently ready
+ * while its messages are impossible to observe.
+ */
+export const ConversationSharedEndpointInputModesV1ProtocolSchema = defineProtocolUniqueArray(
+    defineProtocolUnion([
+        defineProtocolLiteral(CONVERSATION_BINDING_INPUT_MODES_V1[0]),
+        defineProtocolLiteral(CONVERSATION_BINDING_INPUT_MODES_V1[1]),
+        defineProtocolLiteral(CONVERSATION_BINDING_INPUT_MODES_V1[2]),
+    ]),
+    { minItems: 1, maxItems: CONVERSATION_BINDING_INPUT_MODES_V1.length },
+);
 
 /** @internal Relative-only fields shared by strict connection-bearing schemas. */
 export const ConversationProviderConnectionInputV1Fields = {

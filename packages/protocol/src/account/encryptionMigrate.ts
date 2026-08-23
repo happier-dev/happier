@@ -55,6 +55,9 @@ import {
 import {
   MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
 } from '../automations/automationEventV1.js';
+import {
+  AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS,
+} from '../automations/automationTemplateEnvelope.js';
 import { AccountSettingsStoredContentEnvelopeSchema } from './settings/index.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
@@ -276,7 +279,7 @@ const AccountEncryptionMigratePredecessorConnectedServicesDirectiveSchema =
  * ceiling would make a validly persisted envelope unmigratable.
  */
 export const ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS = {
-  templateCiphertext: z.string().min(1).max(220_000),
+  templateCiphertext: z.string().min(1).max(AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS),
   triggerDefinitionEnvelope: z.string()
     .min(1)
     .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES),
@@ -1168,7 +1171,8 @@ const AccountEncryptionMigrateAutomationRunOriginSchema = z.enum([
 
 const AccountEncryptionMigrateAutomationDefinitionContentSchema = z
   .object({
-    templateCiphertext: z.string().min(1).max(220_000),
+    templateCiphertext:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.templateCiphertext,
     triggerDefinitionEnvelope: z.string()
       .min(1)
       .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES)

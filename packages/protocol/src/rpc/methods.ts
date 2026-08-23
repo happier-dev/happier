@@ -317,6 +317,7 @@ export const RPC_METHODS = {
   TRANSCRIPT_PAGE: 'transcript.page',
   TRANSCRIPT_READ_AFTER: 'transcript.readAfter',
   TRANSCRIPT_FOLLOW: 'transcript.follow',
+  TRANSCRIPT_UNFOLLOW: 'transcript.unfollow',
   TRANSCRIPT_IMPORT: 'transcript.import',
   TRANSCRIPT_SEARCH: 'transcript.search',
   SCM_BACKEND_DESCRIBE: 'scm.backend.describe',

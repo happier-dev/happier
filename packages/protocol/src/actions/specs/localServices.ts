@@ -1,16 +1,32 @@
 import { z } from 'zod';
 
 import type { RuntimeActionIdV1 } from '../actionIds.js';
-import { LocalServiceActionRequestV1Schema, LocalServiceActionResultV1Schema } from '../../local/services/actions/v1.js';
+import {
+  LocalServiceActionRequestV1Schema,
+  LocalServiceActionResultV1Schema,
+  type LocalServiceActionKindV1,
+} from '../../local/services/actions/v1.js';
 import { LocalServiceInventorySnapshotV1Schema } from '../../local/services/inventory/v1.js';
 import {
+  DaemonLocalServiceLauncherHistoryClearResponseV1Schema,
+  DaemonLocalServiceLauncherOpenPreviewResponseV1Schema,
+  DaemonLocalServiceLauncherRegisterPreviewResponseV1Schema,
   DaemonLocalServiceLauncherStartRequestV1Schema,
   DaemonLocalServiceLauncherStartResponseV1Schema,
   LocalServiceLauncherSnapshotV1Schema,
 } from '../../local/services/launcher/v1.js';
-import { LocalServicePreviewSnapshotV1Schema } from '../../local/services/preview/v1.js';
-import { LocalServicePublicExposureV1Schema } from '../../local/services/public/v1.js';
-import { refineKindSchema, type RuntimeActionSpecFamily } from './common.js';
+import {
+  DaemonLocalServicePreviewOpenOrCreateResponseV1Schema,
+  DaemonLocalServicePreviewRevokeResponseV1Schema,
+  LocalServicePreviewSnapshotV1Schema,
+} from '../../local/services/preview/v1.js';
+import {
+  DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema,
+  DaemonLocalServicePublicPreviewCreateResponseV1Schema,
+  DaemonLocalServicePublicPreviewRevokeResponseV1Schema,
+  LocalServicePublicPreviewSnapshotV1Schema,
+} from '../../local/services/public/v1.js';
+import type { RuntimeActionSpecFamily } from './common.js';
 
 const RuntimeLocalServiceMachineInputSchema = z
   .object({
@@ -34,6 +50,40 @@ const RuntimeLocalServicePublicPreviewActionInputSchema = RuntimeLocalServicePre
   mode: z.enum(['authenticated', 'secret_link', 'public']).optional(),
   ttlMs: z.number().int().positive().optional(),
 }).passthrough();
+
+type LocalServicesRuntimeActionId = Extract<RuntimeActionIdV1, `localServices.${string}`>;
+
+const LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION = Object.freeze({
+  'localServices.actions.copyUrl': 'copy_url',
+  'localServices.actions.openPreview': 'open_preview',
+  'localServices.actions.forget': 'forget',
+  'localServices.actions.stopManaged': 'stop_managed',
+  'localServices.actions.restartManaged': 'restart_managed',
+  'localServices.actions.terminateDetected': 'terminate_detected',
+} as const satisfies Readonly<Partial<Record<RuntimeActionIdV1, LocalServiceActionKindV1>>>);
+
+type LocalServiceActionRuntimeActionId = keyof typeof LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION;
+
+export function resolveLocalServiceActionKindForRuntimeActionId(
+  actionId: RuntimeActionIdV1,
+): LocalServiceActionKindV1 | null {
+  return LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION[
+    actionId as LocalServiceActionRuntimeActionId
+  ] ?? null;
+}
+
+function localServiceActionRequestSchema(
+  actionId: LocalServiceActionRuntimeActionId,
+) {
+  const expectedAction = LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION[actionId];
+  return LocalServiceActionRequestV1Schema.refine(
+    (request) => request.action === expectedAction,
+    {
+      message: `Local service action must be ${expectedAction}.`,
+      path: ['action'],
+    },
+  );
+}
 
 export const LOCAL_SERVICES_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
   'localServices.inventory.list': 'List local services',
@@ -81,45 +131,61 @@ export const LOCAL_SERVICES_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record
   'localServices.actions.terminateDetected': 'Terminate a detected (non-managed) local service.',
 });
 
-const LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
-  'localServices.actions.copyUrl': 'copy_url',
-  'localServices.actions.openPreview': 'open_preview',
-  'localServices.actions.forget': 'forget',
-  'localServices.actions.stopManaged': 'stop_managed',
-  'localServices.actions.restartManaged': 'restart_managed',
-  'localServices.actions.terminateDetected': 'terminate_detected',
-});
+/**
+ * Canonical per-id schema projection for every backed local-services Action.
+ * The daemon routes already own the differing leaf result contracts; this map
+ * retains those contracts instead of widening them with `z.unknown()` when
+ * the Action becomes publicly discoverable.
+ */
+export const LOCAL_SERVICES_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
+  'localServices.inventory.list': RuntimeLocalServiceMachineInputSchema,
+  'localServices.inventory.refresh': RuntimeLocalServiceMachineInputSchema,
+  'localServices.launcher.snapshot': RuntimeLocalServiceMachineInputSchema,
+  'localServices.launcher.start': DaemonLocalServiceLauncherStartRequestV1Schema,
+  'localServices.launcher.openPreview': RuntimeLocalServiceLauncherActionInputSchema,
+  'localServices.launcher.registerPreview': RuntimeLocalServiceLauncherActionInputSchema,
+  'localServices.launcher.history.clear': RuntimeLocalServiceLauncherActionInputSchema,
+  'localServices.preview.openOrCreate': RuntimeLocalServicePreviewActionInputSchema,
+  'localServices.preview.status': RuntimeLocalServicePreviewActionInputSchema,
+  'localServices.preview.revoke': RuntimeLocalServicePreviewActionInputSchema,
+  'localServices.publicPreview.create': RuntimeLocalServicePublicPreviewActionInputSchema,
+  'localServices.publicPreview.status': RuntimeLocalServicePublicPreviewActionInputSchema,
+  'localServices.publicPreview.revoke': RuntimeLocalServicePublicPreviewActionInputSchema,
+  'localServices.publicPreview.copyUrl': RuntimeLocalServicePublicPreviewActionInputSchema,
+  'localServices.actions.copyUrl': localServiceActionRequestSchema('localServices.actions.copyUrl'),
+  'localServices.actions.openPreview': localServiceActionRequestSchema('localServices.actions.openPreview'),
+  'localServices.actions.forget': localServiceActionRequestSchema('localServices.actions.forget'),
+  'localServices.actions.stopManaged': localServiceActionRequestSchema('localServices.actions.stopManaged'),
+  'localServices.actions.restartManaged': localServiceActionRequestSchema('localServices.actions.restartManaged'),
+  'localServices.actions.terminateDetected': localServiceActionRequestSchema('localServices.actions.terminateDetected'),
+} as const satisfies Readonly<Record<LocalServicesRuntimeActionId, z.ZodTypeAny>>);
 
-function refineLocalServiceActionSchema(actionId: RuntimeActionIdV1): z.ZodTypeAny {
-  const expected = LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION[actionId];
-  if (!expected) return RuntimeLocalServiceMachineInputSchema;
-  return refineKindSchema(LocalServiceActionRequestV1Schema, 'action', expected, 'Local service action');
-}
-
-function localServicesRuntimeActionInputSchema(actionId: RuntimeActionIdV1): z.ZodTypeAny | null {
-  if (actionId.startsWith('localServices.inventory.')) return RuntimeLocalServiceMachineInputSchema;
-  if (actionId === 'localServices.launcher.snapshot') return RuntimeLocalServiceMachineInputSchema;
-  if (actionId === 'localServices.launcher.start') return DaemonLocalServiceLauncherStartRequestV1Schema;
-  if (actionId.startsWith('localServices.launcher.')) return RuntimeLocalServiceLauncherActionInputSchema;
-  if (actionId.startsWith('localServices.preview.')) return RuntimeLocalServicePreviewActionInputSchema;
-  if (actionId.startsWith('localServices.publicPreview.')) return RuntimeLocalServicePublicPreviewActionInputSchema;
-  if (actionId.startsWith('localServices.actions.')) return refineLocalServiceActionSchema(actionId);
-  return null;
-}
-
-function localServicesRuntimeActionOutputSchema(actionId: RuntimeActionIdV1): z.ZodTypeAny | null {
-  if (actionId.startsWith('localServices.inventory.')) return LocalServiceInventorySnapshotV1Schema;
-  if (actionId === 'localServices.launcher.start') return DaemonLocalServiceLauncherStartResponseV1Schema;
-  if (actionId.startsWith('localServices.launcher.')) return LocalServiceLauncherSnapshotV1Schema.or(z.unknown());
-  if (actionId.startsWith('localServices.preview.')) return LocalServicePreviewSnapshotV1Schema.or(z.unknown());
-  if (actionId.startsWith('localServices.publicPreview.')) return LocalServicePublicExposureV1Schema.or(z.array(LocalServicePublicExposureV1Schema)).or(z.unknown());
-  if (actionId.startsWith('localServices.actions.')) return LocalServiceActionResultV1Schema;
-  return null;
-}
+export const LOCAL_SERVICES_RUNTIME_ACTION_OUTPUT_SCHEMAS = Object.freeze({
+  'localServices.inventory.list': LocalServiceInventorySnapshotV1Schema,
+  'localServices.inventory.refresh': LocalServiceInventorySnapshotV1Schema,
+  'localServices.launcher.snapshot': LocalServiceLauncherSnapshotV1Schema,
+  'localServices.launcher.start': DaemonLocalServiceLauncherStartResponseV1Schema,
+  'localServices.launcher.openPreview': DaemonLocalServiceLauncherOpenPreviewResponseV1Schema,
+  'localServices.launcher.registerPreview': DaemonLocalServiceLauncherRegisterPreviewResponseV1Schema,
+  'localServices.launcher.history.clear': DaemonLocalServiceLauncherHistoryClearResponseV1Schema,
+  'localServices.preview.openOrCreate': DaemonLocalServicePreviewOpenOrCreateResponseV1Schema,
+  'localServices.preview.status': LocalServicePreviewSnapshotV1Schema,
+  'localServices.preview.revoke': DaemonLocalServicePreviewRevokeResponseV1Schema,
+  'localServices.publicPreview.create': DaemonLocalServicePublicPreviewCreateResponseV1Schema,
+  'localServices.publicPreview.status': LocalServicePublicPreviewSnapshotV1Schema,
+  'localServices.publicPreview.revoke': DaemonLocalServicePublicPreviewRevokeResponseV1Schema,
+  'localServices.publicPreview.copyUrl': DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema,
+  'localServices.actions.copyUrl': LocalServiceActionResultV1Schema,
+  'localServices.actions.openPreview': LocalServiceActionResultV1Schema,
+  'localServices.actions.forget': LocalServiceActionResultV1Schema,
+  'localServices.actions.stopManaged': LocalServiceActionResultV1Schema,
+  'localServices.actions.restartManaged': LocalServiceActionResultV1Schema,
+  'localServices.actions.terminateDetected': LocalServiceActionResultV1Schema,
+} as const satisfies Readonly<Record<LocalServicesRuntimeActionId, z.ZodTypeAny>>);
 
 export const LOCAL_SERVICES_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
   titles: LOCAL_SERVICES_RUNTIME_ACTION_TITLES,
   descriptions: LOCAL_SERVICES_RUNTIME_ACTION_DESCRIPTIONS,
-  inputSchemaForAction: localServicesRuntimeActionInputSchema,
-  outputSchemaForAction: localServicesRuntimeActionOutputSchema,
+  inputSchemas: LOCAL_SERVICES_RUNTIME_ACTION_INPUT_SCHEMAS,
+  outputSchemas: LOCAL_SERVICES_RUNTIME_ACTION_OUTPUT_SCHEMAS,
 } satisfies RuntimeActionSpecFamily);

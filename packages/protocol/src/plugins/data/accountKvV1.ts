@@ -7,6 +7,7 @@ import {
   sealAccountScopedBlobCiphertext,
   type AccountScopedCryptoMaterial,
 } from '../../crypto/accountScopedCipher.js';
+import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import {
   normalizeStrictJsonValue,
   type JsonValue,
@@ -274,3 +275,308 @@ export type PluginAccountStorageMutationResponseV1 = z.infer<
 export const PluginAccountStorageUnavailableV1Schema = z.object({
   error: z.literal('plugin_account_storage_unavailable'),
 }).strict();
+
+/**
+ * The logical-key layer over one opaque Account KV row.
+ *
+ * Every realm that speaks Account KV — the daemon runtime and the direct
+ * Plugin UI client — applies the *same* key normalization, per-key version
+ * advance, conditional-write rule, tombstone rule, and list paging. Keeping
+ * that algebra here is what makes a second KV implementation unnecessary: a
+ * realm owns only its transport, Account currentness, and envelope sealing.
+ */
+export type PluginAccountKvRowErrorCodeV1 =
+  | 'plugin_account_kv_invalid'
+  | 'plugin_account_kv_conflict'
+  | 'plugin_account_kv_cursor_stale';
+
+export class PluginAccountKvRowError extends Error {
+  readonly code: PluginAccountKvRowErrorCodeV1;
+
+  constructor(code: PluginAccountKvRowErrorCodeV1, message: string) {
+    super(message);
+    this.name = 'PluginAccountKvRowError';
+    this.code = code;
+  }
+}
+
+/** The author-visible projection of one retained key. */
+export type PluginAccountKvProjectedEntryV1<TValue extends JsonValue = JsonValue> =
+  | Readonly<{ version: number; value: TValue }>
+  | Readonly<{ version: number; deleted: true }>;
+
+export type PluginAccountKvProjectedListItemV1 =
+  Readonly<{ key: string }> & PluginAccountKvProjectedEntryV1;
+
+const PLUGIN_ACCOUNT_KV_DEFAULT_LIST_LIMIT_V1 = 100;
+const PLUGIN_ACCOUNT_KV_MAXIMUM_LIST_LIMIT_V1 = 1_000;
+const PLUGIN_ACCOUNT_KV_RESERVED_KEY_PREFIX_V1 = '@happier/';
+
+function hasOwnKey(value: Readonly<Record<string, unknown>>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function normalizePluginAccountKvValueV1(value: JsonValue): JsonValue {
+  try {
+    return normalizePluginAccountStorageJsonValueV1(value);
+  } catch {
+    throw new PluginAccountKvRowError(
+      'plugin_account_kv_invalid',
+      'Account KV value is not within the published JSON bounds',
+    );
+  }
+}
+
+export function normalizePluginAccountKvLogicalKeyV1(key: string): string {
+  const parsed = PluginAccountStorageLogicalKeyV1Schema.safeParse(key);
+  if (!parsed.success) {
+    throw new PluginAccountKvRowError(
+      'plugin_account_kv_invalid',
+      'Account KV key is invalid or reserved',
+    );
+  }
+  return parsed.data;
+}
+
+export function createEmptyPluginAccountKvRowV1(): PluginAccountStorageRowV1 {
+  return PluginAccountStorageRowV1Schema.parse({ v: 1, values: Object.create(null) });
+}
+
+export function clonePluginAccountKvRowV1(
+  row: PluginAccountStorageRowV1,
+): PluginAccountStorageRowV1 {
+  return PluginAccountStorageRowV1Schema.parse(row);
+}
+
+export function readPluginAccountKvEntryV1(
+  row: PluginAccountStorageRowV1,
+  key: string,
+): PluginAccountStorageEntryV1 | undefined {
+  return hasOwnKey(row.values, key) ? row.values[key] : undefined;
+}
+
+export function projectPluginAccountKvEntryV1<TValue extends JsonValue = JsonValue>(
+  entry: PluginAccountStorageEntryV1,
+): PluginAccountKvProjectedEntryV1<TValue> {
+  if ('deleted' in entry) {
+    return Object.freeze({ version: entry.version, deleted: true as const });
+  }
+  return Object.freeze({
+    version: entry.version,
+    value: normalizePluginAccountKvValueV1(entry.value) as TValue,
+  });
+}
+
+export function projectPluginAccountKvListItemV1(
+  key: string,
+  entry: PluginAccountStorageEntryV1,
+): PluginAccountKvProjectedListItemV1 {
+  const projected = projectPluginAccountKvEntryV1(entry);
+  return 'deleted' in projected
+    ? Object.freeze({ key, version: projected.version, deleted: true as const })
+    : Object.freeze({ key, version: projected.version, value: projected.value });
+}
+
+/**
+ * The one conditional-write rule. A tombstone stays visible with its version so
+ * a stale `absent` writer cannot resurrect a key it never observed being deleted.
+ */
+export function assertPluginAccountKvExpectedVersionV1(
+  row: PluginAccountStorageRowV1,
+  key: string,
+  expectedVersion: number | 'absent',
+): PluginAccountStorageEntryV1 | undefined {
+  if (
+    expectedVersion !== 'absent'
+    && (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0)
+  ) {
+    throw new PluginAccountKvRowError(
+      'plugin_account_kv_invalid',
+      'Account KV expected version is invalid',
+    );
+  }
+  const current = readPluginAccountKvEntryV1(row, key);
+  if (
+    (expectedVersion === 'absent' && current !== undefined)
+    || (expectedVersion !== 'absent' && (current === undefined || current.version !== expectedVersion))
+  ) {
+    throw new PluginAccountKvRowError(
+      'plugin_account_kv_conflict',
+      'Account KV key changed before the conditional write completed',
+    );
+  }
+  return current;
+}
+
+function nextPluginAccountKvVersionV1(
+  previous: PluginAccountStorageEntryV1 | undefined,
+): number {
+  if (!previous) return 0;
+  if (previous.version >= Number.MAX_SAFE_INTEGER) {
+    throw new PluginAccountKvRowError(
+      'plugin_account_kv_invalid',
+      'Account KV key version cannot advance further',
+    );
+  }
+  return previous.version + 1;
+}
+
+export function setPluginAccountKvEntryV1(
+  row: PluginAccountStorageRowV1,
+  key: string,
+  value: JsonValue,
+  previous: PluginAccountStorageEntryV1 | undefined,
+): number {
+  const version = nextPluginAccountKvVersionV1(previous);
+  Object.defineProperty(row.values, key, {
+    value: Object.freeze({ version, value: normalizePluginAccountKvValueV1(value) }),
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+  return version;
+}
+
+export function deletePluginAccountKvEntryV1(
+  row: PluginAccountStorageRowV1,
+  key: string,
+  previous: PluginAccountStorageEntryV1,
+): number {
+  if ('deleted' in previous) {
+    throw new PluginAccountKvRowError(
+      'plugin_account_kv_conflict',
+      'Account KV key is already deleted',
+    );
+  }
+  const version = nextPluginAccountKvVersionV1(previous);
+  Object.defineProperty(row.values, key, {
+    value: Object.freeze({ version, deleted: true as const }),
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+  return version;
+}
+
+/**
+ * The cursor is base64url over the shared Protocol encoder rather than a Node
+ * `Buffer`, because the same paging runs in the daemon, the browser and Hermes.
+ */
+function encodePluginAccountKvListCursorV1(input: Readonly<{
+  revision: number;
+  prefix: string | null;
+  lastKey: string;
+}>): string {
+  return encodeBase64(
+    new TextEncoder().encode(JSON.stringify({
+      v: 1,
+      revision: input.revision,
+      prefix: input.prefix,
+      lastKey: input.lastKey,
+    })),
+    'base64url',
+  );
+}
+
+function decodePluginAccountKvListCursorV1(cursor: string): Readonly<{
+  revision: number;
+  prefix: string | null;
+  lastKey: string;
+}> {
+  try {
+    const parsed = JSON.parse(
+      new TextDecoder().decode(decodeBase64(cursor, 'base64url')),
+    ) as unknown;
+    if (
+      !parsed
+      || typeof parsed !== 'object'
+      || Array.isArray(parsed)
+      || (parsed as Readonly<Record<string, unknown>>).v !== 1
+      || !Number.isSafeInteger((parsed as Readonly<Record<string, unknown>>).revision)
+      || (
+        (parsed as Readonly<Record<string, unknown>>).prefix !== null
+        && typeof (parsed as Readonly<Record<string, unknown>>).prefix !== 'string'
+      )
+      || typeof (parsed as Readonly<Record<string, unknown>>).lastKey !== 'string'
+    ) {
+      throw new Error('invalid cursor');
+    }
+    return Object.freeze({
+      revision: (parsed as Readonly<Record<string, unknown>>).revision as number,
+      prefix: (parsed as Readonly<Record<string, unknown>>).prefix as string | null,
+      lastKey: (parsed as Readonly<Record<string, unknown>>).lastKey as string,
+    });
+  } catch {
+    throw new PluginAccountKvRowError(
+      'plugin_account_kv_invalid',
+      'Account KV list cursor is invalid',
+    );
+  }
+}
+
+export function listPluginAccountKvEntriesV1(input: Readonly<{
+  row: PluginAccountStorageRowV1;
+  /** `-1` for an absent row, so a cursor cannot survive the row's first write. */
+  revision: number;
+  prefix?: string;
+  limit?: number;
+  cursor?: string;
+}>): Readonly<{
+  items: readonly PluginAccountKvProjectedListItemV1[];
+  nextCursor?: string;
+}> {
+  if (input.prefix?.startsWith(PLUGIN_ACCOUNT_KV_RESERVED_KEY_PREFIX_V1)) {
+    throw new PluginAccountKvRowError(
+      'plugin_account_kv_invalid',
+      'Account KV key prefix is reserved',
+    );
+  }
+  const limit = input.limit ?? PLUGIN_ACCOUNT_KV_DEFAULT_LIST_LIMIT_V1;
+  if (
+    !Number.isSafeInteger(limit)
+    || limit < 1
+    || limit > PLUGIN_ACCOUNT_KV_MAXIMUM_LIST_LIMIT_V1
+  ) {
+    throw new PluginAccountKvRowError(
+      'plugin_account_kv_invalid',
+      'Account KV list limit is invalid',
+    );
+  }
+  const prefix = input.prefix ?? null;
+  const cursor = input.cursor === undefined
+    ? null
+    : decodePluginAccountKvListCursorV1(input.cursor);
+  if (cursor && cursor.revision !== input.revision) {
+    throw new PluginAccountKvRowError(
+      'plugin_account_kv_cursor_stale',
+      'Account KV changed before the next page was read',
+    );
+  }
+  if (cursor && cursor.prefix !== prefix) {
+    throw new PluginAccountKvRowError(
+      'plugin_account_kv_invalid',
+      'Account KV list cursor does not match the requested prefix',
+    );
+  }
+  const keys = Object.keys(input.row.values)
+    .filter((key) => prefix === null || key.startsWith(prefix))
+    .filter((key) => !cursor || key > cursor.lastKey)
+    .sort();
+  const selected = keys.slice(0, limit);
+  const lastKey = selected[selected.length - 1];
+  return Object.freeze({
+    items: Object.freeze(selected.map((key) => {
+      const entry = readPluginAccountKvEntryV1(input.row, key);
+      if (!entry) {
+        throw new PluginAccountKvRowError(
+          'plugin_account_kv_invalid',
+          'Account KV list row changed during read',
+        );
+      }
+      return projectPluginAccountKvListItemV1(key, entry);
+    })),
+    ...(lastKey && keys.length > selected.length
+      ? { nextCursor: encodePluginAccountKvListCursorV1({ revision: input.revision, prefix, lastKey }) }
+      : {}),
+  });
+}

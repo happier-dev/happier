@@ -354,13 +354,18 @@ export type ExternalSessionCanonicalOwnerDisagreementV1 = z.infer<
   typeof ExternalSessionCanonicalOwnerDisagreementV1Schema
 >;
 
+/**
+ * Only owner evidence a writer actually captures. `runtimeControlRevision` and
+ * `publicationRevision` were declared but never written, so every reader saw
+ * `undefined` and one of them substituted the linked-Session revision as
+ * runtime-control proof. Reintroduce a field here only together with the
+ * writer that captures the real owner revision.
+ */
 export const ExternalSessionCanonicalOwnerEvidenceV1Schema = z.object({
   linkedSessionRevision: OperationRevisionSchema,
   sourceSnapshotEvidenceRef: OperationSourceCursorEvidenceSchema.optional(),
-  runtimeControlRevision: OperationRevisionSchema.optional(),
   transcriptAuthorityRevision: OperationRevisionSchema.optional(),
   pendingAdmissionRevision: OperationRevisionSchema.optional(),
-  publicationRevision: OperationRevisionSchema.optional(),
   disagreement: ExternalSessionCanonicalOwnerDisagreementV1Schema.optional(),
 }).strict();
 export type ExternalSessionCanonicalOwnerEvidenceV1 = z.infer<
@@ -1219,12 +1224,46 @@ const TERMINAL_OPERATION_STATUSES: readonly ExternalSessionOperationStatusV1[] =
   'discarded',
 ];
 
+function resolveCancelledDiscardSubjectV1(
+  previous: ExternalSessionOperationRecordV1,
+): 'local_private_capture' | 'initial_server_partial' | null {
+  const isDiscardingPrivateMaterialization = previous.request.plan === 'materialize'
+    || previous.request.targetStorageMode === 'persisted';
+  if (previous.status !== 'cancelled' || !isDiscardingPrivateMaterialization) {
+    return null;
+  }
+  const isCancelledLocalPrivateCapture = previous.priorStableStorage.state === 'machine_only'
+    && previous.currentStorageState === 'machine_only'
+    && previous.fence.kind === 'none'
+    && previous.checkpoint.acceptedThroughServerSeq === undefined
+    && previous.checkpoint.acknowledgedBatchId === undefined
+    && previous.bindings.historicalImportJobId === undefined;
+  if (isCancelledLocalPrivateCapture) return 'local_private_capture';
+  const isCancelledInitialPartial = previous.priorStableStorage.state === 'machine_only'
+    && previous.currentStorageState === 'server_partial'
+    && previous.fence.kind === 'initial_server_partial'
+    && previous.checkpoint.acceptedThroughServerSeq
+      === previous.fence.acceptedThroughServerSeq
+    && previous.bindings.historicalImportJobId !== undefined;
+  return isCancelledInitialPartial ? 'initial_server_partial' : null;
+}
+
+/**
+ * A cancelled operation whose explicit Discard still has durable server-side
+ * partial history to release. Its full record is the only pointer to that
+ * state and to the historical import job that owns it, so the record is never
+ * replaced by a minimal settled receipt while this holds.
+ */
+export function externalSessionOperationRetainsPartialDiscardRecoveryV1(
+  record: ExternalSessionOperationRecordV1,
+): boolean {
+  return resolveCancelledDiscardSubjectV1(record) === 'initial_server_partial';
+}
+
 function isCancelledDiscardTransition(
   previous: ExternalSessionOperationRecordV1,
   next: ExternalSessionOperationRecordV1,
 ): boolean {
-  const isDiscardingPrivateMaterialization = previous.request.plan === 'materialize'
-    || previous.request.targetStorageMode === 'persisted';
   const isPrivateMachineOnlyDiscard = next.status === 'discarded'
     && next.priorStableStorage.state === 'machine_only'
     && next.currentStorageState === 'machine_only'
@@ -1238,26 +1277,8 @@ function isCancelledDiscardTransition(
     && next.fence.kind === 'none'
     && next.cancellation === undefined
     && next.terminalResult?.kind === 'discarded';
-  if (
-    previous.status !== 'cancelled'
-    || !isDiscardingPrivateMaterialization
-    || !isPrivateMachineOnlyDiscard
-  ) {
-    return false;
-  }
-  const isCancelledLocalPrivateCapture = previous.priorStableStorage.state === 'machine_only'
-    && previous.currentStorageState === 'machine_only'
-    && previous.fence.kind === 'none'
-    && previous.checkpoint.acceptedThroughServerSeq === undefined
-    && previous.checkpoint.acknowledgedBatchId === undefined
-    && previous.bindings.historicalImportJobId === undefined;
-  const isCancelledInitialPartial = previous.priorStableStorage.state === 'machine_only'
-    && previous.currentStorageState === 'server_partial'
-    && previous.fence.kind === 'initial_server_partial'
-    && previous.checkpoint.acceptedThroughServerSeq
-      === previous.fence.acceptedThroughServerSeq
-    && previous.bindings.historicalImportJobId !== undefined;
-  return isCancelledLocalPrivateCapture || isCancelledInitialPartial;
+  return isPrivateMachineOnlyDiscard
+    && resolveCancelledDiscardSubjectV1(previous) !== null;
 }
 
 export function decideExternalSessionOperationUpdateV1(

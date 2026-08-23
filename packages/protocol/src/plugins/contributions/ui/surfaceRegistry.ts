@@ -79,6 +79,7 @@ export type PluginUiRightSidebarScopeV1 = z.infer<typeof PluginUiRightSidebarSco
 export type PluginUiDestinationBindingSlotV1<
   TContainer extends PluginUiContainerV1 = PluginUiContainerV1,
   TTargetKind extends PluginUiTargetKindV1 = PluginUiTargetKindV1,
+  TInstancePolicy extends PluginUiDestinationInstancePolicyV1 = PluginUiDestinationInstancePolicyV1,
 > = Readonly<{
   container: TContainer;
   targetKind: TTargetKind;
@@ -92,8 +93,13 @@ export type PluginUiDestinationBindingSlotV1<
    * Every policy this slot can actually fulfill through its canonical launcher
    * and isolated mount. Slots are singleton unless the registry explicitly
    * proves a bounded instance-key path.
+   *
+   * The literal element type is preserved so the public authoring TYPE derives
+   * the admitted policy from this same row. Widening it to the whole
+   * vocabulary would leave TypeScript accepting a declaration the canonical
+   * parser and the generated authoring schema both reject.
   */
-  instancePolicies: readonly PluginUiDestinationInstancePolicyV1[];
+  instancePolicies: readonly TInstancePolicy[];
 }>;
 
 const ALL_DESTINATION_PLATFORMS: readonly PluginUiPlatformV1[] = Object.freeze([
@@ -129,13 +135,13 @@ function isDesktopTabletOnlyDestinationBindingSlotV1(
   return slot !== null
     && slot.platforms.every((platform) => DESKTOP_DESTINATION_PLATFORMS.includes(platform));
 }
-const SINGLETON_DESTINATION_INSTANCE_POLICIES: readonly PluginUiDestinationInstancePolicyV1[] = Object.freeze([
+const SINGLETON_DESTINATION_INSTANCE_POLICIES = Object.freeze([
   'singleton',
-]);
-const INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES: readonly PluginUiDestinationInstancePolicyV1[] = Object.freeze([
+] as const) satisfies readonly PluginUiDestinationInstancePolicyV1[];
+const INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES = Object.freeze([
   'singleton',
   'multiple',
-]);
+] as const) satisfies readonly PluginUiDestinationInstancePolicyV1[];
 
 function surfaceContextPlacementForDestinationBindingSlot(
   container: PluginUiContainerV1,
@@ -159,13 +165,15 @@ function surfaceContextPlacementForDestinationBindingSlot(
 function defineDestinationBindingSlot<
   const TContainer extends PluginUiContainerV1,
   const TTargetKind extends PluginUiTargetKindV1,
+  const TInstancePolicies extends readonly PluginUiDestinationInstancePolicyV1[] =
+    typeof SINGLETON_DESTINATION_INSTANCE_POLICIES,
 >(
   container: TContainer,
   targetKind: TTargetKind,
   platforms: readonly PluginUiPlatformV1[],
   rightSidebarScope?: PluginUiRightSidebarScopeV1,
-  instancePolicies: readonly PluginUiDestinationInstancePolicyV1[] = SINGLETON_DESTINATION_INSTANCE_POLICIES,
-): PluginUiDestinationBindingSlotV1<TContainer, TTargetKind> {
+  instancePolicies: TInstancePolicies = SINGLETON_DESTINATION_INSTANCE_POLICIES as unknown as TInstancePolicies,
+): PluginUiDestinationBindingSlotV1<TContainer, TTargetKind, TInstancePolicies[number]> {
   return Object.freeze({
     container,
     targetKind,
