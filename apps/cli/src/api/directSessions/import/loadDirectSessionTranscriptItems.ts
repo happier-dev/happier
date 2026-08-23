@@ -28,9 +28,12 @@ export async function loadDirectSessionTranscriptItems(params: Readonly<{
     if (page.items.length > 0) {
       pages.push(page.items.slice());
     }
-    if (!page.hasMore || !page.nextCursor) {
+    if (!page.hasMore) {
       complete = true;
       break;
+    }
+    if (!page.nextCursor) {
+      throw new Error('Direct-session transcript continuation page omitted its cursor');
     }
     cursor = page.nextCursor;
   }

@@ -8,6 +8,7 @@ import { adoptDirectSessionMediaForImport } from './adoptDirectSessionMediaForIm
 
 const filesystemBoundary = vi.hoisted(() => ({ failedManagedCopiesRemaining: 0 }));
 
+// Mock only the filesystem-copy boundary so a rejected media persistence attempt is deterministic.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {

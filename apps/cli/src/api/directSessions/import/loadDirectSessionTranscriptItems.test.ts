@@ -91,4 +91,15 @@ describe('loadDirectSessionTranscriptItems', () => {
     await expect(loadDirectSessionTranscriptItems({ readPage, maxPages: 2 })).rejects.toThrow();
     expect(readPage).toHaveBeenCalledTimes(2);
   });
+
+  it('fails observably when a continuation page omits its cursor', async () => {
+    const readPage = vi.fn().mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      hasMore: true,
+    });
+
+    await expect(loadDirectSessionTranscriptItems({ readPage })).rejects.toThrow();
+    expect(readPage).toHaveBeenCalledTimes(1);
+  });
 });
