@@ -700,6 +700,7 @@ async function copyWithSafePublication({
     await assertSameRegularFile('source', sourcePath, sourceIdentity);
     await beforeAccept?.();
 
+    await assertSameRegularFile('published SQLite output', output.outputPath, publishedIdentity);
     const finalPublished = await inspectFinalDatabase(output.outputPath);
     if (!hasIdentity(await lstat(output.outputPath), publishedIdentity)) {
       throw new Error('published SQLite output identity changed during final verification');
