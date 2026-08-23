@@ -8666,6 +8666,7 @@ export const de: TranslationStructure = {
         },
         actions: {
             terminateDetectedA11y: 'Erkannten lokalen Dienst beenden',
+            forgetA11y: 'Diesen Dienst aus der Liste ausblenden',
             terminatePidOnlyConfidence: 'Sicherheit beim Beenden: Identität nur über die PID; Bestätigung nötig',
             copyAddressA11y: 'Adresse des Dienstes kopieren',
             terminateConfirmTitle: 'Dienst beenden?',
@@ -8812,6 +8813,7 @@ export const de: TranslationStructure = {
             label: 'Browser-Adresse',
             placeholder: 'URL eingeben',
             copy: 'URL kopieren',
+            searchUnconfigured: 'Keine Suchmaschine konfiguriert – gib stattdessen eine Webadresse ein.',
         },
         frame: {
             errorTitle: 'Die Seite ließ sich nicht laden',

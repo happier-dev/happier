@@ -9,6 +9,7 @@ import {
 } from '@happier-dev/protocol';
 import tweetnacl from 'tweetnacl';
 
+import type { DaemonPeerMediationObservabilityEmitter } from '../observability/events';
 import {
   startPeerMediationLoopbackServer as startPeerMediationLoopbackServerDefault,
   type StartPeerMediationLoopbackServerOptions,
@@ -58,6 +59,12 @@ export type StartPeerMediationLoopbackInput = Readonly<{
   host?: string;
   port?: number;
   localPerPeerMaxConcurrentCalls?: number;
+  /**
+   * PMS-9 / P1-9: the shared daemon observability emitter. Supplying it here is what makes the
+   * DIRECT routes observable at all; before this the emitter reached only the two relay
+   * terminators, so the loopback route produced no flow facts.
+   */
+  observability?: DaemonPeerMediationObservabilityEmitter;
   startPeerMediationLoopbackServer?: (
     options: StartPeerMediationLoopbackServerOptions,
   ) => ReturnType<typeof startPeerMediationLoopbackServerDefault>;
@@ -234,6 +241,7 @@ export async function startPeerMediationLoopback(
       : {}),
     ...(liveStreamEnabled ? { stream: streamOptions ?? {} } : {}),
     ...(tunnelEnabled ? { tunnel: tunnelOptions } : {}),
+    ...(input.observability ? { observability: input.observability } : {}),
   });
 
   return {

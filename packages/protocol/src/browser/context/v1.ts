@@ -2,7 +2,10 @@ import { z } from 'zod';
 
 import { RuntimeActionIdV1Schema } from '../../actions/actionIds.js';
 import { BrowserSemanticAdapterKindV1Schema } from '../adapters/kinds.js';
-import { BrowserDiagnosticFidelityV1Schema } from '../diagnostics/v1.js';
+import {
+  BrowserDiagnosticFidelityV1Schema,
+  BrowserDiagnosticsElementSourceLocationV1Schema,
+} from '../diagnostics/v1.js';
 import {
   BrowserTargetDisplayV1Schema,
   BrowserViewTargetKindV1Schema,
@@ -151,6 +154,13 @@ export const BrowserAnnotationTargetV1Schema = z.discriminatedUnion('kind', [
       selectorPath: z.string().trim().min(1).max(1024),
       accessibleName: z.string().max(512).optional(),
       rect: BrowserAnnotationRectV1Schema.optional(),
+      /**
+       * UB-7. The component that rendered the annotated element and the source file it came from,
+       * when the engine can resolve them. An agent receiving this annotation gets the edit site,
+       * not just the selector. Both are absent for non-React or production pages.
+       */
+      componentName: z.string().trim().min(1).max(128).optional(),
+      sourceLocation: BrowserDiagnosticsElementSourceLocationV1Schema.optional(),
     })
     .strict(),
 ]);

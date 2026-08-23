@@ -733,6 +733,7 @@ describe("local service API route composition", () => {
                 ? new URL(exposureResponse.exposure.publicUrl).searchParams.get("publicToken")
                 : null;
             expect(exposureId).toBeTypeOf("string");
+            expect(exposureResponse?.exposure?.publicUrl).toMatch(/^https:\/\/[a-z0-9-]+\.preview\.example\.test\//u);
             expect(publicToken).toBeTypeOf("string");
 
             const exchangeViaUrlReply = createReplyStub();

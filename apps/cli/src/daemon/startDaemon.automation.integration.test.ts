@@ -5,6 +5,16 @@ type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 type BuildHappyCliSubprocessLaunchSpec = typeof import('@/utils/spawnHappyCLI').buildHappyCliSubprocessLaunchSpec;
 
 const harness = vi.hoisted(() => {
+  // A real daemon credential is a JWT whose `sub` is the Account. The previous opaque
+  // 'token-automation' fixture made every subject-derived startup branch inert, which is exactly
+  // how the peer-mediation observability read-path install went unexercised at this boundary.
+  const daemonCredentialAccountId = 'account-automation';
+  const daemonCredentialToken = [
+    Buffer.from(JSON.stringify({ alg: 'none' }), 'utf8').toString('base64url'),
+    Buffer.from(JSON.stringify({ sub: daemonCredentialAccountId }), 'utf8').toString('base64url'),
+    'signature',
+  ].join('.');
+
   let resolveShutdown: ((value: { source: ShutdownSource; errorMessage?: string }) => void) | null = null;
   let requestShutdownRef: ((source: ShutdownSource, errorMessage?: string) => void) | null = null;
   let machineConnectionStateListener: ((state: any) => void) | null = null;
@@ -97,6 +107,11 @@ const harness = vi.hoisted(() => {
 
   const lockHandle = { release: vi.fn(async () => {}) };
 
+  // PMS-WIRE composition seam: the real `Api` exposes this publisher and `startDaemon` is the only
+  // caller. Holding the spy on the harness (not inside the module factory) keeps its call history
+  // readable from a test while `vi.clearAllMocks()` resets it between cases.
+  const setPeerMediationObservabilityRuntimeActionContextProvider = vi.fn();
+
   const createDaemonShutdownController = vi.fn(() => {
     const resolvesWhenShutdownRequested = new Promise<{ source: ShutdownSource; errorMessage?: string }>((resolve) => {
       resolveShutdown = resolve;
@@ -121,6 +136,9 @@ const harness = vi.hoisted(() => {
     automationWorkerResume,
     apiMachine,
     lockHandle,
+    daemonCredentialAccountId,
+    daemonCredentialToken,
+    setPeerMediationObservabilityRuntimeActionContextProvider,
     startConnectedServiceQuotasLoop,
     connectedServiceQuotasPause,
     connectedServiceQuotasResume,
@@ -139,6 +157,8 @@ vi.mock('@/api/api', () => ({
     create: vi.fn(async () => ({
       machineSyncClient: () => harness.apiMachine,
       setServerFeaturesSnapshotProvider: vi.fn(),
+      setPeerMediationObservabilityRuntimeActionContextProvider:
+        harness.setPeerMediationObservabilityRuntimeActionContextProvider,
       createBrowserRuntimeActionExecutor: vi.fn(),
       getAccountEncryptionMode: vi.fn(async () => 'plain'),
       getConnectedServiceAuthGroup: vi.fn(async () => null),
@@ -278,7 +298,7 @@ vi.mock('@/persistence', () => ({
   acquireDaemonLock: vi.fn(async () => harness.lockHandle),
   releaseDaemonLock: vi.fn(async () => {}),
   readStoredCredentials: vi.fn(async () => ({
-    token: 'token-automation',
+    token: harness.daemonCredentialToken,
     encryption: {
       type: 'dataKey',
       publicKey: new Uint8Array(32).fill(1),

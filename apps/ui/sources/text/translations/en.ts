@@ -8660,6 +8660,7 @@ export const en = {
         },
         actions: {
             terminateDetectedA11y: 'Terminate detected local service',
+            forgetA11y: 'Hide this service from the list',
             terminatePidOnlyConfidence: 'Terminate confidence: PID-only identity; confirmation required',
             copyAddressA11y: 'Copy service address',
             terminateConfirmTitle: 'Terminate service?',
@@ -8806,6 +8807,7 @@ export const en = {
             label: 'Browser address',
             placeholder: 'Enter URL',
             copy: 'Copy URL',
+            searchUnconfigured: 'No search engine is configured — type a web address instead.',
         },
         frame: {
             errorTitle: 'Page failed to load',

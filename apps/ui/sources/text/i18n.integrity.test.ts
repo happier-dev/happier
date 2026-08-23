@@ -900,6 +900,57 @@ function callSampledTranslation(value: unknown, args: readonly unknown[]): strin
 }
 
 describe('i18n integrity', () => {
+    // The browser and local-services corridors (RU2 surfaces finalization, R-9). U-8 shipped the
+    // whole `browserContext.editor` sub-block in English only: it existed in `en` and in `de`, and
+    // in none of the other ten locales, so the annotation editor rendered untranslated for most of
+    // the world. No namespace assertion covered these surfaces, which is why nothing caught it.
+    // Shape parity is asserted rather than key presence alone so that a leaf which changes from a
+    // string to a formatter in `en` — a real source of runtime `t(...)` breakage — also fails here.
+    it('keeps the browser and local-services namespaces complete in every supported locale', () => {
+        const locales = [
+            { code: 'ru', root: ru },
+            { code: 'pl', root: pl },
+            { code: 'es', root: es },
+            { code: 'fr', root: fr },
+            { code: 'it', root: itLocale },
+            { code: 'pt', root: pt },
+            { code: 'ca', root: ca },
+            { code: 'de', root: de },
+            { code: 'zh-Hans', root: zhHans },
+            { code: 'zh-Hant', root: zhHant },
+            { code: 'ja', root: ja },
+        ];
+        // Every top-level namespace reached by `t(...)` from `components/browser/**` and
+        // `components/sessions/localServices/**`.
+        const corridorNamespaces = [
+            'browserAutomation',
+            'browserContext',
+            'browserDiagnostics',
+            'browserLaunchpad',
+            'browserRecording',
+            'browserShell',
+            'browserSurface',
+            'localServices',
+        ] as const;
+
+        const shapeMismatches = corridorNamespaces.flatMap((namespace) => {
+            const expected = flattenTranslationLeaves(en[namespace])
+                .map((leaf) => `${leaf.key}:${leaf.kind}`)
+                .sort();
+            return locales.flatMap(({ code, root }) => {
+                const actual = flattenTranslationLeaves(root[namespace])
+                    .map((leaf) => `${leaf.key}:${leaf.kind}`)
+                    .sort();
+                const missing = expected.filter((leaf) => !actual.includes(leaf));
+                return missing.length === 0
+                    ? []
+                    : [`${code}: ${namespace} missing ${missing.join(', ')}`];
+            });
+        });
+
+        expect(shapeMismatches).toEqual([]);
+    });
+
     it('keeps the Voice namespace complete in every supported locale', () => {
         const locales = [
             { code: 'ru', root: ru },
