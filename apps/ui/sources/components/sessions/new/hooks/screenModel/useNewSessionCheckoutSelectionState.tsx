@@ -8,6 +8,7 @@ import {
     type NewSessionCheckoutCreationDraft,
 } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { generateWorktreeName } from '@/utils/worktree/generateWorktreeName';
 
 type HydratedCheckoutAuthoringDraft = Readonly<{
     checkoutCreationDraft?: NewSessionCheckoutCreationDraft | null;
@@ -20,6 +21,7 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
     selectedMachineId: string | null;
     selectedPath: string;
     repoScmSnapshot: ScmWorkingSnapshot | null;
+    defaultCheckoutMode: 'current_path' | 'git_worktree';
     autoOpenWorktreePickerKey?: string | null;
 }>): Readonly<{
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
@@ -59,6 +61,8 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
     const pendingGitWorktreeSourceKindRef = React.useRef<'current' | 'local' | 'remote'>('current');
     const previousSelectionKeyRef = React.useRef<string | null>(null);
     const lastAutoOpenWorktreePickerKeyRef = React.useRef<string | null>(null);
+    const defaultAppliedSelectionKeysRef = React.useRef(new Set<string>());
+    const defaultWorktreeNameRef = React.useRef(generateWorktreeName());
 
     React.useEffect(() => {
         if (!hasAppliedCheckoutDraftEffectRef.current) {
@@ -123,6 +127,34 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
         shouldReconcileInitialHydratedCheckoutCreationDraftRef.current = false;
         setCheckoutCreationDraft(null);
     }, [checkoutCreationDraft, params.selectedMachineId, params.selectedPath]);
+
+    React.useEffect(() => {
+        const selectionKey = `${params.selectedMachineId ?? ''}\n${params.selectedPath}`;
+        if (defaultAppliedSelectionKeysRef.current.has(selectionKey)) return;
+        if (params.repoScmSnapshot === null || checkoutCreationDraft !== null) return;
+
+        defaultAppliedSelectionKeysRef.current.add(selectionKey);
+        if (
+            params.defaultCheckoutMode !== 'git_worktree'
+            || params.repoScmSnapshot.repo.isRepo !== true
+            || params.repoScmSnapshot.repo.backendId !== 'git'
+        ) {
+            return;
+        }
+
+        setCheckoutCreationDraft({
+            kind: 'git_worktree',
+            displayName: defaultWorktreeNameRef.current,
+            baseRef: null,
+            branchMode: 'new',
+        });
+    }, [
+        checkoutCreationDraft,
+        params.defaultCheckoutMode,
+        params.repoScmSnapshot,
+        params.selectedMachineId,
+        params.selectedPath,
+    ]);
 
     React.useEffect(() => {
         const autoOpenKey = params.autoOpenWorktreePickerKey ?? null;

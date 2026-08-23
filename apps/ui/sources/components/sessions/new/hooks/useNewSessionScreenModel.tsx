@@ -370,6 +370,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const usePathPickerSearch = useSetting('usePathPickerSearch');
     const newSessionWizardSectionPresentation = useSetting('newSessionWizardSectionPresentationV1');
     const newSessionWizardColumnsEnabled = useSetting('newSessionWizardColumnsEnabled');
+    const newSessionDefaultCheckoutMode = useSetting('newSessionDefaultCheckoutModeV1');
     const [profiles, setProfiles] = useSettingMutable('profiles');
     const lastUsedProfile = useSetting('lastUsedProfile');
     const [favoriteDirectories, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
@@ -740,6 +741,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineId,
         selectedPath,
         repoScmSnapshot,
+        defaultCheckoutMode: newSessionDefaultCheckoutMode,
         autoOpenWorktreePickerKey: effectiveWorktreeRouteMode === 'new'
             ? `route:new:${selectedMachineId ?? ''}:${selectedPath}`
             : null,

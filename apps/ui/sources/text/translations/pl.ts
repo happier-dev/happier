@@ -8357,6 +8357,9 @@ settingsSession: {
         wizardColumnsTitle: "Układ dwukolumnowy",
         wizardColumnsEnabledSubtitle: "Umieszcza powiązane selektory obok siebie na szerokich ekranach.",
         wizardColumnsDisabledSubtitle: "Układa wszystkie selektory kreatora w jednej kolumnie.",
+        defaultWorktreeTitle: "Create a worktree for new sessions",
+        defaultWorktreeEnabledSubtitle: "Start each new Git session in a fresh worktree.",
+        defaultWorktreeDisabledSubtitle: "Start new Git sessions in the selected folder.",
         wizardPresentationTitle: "Układ selektorów kreatora",
         wizardPresentationFooter:
           "Auto zostawia krótkie sekcje jako listy i przełącza długie sekcje na przeszukiwalne menu rozwijane.",

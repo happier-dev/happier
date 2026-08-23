@@ -100,6 +100,7 @@ export const NewSessionWizardSettingsView = React.memo(function NewSessionWizard
     const popoverBoundaryRef = React.useRef<any>(null);
     const [presentationBySection, setPresentationBySection] = useSettingMutable('newSessionWizardSectionPresentationV1');
     const [columnsEnabled, setColumnsEnabled] = useSettingMutable('newSessionWizardColumnsEnabled');
+    const [defaultCheckoutMode, setDefaultCheckoutMode] = useSettingMutable('newSessionDefaultCheckoutModeV1');
 
     const normalizedPresentationBySection = React.useMemo(() => {
         const record = presentationBySection && typeof presentationBySection === 'object' && !Array.isArray(presentationBySection)
@@ -134,6 +135,24 @@ export const NewSessionWizardSettingsView = React.memo(function NewSessionWizard
                 title={t('settingsSession.sessionCreation.wizardLayoutTitle')}
                 footer={t('settingsSession.sessionCreation.wizardLayoutFooter')}
             >
+                <Item
+                    testID="settings-new-session-default-worktree"
+                    title={t('settingsSession.sessionCreation.defaultWorktreeTitle')}
+                    subtitle={t(
+                        defaultCheckoutMode === 'git_worktree'
+                            ? 'settingsSession.sessionCreation.defaultWorktreeEnabledSubtitle'
+                            : 'settingsSession.sessionCreation.defaultWorktreeDisabledSubtitle',
+                    )}
+                    icon={<Icon name="stack-simple" size={29} color={theme.colors.text.secondary} />}
+                    rightElement={(
+                        <Switch
+                            value={defaultCheckoutMode === 'git_worktree'}
+                            onValueChange={(enabled) => setDefaultCheckoutMode(enabled ? 'git_worktree' : 'current_path')}
+                        />
+                    )}
+                    showChevron={false}
+                    onPress={() => setDefaultCheckoutMode(defaultCheckoutMode === 'git_worktree' ? 'current_path' : 'git_worktree')}
+                />
                 <Item
                     testID="settings-new-session-wizard-columns"
                     title={t('settingsSession.sessionCreation.wizardColumnsTitle')}

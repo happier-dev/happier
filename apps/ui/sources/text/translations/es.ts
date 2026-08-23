@@ -8400,6 +8400,9 @@ settingsSession: {
         wizardColumnsTitle: "Diseño en dos columnas",
         wizardColumnsEnabledSubtitle: "Coloca selectores relacionados uno al lado del otro en pantallas anchas.",
         wizardColumnsDisabledSubtitle: "Apila todos los selectores del asistente en una columna.",
+        defaultWorktreeTitle: "Create a worktree for new sessions",
+        defaultWorktreeEnabledSubtitle: "Start each new Git session in a fresh worktree.",
+        defaultWorktreeDisabledSubtitle: "Start new Git sessions in the selected folder.",
         wizardPresentationTitle: "Diseño de selectores del asistente",
         wizardPresentationFooter:
           "Auto mantiene las secciones cortas como listas y cambia las largas a desplegables con búsqueda.",
