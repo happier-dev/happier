@@ -8593,9 +8593,9 @@ settingsSession: {
         wizardColumnsTitle: "2列レイアウト",
         wizardColumnsEnabledSubtitle: "広い画面で関連する選択欄を横に並べます。",
         wizardColumnsDisabledSubtitle: "すべてのウィザード選択欄を1列に積みます。",
-        defaultWorktreeTitle: "Create a worktree for new sessions",
-        defaultWorktreeEnabledSubtitle: "Start each new Git session in a fresh worktree.",
-        defaultWorktreeDisabledSubtitle: "Start new Git sessions in the selected folder.",
+        defaultWorktreeTitle: "新しいセッション用にワークツリーを作成",
+        defaultWorktreeEnabledSubtitle: "新しい各 Git セッションを新しいワークツリーで開始します。",
+        defaultWorktreeDisabledSubtitle: "新しい Git セッションを選択したフォルダーで開始します。",
         wizardPresentationTitle: "ウィザード選択欄のレイアウト",
         wizardPresentationFooter:
           "Auto は短いセクションをリストのままにし、長いセクションを検索可能なドロップダウンに切り替えます。",

@@ -8476,9 +8476,9 @@ settingsSession: {
         wizardColumnsTitle: "Layout em duas colunas",
         wizardColumnsEnabledSubtitle: "Coloca seletores relacionados lado a lado em telas largas.",
         wizardColumnsDisabledSubtitle: "Empilha todos os seletores do assistente em uma coluna.",
-        defaultWorktreeTitle: "Create a worktree for new sessions",
-        defaultWorktreeEnabledSubtitle: "Start each new Git session in a fresh worktree.",
-        defaultWorktreeDisabledSubtitle: "Start new Git sessions in the selected folder.",
+        defaultWorktreeTitle: "Criar um worktree para novas sessões",
+        defaultWorktreeEnabledSubtitle: "Inicie cada nova sessão Git em um novo worktree.",
+        defaultWorktreeDisabledSubtitle: "Inicie novas sessões Git na pasta selecionada.",
         wizardPresentationTitle: "Layout dos seletores do assistente",
         wizardPresentationFooter:
           "Auto mantém seções curtas como listas e muda seções longas para menus suspensos pesquisáveis.",

@@ -5,7 +5,6 @@ import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 
 const setPresentation = vi.fn();
 const setColumnsEnabled = vi.fn();
-const setDefaultCheckoutMode = vi.fn();
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -22,9 +21,6 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 }
                 if (name === 'newSessionWizardColumnsEnabled') {
                     return [false, setColumnsEnabled];
-                }
-                if (name === 'newSessionDefaultCheckoutModeV1') {
-                    return ['current_path', setDefaultCheckoutMode];
                 }
                 return [null, vi.fn()];
             },
@@ -71,7 +67,6 @@ describe('NewSessionWizardSettingsView', () => {
 
         const rows = screen.findAllByType('Item' as any).filter((item) => typeof item.props.testID === 'string');
         expect(rows.map((row) => [row.props.testID, row.props.subtitle])).toEqual([
-            ['settings-new-session-default-worktree', 'Start new Git sessions in the selected folder.'],
             ['settings-new-session-wizard-columns', 'Stack every wizard selector in one column.'],
             ['settings-new-session-wizard-profiles', 'Auto'],
             ['settings-new-session-wizard-backends', 'Auto'],
@@ -91,8 +86,6 @@ describe('NewSessionWizardSettingsView', () => {
         screen.pressRowByTitle('Two-column layout');
         expect(setColumnsEnabled).toHaveBeenCalledWith(true);
 
-        expect(screen.findRowByTitle('Create a worktree for new sessions')).toBeTruthy();
-        screen.pressRowByTitle('Create a worktree for new sessions');
-        expect(setDefaultCheckoutMode).toHaveBeenCalledWith('git_worktree');
+        expect(screen.findRowByTitle('Create a worktree for new sessions')).toBeNull();
     });
 });

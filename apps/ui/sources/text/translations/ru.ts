@@ -8339,9 +8339,9 @@ settingsSession: {
         wizardColumnsTitle: "Макет в две колонки",
         wizardColumnsEnabledSubtitle: "Размещает связанные селекторы рядом на широких экранах.",
         wizardColumnsDisabledSubtitle: "Размещает все селекторы мастера в одной колонке.",
-        defaultWorktreeTitle: "Create a worktree for new sessions",
-        defaultWorktreeEnabledSubtitle: "Start each new Git session in a fresh worktree.",
-        defaultWorktreeDisabledSubtitle: "Start new Git sessions in the selected folder.",
+        defaultWorktreeTitle: "Создавать worktree для новых сессий",
+        defaultWorktreeEnabledSubtitle: "Запускайте каждую новую Git-сессию в новом worktree.",
+        defaultWorktreeDisabledSubtitle: "Запускайте новые Git-сессии в выбранной папке.",
         wizardPresentationTitle: "Макет селекторов мастера",
         wizardPresentationFooter:
           "Auto оставляет короткие разделы списками и переключает длинные разделы на выпадающие меню с поиском.",
