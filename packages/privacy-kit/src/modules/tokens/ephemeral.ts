@@ -29,7 +29,7 @@ export async function createEphemeralTokenGenerator(opts: {
                 .setProtectedHeader({ alg: 'EdDSA' })
                 .setIssuedAt()
                 .setNotBefore('0s')
-                .setExpirationTime(Math.floor((Date.now() + opts.ttl) / 1000))
+                .setExpirationTime(Math.ceil((Date.now() + opts.ttl) / 1000))
                 .setIssuer(opts.service)
                 .setJti(crypto.randomUUID())
                 .sign(key);
