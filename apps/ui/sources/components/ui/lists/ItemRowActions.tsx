@@ -36,6 +36,8 @@ export interface ItemRowActionsProps {
      * at the far right of the row.
      */
     pinnedActionIds?: string[];
+    /** Content that stays immediately before the pinned controls (after overflow in compact rows). */
+    leadingPinnedContent?: React.ReactNode;
     /**
      * Where to render the overflow (ellipsis) trigger on compact layouts.
      * - 'end': after all inline actions (default)
@@ -271,17 +273,30 @@ export function ItemRowActions(props: ItemRowActionsProps) {
 
     return (
         <View style={[styles.container, { gap }]}>
-            {(compact ? nonPinnedInlineActions : inlineActions).map(renderInlineAction)}
+            {compact ? nonPinnedInlineActions.map(renderInlineAction) : (
+                inlineActions.map((action, index) => (
+                    <React.Fragment key={action.id}>
+                        {props.leadingPinnedContent != null
+                            && pinnedIds.has(action.id)
+                            && !inlineActions.slice(0, index).some((candidate) => pinnedIds.has(candidate.id))
+                            ? <View>{props.leadingPinnedContent}</View>
+                            : null}
+                        {renderInlineAction(action)}
+                    </React.Fragment>
+                ))
+            )}
 
             {compact && overflowActions.length > 0 && overflowPosition === 'beforePinned' ? (
                 <>
                     {renderOverflow()}
+                    {props.leadingPinnedContent != null ? <View>{props.leadingPinnedContent}</View> : null}
                     {pinnedActions.map(renderInlineAction)}
                 </>
             ) : null}
 
             {compact && overflowActions.length > 0 && overflowPosition === 'end' ? (
                 <>
+                    {props.leadingPinnedContent != null ? <View>{props.leadingPinnedContent}</View> : null}
                     {pinnedActions.map(renderInlineAction)}
                     {renderOverflow()}
                 </>
@@ -289,6 +304,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
 
             {compact && overflowActions.length === 0 && pinnedActions.length > 0 ? (
                 <>
+                    {props.leadingPinnedContent != null ? <View>{props.leadingPinnedContent}</View> : null}
                     {pinnedActions.map(renderInlineAction)}
                 </>
             ) : null}
