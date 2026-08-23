@@ -5838,6 +5838,7 @@ export const de: TranslationStructure = {
         browseSourceCodexConnectedServices: ({ service }: { service: string }) => `${service} verbundene Dienste`,
         browseSourceClaudeDefault: 'Standard-Claude-Konfiguration',
         browseSourceOpenCodeDefault: 'Standard-OpenCode-Server',
+        browseSourcePiDefault: 'Standard-Pi-Agent-Verzeichnis',
         browseCandidates: 'Verfügbare Sessions',
         browseNoMachines: 'Für direkte Sessions sind noch keine Rechner verfügbar.',
         browseNoCandidates: 'Für diesen Rechner und Provider wurden keine Provider-Sessions gefunden.',

@@ -176,6 +176,24 @@ describe('pagePiTranscript', () => {
     ]);
   });
 
+  it('pages both rows of one bash execution without gaps when maxItems is one', async () => {
+    const agentDir = freshAgentDir();
+    const { source, env } = writeSession(agentDir, [
+      header,
+      {
+        type: 'message', id: 'bash1', parentId: null, timestamp: '2024-12-03T14:00:01.000Z',
+        message: {
+          role: 'bashExecution', command: 'pwd', output: '/proj', exitCode: 0,
+          cancelled: false, truncated: false, timestamp: Date.parse('2024-12-03T14:00:01.000Z'),
+        },
+      },
+    ]);
+
+    const ordered = await importAll(source, env, { maxBytes: 1024 * 1024, maxItems: 1 });
+    const baseId = `pi:sessions/--proj--/2024-12-03T14-00-00-000Z_${SESSION_ID}.jsonl:bash1`;
+    expect(ordered.map((item) => item.id)).toEqual([`${baseId}:bash-call`, `${baseId}:bash-result`]);
+  });
+
   it('reconstructs chronologically with no duplicates or gaps when maxBytes truncates pages below maxItems', async () => {
     // Regression: byte-truncation must not overlap the next page's window. With small maxBytes each
     // page delivers fewer items than maxItems; the reconstruction must still be chronological,

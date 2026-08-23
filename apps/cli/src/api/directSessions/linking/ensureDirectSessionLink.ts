@@ -30,7 +30,6 @@ import {
   directSessionMarkerMatches,
   readDirectSessionMarkerProviderId,
 } from '@/api/directSessions/markers/readDirectSessionMarkerIdentity';
-import { normalizePathForComparison } from '@/utils/path/normalizePathForComparison';
 
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');

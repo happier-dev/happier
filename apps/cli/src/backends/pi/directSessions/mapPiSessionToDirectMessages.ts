@@ -1,11 +1,19 @@
 import type { DirectTranscriptRawMessageV1, SessionMessageRole } from '@happier-dev/protocol';
 
+import { resolveAcpSessionMessageRole } from '@/api/session/messageRole/resolveAcpSessionMessageRole';
+
 import { buildSessionPath, type PiSessionEntry } from './piEntryContext';
 
+type ProjectedPiRow = Readonly<{
+  idSuffix?: string;
+  messageRole: SessionMessageRole;
+  raw: Record<string, unknown>;
+}>;
+
 /**
- * Map a parsed pi session (full entry list) into direct-transcript items, resolving the active
- * active branch and projecting its historical entries. Compaction changes the model's runtime
- * context, but it does not delete older records from the user-visible session history.
+ * Map a parsed pi session into the active branch's direct-transcript rows. A durable
+ * Pi entry may project to more than one row (notably a shell execution's call/result).
+ * Compaction changes runtime context but never removes older user-visible history.
  */
 export function mapPiSessionToDirectMessages(params: Readonly<{
   entries: readonly PiSessionEntry[];
@@ -16,51 +24,88 @@ export function mapPiSessionToDirectMessages(params: Readonly<{
   const items: DirectTranscriptRawMessageV1[] = [];
 
   for (const entry of contextEntries) {
-    const piRole = readPiEntryRole(entry);
-    const message = projectPiEntryToMessage(entry);
-    if (!message) continue;
-
-    const id = `pi:${params.fileRelPath}:${entry.id}`;
-
-    items.push({
-      id,
-      localId: id,
-      createdAtMs: resolvePiEntryTimestampMs(entry),
-      messageRole: resolvePiMessageRole(piRole),
-      raw: message,
-    });
+    const baseId = `pi:${params.fileRelPath}:${entry.id}`;
+    const rows = projectPiEntryToRows(entry, baseId);
+    for (const row of rows) {
+      const id = row.idSuffix ? `${baseId}:${row.idSuffix}` : baseId;
+      items.push({
+        id,
+        localId: id,
+        createdAtMs: resolvePiEntryTimestampMs(entry),
+        messageRole: row.messageRole,
+        raw: row.raw,
+      });
+    }
   }
 
   return items;
 }
 
-/**
- * Port of pi's `sessionEntryToContextMessages`, projected into the protocol transcript envelope
- * (`role: 'agent' | 'user'`, mirroring the Claude direct-session mapper) so the UI's
- * `TranscriptRawRecordV1` schema accepts every emitted record. Message entries with
- * null/missing content are normalized to an empty content array, matching pi's defensive
- * parsing. Non-assistant pi roles (user-with-blocks, toolResult, bashExecution) ride `user`
- * rows, the claude convention for non-assistant content.
- */
-function projectPiEntryToMessage(entry: PiSessionEntry): Record<string, unknown> | null {
+function projectPiEntryToRows(entry: PiSessionEntry, baseId: string): readonly ProjectedPiRow[] {
   if (entry.type === 'message') {
     const message = (entry as { message?: unknown }).message;
-    if (!message || typeof message !== 'object' || Array.isArray(message)) return null;
-    const msg = message as Record<string, unknown> & { content?: unknown };
-    const content = msg.content == null ? [] : msg.content;
-    if (msg.role === 'user') {
-      const text = typeof content === 'string' ? content : joinPiTextBlocks(content);
-      // The semantic transcript classifier only recognizes user prompts as protocol
-      // user text records (role:'user' + content.type:'text'); real pi sessions store
-      // user prompts as content block arrays, so join their text blocks. User messages
-      // without text blocks fall through to the agent-output 'user' row (attachment /
-      // tool convention) instead of being dropped.
-      if (text !== null) {
-        return { role: 'user', content: { type: 'text', text } };
-      }
-    }
-    if (msg.role === 'assistant') {
-      return {
+    if (!isRecord(message)) return [];
+    return projectPiMessageRows(message, baseId);
+  }
+
+  if (entry.type === 'custom_message') {
+    const record = entry as { content?: unknown; display?: unknown };
+    if (record.display === false) return [];
+    const text = projectPiUserContentText(record.content);
+    return text === null ? [] : [{
+      messageRole: 'user',
+      raw: { role: 'user', content: { type: 'text', text } },
+    }];
+  }
+
+  if (entry.type === 'branch_summary') {
+    const summary = readNonEmptyString((entry as { summary?: unknown }).summary);
+    return summary ? [acpRow({ type: 'message', message: summary })] : [];
+  }
+
+  if (entry.type === 'compaction') {
+    const tokensBefore = readFiniteNumber((entry as { tokensBefore?: unknown }).tokensBefore);
+    return [{
+      messageRole: 'event',
+      raw: {
+        role: 'agent',
+        content: {
+          type: 'event',
+          id: baseId,
+          data: {
+            type: 'context-compaction',
+            phase: 'completed',
+            lifecycleId: baseId,
+            provider: 'pi',
+            source: 'runtime',
+            trigger: 'unknown',
+            ...(tokensBefore === null ? {} : { tokenCountBefore: tokensBefore }),
+          },
+        },
+      },
+    }];
+  }
+
+  return [];
+}
+
+function projectPiMessageRows(message: Record<string, unknown>, baseId: string): readonly ProjectedPiRow[] {
+  const content = message.content;
+
+  if (message.role === 'user') {
+    const text = projectPiUserContentText(content);
+    return text === null ? [] : [{
+      messageRole: 'user',
+      raw: { role: 'user', content: { type: 'text', text } },
+    }];
+  }
+
+  if (message.role === 'assistant') {
+    const normalized = normalizePiAssistantContentBlocks(content);
+    if (isEmptyPiAssistantContent(normalized)) return [];
+    return [{
+      messageRole: 'agent',
+      raw: {
         role: 'agent',
         content: {
           type: 'output',
@@ -68,18 +113,20 @@ function projectPiEntryToMessage(entry: PiSessionEntry): Record<string, unknown>
             type: 'assistant',
             message: {
               role: 'assistant',
-              ...(typeof msg.model === 'string' ? { model: msg.model } : {}),
-              ...(msg.usage && typeof msg.usage === 'object' ? { usage: msg.usage } : {}),
-              content: normalizePiAssistantContentBlocks(content),
+              ...(typeof message.model === 'string' ? { model: message.model } : {}),
+              ...(isRecord(message.usage) ? { usage: message.usage } : {}),
+              content: normalized,
             },
           },
         },
-      };
-    }
-    if (msg.role === 'toolResult') {
-      // The UI transcript normalizer renders Claude-convention tool_result blocks; pi stores
-      // standalone toolResult messages, so project the whole message as one tool_result block.
-      return {
+      },
+    }];
+  }
+
+  if (message.role === 'toolResult') {
+    return [{
+      messageRole: 'event',
+      raw: {
         role: 'agent',
         content: {
           type: 'output',
@@ -89,133 +136,118 @@ function projectPiEntryToMessage(entry: PiSessionEntry): Record<string, unknown>
               role: 'user',
               content: [{
                 type: 'tool_result',
-                tool_use_id: typeof (msg as { toolCallId?: unknown }).toolCallId === 'string'
-                  ? (msg as { toolCallId: string }).toolCallId
-                  : '',
-                content,
-                is_error: (msg as { isError?: unknown }).isError === true,
+                tool_use_id: typeof message.toolCallId === 'string' ? message.toolCallId : '',
+                content: sanitizePiToolResultContent(content),
+                is_error: message.isError === true,
               }],
             },
           },
         },
-      };
-    }
-    return {
-      role: 'agent',
-      content: {
-        type: 'output',
-        data: {
-          type: 'user',
-          message: {
-            role: 'user',
-            ...(typeof (msg as { toolCallId?: unknown }).toolCallId === 'string'
-              ? { toolCallId: (msg as { toolCallId: string }).toolCallId }
-              : {}),
-            content,
-          },
-        },
       },
-    };
+    }];
   }
-  if (entry.type === 'custom_message') {
-    return {
-      role: 'agent',
-      content: {
-        type: 'output',
-        data: {
-          type: 'piCustomMessage',
-          customType: (entry as { customType?: unknown }).customType,
-          content: (entry as { content?: unknown }).content ?? [],
-          display: (entry as { display?: unknown }).display,
-          details: (entry as { details?: unknown }).details,
-        },
-      },
-    };
+
+  if (message.role === 'bashExecution') {
+    const command = readNonEmptyString(message.command);
+    const output = typeof message.output === 'string' ? message.output : '';
+    const exitCode = readFiniteNumber(message.exitCode);
+    if (!command) return [];
+    const cancelled = message.cancelled === true;
+    const truncated = message.truncated === true;
+    return [
+      acpRow({
+        type: 'tool-call', callId: baseId, name: 'bash', id: `${baseId}:bash-call`, input: { command },
+      }, 'bash-call'),
+      acpRow({
+        type: 'tool-result', callId: baseId, id: `${baseId}:bash-result`,
+        output: { output, exitCode, cancelled, truncated },
+        isError: cancelled || (exitCode !== null && exitCode !== 0),
+      }, 'bash-result'),
+    ];
   }
-  if (entry.type === 'branch_summary') {
-    const summary = (entry as { summary?: unknown }).summary;
-    if (!summary) return null;
-    return {
-      role: 'agent',
-      content: { type: 'output', data: { type: 'summary', summary: String(summary) } },
-    };
-  }
-  if (entry.type === 'compaction') {
-    return {
-      role: 'agent',
-      content: {
-        type: 'output',
-        data: {
-          type: 'summary',
-          summary: String((entry as { summary?: unknown }).summary ?? ''),
-          tokensBefore: (entry as { tokensBefore?: unknown }).tokensBefore,
-        },
-      },
-    };
-  }
-  return null;
+
+  return [];
 }
 
-/**
- * Normalize pi assistant content blocks to the Claude transcript convention the UI renders:
- * `{ type: 'toolCall', id, name, arguments }` -> `{ type: 'tool_use', id, name, input }`.
- * All other block shapes (text, thinking, …) pass through unchanged.
- */
-function normalizePiAssistantContentBlocks(content: unknown): unknown {
+function acpRow(data: Record<string, unknown>, idSuffix?: string): ProjectedPiRow {
+  return {
+    ...(idSuffix ? { idSuffix } : {}),
+    messageRole: resolveAcpSessionMessageRole(data),
+    raw: { role: 'agent', content: { type: 'acp', provider: 'pi', data } },
+  };
+}
+
+/** Pi direct transcripts are text-only today; retain image position/type, never inline bytes. */
+function projectPiUserContentText(content: unknown): string | null {
+  if (typeof content === 'string') return content.length > 0 ? content : null;
+  if (!Array.isArray(content)) return null;
+  const parts: string[] = [];
+  let previousWasText = false;
+  for (const block of content) {
+    if (!isRecord(block)) continue;
+    if (block.type === 'text' && typeof block.text === 'string' && block.text.length > 0) {
+      if (previousWasText) parts.push('\n');
+      parts.push(block.text);
+      previousWasText = true;
+      continue;
+    }
+    if (block.type === 'image') {
+      const mimeType = readNonEmptyString(block.mimeType) ?? 'unknown';
+      parts.push(`\n[Pi image content (${mimeType})]\n`);
+      previousWasText = false;
+    }
+  }
+  return parts.length > 0 ? parts.join('') : null;
+}
+
+function sanitizePiToolResultContent(content: unknown): unknown {
   if (!Array.isArray(content)) return content;
   return content.map((block) => {
-    if (!block || typeof block !== 'object' || Array.isArray(block)) return block;
-    const record = block as Record<string, unknown>;
-    if (record.type !== 'toolCall') return block;
-    return {
-      type: 'tool_use',
-      id: record.id,
-      name: record.name,
-      input: record.arguments,
-    };
+    if (!isRecord(block) || block.type !== 'image') return block;
+    const mimeType = readNonEmptyString(block.mimeType) ?? 'unknown';
+    return { type: 'text', text: `[Pi tool result image (${mimeType})]` };
   });
 }
 
-/**
- * Join the `{ type: 'text' }` blocks of a pi content block array into one string.
- * Returns null for non-arrays and for arrays without any non-empty text blocks.
- */
-function joinPiTextBlocks(content: unknown): string | null {
-  if (!Array.isArray(content)) return null;
-  const parts: string[] = [];
+/** Normalize Pi's tool-call spelling and discard empty signed/redacted display blocks. */
+function normalizePiAssistantContentBlocks(content: unknown): unknown {
+  if (!Array.isArray(content)) return content;
+  const normalized: unknown[] = [];
   for (const block of content) {
-    if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
-    const record = block as Record<string, unknown>;
-    if (record.type !== 'text' || typeof record.text !== 'string') continue;
-    if (record.text.length > 0) parts.push(record.text);
+    if (!isRecord(block)) {
+      normalized.push(block);
+      continue;
+    }
+    if (block.type === 'text' && (typeof block.text !== 'string' || block.text.length === 0)) continue;
+    if (block.type === 'thinking' && (typeof block.thinking !== 'string' || block.thinking.length === 0)) continue;
+    if (block.type === 'toolCall') {
+      normalized.push({ type: 'tool_use', id: block.id, name: block.name, input: block.arguments });
+      continue;
+    }
+    normalized.push(block);
   }
-  return parts.length > 0 ? parts.join('\n') : null;
+  return normalized;
 }
 
-function readPiEntryRole(entry: PiSessionEntry): string | undefined {
-  if (entry.type === 'message') {
-    const role = (entry as { message?: { role?: unknown } }).message?.role;
-    return typeof role === 'string' ? role : undefined;
-  }
-  if (entry.type === 'custom_message') return 'custom';
-  if (entry.type === 'branch_summary') return 'branchSummary';
-  if (entry.type === 'compaction') return 'compactionSummary';
-  return undefined;
+function isEmptyPiAssistantContent(content: unknown): boolean {
+  return content == null || content === '' || (Array.isArray(content) && content.length === 0);
 }
 
-function resolvePiMessageRole(role: string | undefined): SessionMessageRole {
-  if (role === 'user') return 'user';
-  if (role === 'assistant') return 'agent';
-  // toolResult, bashExecution, custom, custom_message-inferred, branchSummary, compactionSummary
-  return 'event';
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function readFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function resolvePiEntryTimestampMs(entry: PiSessionEntry): number {
   const fromEntry = timestampToMs(entry.timestamp);
-  if (fromEntry > 0) return fromEntry;
-  // The projected envelope carries no timestamp; fall back to the pi message's own
-  // epoch field on the entry (entries that have neither resolve to 0, same as before).
-  return timestampToMs(entry.message?.timestamp);
+  return fromEntry > 0 ? fromEntry : timestampToMs(entry.message?.timestamp);
 }
 
 function timestampToMs(value: unknown): number {
@@ -224,7 +256,6 @@ function timestampToMs(value: unknown): number {
     if (Number.isFinite(ms) && ms >= 0) return Math.trunc(ms);
   }
   if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
-    // Heuristic: seconds vs milliseconds (same rule as the Claude mapper).
     return value < 1_000_000_000_000 ? Math.trunc(value * 1000) : Math.trunc(value);
   }
   return 0;

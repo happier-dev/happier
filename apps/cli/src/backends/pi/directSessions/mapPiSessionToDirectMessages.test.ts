@@ -109,7 +109,7 @@ describe('mapPiSessionToDirectMessages', () => {
     expect(ids(items)).toEqual([`pi:${FILE_REL}:aaaa0001`, `pi:${FILE_REL}:bbbb0001`]);
   });
 
-  it('preserves the full active-branch history around compaction and emits the compaction as an event', () => {
+  it('preserves the full active-branch history around compaction and emits the canonical compaction event', () => {
     const entries = [
       user('aaaa0001', null, 'old prompt'),
       assistant('summariz', 'aaaa0001', 'summarized away'),
@@ -128,8 +128,11 @@ describe('mapPiSessionToDirectMessages', () => {
     ]);
     expect(items[3]!.messageRole).toBe('event');
     expect(rawPath(items[3], 'role')).toBe('agent');
-    expect(rawPath(items[3], 'content.data.type')).toBe('summary');
-    expect(rawPath(items[3], 'content.data.summary')).toBe('earlier work');
+    expect(rawPath(items[3], 'content.type')).toBe('event');
+    expect(rawPath(items[3], 'content.data')).toEqual({
+      type: 'context-compaction', phase: 'completed', lifecycleId: `pi:${FILE_REL}:comp00001`,
+      provider: 'pi', source: 'runtime', trigger: 'unknown', tokenCountBefore: 5000,
+    });
   });
 
   it('skips non-context entries (model_change, thinking_level_change, label, custom) entirely', () => {
@@ -148,7 +151,7 @@ describe('mapPiSessionToDirectMessages', () => {
     expect(ids(items)).toEqual([`pi:${FILE_REL}:aaaa0001`, `pi:${FILE_REL}:bbbb0001`]);
   });
 
-  it('classifies bashExecution tool output as an event', () => {
+  it('projects bashExecution as one canonical ACP tool call and result pair', () => {
     const entries = [
       user('aaaa0001', null, 'run ls'),
       entry({
@@ -159,7 +162,17 @@ describe('mapPiSessionToDirectMessages', () => {
       }),
     ];
     const items = mapPiSessionToDirectMessages({ entries, fileRelPath: FILE_REL });
-    expect(roles(items)).toEqual(['user', 'event']);
+    expect(roles(items)).toEqual(['user', 'event', 'event']);
+    const callId = `pi:${FILE_REL}:bbbb0001`;
+    expect(items.slice(1).map((item) => item.id)).toEqual([`${callId}:bash-call`, `${callId}:bash-result`]);
+    expect(rawPath(items[1], 'content')).toEqual({
+      type: 'acp', provider: 'pi',
+      data: { type: 'tool-call', callId, name: 'bash', id: `${callId}:bash-call`, input: { command: 'ls' } },
+    });
+    expect(rawPath(items[2], 'content.data')).toEqual({
+      type: 'tool-result', callId, id: `${callId}:bash-result`,
+      output: { output: 'a\nb', exitCode: 0, cancelled: false, truncated: false }, isError: false,
+    });
   });
 
   it('returns [] for an empty session', () => {
@@ -201,8 +214,8 @@ describe('mapPiSessionToDirectMessages', () => {
     expect(assistantRow.content.data.type).toBe('assistant');
     expect(assistantRow.content.data.message.content[0].text).toBe('assistant reply');
     const summaryRow = items.find((item) => item.id.endsWith('s5m000001'))!.raw as Record<string, any>;
-    expect(summaryRow.content.data.type).toBe('summary');
-    expect(summaryRow.content.data.summary).toBe('branched from earlier work');
+    expect(summaryRow.content.type).toBe('acp');
+    expect(summaryRow.content.data).toEqual({ type: 'message', message: 'branched from earlier work' });
   });
 
   it('projects block-array user prompts onto the protocol user record so transcript views render them as user messages', () => {
@@ -213,7 +226,7 @@ describe('mapPiSessionToDirectMessages', () => {
       }),
       entry({
         type: 'message', id: 'aaaa0002', parentId: 'aaaa0001', timestamp: '2024-12-03T14:00:01.500Z',
-        message: { role: 'user', content: [{ type: 'image', source: '…' }], timestamp: 1 },
+        message: { role: 'user', content: [{ type: 'image', data: 'private-image-bytes', mimeType: 'image/png' }], timestamp: 1 },
       }),
     ];
     const items = mapPiSessionToDirectMessages({ entries, fileRelPath: FILE_REL });
@@ -224,10 +237,12 @@ describe('mapPiSessionToDirectMessages', () => {
     expect(rawPath(items[0], 'role')).toBe('user');
     expect(rawPath(items[0], 'content.type')).toBe('text');
     expect(rawPath(items[0], 'content.text')).toBe('first part\nsecond part');
-    // A user message with no text blocks cannot become a text record; it stays on the
-    // agent-output 'user' row (tool/attachment convention) instead of being dropped.
+    // The deployed direct-transcript envelope is text-only. Preserve the image marker
+    // without retaining inline bytes in an unrendered raw record.
     expect(items[1]!.messageRole).toBe('user');
-    expect(rawPath(items[1], 'content.data.type')).toBe('user');
+    expect(rawPath(items[1], 'content.type')).toBe('text');
+    expect(rawPath(items[1], 'content.text')).toBe('\n[Pi image content (image/png)]\n');
+    expect(JSON.stringify(items)).not.toContain('private-image-bytes');
   });
 
   it('normalizes pi toolCall blocks and toolResult messages to the Claude transcript convention', () => {
@@ -275,12 +290,53 @@ describe('mapPiSessionToDirectMessages', () => {
     ]);
   });
 
-  it('treats a message with null content as an empty-content message rather than dropping it', () => {
+  it('skips an empty assistant message instead of emitting an invisible event row', () => {
     const entries = [
       entry({ type: 'message', id: 'aaaa0001', parentId: null, message: { role: 'assistant', content: null } }),
     ];
     const items = mapPiSessionToDirectMessages({ entries, fileRelPath: FILE_REL });
-    expect(items).toHaveLength(1);
-    expect(rawPath(items[0], 'content.data.message.content')).toEqual([]);
+    expect(items).toEqual([]);
+  });
+
+  it('publishes visible custom messages as user text and skips hidden extension bookkeeping', () => {
+    const entries = [
+      entry({ type: 'custom_message', id: 'visible1', parentId: null, customType: 'extension', content: [{ type: 'text', text: 'injected context' }], display: true }),
+      entry({ type: 'custom_message', id: 'hidden01', parentId: 'visible1', customType: 'extension', content: 'hidden context', display: false }),
+    ];
+    const items = mapPiSessionToDirectMessages({ entries, fileRelPath: FILE_REL });
+    expect(ids(items)).toEqual([`pi:${FILE_REL}:visible1`]);
+    expect(items[0]!.messageRole).toBe('user');
+    expect(items[0]!.raw).toEqual({ role: 'user', content: { type: 'text', text: 'injected context' } });
+  });
+
+  it('strips inline image bytes from tool results while preserving visible content order', () => {
+    const entries = [entry({
+      type: 'message', id: 'tool0001', parentId: null,
+      message: {
+        role: 'toolResult', toolCallId: 'call_1', isError: false,
+        content: [
+          { type: 'text', text: 'before' },
+          { type: 'image', data: 'private-tool-image-bytes', mimeType: 'image/jpeg' },
+          { type: 'text', text: 'after' },
+        ],
+      },
+    })];
+    const items = mapPiSessionToDirectMessages({ entries, fileRelPath: FILE_REL });
+    expect(rawPath(items[0], 'content.data.message.content.0.content')).toEqual([
+      { type: 'text', text: 'before' },
+      { type: 'text', text: '[Pi tool result image (image/jpeg)]' },
+      { type: 'text', text: 'after' },
+    ]);
+    expect(JSON.stringify(items)).not.toContain('private-tool-image-bytes');
+  });
+
+  it('skips redacted assistant blocks while preserving usable content and skips fully redacted turns', () => {
+    const entries = [
+      entry({ type: 'message', id: 'partial1', parentId: null, message: { role: 'assistant', content: [{ type: 'thinking', thinking: '', thinkingSignature: 'sig' }, { type: 'text', text: 'answer' }] } }),
+      entry({ type: 'message', id: 'empty001', parentId: 'partial1', message: { role: 'assistant', content: [{ type: 'text', text: '' }] } }),
+    ];
+    const items = mapPiSessionToDirectMessages({ entries, fileRelPath: FILE_REL });
+    expect(ids(items)).toEqual([`pi:${FILE_REL}:partial1`]);
+    expect(rawPath(items[0], 'content.data.message.content')).toEqual([{ type: 'text', text: 'answer' }]);
   });
 });
