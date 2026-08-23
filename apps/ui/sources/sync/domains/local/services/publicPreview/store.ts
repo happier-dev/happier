@@ -116,3 +116,45 @@ export function selectLocalServicePublicPreviewExposure(
 ): LocalServicePublicExposureV1 | null {
     return state.exposuresById.get(exposureId) ?? null;
 }
+
+export type LocalServicePublicExposureExpiry = Readonly<{
+    /** Absolute wall-clock expiry, straight off the wire. */
+    expiresAt: number;
+    /** Milliseconds left, floored at 0. */
+    remainingMs: number;
+    /** True once the link can no longer be used, whatever the daemon-reported state still says. */
+    expired: boolean;
+}>;
+
+/**
+ * Client-side expiry derivation for a public exposure (G15).
+ *
+ * `expiresAt` has always been on the wire and nothing read it, so a link kept reading "Shareable
+ * link active" after it died — the daemon's own `public_preview_expired` diagnostic could only
+ * arrive on a refresh the pane no longer had. The daemon stays the authority on `state`; this is
+ * the honest presentation of a deadline the client can already see, for the window between real
+ * expiry and the next snapshot.
+ */
+export function selectLocalServicePublicExposureExpiry(
+    exposure: LocalServicePublicExposureV1,
+    nowMs: number,
+): LocalServicePublicExposureExpiry {
+    const remainingMs = Math.max(0, exposure.expiresAt - nowMs);
+    return {
+        expiresAt: exposure.expiresAt,
+        remainingMs,
+        expired: exposure.state === 'expired' || remainingMs === 0,
+    };
+}
+
+/**
+ * Whether an exposure is genuinely usable right now: the daemon calls it active AND its deadline
+ * has not passed. Callers that used to test `state === 'active'` alone were the G15 defect.
+ */
+export function isLocalServicePublicExposureLive(
+    exposure: LocalServicePublicExposureV1,
+    nowMs: number,
+): boolean {
+    return exposure.state === 'active'
+        && !selectLocalServicePublicExposureExpiry(exposure, nowMs).expired;
+}

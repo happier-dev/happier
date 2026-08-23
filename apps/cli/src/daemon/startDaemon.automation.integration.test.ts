@@ -1676,4 +1676,41 @@ describe('startDaemon automation wiring (integration)', () => {
       exitSpy.mockRestore();
     }
   });
+
+  // G12 / L3-5: the composition-boundary proof. The handler-level test at
+  // `src/rpc/handlers/executionRuns/peerMediationObservabilityDispatch.test.ts` calls the installer
+  // directly with a hand-written `api` stub, so deleting the real call in `startDaemon` left it
+  // green. This case boots the real `startDaemon` and fails when that call is removed.
+  it('publishes the peer-mediation observability read-path context from the daemon credential subject', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    let run: Promise<void> | null = null;
+    try {
+      const { startDaemon } = await import('./startDaemon');
+
+      run = startDaemon();
+      await vi.waitFor(() => {
+        expect(harness.startAutomationWorker).toHaveBeenCalledTimes(1);
+      });
+
+      expect(harness.setPeerMediationObservabilityRuntimeActionContextProvider).toHaveBeenCalledTimes(1);
+      const publishContext = harness.setPeerMediationObservabilityRuntimeActionContextProvider.mock.calls[0]?.[0] as
+        | (() => Readonly<{ store: { snapshot: unknown }; accountId: string; machineId: string }> | null)
+        | undefined;
+      expect(publishContext).toBeTypeOf('function');
+
+      // The published scope is derived from the live credential subject and the registered machine,
+      // and it carries the SAME store the daemon's relay write-path emits into.
+      const context = publishContext?.() ?? null;
+      expect(context).toMatchObject({
+        accountId: harness.daemonCredentialAccountId,
+        machineId: 'machine-automation',
+      });
+      expect(typeof context?.store.snapshot).toBe('function');
+    } finally {
+      harness.requestShutdown('happier-cli');
+      await run?.catch(() => undefined);
+      exitSpy.mockRestore();
+    }
+  });
 });

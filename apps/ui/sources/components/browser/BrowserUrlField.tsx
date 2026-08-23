@@ -100,7 +100,10 @@ function messageForResult(result: BrowserAddressNormalizationResult): string | n
         case 'search_unconfigured':
             return t('browserShell.address.searchUnconfigured');
         case 'invalid_url':
-            return t('browserShell.address.invalid');
+            // An existing, already-translated key rather than a new one: "This address can't be
+            // opened." is exactly what happened, and the corridor does not need a second string
+            // that says it in different words.
+            return t('browserShell.unavailable.invalidUrl');
     }
 }
 

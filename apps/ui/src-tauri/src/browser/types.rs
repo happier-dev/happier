@@ -48,13 +48,22 @@ pub enum DesktopBrowserProducer {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum DesktopBrowserDisabledReason {
-    #[serde(rename = "desktop_webview_child_view_unimplemented")]
-    NativeChildViewUnimplemented,
-    /// X11 child-embedding is spec-permitted by Wry but unproven for our Tauri-window child handle
-    /// and has no recorded manual-QA evidence. Until that verification lands (see the BRW-12 spike
-    /// docs) X11 stays honestly unavailable with this reason rather than over-claiming `available`.
-    #[serde(rename = "desktop_webview_x11_child_unimplemented")]
-    LinuxX11ChildEmbeddingUnimplemented,
+    /// The child-embedding primitive IS implemented for this platform
+    /// (`child_embedding_supported_for` returns true); what is missing is a recorded passing QA run
+    /// or a platform prerequisite for a persistent profile. Named *unverified*, not *unimplemented*:
+    /// the old name asserted a structural gap that does not exist and told every reader the
+    /// platform could never work.
+    #[serde(rename = "desktop_webview_child_view_unverified")]
+    NativeChildViewUnverified,
+    /// X11 child-embedding is spec-permitted by Wry and `build_as_child` is linked, but it is
+    /// unproven against our Tauri-window child handle and has no recorded manual-QA evidence. Until
+    /// that verification lands (see the BRW-12 spike docs) X11 stays honestly unavailable with this
+    /// reason rather than over-claiming `available`.
+    #[serde(rename = "desktop_webview_x11_child_unverified")]
+    LinuxX11ChildEmbeddingUnverified,
+    /// Genuinely unimplemented, unlike the two above: `build_as_child` returns
+    /// `wry::Error::UnsupportedWindowHandle` for a Wayland parent, so no embedding primitive exists
+    /// here at all.
     #[serde(rename = "desktop_webview_wayland_gtk_unimplemented")]
     LinuxWaylandGtkEmbeddingUnimplemented,
     #[serde(rename = "desktop_webview_linux_display_unavailable")]

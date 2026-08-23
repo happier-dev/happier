@@ -605,12 +605,12 @@ fn windows_and_x11_availability_is_gated_behind_verified_child_embedding() {
         (
             DesktopBrowserPlatform::Windows,
             DesktopBrowserPrimitive::WindowsHwndWebView2,
-            DesktopBrowserDisabledReason::NativeChildViewUnimplemented,
+            DesktopBrowserDisabledReason::NativeChildViewUnverified,
         ),
         (
             DesktopBrowserPlatform::LinuxX11,
             DesktopBrowserPrimitive::LinuxX11ChildEmbedding,
-            DesktopBrowserDisabledReason::LinuxX11ChildEmbeddingUnimplemented,
+            DesktopBrowserDisabledReason::LinuxX11ChildEmbeddingUnverified,
         ),
     ] {
         let unverified = resolve_desktop_browser_strategy_for_runtime(
@@ -757,7 +757,7 @@ fn macos_strategy_requires_custom_wk_data_store_identifier_support() {
     assert!(!unavailable.available);
     assert_eq!(
         unavailable.disabled_reasons,
-        vec![DesktopBrowserDisabledReason::NativeChildViewUnimplemented]
+        vec![DesktopBrowserDisabledReason::NativeChildViewUnverified]
     );
     assert!(!unavailable.supports.navigation);
     assert!(!unavailable.privileged_ipc);

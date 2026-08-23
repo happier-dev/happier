@@ -67,7 +67,7 @@ pub(crate) fn resolve_desktop_browser_strategy_for_runtime(
         DesktopBrowserPlatform::MacOs => DesktopBrowserAvailability::unavailable(
             platform,
             DesktopBrowserPrimitive::MacOsNsViewWebKit,
-            DesktopBrowserDisabledReason::NativeChildViewUnimplemented,
+            DesktopBrowserDisabledReason::NativeChildViewUnverified,
         ),
         DesktopBrowserPlatform::Windows
             if runtime_support.child_embedding_verified
@@ -78,7 +78,7 @@ pub(crate) fn resolve_desktop_browser_strategy_for_runtime(
         DesktopBrowserPlatform::Windows => DesktopBrowserAvailability::unavailable(
             platform,
             DesktopBrowserPrimitive::WindowsHwndWebView2,
-            DesktopBrowserDisabledReason::NativeChildViewUnimplemented,
+            DesktopBrowserDisabledReason::NativeChildViewUnverified,
         ),
         DesktopBrowserPlatform::LinuxX11
             if runtime_support.child_embedding_verified
@@ -92,7 +92,7 @@ pub(crate) fn resolve_desktop_browser_strategy_for_runtime(
         DesktopBrowserPlatform::LinuxX11 => DesktopBrowserAvailability::unavailable(
             platform,
             DesktopBrowserPrimitive::LinuxX11ChildEmbedding,
-            DesktopBrowserDisabledReason::LinuxX11ChildEmbeddingUnimplemented,
+            DesktopBrowserDisabledReason::LinuxX11ChildEmbeddingUnverified,
         ),
         DesktopBrowserPlatform::LinuxWayland => DesktopBrowserAvailability::unavailable(
             platform,

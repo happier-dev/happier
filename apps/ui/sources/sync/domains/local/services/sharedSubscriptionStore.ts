@@ -261,8 +261,7 @@ export function createLocalServicesSharedSubscriptionStore<
             if (entry.refCount === 1) {
                 void runRefresh(entry);
             }
-            // B1-FALSIFICATION-TEMPORARY: mechanism removed to prove RED. RESTORE.
-            void runWatchLoop;
+            runWatchLoop(entry);
             return () => {
                 if (!subscribed) {
                     return;

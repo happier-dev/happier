@@ -326,6 +326,8 @@ async function maybeStartPeerMediationLoopback(params: Readonly<{
   machineId: string;
   voiceBinaryAppendConsumer?: PeerTcpTunnelVoiceBinaryAppendConsumer;
   voiceBinaryTerminalConsumer?: PeerTcpTunnelVoiceBinaryTerminalConsumer;
+  /** PMS-9 / P1-9: shared emitter so the DIRECT loopback routes publish flow facts too. */
+  observability?: DaemonPeerMediationObservabilityEmitter;
 }>): Promise<StartedPeerMediationLoopback | null> {
   const serverFeatures = await resolvePeerMediationMachineRpcServerFeatures(params.config);
   if (!serverFeatures) return null;
@@ -347,6 +349,7 @@ async function maybeStartPeerMediationLoopback(params: Readonly<{
       ...(params.voiceBinaryAppendConsumer ? { voiceBinaryAppendConsumer: params.voiceBinaryAppendConsumer } : {}),
       ...(params.voiceBinaryTerminalConsumer ? { voiceBinaryTerminalConsumer: params.voiceBinaryTerminalConsumer } : {}),
     },
+    ...(params.observability ? { observability: params.observability } : {}),
     ...(params.config?.nowMs ? { nowMs: params.config.nowMs } : {}),
     ...(params.config?.endpointFingerprint ? { endpointFingerprint: params.config.endpointFingerprint } : {}),
     ...(params.config?.endpointTtlMs ? { endpointTtlMs: params.config.endpointTtlMs } : {}),
@@ -1094,8 +1097,20 @@ export async function bootstrapMachineSyncRuntime(
     voiceBinaryTerminalConsumer =
       machineRpcLifecycleRegistration?.voiceInference?.voiceInferenceStreaming.cancelSttStreamForTransportLoss;
 
+    // PMS-9 (finding #49) + PMS-WIRE: supply ONE observability emitter to the DIRECT loopback routes
+    // AND both relay terminators. In production startup hands in the shared emitter
+    // (`params.peerMediationMachineRpc.observability`) whose store is also published onto the Api
+    // provider bridge for the read-path executor, so the write-path and read-path bind to the SAME
+    // store. Narrow callers without an injected emitter fall back to a self-owned store (read-path
+    // stays empty, but the write-path still functions).
+    const peerMediationObservabilityEmitter = params.peerMediationMachineRpc?.observability
+      ?? createDaemonPeerMediationObservabilityRuntime({
+        nowMs: params.peerMediationMachineRpc?.nowMs ?? (() => Date.now()),
+      }).emitter;
+
     peerMediationLoopback = await maybeStartPeerMediationLoopback({
       config: params.peerMediationMachineRpc,
+      observability: peerMediationObservabilityEmitter,
       connectedApiMachine,
       credentials: params.credentials,
       machine: params.machine,
@@ -1109,16 +1124,6 @@ export async function bootstrapMachineSyncRuntime(
     if (peerMediationLoopback) {
       stopPeerMediationLoopbackServer = peerMediationLoopback.stop;
     }
-
-    // PMS-9 (finding #49) + PMS-WIRE: supply ONE observability emitter to both relay terminators.
-    // In production startup hands in the shared emitter (`params.peerMediationMachineRpc.observability`)
-    // whose store is also published onto the Api provider bridge for the read-path executor, so the
-    // write-path and read-path bind to the SAME store. Narrow callers without an injected emitter fall
-    // back to a self-owned store (read-path stays empty, but the write-path still functions).
-    const peerMediationObservabilityEmitter = params.peerMediationMachineRpc?.observability
-      ?? createDaemonPeerMediationObservabilityRuntime({
-        nowMs: params.peerMediationMachineRpc?.nowMs ?? (() => Date.now()),
-      }).emitter;
 
     const peerTcpTunnelRelayContext = await resolvePeerTcpTunnelRelayBootstrapContext({
       config: params.peerMediationMachineRpc,

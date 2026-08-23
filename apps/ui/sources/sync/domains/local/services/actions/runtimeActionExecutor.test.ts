@@ -719,6 +719,79 @@ describe('UI local-services runtime action executor', () => {
         }));
     });
 
+    // INV-1 / DEC-2: the egress predicate resolves the SAME way as the consent layer — an
+    // unknown or missing surface is treated as agent-reachable, so the secret public URL is
+    // redacted rather than egressed raw. Previously this branch tested `surface === 'agent'`
+    // and handed the raw URL to every other value, including `undefined`.
+    it('redacts public-preview URLs when the caller stamps no surface (fail closed)', async () => {
+        const mod = await import('./runtimeActionExecutor');
+
+        const fetchPublicPreviewStatus = vi.fn(async () => ({ ok: true as const, snapshot: publicPreviewSnapshot }));
+        const createPublicPreviewExposure = vi.fn(async () => ({
+            ok: true as const,
+            response: publicPreviewCreateResponse,
+        }));
+        const revokePublicPreviewExposure = vi.fn(async () => ({
+            ok: true as const,
+            response: {
+                protocolVersion: 1 as const,
+                exposureId: 'public_preview_1',
+                revokedAt: 4_000,
+                snapshot: publicPreviewSnapshot,
+            },
+        }));
+        const execute = mod.createLocalServicesRuntimeActionExecutor({
+            resolveMachineId: () => 'machine_1',
+            fetchPublicPreviewStatus,
+            createPublicPreviewExposure,
+            revokePublicPreviewExposure,
+        });
+
+        const unattributed = await execute(runtimeArgs({
+            actionId: 'localServices.publicPreview.status',
+            input: { previewId: 'preview_1' },
+            context: { defaultSessionId: 'session_1', serverId: 'server_1' },
+        })) as LocalServicePublicPreviewSnapshotV1;
+        expect(unattributed.exposures[0]?.publicUrl).toBe(REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL);
+
+        const unknownSurface = await execute(runtimeArgs({
+            actionId: 'localServices.publicPreview.status',
+            input: { previewId: 'preview_1' },
+            context: { surface: 'not_a_surface' as never, defaultSessionId: 'session_1', serverId: 'server_1' },
+        })) as LocalServicePublicPreviewSnapshotV1;
+        expect(unknownSurface.exposures[0]?.publicUrl).toBe(REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL);
+
+        const createResult = await execute(runtimeArgs({
+            actionId: 'localServices.publicPreview.create',
+            input: {
+                sessionId: 'session_1',
+                previewId: 'preview_1',
+                mode: 'secret_link',
+                ttlMs: 600_000,
+                rateLimitProfileId: 'default',
+                confirmation: { acknowledged: true },
+            },
+            context: { serverId: 'server_1' },
+        })) as DaemonLocalServicePublicPreviewCreateResponseV1;
+        expect(createResult.exposure.publicUrl).toBe(REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL);
+
+        const revokeResult = await execute(runtimeArgs({
+            actionId: 'localServices.publicPreview.revoke',
+            input: { sessionId: 'session_1', previewId: 'preview_1', exposureId: 'public_preview_1' },
+            context: { serverId: 'server_1' },
+        })) as { snapshot: LocalServicePublicPreviewSnapshotV1 };
+        expect(revokeResult.snapshot.exposures[0]?.publicUrl).toBe(REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL);
+
+        // A known non-agent surface still receives the real URL — the fix must not redact
+        // everything unconditionally.
+        const uiResult = await execute(runtimeArgs({
+            actionId: 'localServices.publicPreview.status',
+            input: { previewId: 'preview_1' },
+            context: { surface: 'ui', defaultSessionId: 'session_1', serverId: 'server_1' },
+        })) as LocalServicePublicPreviewSnapshotV1;
+        expect(uiResult.exposures[0]?.publicUrl).toBe(publicExposure.publicUrl);
+    });
+
     it('redacts public-preview create and revoke response URLs for agent-surface egress while publishing raw store snapshots', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
         expect(mod?.createLocalServicesRuntimeActionExecutor).toBeTypeOf('function');

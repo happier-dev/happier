@@ -36,8 +36,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         flexShrink: 1,
     },
+    // NOT `state.warning.foreground`. Q2 measured that pairing at 2.07:1 on `surface.inset` and
+    // 2.09:1 on its own `state.warning.background` in light theme — the theme's amber is a FILL
+    // colour, not a text colour, and using it here would have made the one chip that must be
+    // legible the least legible thing in the row. The warning is carried by the open-lock glyph
+    // (shape, so it survives colour blindness) and the tinted fill; the words stay `text.primary`.
     textInsecure: {
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.text.primary,
     },
 }));
 
@@ -128,11 +133,13 @@ export function SecurityOriginIndicator(props: Readonly<{
     const hasOrigin = Boolean(model.originLabel) || model.securityLevel !== 'unknown';
     const visual = hasOrigin ? visualForLevel(model.securityLevel) : null;
     const iconName = visual?.iconName ?? originKindGlyph(props.view);
-    const iconColor = visual?.tone === 'secure'
-        ? theme.colors.state.success.foreground
-        : visual?.tone === 'insecure'
-            ? theme.colors.state.warning.foreground
-            : theme.colors.text.secondary;
+    // One glyph colour for every state that is FINE, and the text colour for the one that is not.
+    // A green lock adds nothing a closed lock has not already said, and the theme's semantic
+    // foregrounds measure 2.2:1 against a plain surface — below even the 3:1 that a meaning-bearing
+    // graphic needs. Difference lives in the glyph and, for `insecure`, in the fill behind it.
+    const iconColor = visual?.tone === 'insecure'
+        ? theme.colors.text.primary
+        : theme.colors.text.secondary;
 
     const securityLabel = t(`browserShell.security.${model.securityLevel}` as const);
     const label = model.originLabel ?? (hasOrigin ? securityLabel : originKindLabel(props.view));

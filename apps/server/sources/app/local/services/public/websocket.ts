@@ -51,7 +51,7 @@ export type LocalServicePublicWebSocketUpgradeOptions = Readonly<{
     authorizeSessionAccess?: (input: Readonly<{
         userId: string;
         sessionId: string;
-        purpose: LocalServicePublicAccessPurpose | string;
+        purpose: LocalServicePublicAccessPurpose;
     }>) => boolean | Promise<boolean>;
     readOptionalUserId?: (request: unknown) => Promise<string | null>;
     openTunnel?: OpenLocalServicePreviewTunnel;
