@@ -30,6 +30,12 @@ export async function requireLocalSessionVisibleForRoute(params: Readonly<{
     serverId?: string | null;
     getStoredSession: (sessionId: string) => Session | null;
     ensureSessionVisibleForMessageRoute?: EnsureSessionVisibleForMessageRoute | null;
+    /**
+     * Consumer-specific proof required after the one authoritative hydration
+     * attempt. This stays here so route consumers do not grow local polling or
+     * competing readiness loops.
+     */
+    isLocalSessionReady?: (session: Session) => boolean;
 }>): Promise<Session> {
     if (typeof params.ensureSessionVisibleForMessageRoute === 'function') {
         const hydration = await params.ensureSessionVisibleForMessageRoute(
@@ -44,6 +50,9 @@ export async function requireLocalSessionVisibleForRoute(params: Readonly<{
 
     const session = params.getStoredSession(params.sessionId);
     if (!session) {
+        throw new Error(CREATED_SESSION_NOT_AVAILABLE_LOCALLY_ERROR);
+    }
+    if (params.isLocalSessionReady && !params.isLocalSessionReady(session)) {
         throw new Error(CREATED_SESSION_NOT_AVAILABLE_LOCALLY_ERROR);
     }
     return session;

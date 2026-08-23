@@ -213,6 +213,19 @@ describe('getPendingMessageVisualState', () => {
                 isUnknown: false,
             },
         });
+
+        expect(getPendingMessageVisualState(pendingMessage({
+            pendingDeliveryStatus: 'blocked',
+            pendingDeliveryBlockedReason: 'conditional_steer_unavailable',
+        }))).toEqual({
+            kind: 'blocked',
+            showSpinner: false,
+            iconName: 'warning-circle',
+            deliveryBlockedPresentation: {
+                labelKey: 'session.pendingMessages.deliveryBlockedReasons.unknown',
+                isUnknown: false,
+            },
+        });
     });
 
     it.each([

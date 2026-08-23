@@ -78,6 +78,8 @@ function createDeps(overrides: Partial<VoiceHistoryConsumerDeps> = {}): VoiceHis
       status: 'no_more' as const,
     })),
     readMessages: vi.fn(() => []),
+    readMessagesRevision: () => 0,
+    subscribeHistorySources: () => () => {},
     resolveProviderLabel: (source) => source?.pluginId === OPENAI_SOURCE.pluginId
       ? 'OpenAI Realtime'
       : source?.pluginId === XAI_SOURCE.pluginId
@@ -232,6 +234,124 @@ describe('createVoiceHistoryConsumer', () => {
     projectionRevision += 1;
     consumer.read();
     expect(resolveProviderLabel).toHaveBeenCalledTimes(4);
+  });
+
+  it('keeps the projection across reads when the message reader materializes a fresh array', async () => {
+    // The canonical reader (`readStoredSessionMessages`) builds a new array on
+    // every call, so a projection memo keyed on array identity never hits in
+    // production even though a fixture returning one stable array says it does.
+    const messages = [
+      voiceMessage({
+        id: 'question',
+        role: 'user',
+        text: 'First question',
+        createdAt: 100,
+        source: OPENAI_SOURCE,
+      }),
+      voiceMessage({
+        id: 'answer',
+        role: 'assistant',
+        text: 'Matching answer',
+        createdAt: 200,
+        source: OPENAI_SOURCE,
+      }),
+    ];
+    let messagesRevision = 7;
+    const resolveProviderLabel = vi.fn(() => 'OpenAI Realtime');
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      readMessages: () => [...messages],
+      readMessagesRevision: () => messagesRevision,
+      resolveProviderLabel,
+    }));
+
+    await consumer.open();
+    expect(resolveProviderLabel).toHaveBeenCalledTimes(2);
+
+    // Typing filters the already-projected rows; it never re-projects them.
+    consumer.read('matching');
+    consumer.read('question');
+    consumer.read('');
+    expect(resolveProviderLabel).toHaveBeenCalledTimes(2);
+
+    // A real message write does re-project — exactly once for the new slice.
+    messages.push(voiceMessage({
+      id: 'follow-up',
+      role: 'user',
+      text: 'A follow-up',
+      createdAt: 300,
+      source: OPENAI_SOURCE,
+    }));
+    messagesRevision += 1;
+    expect(consumer.read().rows).toHaveLength(3);
+    expect(resolveProviderLabel).toHaveBeenCalledTimes(5);
+  });
+
+  it('publishes a History revision that moves on live writes and ignores unrelated ones', async () => {
+    const listeners = new Set<() => void>();
+    let messagesRevision = 1;
+    let projectionRevision = 1;
+    const messages = [
+      voiceMessage({
+        id: 'question',
+        role: 'user',
+        text: 'First question',
+        createdAt: 100,
+        source: OPENAI_SOURCE,
+      }),
+    ];
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      readMessages: () => [...messages],
+      readMessagesRevision: () => messagesRevision,
+      readProjectionRevision: () => projectionRevision,
+      subscribeHistorySources: (listener) => {
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+      },
+      loadOlderMessages: async () => ({ loaded: 0, hasMore: false, status: 'no_more' as const }),
+    }));
+
+    const notified = vi.fn();
+    const unsubscribe = consumer.subscribe(notified);
+    expect(listeners.size).toBe(1);
+
+    const unbound = consumer.getRevision();
+    await consumer.open();
+    const bound = consumer.getRevision();
+    // Binding a session is itself a change, and it is published without a read.
+    expect(bound).not.toBe(unbound);
+    expect(notified).toHaveBeenCalled();
+
+    // An unrelated store write reaches the listener, but the revision is stable,
+    // so the screen's external-store comparison ends it there.
+    for (const listener of listeners) listener();
+    expect(consumer.getRevision()).toBe(bound);
+
+    // A voice turn landing in the bound session while History is open.
+    messages.push(voiceMessage({
+      id: 'answer',
+      role: 'assistant',
+      text: 'A live answer',
+      createdAt: 200,
+      source: OPENAI_SOURCE,
+    }));
+    messagesRevision += 1;
+    const afterMessage = consumer.getRevision();
+    expect(afterMessage).not.toBe(bound);
+    expect(consumer.read().rows).toHaveLength(2);
+
+    // A provider label resolving late changes the rendered rows too.
+    projectionRevision += 1;
+    const afterProjection = consumer.getRevision();
+    expect(afterProjection).not.toBe(afterMessage);
+
+    // Reaching the end of pagination retires the Load older control with no
+    // message write behind it.
+    await consumer.loadOlder();
+    expect(consumer.getRevision()).not.toBe(afterProjection);
+    expect(consumer.read().hasMore).toBe(false);
+
+    unsubscribe();
+    expect(listeners.size).toBe(0);
   });
 
   it('rejects a stale discovery instead of replacing a newer session binding', async () => {
@@ -402,12 +522,12 @@ describe('createVoiceHistoryConsumer', () => {
     await consumer.open();
     resolveProviderLabel.mockClear();
     const artifact = await consumer.exportHistory({ range: 'all' });
-    const payload = JSON.parse(artifact.content);
+    const payload = JSON.parse([...artifact.chunks()].join(''));
 
     expect(loadOlderMessages).toHaveBeenCalledTimes(2);
-    // The initial export snapshot reuses the projection produced by open();
-    // each newly loaded page invalidates and projects the enlarged slice once.
-    expect(resolveProviderLabel).toHaveBeenCalledTimes(5);
+    // The growing slice is projected and re-sorted exactly ONCE, after the last
+    // page, instead of once per page: three rows, three label resolutions.
+    expect(resolveProviderLabel).toHaveBeenCalledTimes(3);
     expect(artifact).toMatchObject({
       mimeType: 'application/json',
       rowCount: 3,
@@ -424,10 +544,11 @@ describe('createVoiceHistoryConsumer', () => {
     });
   });
 
-  it('fails all-history export with typed page and row ceilings', async () => {
+  it('exports the complete history past every former page, row and byte ceiling', async () => {
     const loaded: Message[] = [];
     let pageIndex = 0;
-    const pageBoundConsumer = createVoiceHistoryConsumer(createDeps({
+    const TOTAL_PAGES = 80;
+    const pagedConsumer = createVoiceHistoryConsumer(createDeps({
       readMessages: () => loaded,
       loadOlderMessages: vi.fn(async () => {
         pageIndex += 1;
@@ -435,43 +556,43 @@ describe('createVoiceHistoryConsumer', () => {
           id: `page-${pageIndex}`,
           role: 'assistant',
           text: `Page ${pageIndex}`,
-          createdAt: pageIndex,
+          createdAt: TOTAL_PAGES - pageIndex,
           source: OPENAI_SOURCE,
         }));
         return {
           loaded: 1,
-          hasMore: pageIndex <= 64,
-          status: pageIndex <= 64 ? 'loaded' as const : 'no_more' as const,
+          hasMore: pageIndex < TOTAL_PAGES,
+          status: pageIndex < TOTAL_PAGES ? 'loaded' as const : 'no_more' as const,
         };
       }),
     }));
-    await pageBoundConsumer.open();
+    await pagedConsumer.open();
 
-    await expect(pageBoundConsumer.exportHistory({ range: 'all' })).rejects.toMatchObject({
-      name: 'VoiceHistoryExportLimitError',
-      limit: 'pages',
-      maximum: 64,
-    });
+    const pagedArtifact = await pagedConsumer.exportHistory({ range: 'all' });
+    const pagedPayload = JSON.parse([...pagedArtifact.chunks()].join(''));
 
-    const rowBoundConsumer = createVoiceHistoryConsumer(createDeps({
+    expect(pagedArtifact.rowCount).toBe(TOTAL_PAGES);
+    expect(pagedPayload.entries).toHaveLength(TOTAL_PAGES);
+    // Oldest first, unbroken: a partial or reordered artifact is not an export.
+    expect(pagedPayload.entries.map((entry: { id: string }) => entry.id))
+      .toEqual(Array.from({ length: TOTAL_PAGES }, (_, index) => `page-${TOTAL_PAGES - index}`));
+
+    const rowConsumer = createVoiceHistoryConsumer(createDeps({
       readMessages: () => Array.from({ length: 5_001 }, (_, index) => voiceMessage({
         id: `row-${index}`,
         role: 'assistant',
-        text: 'bounded',
+        text: 'unbounded',
         createdAt: index,
         source: OPENAI_SOURCE,
       })),
     }));
-    await rowBoundConsumer.open();
-    await expect(rowBoundConsumer.exportHistory({ range: 'loaded' })).rejects.toMatchObject({
-      name: 'VoiceHistoryExportLimitError',
-      limit: 'rows',
-      maximum: 5_000,
-    });
-  });
+    await rowConsumer.open();
+    const rowArtifact = await rowConsumer.exportHistory({ range: 'loaded' });
 
-  it('fails export with a typed serialized-byte ceiling before returning an oversized artifact', async () => {
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    expect(rowArtifact.rowCount).toBe(5_001);
+    expect(JSON.parse([...rowArtifact.chunks()].join('')).entries).toHaveLength(5_001);
+
+    const byteConsumer = createVoiceHistoryConsumer(createDeps({
       readMessages: () => [
         voiceMessage({
           id: 'oversized',
@@ -482,13 +603,13 @@ describe('createVoiceHistoryConsumer', () => {
         }),
       ],
     }));
-    await consumer.open();
+    await byteConsumer.open();
+    const byteArtifact = await byteConsumer.exportHistory({ range: 'loaded' });
+    const byteChunks = [...byteArtifact.chunks()];
 
-    await expect(consumer.exportHistory({ range: 'loaded' })).rejects.toMatchObject({
-      name: 'VoiceHistoryExportLimitError',
-      limit: 'bytes',
-      maximum: 8 * 1024 * 1024,
-    });
+    expect(byteChunks.reduce((total, chunk) => total + chunk.length, 0))
+      .toBeGreaterThan(8 * 1024 * 1024);
+    expect(JSON.parse(byteChunks.join('')).entries).toHaveLength(1);
   });
 
   it('does not create a carrier when history is absent and fails closed after account scope changes', async () => {
@@ -547,6 +668,72 @@ describe('createVoiceHistoryConsumer', () => {
     );
   });
 
+  it('surfaces an attempted-and-failed older page instead of a silent no-op', async () => {
+    const loaded: Message[] = [
+      voiceMessage({
+        id: 'newest',
+        role: 'assistant',
+        text: 'Newest answer',
+        createdAt: 300,
+        source: OPENAI_SOURCE,
+      }),
+    ];
+    let attempt = 0;
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      readMessages: () => loaded,
+      loadOlderMessages: vi.fn(async () => {
+        attempt += 1;
+        if (attempt === 1) {
+          return { loaded: 0, hasMore: true, status: 'retryable_error' as const };
+        }
+        loaded.push(voiceMessage({
+          id: 'older',
+          role: 'user',
+          text: 'Older question',
+          createdAt: 100,
+          source: OPENAI_SOURCE,
+        }));
+        return { loaded: 1, hasMore: false, status: 'no_more' as const };
+      }),
+    }));
+    await consumer.open();
+
+    await expect(consumer.loadOlder()).rejects.toThrow(/older/iu);
+    // The failed read retains rows and the older cursor, so the exact same
+    // read is still available: the very next attempt must succeed.
+    expect(consumer.read()).toMatchObject({
+      sessionId: 'voice-history-session',
+      hasMore: null,
+    });
+    expect(consumer.read().rows).toHaveLength(1);
+
+    await expect(consumer.loadOlder()).resolves.toMatchObject({ hasMore: false });
+    expect(consumer.read().rows).toHaveLength(2);
+  });
+
+  it('fails an all-history export on an attempted-and-failed page rather than truncating it', async () => {
+    const loaded: Message[] = [
+      voiceMessage({
+        id: 'newest',
+        role: 'assistant',
+        text: 'Newest answer',
+        createdAt: 300,
+        source: OPENAI_SOURCE,
+      }),
+    ];
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      readMessages: () => loaded,
+      loadOlderMessages: vi.fn(async () => ({
+        loaded: 0,
+        hasMore: true,
+        status: 'retryable_error' as const,
+      })),
+    }));
+    await consumer.open();
+
+    await expect(consumer.exportHistory({ range: 'all' })).rejects.toThrow(/older/iu);
+  });
+
   it('refuses whole-session deletion while the carrier belongs to an active targetless attempt', async () => {
     const deleteSession = vi.fn(async () => ({ success: true }));
     const retireLocalSession = vi.fn();
@@ -568,20 +755,82 @@ describe('createVoiceHistoryConsumer', () => {
     });
   });
 
-  it('retains the local binding when the server reports the carrier missing or not owned', async () => {
+  it('retires the exact carrier and its decrypted rows when the server confirms it absent', async () => {
     const retireLocalSession = vi.fn();
     const consumer = createVoiceHistoryConsumer(createDeps({
+      readMessages: () => [
+        voiceMessage({
+          id: 'stale-row',
+          role: 'assistant',
+          text: 'deleted from another device',
+          createdAt: 100,
+          source: OPENAI_SOURCE,
+        }),
+      ],
+      // No socket deletion update ever arrives here: the HTTP answer alone has
+      // to retire the binding, or a device that misses the socket echo keeps
+      // showing decrypted rows for history the server no longer has.
       deleteSession: vi.fn(async () => ({
         success: false,
+        code: 'session_absent' as const,
         message: 'Session not found or not owned by user',
       })),
       retireLocalSession,
     }));
     await consumer.open();
+    expect(consumer.read().rows).toHaveLength(1);
+
+    await expect(consumer.clear()).resolves.toEqual({ cleared: true });
+    expect(retireLocalSession).toHaveBeenCalledWith('voice-history-session');
+    expect(consumer.read()).toMatchObject({ sessionId: null, rows: [] });
+  });
+
+  it('keeps the carrier and stays retryable when the server lost the delete condition', async () => {
+    const retireLocalSession = vi.fn();
+    const deleteSession = vi.fn(async () => ({
+      success: false,
+      code: 'session_delete_conflict' as const,
+      message: 'Session delete condition was lost',
+    }));
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      readMessages: () => [
+        voiceMessage({
+          id: 'live-row',
+          role: 'assistant',
+          text: 'still on the server',
+          createdAt: 100,
+          source: OPENAI_SOURCE,
+        }),
+      ],
+      deleteSession,
+      retireLocalSession,
+    }));
+    await consumer.open();
 
     await expect(consumer.clear()).rejects.toThrow(
-      'Session not found or not owned by user',
+      'Session delete condition was lost',
     );
+    expect(retireLocalSession).not.toHaveBeenCalled();
+    expect(consumer.read()).toMatchObject({ sessionId: 'voice-history-session' });
+    expect(consumer.read().rows).toHaveLength(1);
+
+    deleteSession.mockResolvedValueOnce({ success: true } as never);
+    await expect(consumer.clear()).resolves.toEqual({ cleared: true });
+    expect(retireLocalSession).toHaveBeenCalledWith('voice-history-session');
+  });
+
+  it('keeps an unclassified clear failure retryable without retiring local history', async () => {
+    const retireLocalSession = vi.fn();
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      deleteSession: vi.fn(async () => ({
+        success: false,
+        message: 'Failed to delete session',
+      })),
+      retireLocalSession,
+    }));
+    await consumer.open();
+
+    await expect(consumer.clear()).rejects.toThrow('Failed to delete session');
     expect(retireLocalSession).not.toHaveBeenCalled();
     expect(consumer.read()).toMatchObject({
       sessionId: 'voice-history-session',

@@ -22,22 +22,31 @@ import type { InstallerFs, InstallMode, InstallerOverrides, InvalidatePackRuntim
  * behind it change. Resolved here — the one place that owns both the installer
  * host and the app's voice runtime — rather than inside the filesystem host.
  *
- * The native streaming recognizer cached for that directory is evicted through
- * the sherpa module, which owns the stream lifetime: the eviction marks the jobs
- * decoding against the pack and releases the recognizer, and the handles are
- * destroyed by whichever holder releases last. A native binary that predates
- * that method simply keeps its recognizer, which is no worse than before, so the
- * removal or promotion still proceeds.
+ * Both native engine kinds -- the streaming recognizer and the offline TTS engine
+ * -- are retired through one sherpa entry point, which owns their lifetime: it
+ * drops the cache entries, marks the jobs running against them cancelled, and
+ * lets whichever holder releases last destroy the handles, so an in-flight decode
+ * or synthesis is never freed underneath.
  *
- * Offline TTS engines are still cached natively by the same path and are not
- * evicted here: their handles are passed to synthesis as raw pointers, so they
- * cannot be released safely until they own their lifetime the way streams now do.
+ * This fails closed. It is awaited before the live bytes move, so a rejection
+ * aborts the promotion or removal with the pack still intact; letting it through
+ * would replace the bytes while the engine built from the predecessor bytes keeps
+ * serving, which reads to the user as an update that did nothing. The native
+ * module being absent entirely (web, or a build without the module) is not that
+ * case: nothing is cached against the directory, so there is nothing to retire.
  */
 function getInvalidatePackRuntime(overrides: InstallerOverrides): InvalidatePackRuntime {
   return overrides.invalidatePackRuntime ?? (async (packDirUri) => {
     const assetsDir = uriToFilePath(packDirUri);
     forgetSpeakerCountForAssetsDir(assetsDir);
-    await getOptionalHappierSherpaNativeModule()?.releaseStreamingAssetsDir?.({ assetsDir }).catch(() => {});
+    const sherpa = getOptionalHappierSherpaNativeModule();
+    if (!sherpa) return;
+    if (typeof sherpa.releaseAssetsDir !== 'function') {
+      // A native binary older than this JS bundle cannot retire its engines, and
+      // proceeding would leave the superseded model serving until the app restarts.
+      throw new Error('model_pack_runtime_invalidation_unsupported');
+    }
+    await sherpa.releaseAssetsDir({ assetsDir });
   });
 }
 
@@ -197,7 +206,14 @@ export async function checkModelPackUpdateAvailable(
   const fs = await getFs(overrides);
   const fetchImpl = getFetch(overrides);
   const id = normalizePackId(opts.packId);
-  await reconcileExpoModelPackPromotion({ fs, packId: id });
+  // X-M1: recover an interrupted swap before comparing manifests. The rollback
+  // rewrites the live directory, so it retires the engines keyed on it exactly
+  // like a promote or a remove does.
+  await reconcileExpoModelPackPromotion({
+    fs,
+    packId: id,
+    invalidatePackRuntime: getInvalidatePackRuntime(overrides),
+  });
   const rootDir = getPackRootDir(fs, id);
   const meta = getMetaFile(fs, rootDir);
 

@@ -10,7 +10,11 @@ import {
   PluginSettingSwitchField,
 } from '@/components/settings/plugins/detail/PluginSettingChoiceFields';
 import { PluginSettingTextField } from '@/components/settings/plugins/detail/PluginDetailGenericSettingsSection';
-import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol';
+import {
+  compilePluginJsonSchema,
+  isValidPluginJsonSchemaValue,
+  resolveRequiredRecipientContractApprovalDigestV1,
+} from '@happier-dev/protocol';
 import type {
   PluginProjectionEditableSettingField,
   PluginProjectionEditableSettingsGroup,
@@ -270,7 +274,9 @@ export function VoiceProviderSection(props: {
           settings: accountSettings,
           contribution,
           credentialSlotId: row.entry.accountCredentialSlot.id,
-          requiredRecipientContractDigest: row.entry.accountCredentialSlot.recipientContractDigest,
+          requiredRecipientContractDigest: resolveRequiredRecipientContractApprovalDigestV1(
+            row.entry.accountCredentialSlot.recipientContract,
+          ),
         })
       : null;
     const accountCredentialReference = accountCredentialStatus?.status === 'ready'

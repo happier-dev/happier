@@ -318,6 +318,72 @@ describe('useExternalSessionOperationOwnerHydration', () => {
         },
     );
 
+    it('reports a failed status read as recoverable and re-reads once on an explicit check', async () => {
+        // A transient read failure used to be indistinguishable from "not the owner": the row
+        // degraded to the generic read-only card with no way back short of a remount or an
+        // offline -> online flip. The failure is now its own status, recoverable ONCE per press.
+        const progress = createProgress();
+        machineExternalSessionOperationStatusSpy
+            .mockRejectedValueOnce(new Error('status read failed'))
+            .mockResolvedValueOnce({ ok: true, progress });
+        const hook = await renderOwnerHydration({
+            presentation: createPresentation(),
+            isExactOwner: true,
+            machineOnline: true,
+        });
+
+        expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().progress).toBeNull();
+        expect(hook.getCurrent().status).toBe('unavailable');
+
+        await act(async () => {
+            hook.getCurrent().checkAgain();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().status).toBe('ready');
+        expect(hook.getCurrent().progress).toEqual(progress);
+
+        // No polling: a settled read is not re-issued by pressing again.
+        await act(async () => {
+            hook.getCurrent().checkAgain();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+        expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('separates not-owner and offline from a failed read', async () => {
+        machineExternalSessionOperationStatusSpy.mockResolvedValue({
+            ok: true,
+            progress: createProgress(),
+        });
+        const notOwner = await renderOwnerHydration({
+            presentation: createPresentation(),
+            isExactOwner: false,
+            machineOnline: true,
+        });
+        expect(notOwner.getCurrent().status).toBe('not_owner');
+        expect(machineExternalSessionOperationStatusSpy).not.toHaveBeenCalled();
+        await act(async () => {
+            notOwner.getCurrent().checkAgain();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+        expect(machineExternalSessionOperationStatusSpy).not.toHaveBeenCalled();
+
+        const offline = await renderOwnerHydration({
+            presentation: createPresentation(),
+            isExactOwner: true,
+            machineOnline: false,
+        });
+        expect(offline.getCurrent().status).toBe('offline');
+        await act(async () => {
+            offline.getCurrent().checkAgain();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+        expect(machineExternalSessionOperationStatusSpy).not.toHaveBeenCalled();
+    });
+
     it('clears private progress and point-reads again when the server scope changes', async () => {
         const initialProgress = createProgress();
         const scopedProgress = createProgress({ updatedAtMs: 1_700_000_000_001 });

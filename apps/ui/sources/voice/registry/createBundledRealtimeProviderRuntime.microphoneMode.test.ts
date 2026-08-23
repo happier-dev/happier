@@ -142,8 +142,8 @@ describe('createBundledRealtimeProviderRuntime microphone mode', () => {
   it('chooses one declared microphone authority before connection creation', async () => {
     const webRtc = createRuntimeForMode('host_webrtc');
     await webRtc.runtime.adapter.start({ sessionId: 'voice-test' });
+    expect(webRtc.mic.ensurePermission).toHaveBeenCalledTimes(1);
     expect(webRtc.mic.ensureActive).toHaveBeenCalledTimes(1);
-    expect(webRtc.mic.ensurePermission).not.toHaveBeenCalled();
     expect(webRtc.acquireAudioMode).toHaveBeenCalledTimes(1);
 
     const pcm = createRuntimeForMode('host_pcm');
@@ -157,5 +157,24 @@ describe('createBundledRealtimeProviderRuntime microphone mode', () => {
     expect(providerManaged.mic.ensurePermission).not.toHaveBeenCalled();
     expect(providerManaged.mic.ensureActive).not.toHaveBeenCalled();
     expect(providerManaged.acquireAudioMode).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds the audio-mode lease before host WebRTC capture opens its track', async () => {
+    const webRtc = createRuntimeForMode('host_webrtc');
+    await webRtc.runtime.adapter.start({ sessionId: 'voice-test' });
+
+    // The platform decides the capture route and echo cancellation when the
+    // track is created: Android reads `AudioManager.mode` and AEC availability
+    // at `AudioRecord` construction. Acquiring the canonical lease afterwards
+    // leaves the whole call on the media route with no AEC. Permission is
+    // prompted first so an unanswered prompt never holds the exclusive session.
+    const permissionOrder = webRtc.mic.ensurePermission.mock.invocationCallOrder[0];
+    const leaseOrder = webRtc.acquireAudioMode.mock.invocationCallOrder[0];
+    const captureOrder = webRtc.mic.ensureActive.mock.invocationCallOrder[0];
+    expect(permissionOrder).toBeDefined();
+    expect(leaseOrder).toBeDefined();
+    expect(captureOrder).toBeDefined();
+    expect(permissionOrder!).toBeLessThan(leaseOrder!);
+    expect(leaseOrder!).toBeLessThan(captureOrder!);
   });
 });

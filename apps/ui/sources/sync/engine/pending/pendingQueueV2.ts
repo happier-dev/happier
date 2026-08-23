@@ -45,16 +45,16 @@ import {
     PendingRequestedActionV1Schema,
     DEFAULT_PENDING_REQUESTED_ACTION_V1,
     HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
-    HappierStructuredInputV1EnvelopeSchema,
     PendingMessageMutationFingerprintV1Schema,
+    RawIngressStructuredInputV1Schema,
     SessionStoredMessageContentSchema,
-    type HappierStructuredInputV1Envelope,
+    type RawIngressStructuredInputV1,
     type PendingDeliveryBlockedReason,
     type PendingDeliveryStatusV1,
     type PendingRequestedActionV1,
     type SessionStoredMessageContent,
 } from '@happier-dev/protocol';
-import { admitStructuredInputMentionsForText } from '@happier-dev/protocol/runtime';
+import { admitMentionRefsV1ForText } from '@happier-dev/protocol/runtime';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
@@ -430,7 +430,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  */
 function replacePendingEditStructuredInput(
     rawRecord: RawRecord,
-    structuredInput: HappierStructuredInputV1Envelope | undefined,
+    structuredInput: RawIngressStructuredInputV1 | undefined,
     text: string,
 ): RawRecord {
     if (structuredInput === undefined) return rawRecord;
@@ -445,8 +445,13 @@ function replacePendingEditStructuredInput(
     if (hasExistingStructuredInput && !isPlainObject(existingStructuredInput)) {
         throw new Error('Pending structured input is invalid');
     }
+    // A Pending row is Message ingress: the queue re-sends its stored metadata verbatim
+    // through the send RPC, where the daemon's SessionMedia finalizer turns a draft's staged
+    // claim into a durable reference. Validating it as the persisted envelope rejected every
+    // queued media row — on both the stored and the replacement side — so a media attachment
+    // could be prepared but never saved.
     const parsedExisting = hasExistingStructuredInput
-        ? HappierStructuredInputV1EnvelopeSchema.safeParse(existingStructuredInput)
+        ? RawIngressStructuredInputV1Schema.safeParse(existingStructuredInput)
         : null;
     if (parsedExisting && !parsedExisting.success) throw new Error('Pending structured input is invalid');
 
@@ -456,14 +461,14 @@ function replacePendingEditStructuredInput(
     delete nextStructuredInput.mentions;
     delete nextStructuredInput.composerAttachments;
 
-    const parsedReplacement = HappierStructuredInputV1EnvelopeSchema.safeParse(structuredInput);
+    const parsedReplacement = RawIngressStructuredInputV1Schema.safeParse(structuredInput);
     if (!parsedReplacement.success) throw new Error('Pending structured input is invalid');
-    const admittedReplacement = admitStructuredInputMentionsForText(parsedReplacement.data, text);
-    if (admittedReplacement.mentions?.length) {
-        nextStructuredInput.mentions = admittedReplacement.mentions;
+    const admittedMentions = admitMentionRefsV1ForText(text, parsedReplacement.data.mentions ?? []);
+    if (admittedMentions.length) {
+        nextStructuredInput.mentions = admittedMentions;
     }
-    if (admittedReplacement.composerAttachments?.length) {
-        nextStructuredInput.composerAttachments = admittedReplacement.composerAttachments;
+    if (parsedReplacement.data.composerAttachments?.length) {
+        nextStructuredInput.composerAttachments = parsedReplacement.data.composerAttachments;
     }
 
     const { [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: _existing, ...nextMeta } = existingMeta;
@@ -2450,7 +2455,7 @@ export async function updatePendingMessageV2(params: {
      */
     replacementLocalId?: string;
     /** The complete current editable Composer semantic input; an empty envelope removes it. */
-    structuredInput?: HappierStructuredInputV1Envelope;
+    structuredInput?: RawIngressStructuredInputV1;
     encryption: Encryption | null;
     fetchArtifactWithBody?: (artifactId: string) => Promise<DecryptedArtifact | null>;
     updateArtifact?: (artifact: DecryptedArtifact) => void;

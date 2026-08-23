@@ -78,7 +78,6 @@ describe('session draft value store', () => {
     it('declares the semantic fields owned by AgentInput drafts', () => {
         expect(Object.keys(SESSION_DRAFT_VALUE_FIELD_CATALOG).sort()).toEqual([
             'routing.agentContinuation',
-            'routing.agentContinuationSubmission',
             'routing.executionRunDelivery',
             'routing.recipient',
             'structuredInput.composerAttachments',
@@ -87,76 +86,25 @@ describe('session draft value store', () => {
         expect(SESSION_DRAFT_VALUE_DEFAULT_TTL_DAYS).toBe(30);
     });
 
-    // The submitted switch is a mirror of one live outcome, and the Session
-    // screen owns both halves. A catalog clear of its own would take the record
-    // away on an event the live half does not observe, which is exactly the
-    // two-lifetimes defect the armed-Agent field was introduced to remove.
-    it('gives the submitted switch no lifecycle the live outcome does not share', () => {
-        const submission = {
-            localId: 'armed-local-1',
-            intent: ARMED_CONTINUATION.intent,
-            result: { type: 'outcome_unknown' as const, localId: 'armed-local-1' },
-            submittedText: 'switch and send this',
-            reconciled: false,
-        };
-        writeSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuationSubmission', submission, 100);
+    it('keeps a submitted localId and exact user-message snapshot inside the arm', () => {
+        const armed = {
+            ...ARMED_CONTINUATION,
+            submission: {
+                localId: 'armed-local-1',
+                input: {
+                    localId: 'armed-local-1',
+                    text: 'switch and send this',
+                    meta: { displayText: 'Switch and send this' },
+                },
+            },
+        } as never;
+        writeSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuation', armed, 100);
 
-        expect(clearSessionDraftValuesForSession(scopeA, 'session-1', { reason: 'send' }))
-            .not.toContain('routing.agentContinuationSubmission');
-        expect(clearSessionDraftValuesForSession(scopeA, 'session-1', { reason: 'composerClear' }))
-            .not.toContain('routing.agentContinuationSubmission');
-        expect(readSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuationSubmission'))
-            .toEqual(submission);
-
-        expect(clearSessionDraftValuesForSession(scopeA, 'session-1', { reason: 'sessionDelete' }))
-            .toContain('routing.agentContinuationSubmission');
-    });
-
-    // An unsettled transition stops being a live statement about this composer
-    // long before a draft stops being a live message.
-    it('expires a submitted switch a day after it was written', () => {
-        const submission = {
-            localId: 'armed-local-1',
-            intent: ARMED_CONTINUATION.intent,
-            result: { type: 'outcome_unknown' as const, localId: 'armed-local-1' },
-            submittedText: 'switch and send this',
-            reconciled: true,
-        };
-        writeSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuationSubmission', submission, 100);
-        writeSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuation', ARMED_CONTINUATION, 100);
-
-        garbageCollectSessionDraftValues(scopeA, { now: 100 + 23 * 60 * 60 * 1000 });
-        expect(readSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuationSubmission'))
-            .toEqual(submission);
-
+        expect(readSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuation')).toEqual(armed);
         garbageCollectSessionDraftValues(scopeA, { now: 100 + 25 * 60 * 60 * 1000 });
-        expect(readSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuationSubmission')).toBeUndefined();
-        // The arm keeps the shared default: the two are on different clocks by
-        // design, not by omission.
-        expect(readSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuation')).toEqual(ARMED_CONTINUATION);
-    });
-
-    // A record whose identity or answer cannot be read is not a partially
-    // usable one: restoring it would put a banner and a send block behind a
-    // localId that no longer dedupes anything.
-    it('refuses a malformed submitted switch whole', () => {
-        writeSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuationSubmission', {
-            localId: '',
-            intent: ARMED_CONTINUATION.intent,
-            result: { type: 'outcome_unknown', localId: 'armed-local-1' },
-            submittedText: 'switch and send this',
-            reconciled: false,
-        } as never, 100);
-        expect(readSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuationSubmission')).toBeUndefined();
-
-        writeSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuationSubmission', {
-            localId: 'armed-local-1',
-            intent: ARMED_CONTINUATION.intent,
-            result: { type: 'made_up_arm', localId: 'armed-local-1' },
-            submittedText: 'switch and send this',
-            reconciled: false,
-        } as never, 100);
-        expect(readSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuationSubmission')).toBeUndefined();
+        // The submission has the arm's shared draft lifetime; there is no second
+        // field and no shorter transition-specific TTL.
+        expect(readSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuation')).toEqual(armed);
     });
 
     it('owns one scoped semantic revision for text, references, and attachments', () => {
@@ -359,16 +307,16 @@ describe('session draft value store', () => {
         expect(readSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuation')).toBeUndefined();
     });
 
-    it('keeps the armed Agent when a composer action consumes the draft', () => {
-        // The live picker stays armed through a composer action, so the persisted
-        // half must too: one choice, one lifetime. Cancelling is its own gesture.
+    it('clears the armed Agent when a composer action consumes the draft', () => {
+        // The armed choice is a composer-routing field, so a composer clear must
+        // consume its persisted half alongside the recipient.
         writeSessionDraftValue(scopeA, 'session-1', 'routing.recipient', null, 100);
         writeSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuation', ARMED_CONTINUATION, 100);
 
         clearSessionDraftValuesForSession(scopeA, 'session-1', { reason: 'composerClear' });
 
         expect(readSessionDraftValue(scopeA, 'session-1', 'routing.recipient')).toBeUndefined();
-        expect(readSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuation')).toEqual(ARMED_CONTINUATION);
+        expect(readSessionDraftValue(scopeA, 'session-1', 'routing.agentContinuation')).toBeUndefined();
     });
 
     it('keeps an armed Agent across a reload and refuses a malformed one', () => {

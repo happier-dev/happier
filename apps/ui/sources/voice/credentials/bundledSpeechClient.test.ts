@@ -3,6 +3,7 @@ import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
 
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
+import { downloadInChunks, uploadInChunks } from '@/sync/domains/transfers/runtime/transferRuntime/carriers/chunkTransferClient';
 
 import { BundledSpeechDaemonClient } from './bundledSpeechClient';
 
@@ -177,5 +178,144 @@ describe('bundled speech selected-daemon client', () => {
       mimeType: 'audio/wav',
     });
     expect(closeUploadSource).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps every upload phase of one transcribe on the machine the upload started on', async () => {
+    // Auto selection is re-derived from mutable ordering on every read. When
+    // `chunk` reaches a machine that never saw `init` the daemon answers
+    // `transfer_not_found`, the abort lands on the wrong machine too, and the
+    // real staged upload survives on the initiating machine until its TTL.
+    const resolveMachineId = vi.fn<(override?: unknown) => string | null>()
+      .mockReturnValueOnce('machine-a')
+      .mockReturnValue('machine-b');
+    const dispatched: Array<Readonly<{ machineId: string; method: string }>> = [];
+    const rpc = vi.fn(async (request: Readonly<{ machineId: string; method: string; payload: any }>) => {
+      dispatched.push({ machineId: request.machineId, method: request.method });
+      if (request.method === 'daemon.voice.speech.transcribe.upload.init') {
+        return {
+          success: true,
+          uploadId: 'upload-1',
+          chunkSizeBytes: 4,
+          recipientPublicKeyBase64: 'recipient-public-key',
+        };
+      }
+      if (request.method === 'daemon.voice.speech.transcribe.upload.chunk') return { success: true };
+      if (request.method === 'daemon.voice.speech.transcribe.upload.finalize') {
+        return { success: true, uploadId: 'upload-1', sizeBytes: 4, sha256: 'a'.repeat(64) };
+      }
+      if (request.method === 'daemon.voice.speech.transcribe') {
+        return { ok: true, requestId: request.payload.requestId, text: 'bound transcript' };
+      }
+      throw new Error(`unexpected_method:${request.method}`);
+    });
+    vi.mocked(uploadInChunks).mockImplementationOnce((async (transfer: any) => {
+      const started = await transfer.init();
+      await transfer.sendChunk({ uploadId: started.uploadId, index: 0 });
+      await transfer.finalize({ uploadId: started.uploadId });
+      return { success: true, uploadId: started.uploadId };
+    }) as never);
+
+    const client = new BundledSpeechDaemonClient({ resolveMachineId, machineRpc: rpc as never });
+    await expect(client.transcribe({
+      entry: createAcmeSpeechContribution(),
+      source: { kind: 'native', uri: 'file:///recording.wav' },
+      mimeType: 'audio/wav',
+      fileName: 'recording.wav',
+      model: 'acme-stt',
+      language: 'de',
+    })).resolves.toBe('bound transcript');
+
+    expect(dispatched.map((entry) => entry.machineId)).toEqual([
+      'machine-a', 'machine-a', 'machine-a', 'machine-a',
+    ]);
+    expect(dispatched.map((entry) => entry.method)).toEqual([
+      'daemon.voice.speech.transcribe.upload.init',
+      'daemon.voice.speech.transcribe.upload.chunk',
+      'daemon.voice.speech.transcribe.upload.finalize',
+      'daemon.voice.speech.transcribe',
+    ]);
+    expect(resolveMachineId).toHaveBeenCalledTimes(1);
+  });
+
+  it('uploads to the machine the originating attempt captured rather than the current automatic target', async () => {
+    const resolveMachineId = vi.fn<(override?: Readonly<{ machineId: string }> | null) => string | null>(
+      (override) => override?.machineId ?? 'machine-drifted',
+    );
+    const dispatchedMachineIds: string[] = [];
+    const rpc = vi.fn(async (request: Readonly<{ machineId: string; method: string; payload: any }>) => {
+      dispatchedMachineIds.push(request.machineId);
+      if (request.method === 'daemon.voice.speech.transcribe') {
+        return { ok: true, requestId: request.payload.requestId, text: 'attempt transcript' };
+      }
+      throw new Error(`unexpected_method:${request.method}`);
+    });
+
+    const client = new BundledSpeechDaemonClient({ resolveMachineId, machineRpc: rpc as never });
+    await expect(client.transcribe({
+      entry: createAcmeSpeechContribution(),
+      source: { kind: 'native', uri: 'file:///recording.wav' },
+      mimeType: 'audio/wav',
+      fileName: 'recording.wav',
+      model: 'acme-stt',
+      language: 'de',
+      originMachineId: 'machine-attempt',
+    })).resolves.toBe('attempt transcript');
+
+    expect(resolveMachineId).toHaveBeenCalledWith({ machineId: 'machine-attempt' });
+    expect(dispatchedMachineIds).toEqual(['machine-attempt']);
+  });
+
+  it('keeps every synthesis download phase on the machine that produced the download', async () => {
+    const resolveMachineId = vi.fn<(override?: unknown) => string | null>()
+      .mockReturnValueOnce('machine-a')
+      .mockReturnValue('machine-b');
+    const dispatched: Array<Readonly<{ machineId: string; method: string }>> = [];
+    const rpc = vi.fn(async (request: Readonly<{ machineId: string; method: string; payload: any }>) => {
+      dispatched.push({ machineId: request.machineId, method: request.method });
+      if (request.method === 'daemon.voice.speech.synthesize') {
+        return {
+          ok: true,
+          requestId: request.payload.requestId,
+          downloadId: 'download-1',
+          sizeBytes: 3,
+          mimeType: 'audio/wav',
+          chunkSizeBytes: 3,
+        };
+      }
+      if (request.method === 'daemon.voice.speech.download.chunk') {
+        return {
+          success: true,
+          payloadBase64: 'BwgJ',
+          encryptedDataKeyEnvelopeBase64: 'ZW52ZWxvcGU=',
+          isLast: true,
+        };
+      }
+      if (request.method === 'daemon.voice.speech.download.finalize') return { success: true };
+      throw new Error(`unexpected_method:${request.method}`);
+    });
+    vi.mocked(downloadInChunks).mockImplementationOnce((async (transfer: any) => {
+      const started = await transfer.init();
+      await transfer.readChunk({ downloadId: started.downloadId, index: 0 });
+      await transfer.writeBytes(new Uint8Array([7, 8, 9]));
+      await transfer.finalize({ downloadId: started.downloadId });
+      return { ok: true };
+    }) as never);
+
+    const client = new BundledSpeechDaemonClient({ resolveMachineId, machineRpc: rpc as never });
+    await expect(client.synthesize({
+      entry: createAcmeSpeechContribution(),
+      input: 'hello',
+      model: null,
+      voiceName: 'acme-voice',
+      languageCode: 'en',
+      format: 'wav',
+      speakingRate: null,
+      pitch: null,
+    })).resolves.toEqual({ bytes: new Uint8Array([7, 8, 9]), mimeType: 'audio/wav' });
+
+    expect(dispatched.map((entry) => entry.machineId)).toEqual([
+      'machine-a', 'machine-a', 'machine-a',
+    ]);
+    expect(resolveMachineId).toHaveBeenCalledTimes(1);
   });
 });

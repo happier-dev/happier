@@ -89,9 +89,19 @@ vi.mock('@/components/sessions/external/browse/ExternalSessionsBrowseScreen', ()
 }));
 
 vi.mock('@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption', () => ({
-    canBrowseExternalSessions: (providerId: string) => externalSessionBrowseSupportState.supportedByProviderId[providerId] ?? true,
-    resolveExternalSessionBrowseLockedSource: (params: { providerId: string }) =>
-        (externalSessionBrowseSupportState.supportedByProviderId[params.providerId] ?? true) ? { kind: 'test' } : null,
+    // Production calls `canBrowseExternalSessions` with an OBJECT, not a bare provider id:
+    // a mock taking `(providerId: string)` indexed by `undefined` and answered true for
+    // the wrong reason. This suite drives carrier RESOLUTION, so capability stays
+    // permissive here; the projection-phase contract is covered by
+    // `resume-browse.coldProjection.test.tsx` against the real resolver.
+    canBrowseExternalSessions: (params: { agentId: string }) => (
+        externalSessionBrowseSupportState.supportedByProviderId[params.agentId] ?? true
+    ),
+    resolveExternalSessionBrowseLockedSource: (params: { providerId: string }) => (
+        (externalSessionBrowseSupportState.supportedByProviderId[params.providerId] ?? true)
+            ? { kind: 'test' }
+            : null
+    ),
 }));
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
@@ -105,6 +115,7 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 
 vi.mock('@/sync/store/hooks', () => ({
     useProfile: () => ({ id: 'account-1' }),
+    useLocalSetting: () => undefined,
 }));
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
@@ -159,16 +170,18 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
     });
 
     it.each([
-        ['disabled', 'disabled'],
-        ['unknown', 'unknown'],
-        ['missing', null],
-    ] as const)('fails closed for a %s sessions.direct decision before resolving daemon projection or mounting Browse', async (_label, state) => {
+        ['disabled', 'disabled', 'external-sessions-browse-route-gate-unavailable'],
+        ['unknown', 'unknown', 'external-sessions-browse-route-gate-unknown'],
+        ['missing', null, 'external-sessions-browse-route-gate-checking'],
+    ] as const)('fails closed for a %s sessions.direct decision before resolving daemon projection or mounting Browse', async (_label, state, expectedGateTestId) => {
         featureDecisionState.state = state;
         const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
 
         const screen = await renderScreen(React.createElement(ResumeBrowsePickerScreen));
 
-        expect(screen.tree.toJSON()).toBeNull();
+        // Failing closed is not the same as a blank screen: the gate owns one accessible
+        // state with a working exit for every non-available arm.
+        expect(screen.findByTestId(expectedGateTestId)).not.toBeNull();
         expect(featureDecisionSpy).toHaveBeenCalledWith('sessions.direct', {
             scopeKind: 'spawn',
             serverId: 'server-2',

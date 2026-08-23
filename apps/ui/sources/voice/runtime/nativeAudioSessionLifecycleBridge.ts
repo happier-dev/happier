@@ -87,6 +87,9 @@ export function createNativeAudioSessionLifecycleBridge(input: Readonly<{
     if (event.kind === 'lifecycle_changed') {
       return event.state === 'background' ? await suspend('lifecycle') : await resume('lifecycle');
     }
+    // The native owner reports this only after deciding the graph cannot be
+    // resumed, so there is nothing left for this bridge to recover.
+    if (event.kind === 'audio_graph_terminal') return await stopActive();
     if (event.kind === 'capabilities_changed') {
       const configuration = input.coordinator.getSnapshot().configuration;
       if (configuration?.aec === 'required' && (!event.aecAvailable || !event.aecActive)) {

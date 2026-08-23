@@ -234,7 +234,7 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
         expect(optionRow?.props.disabled).toBe(true);
     });
 
-    it('skips a pending candidate during keyboard navigation and activates the next grouped row', async () => {
+    it('withholds every candidate activation while one link is in flight', async () => {
         const props = defaultProps();
         const candidates = [
             { ...candidate, remoteSessionId: 'session-a', candidateKey: 'candidate-a' },
@@ -248,29 +248,44 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
             candidates={candidates}
             linkingSessionId="candidate-b"
         />);
+
+        // The pending row keeps its spinner; every other row is visibly inert
+        // rather than offering an activation the single-flight owner would drop.
+        expect(screen.findAllByTestId('direct-session-candidate:candidate-b')
+            .some((node) => node.props.loading === true)).toBe(true);
+        for (const candidateKey of ['candidate-a', 'candidate-b', 'candidate-c']) {
+            expect(screen.findByTestId(`direct-session-candidate:${candidateKey}`)?.props.disabled).toBe(true);
+        }
+
+        await screen.pressByTestIdAsync('direct-session-candidate:candidate-c');
+        expect(props.onSelectCandidate).not.toHaveBeenCalled();
+
         const keyboardHost = screen
             .findAllByTestId('direct-session-candidates:header')
             .find((node) => typeof node.props?.onKeyPress === 'function');
         expect(keyboardHost).toBeDefined();
 
-        await act(async () => {
-            (keyboardHost!.props.onKeyPress as (event: unknown) => void)({
-                key: 'ArrowDown',
-                nativeEvent: { key: 'ArrowDown' },
-                preventDefault: () => {},
-                stopPropagation: () => {},
+        for (const key of ['ArrowDown', 'Enter']) {
+            await act(async () => {
+                (keyboardHost!.props.onKeyPress as (event: unknown) => void)({
+                    key,
+                    nativeEvent: { key },
+                    preventDefault: () => {},
+                    stopPropagation: () => {},
+                });
             });
-        });
-        await act(async () => {
-            (keyboardHost!.props.onKeyPress as (event: unknown) => void)({
-                key: 'Enter',
-                nativeEvent: { key: 'Enter' },
-                preventDefault: () => {},
-                stopPropagation: () => {},
-            });
-        });
+        }
 
-        expect(props.onSelectCandidate).toHaveBeenCalledWith(candidates[2]);
+        expect(props.onSelectCandidate).not.toHaveBeenCalled();
+
+        // Once the link settles, the same rows are activatable again.
+        await screen.update(<ExternalSessionBrowseCandidatesList
+            {...props}
+            candidates={candidates}
+            linkingSessionId={null}
+        />);
+        await screen.pressByTestIdAsync('direct-session-candidate:candidate-c');
+        expect(props.onSelectCandidate).toHaveBeenCalledWith(candidates[2], 0);
     });
 
     it('keeps loaded candidates mounted when the next page fails and retries inline', async () => {
@@ -741,6 +756,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
         await screen.pressByTestIdAsync('direct-session-candidate:project-b-key');
 
-        expect(props.onSelectCandidate).toHaveBeenCalledWith(projectBCandidate);
+        expect(props.onSelectCandidate).toHaveBeenCalledWith(projectBCandidate, 0);
     });
 });

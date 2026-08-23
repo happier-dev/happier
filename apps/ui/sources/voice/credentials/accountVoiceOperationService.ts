@@ -1,9 +1,10 @@
 import {
   containsProviderRegisteredSensitiveValue,
-  createRecipientContractDigestV1,
   materializeRecipientOperationRequestV1,
   normalizeRecipientContractV1,
+  resolveRequiredRecipientContractApprovalDigestV1,
   type PluginContributionIdentityV1,
+  type QualifiedConnectedAccountPurposeBindingTargetV1,
   type QualifiedConnectedAccountPurposeV1,
   type RecipientContractV1,
 } from '@happier-dev/protocol';
@@ -353,14 +354,23 @@ export function createAccountVoiceOperationService(input: Readonly<{
   isCurrent: () => boolean;
   fetch?: typeof globalThis.fetch;
   materializeSecret?: () => Promise<string | null> | string | null;
+  /**
+   * The selection is passed rather than re-read: the daemon resolves its own
+   * current Connected Account independently, so the materializer must name the
+   * exact selection this operation's captured authority was resolved under.
+   */
   materializeConnectedAccountHeaders?: (input: Readonly<{
     operationId: string;
+    selection: QualifiedConnectedAccountPurposeBindingTargetV1;
     signal: AbortSignal;
   }>) => Promise<Readonly<Record<string, string>>>;
 }>): VoiceAccountOperationAttemptService {
   const fetchImpl = input.fetch ?? globalThis.fetch;
   const recipientContract = normalizeRecipientContractV1(input.recipientContract);
-  const recipientContractDigest = createRecipientContractDigestV1(recipientContract);
+  // `null` for a first-party bundled recipient: a release that changes its
+  // mediated operations must not revoke an approval Happier itself authored.
+  const requiredRecipientContractDigest =
+    resolveRequiredRecipientContractApprovalDigestV1(recipientContract);
   const credentialSlotId = recipientContract.credentialSlot.id;
   const operationAuthorities = new Map<string, AccountOperationCredentialAuthority>(
     recipientContract.operations.map((operation) => [
@@ -408,7 +418,9 @@ export function createAccountVoiceOperationService(input: Readonly<{
       throw operationError('credential_unavailable');
     }
     if (
-      accountAuthority.binding?.approvedRecipientContractDigest !== recipientContractDigest
+      requiredRecipientContractDigest
+      && accountAuthority.binding?.approvedRecipientContractDigest
+        !== requiredRecipientContractDigest
     ) {
       throw operationError('credential_access_review_required');
     }
@@ -469,6 +481,7 @@ export function createAccountVoiceOperationService(input: Readonly<{
         if (accountAuthority.source.selection.kind === 'connectedAccount') {
           const returned = await input.materializeConnectedAccountHeaders?.({
             operationId: operation.id,
+            selection: accountAuthority.source.selection.target,
             signal: operationSignal.signal,
           });
           if (!returned) throw operationError('credential_unavailable');
@@ -498,7 +511,7 @@ export function createAccountVoiceOperationService(input: Readonly<{
             settings: storage.getState().settings,
             contribution: input.contribution,
             credentialSlotId,
-            requiredRecipientContractDigest: recipientContractDigest,
+            requiredRecipientContractDigest,
             decrypt: (value) => sync.decryptSecretValue(value),
           }));
           const sourceCredential = await materializeSecret();

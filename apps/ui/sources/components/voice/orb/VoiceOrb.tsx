@@ -715,8 +715,13 @@ export function VoiceOrb(props: Readonly<{
                         // its full height however little is left.
                         flexShrink: 0,
                         flexDirection: 'row',
+                        // At 320px with 200% text or the longest localization the groups cannot
+                        // share one line. They wrap onto a second line rather than pushing End
+                        // Voice, Mute or a recovery action past the edge.
+                        flexWrap: 'wrap',
                         alignItems: 'center',
-                        gap: 12,
+                        rowGap: 8,
+                        columnGap: 12,
                         paddingHorizontal: 12,
                         paddingVertical: 12,
                         borderRadius: VOICE_ORB_BAR_RADIUS,
@@ -725,24 +730,46 @@ export function VoiceOrb(props: Readonly<{
                         backgroundColor: tokens.dark ? 'rgba(32,28,40,0.86)' : 'rgba(0,0,0,0.042)',
                     }}
                 >
-                    <VoiceTransport
-                        labels={transportLabels}
-                        live={live}
-                        canStart={control.primaryAction === 'start' || control.primaryAction === 'recover'}
-                        muted={control.muted}
-                        capturing={control.capturing}
-                        canMute={control.canMute}
-                        onStart={control.onPrimaryAction}
-                        onEnd={control.onPrimaryAction}
-                        onToggleMute={control.onToggleMute}
-                        onAction={props.onAction ?? (() => {})}
-                    />
+                    <View testID="voice.orb.bar.transport" style={{ flexShrink: 0 }}>
+                        <VoiceTransport
+                            labels={transportLabels}
+                            live={live}
+                            canStart={control.primaryAction === 'start' || control.primaryAction === 'recover'}
+                            muted={control.muted}
+                            capturing={control.capturing}
+                            canMute={control.canMute}
+                            onStart={control.onPrimaryAction}
+                            onEnd={control.onPrimaryAction}
+                            onToggleMute={control.onToggleMute}
+                            onAction={props.onAction ?? (() => {})}
+                        />
+                    </View>
 
-                    {/* A meter with no audio behind it is decoration. */}
-                    {live ? <VoiceWaveform stop={stop} height={24} /> : <View style={{ flex: 1 }} />}
+                    {/*
+                      * The meter is the one child that gives way first: `flexBasis: 0` means it
+                      * only ever takes what the controls left over, so it can never be the reason
+                      * a control wraps, and it clips instead of overflowing when that is nothing.
+                      * A meter with no audio behind it is decoration, so the slot stays empty then
+                      * and simply holds the leftover space open.
+                      */}
+                    <View
+                        testID="voice.orb.bar.meter"
+                        style={{
+                            flexGrow: 1,
+                            flexBasis: 0,
+                            minWidth: 0,
+                            height: 24,
+                            justifyContent: 'center',
+                            overflow: 'hidden',
+                        }}
+                    >
+                        {live ? <VoiceWaveform stop={stop} height={24} /> : null}
+                    </View>
 
                     {extraControls.length > 0 ? (
-                        <ControlRow controls={extraControls} onAction={props.onAction ?? (() => {})} />
+                        <View style={{ flexShrink: 1, minWidth: 0 }}>
+                            <ControlRow controls={extraControls} onAction={props.onAction ?? (() => {})} />
+                        </View>
                     ) : null}
                 </View>
                 </Animated.View>

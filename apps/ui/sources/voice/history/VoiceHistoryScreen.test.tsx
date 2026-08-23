@@ -84,6 +84,8 @@ function createDeps(
       status: 'no_more' as const,
     })),
     readMessages: () => messages,
+    readMessagesRevision: () => 0,
+    subscribeHistorySources: () => () => {},
     resolveProviderLabel: (source) => (
       source?.pluginId === XAI_SOURCE.pluginId ? 'Grok Realtime' : 'OpenAI Realtime'
     ),
@@ -139,12 +141,14 @@ describe('VoiceHistoryScreen', () => {
       }));
       return { loaded: 1, hasMore: false, status: 'no_more' as const };
     });
-    const baseConsumer = createVoiceHistoryConsumer(createDeps(messages, {
+    const resolveProviderLabel = vi.fn((source: VoiceHistoryProviderSource | null) => (
+      source?.pluginId === XAI_SOURCE.pluginId ? 'Grok Realtime' : 'OpenAI Realtime'
+    ));
+    const consumer = createVoiceHistoryConsumer(createDeps(messages, {
       discoverHistorySession: async () => await discovery.promise,
       loadOlderMessages,
+      resolveProviderLabel,
     }));
-    const read = vi.fn(baseConsumer.read);
-    const consumer = Object.freeze({ ...baseConsumer, read });
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
     const screen = await renderScreen(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
@@ -180,16 +184,66 @@ describe('VoiceHistoryScreen', () => {
     await act(async () => {
       screen.changeTextByTestId('voice-history-search', '');
     });
-    read.mockClear();
+    resolveProviderLabel.mockClear();
     await screen.pressByTestIdAsync('voice-history-load-older');
 
     expect(loadOlderMessages).toHaveBeenCalledTimes(1);
-    expect(read).not.toHaveBeenCalled();
+    // The enlarged slice is projected exactly once for the three loaded rows.
+    // Deriving the rendered snapshot from the consumer must not re-project on
+    // each render the surrounding operation state causes.
+    expect(resolveProviderLabel).toHaveBeenCalledTimes(3);
     const pagedText = screen.getTextContent();
     expect(pagedText.indexOf('The oldest response')).toBeLessThan(
       pagedText.indexOf('A question about releases'),
     );
     expect(screen.findByTestId('voice-history-load-older')).toBeNull();
+  });
+
+  it('renders a voice turn that lands while History is already open', async () => {
+    const messages: Message[] = [
+      voiceMessage({
+        id: 'existing',
+        role: 'user',
+        text: 'A question already in history',
+        createdAt: 100,
+        source: OPENAI_SOURCE,
+      }),
+    ];
+    let messagesRevision = 1;
+    const listeners = new Set<() => void>();
+    const consumer = createVoiceHistoryConsumer(createDeps(messages, {
+      readMessages: () => [...messages],
+      readMessagesRevision: () => messagesRevision,
+      subscribeHistorySources: (listener) => {
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+      },
+    }));
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const screen = await renderScreen(
+      <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
+    );
+    await flushAsyncState();
+
+    expect(screen.getTextContent()).toContain('A question already in history');
+    expect(screen.getTextContent()).not.toContain('The live answer');
+    expect(listeners.size).toBeGreaterThan(0);
+
+    // The canonical message owner commits a new voice turn. No interaction, no
+    // remount, no poll: the open screen observes it.
+    await act(async () => {
+      messages.push(voiceMessage({
+        id: 'live',
+        role: 'assistant',
+        text: 'The live answer',
+        createdAt: 200,
+        source: OPENAI_SOURCE,
+      }));
+      messagesRevision += 1;
+      for (const listener of [...listeners]) listener();
+    });
+
+    expect(screen.getTextContent()).toContain('The live answer');
   });
 
   it('keeps the latest reachable search query when an older-page load completes', async () => {
@@ -384,6 +438,125 @@ describe('VoiceHistoryScreen', () => {
       .toBe('End Voice before clearing Voice History.');
     expect(screen.getTextContent()).not.toContain('Voice History could not be cleared.');
     expect(deleteSession).not.toHaveBeenCalled();
+  });
+
+  it('announces loading, failure and recovery states through one persistent status region', async () => {
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const discovery = createDeferred<string | null>();
+    const consumer = createVoiceHistoryConsumer(createDeps(
+      [voiceMessage({
+        id: 'one',
+        role: 'assistant',
+        text: 'Announce me',
+        createdAt: 100,
+        source: OPENAI_SOURCE,
+      })],
+      { discoverHistorySession: () => discovery.promise },
+    ));
+    const screen = await renderScreen(
+      <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
+    );
+    const readStatus = () => screen
+      .findByTestId('voice-history-operation-status')
+      ?.props.children?.props.children;
+
+    expect(screen.findByTestId('voice-history-loading')).not.toBeNull();
+    expect(readStatus()).toBe('Loading Voice History…');
+
+    discovery.resolve('voice-history-session');
+    await flushAsyncState();
+
+    // The live region is the SAME node across the transition. A region that
+    // mounts with its message already inside it is not announced at all.
+    expect(screen.findByTestId('voice-history-operation-status')).not.toBeNull();
+    expect(readStatus()).toBe('');
+    await screen.unmount();
+
+    const errorScreen = await renderScreen(
+      <VoiceHistoryScreen
+        consumer={createVoiceHistoryConsumer(createDeps([], {
+          captureScope: async () => {
+            throw new Error('network unavailable');
+          },
+        }))}
+        saveExportArtifact={vi.fn()}
+      />,
+    );
+    await flushAsyncState();
+
+    expect(errorScreen.findByTestId('voice-history-error')).not.toBeNull();
+    expect(errorScreen.findByTestId('voice-history-operation-status')?.props.children?.props.children)
+      .toBe(
+        'Voice History is unavailable. Happier could not load the encrypted'
+        + ' history for this account. Check your connection and try again.',
+      );
+    await errorScreen.unmount();
+
+    const supersededScreen = await renderScreen(
+      <VoiceHistoryScreen
+        consumer={createVoiceHistoryConsumer(createDeps([], {
+          captureScope: async () => {
+            throw new VoiceHistoryOperationSupersededError();
+          },
+        }))}
+        saveExportArtifact={vi.fn()}
+      />,
+    );
+    await flushAsyncState();
+
+    expect(supersededScreen.findByTestId('voice-history-superseded')).not.toBeNull();
+    expect(supersededScreen.findByTestId('voice-history-operation-status')?.props.children?.props.children)
+      .toBe(
+        'The active account changed. This Voice History request was stopped'
+        + ' before it could use a different account. Reload to continue safely.',
+      );
+  });
+
+  it('reports a failed older-page load instead of presenting it as a successful no-op', async () => {
+    const messages: Message[] = [
+      voiceMessage({
+        id: 'newest',
+        role: 'assistant',
+        text: 'Newest answer',
+        createdAt: 300,
+        source: OPENAI_SOURCE,
+      }),
+    ];
+    let attempt = 0;
+    const consumer = createVoiceHistoryConsumer(createDeps(messages, {
+      loadOlderMessages: vi.fn(async () => {
+        attempt += 1;
+        if (attempt === 1) {
+          return { loaded: 0, hasMore: true, status: 'retryable_error' as const };
+        }
+        messages.push(voiceMessage({
+          id: 'older',
+          role: 'user',
+          text: 'Older question',
+          createdAt: 100,
+          source: OPENAI_SOURCE,
+        }));
+        return { loaded: 1, hasMore: false, status: 'no_more' as const };
+      }),
+    }));
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const screen = await renderScreen(
+      <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
+    );
+
+    await screen.pressByTestIdAsync('voice-history-load-older');
+
+    expect(screen.findByTestId('voice-history-action-message')?.props.children)
+      .toBe('Older Voice History could not be loaded.');
+    expect(screen.findByTestId('voice-history-operation-status')?.props.children?.props.children)
+      .toBe('Older Voice History could not be loaded.');
+    expect(screen.findByTestId('voice-history-row-older')).toBeNull();
+
+    // Rows and the older cursor survived the failure, so the retry works.
+    await screen.pressByTestIdAsync('voice-history-load-older');
+
+    expect(screen.findByTestId('voice-history-row-older')).not.toBeNull();
+    expect(screen.findByTestId('voice-history-action-message')).toBeNull();
   });
 
   it('renders distinct empty, error, and superseded recovery states', async () => {

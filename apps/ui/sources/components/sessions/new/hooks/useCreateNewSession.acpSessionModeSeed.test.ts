@@ -6,7 +6,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
-import { renderHook, renderScreen } from '@/dev/testkit';
+import { createDeferred, renderHook, renderScreen } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import type { HandleCreateSessionOptions } from './useCreateNewSession';
 
@@ -59,6 +59,7 @@ async function setupHarness(options?: Readonly<{
   fetchArtifactWithBodyResult?: Record<string, unknown> | null;
 }>) {
   const fixedServerNowMs = Date.parse('2026-02-05T00:00:00.000Z');
+  const actionOperationPresentationRegisterSpy = vi.fn();
   const publishModeSpy = vi.fn(async (_params: any) => {});
   const clearNewSessionDraftSpy = vi.fn();
   const sendMessageSpy = vi.fn(async (
@@ -107,12 +108,18 @@ async function setupHarness(options?: Readonly<{
       refreshSessions: vi.fn(async () => {}),
       refreshMachines: vi.fn(async () => {}),
       sendMessage: sendMessageSpy,
+      acquireUserRequestLease: vi.fn(() => vi.fn()),
       fetchArtifactWithBody: vi.fn(async () => options?.fetchArtifactWithBodyResult ?? null),
       publishSessionAcpSessionModeOverrideToMetadata: publishModeSpy,
     },
   }));
   vi.doMock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => vi.fn(),
+  }));
+  vi.doMock('@/components/inbox/actionOperations/actionOperationPresentationRuntime', () => ({
+    actionOperationPresentationCoordinator: {
+      register: actionOperationPresentationRegisterSpy,
+    },
   }));
   vi.doMock('@/sync/domains/state/storage', () => ({
     storage: {
@@ -231,6 +238,7 @@ async function setupHarness(options?: Readonly<{
     executeSessionSpawnNewActionSpy,
     followUpSpawnedSessionWithServerScopeSpy,
     clearNewSessionDraftSpy,
+    actionOperationPresentationRegisterSpy,
   };
 }
 
@@ -357,7 +365,11 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       },
       agentModeId: 'plan',
       initialMessage: 'hello',
-    }), { surface: 'ui' });
+    }), expect.objectContaining({ surface: 'ui', actionRequestId: expect.any(String) }));
+    expect(executeSessionSpawnNewActionSpy.mock.calls[0]?.[1]).toEqual({
+      surface: 'ui',
+      actionRequestId: (executeSessionSpawnNewActionSpy.mock.calls[0]?.[0] as { creationKey: string }).creationKey,
+    });
     expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
     expect(followUpSpawnedSessionWithServerScopeSpy).not.toHaveBeenCalled();
     expect(sendMessageSpy).not.toHaveBeenCalled();
@@ -660,6 +672,78 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     expect(onAfterCreatedSettled).toHaveBeenCalledWith({ status: 'rejected' });
   });
 
+  it('finishes post-create follow-up and clears the persisted draft without navigating when unmounted before tracked spawn settles', async () => {
+    const mountedRef = { current: true };
+    vi.doMock('@/hooks/ui/useMountedRef', () => ({
+      useMountedRef: () => mountedRef,
+    }));
+    const {
+      useCreateNewSession,
+      executeSessionSpawnNewActionSpy,
+      clearNewSessionDraftSpy,
+      actionOperationPresentationRegisterSpy,
+    } = await setupHarness({
+      storageState: { sessions: { sess_detached: { id: 'sess_detached' } } },
+    });
+    const spawn = createDeferred<Readonly<{
+      ok: true;
+      result: Readonly<{
+        type: 'success';
+        disposition: 'created';
+        sessionId: string;
+        executionTarget: Readonly<{ serverId: string; machineId: string }>;
+        organizationPlacement: Readonly<{ folderId: null; tagIds: readonly string[] }>;
+        initialInput: Readonly<{ status: 'notRequested' }>;
+      }>;
+    }>>();
+    executeSessionSpawnNewActionSpy.mockReturnValueOnce(spawn.promise);
+    const routerReplace = vi.fn();
+    const afterCreated = vi.fn(async () => {});
+    const draftScope = { serverId: 'server-a', accountId: 'account-a' };
+    const disableDraftPersistence = vi.fn();
+    const hook = await renderHook(() => useCreateNewSession(buildCreateSessionHookParams({
+      router: { push: vi.fn(), replace: routerReplace },
+      draftScope,
+      disableDraftPersistence,
+    }) as any));
+    const createPromise = hook.getCurrent().handleCreateSession({
+      initialMessage: 'skip',
+      afterCreated,
+    }) as unknown as Promise<void>;
+
+    await vi.waitFor(() => {
+      expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledTimes(1);
+    });
+    mountedRef.current = false;
+    await act(async () => {
+      spawn.resolve({
+        ok: true,
+        result: {
+          type: 'success',
+          disposition: 'created',
+          sessionId: 'sess_detached',
+          executionTarget: { serverId: 'server-a', machineId: 'm1' },
+          organizationPlacement: { folderId: null, tagIds: [] },
+          initialInput: { status: 'notRequested' },
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(afterCreated).toHaveBeenCalledTimes(1);
+    expect(actionOperationPresentationRegisterSpy).toHaveBeenCalledWith({
+      requestId: expect.any(String),
+      onStart: 'current',
+      origin: expect.objectContaining({ resolve: expect.any(Function) }),
+    });
+    expect(clearNewSessionDraftSpy).toHaveBeenCalledWith(draftScope);
+    expect(disableDraftPersistence).not.toHaveBeenCalled();
+    expect(routerReplace).not.toHaveBeenCalled();
+    await createPromise;
+    await hook.unmount();
+  });
+
   it('shows typed update guidance when an older CLI does not implement session.spawn_new', async () => {
     const { useCreateNewSession, executeSessionSpawnNewActionSpy, machineSpawnNewSessionSpy } = await setupHarness();
     executeSessionSpawnNewActionSpy.mockResolvedValue({
@@ -786,7 +870,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     expect(publishModeSpy).not.toHaveBeenCalled();
     expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledWith(expect.objectContaining({
       agentModeId: 'plan',
-    }), { surface: 'ui' });
+    }), expect.objectContaining({ surface: 'ui', actionRequestId: expect.any(String) }));
     expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
     expect(sendMessageSpy).not.toHaveBeenCalled();
   });
@@ -848,7 +932,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     expect(publishModeSpy).not.toHaveBeenCalled();
     expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledWith(expect.objectContaining({
       agentModeId: 'plan',
-    }), { surface: 'ui' });
+    }), expect.objectContaining({ surface: 'ui', actionRequestId: expect.any(String) }));
     expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
     expect(sendMessageSpy).not.toHaveBeenCalled();
   });
@@ -920,7 +1004,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
           speed: { updatedAtMs: 123, value: 'fast' },
         },
       }),
-    }), { surface: 'ui' });
+    }), expect.objectContaining({ surface: 'ui', actionRequestId: expect.any(String) }));
     expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
     expect(sendMessageSpy).not.toHaveBeenCalled();
   });
@@ -1006,7 +1090,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
           }),
         }),
       }),
-    }), { surface: 'ui' });
+    }), expect.objectContaining({ surface: 'ui', actionRequestId: expect.any(String) }));
     expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
   });
 
@@ -1096,7 +1180,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledWith(expect.objectContaining({
       initialMessage: 'Expanded QA Template\n\nthis is a UI QA check',
-    }), { surface: 'ui' });
+    }), expect.objectContaining({ surface: 'ui', actionRequestId: expect.any(String) }));
     expect(sendMessageSpy).not.toHaveBeenCalled();
   });
 

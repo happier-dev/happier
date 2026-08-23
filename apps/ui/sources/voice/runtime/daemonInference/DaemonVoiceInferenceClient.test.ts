@@ -41,6 +41,8 @@ vi.mock('./DaemonSpeechStreamProductionTunnelTransport', () => ({
     createProductionDaemonSpeechStreamingSttTransportMock(...args),
 }));
 
+const DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS = 30_000;
+
 describe('DaemonVoiceInferenceClient', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -105,6 +107,29 @@ describe('DaemonVoiceInferenceClient', () => {
       { machineId: 'machine-a' },
     )).rejects.toMatchObject({ code: 'machine_unreachable' });
     expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
+  });
+
+  it('gives a model install its own deadline and forwards the caller lifetime to the daemon', async () => {
+    machineRpcWithServerScopeMock.mockResolvedValue({ ok: true, model: {} });
+    const clientModule = await import('./DaemonVoiceInferenceClient');
+    const client = new clientModule.DaemonVoiceInferenceClient();
+    const caller = new AbortController();
+
+    // The response shape is irrelevant here; only the issued request is.
+    await client.installModel({
+      packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+      signal: caller.signal,
+    }).catch(() => undefined);
+
+    const call = machineRpcWithServerScopeMock.mock.calls
+      .map(([input]: any[]) => input)
+      .find((input: any) => input.method === 'daemon.voiceInference.models.install');
+    expect(call).toBeDefined();
+    // The daemon aborts the install at the deadline the caller declares, so the
+    // ordinary short RPC default would cancel a legitimate multi-minute download.
+    expect(call.timeoutMs).toBe(clientModule.VOICE_MODEL_INSTALL_RPC_TIMEOUT_MS);
+    expect(call.timeoutMs).toBeGreaterThan(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS);
+    expect(call.signal).toBe(caller.signal);
   });
 
   it('downloads synthesized daemon TTS bytes through the selected daemon without creating a voice-home session', async () => {

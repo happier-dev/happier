@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
-import { buildBackendTargetKeyV2, FeaturesResponseSchema } from '@happier-dev/protocol';
+import {
+  AgentsBackendsListOutputSchema,
+  buildBackendTargetKeyV2,
+  FeaturesResponseSchema,
+} from '@happier-dev/protocol';
 import {
   primeServerFeaturesSnapshot,
   resetServerFeaturesClientForTests,
@@ -75,14 +79,19 @@ function primeProvidersFeatureSnapshot(mode: ProvidersFeatureSnapshotMode): void
   primeServerFeaturesSnapshot({ serverId: 'server-a', snapshot });
 }
 
-function createProviderModelsProjection() {
+function createProviderModelsProjection(freeformPolicy: Readonly<{
+  manualModelPolicy?: 'allowed' | 'catalog-only';
+  supportsFreeformModelIds?: boolean;
+}> = {}) {
   return {
     status: 'success',
     agentTargetKey: 'backend:claude',
     groups: [{
       connectionId: 'pc_work', providerName: 'Gateway', connectionName: 'Work',
       connectionRole: 'named', connectionDisplayNameMode: 'custom', connectionRevision: 1,
-      authorization: { authorized: true }, manualModelPolicy: 'allowed', supportsFreeformModelIds: true,
+      authorization: { authorized: true },
+      manualModelPolicy: freeformPolicy.manualModelPolicy ?? 'allowed',
+      supportsFreeformModelIds: freeformPolicy.supportsFreeformModelIds ?? true,
       suppressedConnectedServiceIds: [], modelLoadAction: 'descriptor_absent',
       rows: [{
         ref: { agentTargetKey: 'backend:claude', providerConnectionId: 'pc_work', modelId: 'provider-model' },
@@ -189,7 +198,29 @@ describe('agent catalog voice tools', () => {
       expect.objectContaining({ modelId: 'native', providerConnectionId: null }),
       expect.objectContaining({ modelId: 'provider-model', providerConnectionId: 'pc_work', providerName: 'Gateway · Work' }),
     ]));
+    // The native probe refuses freeform ids, so this is the Provider side of the
+    // two-sided policy alone deciding that an unlisted id is still a real model.
+    expect(result.supportsFreeform).toBe(true);
     expect(providerSettingsReadCount).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ['the Provider refuses manual ids', { manualModelPolicy: 'catalog-only' as const }],
+    ['the Agent refuses unverifiable ids', { supportsFreeformModelIds: false }],
+  ])('keeps freeform closed when %s', async (_label, freeformPolicy) => {
+    machineCapabilitiesInvoke.mockResolvedValue({
+      supported: true,
+      response: { ok: true, result: { availableModels: [{ id: 'native', name: 'Native' }], supportsFreeform: false } },
+    });
+    describeProviderModelsMock.mockResolvedValue(createProviderModelsProjection(freeformPolicy));
+    const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+
+    const result: any = await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' });
+
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ modelId: 'provider-model', providerConnectionId: 'pc_work' }),
+    ]));
+    expect(result.supportsFreeform).toBe(false);
   });
 
   it.each([
@@ -372,7 +403,6 @@ describe('agent catalog voice tools', () => {
     const pluginItem = (backends?.items ?? []).find((i: any) => i.targetKey === 'backend:plugin-review-bot');
     expect(pluginItem).toBeTruthy();
     expect(pluginItem.agentId).toBe('claude');
-    expect(pluginItem.supportsModelSelection).toBe(true);
 
     const models: any = await listAgentModelsForVoiceTool({
       agentId: pluginItem.agentId,
@@ -457,8 +487,6 @@ describe('agent catalog voice tools', () => {
     const pluginItem = (backends?.items ?? []).find((i: any) => i.targetKey === 'backend:acme-review');
     expect(pluginItem).toBeTruthy();
     expect(pluginItem.agentId).toBe('acme-review');
-    expect(pluginItem.supportsModelSelection).toBe(true);
-    expect(pluginItem.supportsFreeformModels).toBe(true);
 
     const models: any = await listAgentModelsForVoiceTool({
       agentId: pluginItem.agentId,
@@ -546,16 +574,37 @@ describe('agent catalog voice tools', () => {
     const gemini = (res?.items ?? []).find((i: any) => i.targetKey === 'backend:gemini');
     expect(gemini).toBeTruthy();
     expect(gemini.enabled).toBe(false);
-    expect(gemini.uiConnectedService).toEqual({
-      serviceId: 'gemini',
-      label: 'Google Gemini',
-      connectRoute: null,
+    expect(gemini).toMatchObject({
+      agentId: 'gemini',
+      identity: { pluginId: 'happier.agent.gemini', localId: 'gemini' },
     });
     const configured = (res?.items ?? []).find((i: any) => i.targetKey === 'backend:team-review:configured:team-review');
     expect(configured).toBeTruthy();
     expect(configured.enabled).toBe(false);
     expect(configured.agentId).toBeUndefined();
-    expect(configured.uiConnectedService).toBeNull();
+    expect(configured).toMatchObject({ backendId: 'team-review' });
+    expect(configured).not.toHaveProperty('identity');
+  });
+
+  it('projects canonical backend inventory rows with Agent identities', async () => {
+    const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
+
+    const output = await listAgentBackendsForVoiceTool({ includeDisabled: true });
+    const parsed = AgentsBackendsListOutputSchema.safeParse(output);
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+
+    expect(parsed.data.items).toContainEqual(expect.objectContaining({
+      targetKey: 'backend:codex',
+      agentId: 'codex',
+      identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+    }));
+    expect(parsed.data.items).toContainEqual(expect.objectContaining({
+      targetKey: 'backend:team-review:configured:team-review',
+      backendId: 'team-review',
+    }));
+    expect(parsed.data.items.find((item) => item.backendId === 'team-review')).not.toHaveProperty('identity');
   });
 
   it('applies limit to backend and model discovery results', async () => {

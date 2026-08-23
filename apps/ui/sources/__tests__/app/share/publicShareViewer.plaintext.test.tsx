@@ -641,4 +641,154 @@ describe('PublicShareViewerScreen (plaintext)', () => {
         expect(finalProps.datasetKey).not.toContain('token-a-secret');
         expect(finalProps.datasetKey).not.toContain('token-b-secret');
     });
+
+    it('walks older public share pages from the served cursor on the already-authorized grant', async () => {
+        // A share longer than one page must not begin mid-conversation: the viewer follows
+        // `nextBeforeSeq` and merges the older page UNDER the rows already on screen.
+        transcriptListSpy.mockClear();
+        serverFetchSpy.mockReset();
+
+        const plainText = (text: string) => ({
+            t: 'plain',
+            v: { role: 'user', content: { type: 'text', text } },
+        });
+
+        serverFetchSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    session: {
+                        id: 's1',
+                        seq: 4,
+                        encryptionMode: 'plain',
+                        createdAt: 1,
+                        updatedAt: 2,
+                        active: true,
+                        activeAt: 2,
+                        metadata: JSON.stringify({ path: '/repo', host: 'devbox', name: 'Plain Session' }),
+                        metadataVersion: 1,
+                    },
+                    owner: { id: 'u1', username: 'alice', firstName: null, lastName: null, avatar: null },
+                    accessLevel: 'view',
+                    encryptedDataKey: null,
+                    isConsentRequired: false,
+                    messagesAccessToken: 'messages-token-paged',
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    messages: [
+                        { id: 'm3', seq: 3, localId: null, content: plainText('newest'), createdAt: 30, updatedAt: 30 },
+                    ],
+                    hasMore: true,
+                    nextBeforeSeq: 3,
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    messages: [
+                        { id: 'm2', seq: 2, localId: null, content: plainText('middle'), createdAt: 20, updatedAt: 20 },
+                        { id: 'm1', seq: 1, localId: null, content: plainText('oldest'), createdAt: 10, updatedAt: 10 },
+                    ],
+                    hasMore: false,
+                    nextBeforeSeq: null,
+                }),
+            });
+
+        const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
+
+        await renderScreen(<PublicShareViewerScreen />);
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const first = transcriptListSpy.mock.calls[transcriptListSpy.mock.calls.length - 1]?.[0];
+        expect(first.messages.map((m: any) => m.text)).toEqual(['newest']);
+        expect(typeof first.loadOlder).toBe('function');
+
+        let olderResult: any;
+        await act(async () => {
+            olderResult = await first.loadOlder();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(olderResult).toEqual({ loaded: 2, hasMore: false, status: 'no_more' });
+        expect(serverFetchSpy).toHaveBeenLastCalledWith(
+            '/v1/public-share/tok-1/messages?beforeSeq=3',
+            expect.objectContaining({
+                method: 'GET',
+                headers: expect.objectContaining({
+                    'x-public-share-messages-access-token': 'messages-token-paged',
+                }),
+            }),
+            expect.objectContaining({ includeAuth: false }),
+        );
+
+        const afterOlder = transcriptListSpy.mock.calls[transcriptListSpy.mock.calls.length - 1]?.[0];
+        expect(afterOlder.messages.map((m: any) => m.text)).toEqual(['oldest', 'middle', 'newest']);
+    });
+
+    it('reports a failed older public share page as retryable instead of a loaded empty page', async () => {
+        transcriptListSpy.mockClear();
+        serverFetchSpy.mockReset();
+
+        serverFetchSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    session: {
+                        id: 's1',
+                        seq: 2,
+                        encryptionMode: 'plain',
+                        createdAt: 1,
+                        updatedAt: 2,
+                        active: true,
+                        activeAt: 2,
+                        metadata: JSON.stringify({ path: '/repo', host: 'devbox', name: 'Plain Session' }),
+                        metadataVersion: 1,
+                    },
+                    owner: { id: 'u1', username: 'alice', firstName: null, lastName: null, avatar: null },
+                    accessLevel: 'view',
+                    encryptedDataKey: null,
+                    isConsentRequired: false,
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    messages: [{
+                        id: 'm2',
+                        seq: 2,
+                        localId: null,
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'newest' } } },
+                        createdAt: 20,
+                        updatedAt: 20,
+                    }],
+                    hasMore: true,
+                    nextBeforeSeq: 2,
+                }),
+            })
+            .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) });
+
+        const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
+
+        await renderScreen(<PublicShareViewerScreen />);
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const first = transcriptListSpy.mock.calls[transcriptListSpy.mock.calls.length - 1]?.[0];
+        let olderResult: any;
+        await act(async () => {
+            olderResult = await first.loadOlder();
+        });
+
+        expect(olderResult).toEqual({ loaded: 0, hasMore: true, status: 'retryable_error' });
+        const afterFailure = transcriptListSpy.mock.calls[transcriptListSpy.mock.calls.length - 1]?.[0];
+        // Rows and the cursor are retained, so the same page can be retried.
+        expect(afterFailure.messages.map((m: any) => m.text)).toEqual(['newest']);
+    });
 });

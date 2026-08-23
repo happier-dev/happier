@@ -94,6 +94,7 @@ function readForkLineage(metadata: unknown): Readonly<{
     parentSessionId: string;
     parentCutoffSeqInclusive: number;
     strategy: string;
+    requestId: string | null;
 }> | null {
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
     const fork = (metadata as Record<string, unknown>).forkV1;
@@ -104,7 +105,12 @@ function readForkLineage(metadata: unknown): Readonly<{
     const strategy = normalizeNonEmptyString(record.strategy);
     const parentCutoffSeqInclusive = record.parentCutoffSeqInclusive;
     if (!parentSessionId || !strategy || typeof parentCutoffSeqInclusive !== 'number') return null;
-    return { parentSessionId, parentCutoffSeqInclusive, strategy };
+    return {
+        parentSessionId,
+        parentCutoffSeqInclusive,
+        strategy,
+        requestId: normalizeNonEmptyString(record.requestId),
+    };
 }
 
 /**
@@ -124,6 +130,8 @@ export type SessionForkLineageMatch = Readonly<{
     parentSessionId: string;
     forkPoint: SessionForkPoint;
     route: SessionForkOperationRoute;
+    /** Durable identity emitted with this exact fork attempt, when available. */
+    requestId?: string | null;
 }>;
 
 /**
@@ -143,6 +151,13 @@ export function isForkChildOfRequest(
         ? NATIVE_RESOLVED_STRATEGIES
         : REPLAY_RESOLVED_STRATEGIES;
     if (!acceptedStrategies.has(lineage.strategy)) return false;
+    const requestId = normalizeNonEmptyString(match.requestId);
+    // The daemon's fork cutoff is an effective content boundary, not necessarily
+    // the sequence clicked in the UI (a clicked user row yields N−1). When the
+    // request identity survived into durable lineage it is the exact proof of
+    // this attempt; comparing adjacent sequence values here would create a
+    // second, divergent cutoff resolver in the consumer.
+    if (requestId) return lineage.requestId === requestId;
     if (
         match.forkPoint.type === 'seq'
         && lineage.parentCutoffSeqInclusive !== match.forkPoint.upToSeqInclusive
@@ -157,12 +172,14 @@ export function findForkChildForRequest(params: Readonly<{
     parentSessionId: string;
     forkPoint: SessionForkPoint;
     route: SessionForkOperationRoute;
+    requestId?: string | null;
     knownChildSessionIds: ReadonlySet<string>;
 }>): SessionForkChildLookupV1 {
     const match: SessionForkLineageMatch = {
         parentSessionId: params.parentSessionId,
         forkPoint: params.forkPoint,
         route: params.route,
+        requestId: params.requestId,
     };
 
     const matches: string[] = [];

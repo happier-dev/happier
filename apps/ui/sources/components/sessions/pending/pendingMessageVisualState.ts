@@ -91,6 +91,7 @@ const blockedReasonLabelKeys = {
     attempt_expired_before_write: 'session.pendingMessages.deliveryBlockedReasons.attemptExpiredBeforeWrite',
     provider_rejected_before_acceptance: 'session.pendingMessages.deliveryBlockedReasons.providerRejectedBeforeAcceptance',
     steering_unavailable: 'session.pendingMessages.deliveryBlockedReasons.unknown',
+    conditional_steer_unavailable: 'session.pendingMessages.deliveryBlockedReasons.unknown',
     unsupported_action: 'session.pendingMessages.deliveryBlockedReasons.unknown',
     payload_too_large: 'session.pendingMessages.deliveryBlockedReasons.payloadTooLarge',
     unknown: 'session.pendingMessages.deliveryBlockedReasons.unknown',

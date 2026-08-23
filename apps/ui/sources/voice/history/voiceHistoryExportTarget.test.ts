@@ -31,11 +31,17 @@ vi.mock('expo-sharing', () => ({
   shareAsync: nativeBoundary.shareAsync,
 }));
 
+const ARTIFACT_CHUNKS = Object.freeze([
+  '{"version":1,"entries":[',
+  '{"id":"a"}',
+  ',{"id":"b"}',
+  ']}',
+]);
 const ARTIFACT: VoiceHistoryExportArtifact = {
   fileName: 'happier-voice-history.json',
   mimeType: 'application/json',
-  content: '{"version":1}',
-  rowCount: 1,
+  chunks: () => ARTIFACT_CHUNKS,
+  rowCount: 2,
   range: 'all',
 };
 
@@ -78,6 +84,10 @@ describe('Voice History export targets', () => {
     await saveVoiceHistoryExportArtifactToWeb(ARTIFACT);
 
     expect(createObjectURL).toHaveBeenCalledOnce();
+    // Every chunk reaches the Blob, in order: a streamed export that dropped or
+    // reordered a chunk would still download, as invalid JSON.
+    expect(await (createObjectURL.mock.calls[0]![0] as unknown as Blob).text())
+      .toBe(ARTIFACT_CHUNKS.join(''));
     expect(anchor.href).toBe('blob:voice-history');
     expect(anchor.download).toBe(ARTIFACT.fileName);
     expect(anchor.rel).toBe('noopener noreferrer');
@@ -92,12 +102,19 @@ describe('Voice History export targets', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:voice-history');
   });
 
-  it('writes, shares, and removes the bounded JSON through native platform boundaries', async () => {
+  it('streams every chunk into the native file, shares it, and removes it', async () => {
     await shareVoiceHistoryExportArtifactNative(ARTIFACT);
 
     expect(nativeBoundary.isAvailableAsync).toHaveBeenCalledOnce();
     expect(nativeBoundary.File).toHaveBeenCalledWith('file:///cache', ARTIFACT.fileName);
-    expect(nativeBoundary.file.write).toHaveBeenCalledWith(ARTIFACT.content);
+    // The first write replaces the file; every later chunk appends, so the file
+    // holds the whole document instead of only its last chunk.
+    expect(nativeBoundary.file.write.mock.calls).toEqual([
+      [ARTIFACT_CHUNKS[0], undefined],
+      [ARTIFACT_CHUNKS[1], { append: true }],
+      [ARTIFACT_CHUNKS[2], { append: true }],
+      [ARTIFACT_CHUNKS[3], { append: true }],
+    ]);
     expect(nativeBoundary.shareAsync).toHaveBeenCalledWith(
       nativeBoundary.file.uri,
       expect.objectContaining({ mimeType: ARTIFACT.mimeType }),

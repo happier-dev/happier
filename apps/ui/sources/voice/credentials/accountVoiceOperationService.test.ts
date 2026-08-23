@@ -247,6 +247,16 @@ const recipientContract = normalizeRecipientContractV1({
 });
 const recipientContractDigest = createRecipientContractDigestV1(recipientContract);
 
+/**
+ * The same declaration published by a party that could rewrite where the raw
+ * key is sent. Only this publisher class carries a re-approval fence.
+ */
+const externalRecipientContract = normalizeRecipientContractV1({
+  ...recipientContract,
+  package: { pluginId: 'happier.voice.openai', source: { kind: 'package', locator: '@acme/voice' } },
+  publisher: { trust: 'verified' as const, identity: 'npm:https://registry.npmjs.org:@acme' },
+});
+
 const multiPurposeRecipientContract = normalizeRecipientContractV1({
   ...recipientContract,
   operations: [
@@ -538,8 +548,18 @@ describe('account Voice operation service', () => {
     await expect(service.inspectAvailability()).resolves.toBeUndefined();
     await expect(requestClientAuth(service)).resolves.toMatchObject({ status: 200 });
 
+    // The exact selection this operation's captured authority resolved is what
+    // the daemon must be told to materialize under: it resolves its own current
+    // Connected Account otherwise.
     expect(materializeConnectedAccountHeaders).toHaveBeenCalledWith({
       operationId: 'client-auth',
+      selection: {
+        kind: 'account',
+        account: {
+          service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+          accountId: 'codex-work',
+        },
+      },
       signal: expect.any(AbortSignal),
     });
     expect(materializeSecret).not.toHaveBeenCalled();
@@ -612,6 +632,13 @@ describe('account Voice operation service', () => {
     expect(materializeConnectedAccountHeaders).toHaveBeenCalledTimes(1);
     expect(materializeConnectedAccountHeaders).toHaveBeenCalledWith({
       operationId: 'voices',
+      selection: {
+        kind: 'account',
+        account: {
+          service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+          accountId: 'catalog-account',
+        },
+      },
       signal: expect.any(AbortSignal),
     });
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -886,7 +913,7 @@ describe('account Voice operation service', () => {
     const fetch = vi.fn();
     const service = createAccountVoiceOperationService({
       providerId: 'happier.voice.openai/realtime-openai',
-      recipientContract,
+      recipientContract: externalRecipientContract,
       signal: new AbortController().signal,
       isCurrent: () => true,
       fetch,
@@ -901,6 +928,36 @@ describe('account Voice operation service', () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(mocks.state.settings.voiceSettingsV1.credentialBindings[0]?.credentialBindings.account.api_key)
       .toBe('secret-1');
+  });
+
+  it('keeps a first-party bundled recipient usable after an update changed its operations', async () => {
+    // The stored approval was collected for the operations Happier shipped
+    // before the update; a contract Happier itself authored must not revoke
+    // itself, so the credential still reaches the declared origin.
+    mocks.state = {
+      ...mocks.state,
+      settings: createSettings('secret-1', 1, 'sha256:' + 'f'.repeat(64)),
+    };
+    const materializeSecret = vi.fn(async () => 'account-secret');
+    const fetch = vi.fn(async () => new Response(
+      '{"value":"ephemeral"}',
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    const service = createAccountVoiceOperationService({
+      providerId: 'happier.voice.openai/realtime-openai',
+      recipientContract,
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+      fetch,
+      materializeSecret,
+    });
+
+    await expect(requestClientAuth(service)).resolves.toMatchObject({
+      status: 200,
+      finalUrl: 'https://api.openai.com/v1/realtime/client_secrets',
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(materializeSecret).toHaveBeenCalledOnce();
   });
 
   it('rejects a source credential reflected directly or through JSON escaping', async () => {

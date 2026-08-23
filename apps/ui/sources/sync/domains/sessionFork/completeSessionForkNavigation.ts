@@ -1,9 +1,9 @@
 import { writeForkInitialPromptV1 } from '@/sync/domains/sessionFork/forkInitialPromptV1';
-import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
-
-import { waitForForkChildHydration } from './waitForForkChildHydration';
+import { requireLocalSessionVisibleForRoute } from '@/sync/runtime/orchestration/serverScopedRpc/localSessionRouteReadiness';
 
 type ForkNavigationOptions = Readonly<{ serverId?: string }>;
 
@@ -25,6 +25,15 @@ function normalizeServerId(value: string | null | undefined): string | null {
 
 function normalizeRestoredDraftText(value: string | null | undefined): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function isExpectedForkChild(session: Session, parentSessionId: string): boolean {
+    const metadata = readSessionOwnerMetadataView(session);
+    if (!metadata || typeof metadata !== 'object') return false;
+    const fork = (metadata as Record<string, unknown>).forkV1;
+    if (!fork || typeof fork !== 'object' || Array.isArray(fork)) return false;
+    const forkRecord = fork as Record<string, unknown>;
+    return forkRecord.v === 1 && forkRecord.parentSessionId === parentSessionId;
 }
 
 function writeRestoredDraft(childSessionId: string, restoredDraftText: string): void {
@@ -60,15 +69,17 @@ export async function completeSessionForkNavigation(
 ): Promise<void> {
     const restoredDraftText = normalizeRestoredDraftText(params.restoredDraftText);
     const serverId = normalizeServerId(params.serverId);
-    if (restoredDraftText) {
-        writeRestoredDraft(params.childSessionId, restoredDraftText);
-    }
-
-    await waitForForkChildHydration({
-        childSessionId: params.childSessionId,
-        parentSessionId: params.parentSessionId,
+    await requireLocalSessionVisibleForRoute({
+        sessionId: params.childSessionId,
         serverId,
+        getStoredSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
+        ensureSessionVisibleForMessageRoute: sync.ensureSessionVisibleForMessageRoute,
+        isLocalSessionReady: (session) => isExpectedForkChild(session, params.parentSessionId),
     });
+    // A wrong or still-unhydrated child must never receive the parent's draft.
+    // Keep this immediately before navigation, after the canonical route owner
+    // proved the expected child and without a fork-specific polling loop.
+    if (restoredDraftText) writeRestoredDraft(params.childSessionId, restoredDraftText);
     await params.navigate(
         params.childSessionId,
         serverId ? { serverId } : undefined,

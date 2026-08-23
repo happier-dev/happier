@@ -40,6 +40,7 @@ import type { ExternalSessionRuntimePresentation } from '../../presentation/exte
 import { SessionRowAttentionIndicator } from '../row/SessionRowAttentionIndicator';
 import { resolveAgentIdFromFlavor, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { Icon } from '@/components/ui/icons/Icon';
+import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
 
 export type SessionViewHeaderProps = Readonly<{
     title: string;
@@ -350,6 +351,12 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
             : <SessionHeaderRightSidebarButton scopeId={input.paneScopeId} />,
         rightElement: (
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <ActionOperationActivityButton
+                    preferredSessionId={input.sessionId}
+                    testID="session-header-action-operations"
+                    buttonSize={SESSION_HEADER_ACTION_TAP_TARGET_PX}
+                    iconSize={SESSION_HEADER_ICON_SIZE_PX}
+                />
                 {input.externalSessionRuntime ? (
                     <View
                         testID={`session-header-external-agent-status-${input.externalSessionRuntime.externalAgent.state}`}

@@ -24,6 +24,10 @@ import {
   resolveVoiceTurnControlAction,
   type VoiceTurnControlAction,
 } from '@/voice/runtime/protocol/VoiceTurnControlCapabilities';
+import {
+  createRealtimeInboundWatchdog,
+  type RealtimeInboundWatchdog,
+} from '@/voice/runtime/realtime/realtimeInboundWatchdog';
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 import {
   normalizeVoiceRuntimeFailureCode,
@@ -76,8 +80,6 @@ export type VoiceConversationControllerDeps = Readonly<{
   ): Promise<VoiceRealtimeConnection>;
   isSelectionCurrent(): boolean;
   onCanonicalEvent(event: VoiceRealtimeCanonicalEvent, signal: AbortSignal): Promise<void>;
-  /** Observes one validated provider control envelope before provider decoding. */
-  onInboundControlEvent?(): void;
   projectTranscript?(input: Readonly<{
     controlSessionId: string;
     attemptId: number;
@@ -188,6 +190,7 @@ type Attempt = {
   providerPreparationReleasePromise: Promise<void> | null;
   authRefreshCount: number;
   connectionSequence: number;
+  inboundWatchdog: RealtimeInboundWatchdog | null;
 };
 
 class VoiceConnectionReadyTimeoutError extends Error {
@@ -232,6 +235,22 @@ export function createVoiceConversationController(
   });
 
   const owns = (attempt: Attempt): boolean => current === attempt && !attempt.abortController.signal.aborted;
+
+  /**
+   * A transport can stay nominally open while it stops delivering content, which
+   * otherwise leaves the attempt awaiting or speaking forever with no user exit.
+   * The watchdog is attempt-local, armed only in the states that require inbound
+   * progress, and recovers through this controller's single reconnect owner.
+   */
+  const armInboundWatchdog = (attempt: Attempt): void => {
+    attempt.inboundWatchdog ??= createRealtimeInboundWatchdog({
+      onStall: () => {
+        if (current !== attempt) return;
+        void requestReconnect();
+      },
+    });
+    attempt.inboundWatchdog.start();
+  };
 
   const awaitConnectionReady = async (operation: Promise<void>): Promise<void> => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -313,6 +332,7 @@ export function createVoiceConversationController(
     attempt: Attempt,
     reason: VoiceConnectionCloseReason,
   ): Promise<void> => {
+    attempt.inboundWatchdog?.stop();
     disposeToolBarrier(attempt);
     if (attempt.connection) {
       attempt.closePromise ??= attempt.connection.close(reason);
@@ -390,6 +410,7 @@ export function createVoiceConversationController(
     reason: 'reconnect' | 'auth_refresh',
   ): Promise<void> => {
     if (!owns(attempt) || attempt.reconnecting || attempt.terminalSettled) return;
+    attempt.inboundWatchdog?.stop();
     attempt.reconnecting = true;
     deps.machine.reconnecting?.({
       controlSessionId: attempt.controlSessionId,
@@ -516,6 +537,7 @@ export function createVoiceConversationController(
             return;
           }
         }
+        armInboundWatchdog(attempt);
         deps.machine.connected({ controlSessionId: attempt.controlSessionId, attemptId: attempt.id });
         if (!owns(attempt) || attempt.connection !== nextConnection) return;
         if (!deps.isSelectionCurrent()) {
@@ -542,6 +564,39 @@ export function createVoiceConversationController(
     }
   };
 
+  /**
+   * Canonical turn edges decide which inbound-progress window is open: the
+   * assistant speaking uses the tight inter-chunk bound, the gap between the
+   * user finishing and the assistant starting uses the generous
+   * response-generation bound, and listening silence arms nothing.
+   */
+  const noteInboundTurnEdge = (attempt: Attempt, event: VoiceRealtimeCanonicalEvent): void => {
+    const watchdog = attempt.inboundWatchdog;
+    if (!watchdog) return;
+    switch (event.type) {
+      case 'assistant_output_started':
+        watchdog.markTurnActive(true);
+        return;
+      case 'assistant_output_stopped':
+        watchdog.markTurnActive(false);
+        watchdog.markAwaitingResponse(false);
+        return;
+      case 'input_speech_started':
+        watchdog.markAwaitingResponse(false);
+        return;
+      case 'input_speech_stopped':
+        watchdog.markAwaitingResponse(true);
+        return;
+      case 'transcript':
+        if (event.event.role === 'user' && event.event.type === 'voice.transcript.final') {
+          watchdog.markAwaitingResponse(true);
+        }
+        return;
+      default:
+        return;
+    }
+  };
+
   const pumpControlEvents = async (
     attempt: Attempt,
     connection: VoiceRealtimeConnection = attempt.connection!,
@@ -559,7 +614,7 @@ export function createVoiceConversationController(
           await settleSelectionInvalidated(attempt);
           return;
         }
-        deps.onInboundControlEvent?.();
+        attempt.inboundWatchdog?.noteInboundEvent();
         const events = deps.adapter.decodeControl(control);
         for (const event of events) {
           if (!owns(attempt) || attempt.connection !== connection) return;
@@ -567,6 +622,7 @@ export function createVoiceConversationController(
             await settleSelectionInvalidated(attempt);
             return;
           }
+          noteInboundTurnEdge(attempt, event);
           if (event.type === 'auth_expired') {
             await reconnect(attempt, 'auth_refresh');
             return;
@@ -716,6 +772,7 @@ export function createVoiceConversationController(
       providerPreparationReleasePromise: null,
       authRefreshCount: 0,
       connectionSequence: 0,
+      inboundWatchdog: null,
     };
     const previousAttemptCleanup = claimAttemptOwnership(attempt);
 
@@ -857,6 +914,7 @@ export function createVoiceConversationController(
           return { status: 'aborted' };
         }
       }
+      armInboundWatchdog(attempt);
       deps.machine.connected({ controlSessionId: attempt.controlSessionId, attemptId: attempt.id });
       if (!owns(attempt) || attempt.connection !== connection) {
         return { status: 'aborted' };

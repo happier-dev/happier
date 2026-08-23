@@ -9,10 +9,12 @@ import {
 import { comparePluginContributionOrder } from '@/sync/domains/plugins/contributionOrder';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import {
-    dispatchPluginSurfaceAction,
     type PluginSurfaceActionDispatchOutcome,
     type PluginSurfaceContributedActionTransport,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import {
+    launchPluginSurfaceAction,
+} from '@/components/plugins/surfaces/launchPluginSurfaceAction';
 import {
     createPluginActionCurrentIntentHandler,
 } from '@/components/plugins/surfaces/pluginSurfaceFeedback';
@@ -255,7 +257,11 @@ export async function dispatchPluginSessionHeaderAction(params: Readonly<{
     execute?: PluginSurfaceContributedActionTransport;
     openSurface?: PluginSurfaceOpenHandler;
     readCurrentUiContext?: () => CurrentUiContextSnapshotV1 | null | undefined;
-}>): Promise<PluginSurfaceActionDispatchOutcome | PluginSurfaceOpenOutcome | null> {
+}>): Promise<
+    PluginSurfaceActionDispatchOutcome
+    | PluginSurfaceOpenOutcome
+    | null
+> {
     const projection = params.projection;
     const action = resolvePluginSessionHeaderAction({
         projection,
@@ -311,7 +317,7 @@ export async function dispatchPluginSessionHeaderAction(params: Readonly<{
             isCurrent,
         })
         : undefined;
-    return await dispatchPluginSurfaceAction({
+    const launched = await launchPluginSurfaceAction({
         callerPluginId: action.pluginId,
         action: semanticAction.action,
         // `null` is the RPC owner's canonical no-input sentinel. The compiled
@@ -347,4 +353,5 @@ export async function dispatchPluginSessionHeaderAction(params: Readonly<{
             : {}),
         ...(params.scopeIsCurrent ? { isCurrent: params.scopeIsCurrent } : {}),
     });
+    return launched.outcome;
 }

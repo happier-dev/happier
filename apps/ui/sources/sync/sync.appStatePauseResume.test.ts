@@ -473,4 +473,73 @@ describe('sync AppState pause/resume', () => {
             globalWithDocument.document = originalDocument;
         }
     });
+
+    it('keeps socket reachability through routine hidden visibility until pre-accept leases settle', async () => {
+        const globalWithDocument = globalThis as unknown as { document?: unknown };
+        const originalDocument = globalWithDocument.document;
+        const handlers = new Map<string, Set<() => void>>();
+        const documentStub = {
+            visibilityState: 'visible',
+            getElementById: () => null,
+            addEventListener: (event: string, listener: () => void) => {
+                const set = handlers.get(event) ?? new Set<() => void>();
+                set.add(listener);
+                handlers.set(event, set);
+            },
+            removeEventListener: (event: string, listener: () => void) => {
+                handlers.get(event)?.delete(listener);
+            },
+            dispatchEvent: (_event: unknown) => {},
+        };
+        globalWithDocument.document = documentStub;
+
+        try {
+            const { sync } = await import('./sync');
+            const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
+            const releaseAcceptanceLease = sync.acquireUserRequestLease();
+
+            documentStub.visibilityState = 'hidden';
+            for (const handler of handlers.get('visibilitychange') ?? []) handler();
+
+            expect(apiSocketDisconnect).not.toHaveBeenCalled();
+            expect(isServerReachabilityNetworkAllowed()).toBe(true);
+
+            releaseAcceptanceLease();
+
+            expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
+            expect(isServerReachabilityNetworkAllowed()).toBe(false);
+        } finally {
+            globalWithDocument.document = originalDocument;
+        }
+    });
+
+    it.each(['pagehide', 'freeze'] as const)('%s remains an immediate hard boundary during pre-accept', async (eventName) => {
+        const globalWithDocument = globalThis as unknown as { document?: unknown };
+        const originalDocument = globalWithDocument.document;
+        const lifecycleHandlers = new Map<string, (event?: unknown) => void>();
+        const documentStub = {
+            visibilityState: 'visible',
+            getElementById: () => null,
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            dispatchEvent: (_event: unknown) => {},
+        };
+        globalWithDocument.document = documentStub;
+        vi.stubGlobal('addEventListener', (event: string, listener: (event?: unknown) => void) => {
+            lifecycleHandlers.set(event, listener);
+        });
+
+        try {
+            const { sync } = await import('./sync');
+            const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
+            sync.acquireUserRequestLease();
+
+            lifecycleHandlers.get(eventName)?.();
+
+            expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
+            expect(isServerReachabilityNetworkAllowed()).toBe(false);
+        } finally {
+            globalWithDocument.document = originalDocument;
+        }
+    });
 });

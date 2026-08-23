@@ -1,5 +1,6 @@
 import type {
     ComposerAgentContinuationIntentV1,
+    SessionAgentTransitionInputV1,
     SessionAgentTransitionRejectedCodeV1,
     SessionAgentTransitionResultV1,
 } from '@happier-dev/protocol';
@@ -37,10 +38,9 @@ export type ArmedAgentContinuationSubmission = ArmedAgentContinuationLabels & Re
     /**
      * The dedupe identity, divider correlation key, and the only key the
      * composer may compare-clear against. It is minted before the call and
-     * never re-minted on retry — including a retry whose draft was edited
-     * first, because this identifies the transition rather than the text. The
-     * canonical admission owner, not this identity, is what stops a reused
-     * identity from overwriting differing content.
+     * never re-minted on retry. The arm retains the first exact wire input and
+     * retries dispatch that snapshot even if the composer was later edited;
+     * localId alone is not a content-integrity guarantee.
      */
     localId: string;
     intent: ComposerAgentContinuationIntentV1;
@@ -71,6 +71,21 @@ function buildTransitionInputMeta(
     return {
         ...(typeof displayText === 'string' && displayText.trim().length > 0 ? { displayText } : {}),
         ...(input.meta ?? {}),
+    };
+}
+
+/**
+ * Builds the one wire-ready request shared by draft persistence and transition
+ * dispatch. Keeping this projection here means a remount never compares a
+ * hand-copied approximation of the request the RPC actually received.
+ */
+export function buildArmedAgentContinuationTransitionInput(
+    submission: Pick<ArmedAgentContinuationSubmission, 'localId' | 'input'>,
+): SessionAgentTransitionInputV1 {
+    return {
+        text: submission.input.text,
+        localId: submission.localId,
+        meta: buildTransitionInputMeta(submission.input),
     };
 }
 
@@ -157,21 +172,6 @@ export type ArmedAgentContinuationDisposition = Readonly<{
      */
     awaitingRuntime?: true;
 }>;
-
-/**
- * Whether this outcome still has anything to say to the reader.
- *
- * One predicate, because the two questions that ask it are the same one: is a
- * submitted switch worth carrying across a remount, and is a carried one still
- * truthful when it comes back. An outcome with nothing to state and nothing to
- * hold the composer for is deleted rather than restored, so a restored banner
- * can never point at a transition that has since resolved.
- */
-export function isArmedAgentContinuationOutcomeUnsettled(
-    disposition: ArmedAgentContinuationDisposition,
-): boolean {
-    return disposition.notice !== null || disposition.send === 'block';
-}
 
 /**
  * Where the exact submitted localId has got to, canonically.
@@ -489,11 +489,7 @@ export async function continueSessionWithArmedAgent(
             sessionId: submission.sessionId,
             expectedCurrentAgentId: submission.intent.sourceAgentId,
             selection: submission.intent.selection,
-            input: {
-                text: submission.input.text,
-                localId: submission.localId,
-                meta: buildTransitionInputMeta(submission.input),
-            },
+            input: buildArmedAgentContinuationTransitionInput(submission),
         },
     });
     return {

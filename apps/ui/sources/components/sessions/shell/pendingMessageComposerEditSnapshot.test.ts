@@ -11,6 +11,29 @@ import {
     type PendingMessageComposerSemanticDraftSnapshot,
 } from './pendingMessageComposerEditSnapshot';
 
+const stagedMediaAttachment = {
+    v: 1,
+    instanceId: 'issue-42',
+    attachment: { pluginId: 'acme.issues', localId: 'issue' },
+    key: '42',
+    value: { issueId: 42 },
+    presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+    content: {
+        kind: 'stagedMedia',
+        handle: {
+            v: 1,
+            id: 'stage-1',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            owner: { pluginId: 'acme.issues', localId: 'issue' },
+            mediaKind: 'image',
+            mimeType: 'image/png',
+            name: 'screenshot.png',
+            sizeBytes: 1234,
+            sha256: 'a'.repeat(64),
+        },
+    },
+} as const;
+
 function createSnapshotWithValue(fieldId: string): PendingMessageComposerSemanticDraftSnapshot {
     return Object.fromEntries(Object.keys(SESSION_DRAFT_VALUE_FIELD_CATALOG).map((key) => [
         key,
@@ -64,33 +87,45 @@ describe('pending message composer semantic draft snapshot', () => {
         });
     });
 
-    it('refuses a write-back whose attachment still owns a transfer-staged claim instead of dropping it', () => {
+    it('writes back an attachment that still owns its transfer-staged claim', () => {
+        // A Pending row is Message ingress: it is re-sent verbatim through the send RPC, so
+        // the daemon's SessionMedia finalizer — not this write-back — turns a staged claim
+        // into a durable reference. Refusing it here made a prepared media attachment
+        // impossible to save and stranded the media the preparation had already staged.
+        expect(buildPendingMessageComposerEditStructuredInput({
+            text: 'Queued edit text',
+            mentions: [],
+            attachments: [stagedMediaAttachment],
+        })).toEqual({
+            status: 'ready',
+            structuredInput: { v: 1, composerAttachments: [stagedMediaAttachment] },
+        });
+    });
+
+    it('refuses a write-back whose attachment cannot be read as Pending ingress', () => {
         expect(buildPendingMessageComposerEditStructuredInput({
             text: 'Queued edit text',
             mentions: [],
             attachments: [{
-                v: 1,
-                instanceId: 'issue-42',
-                attachment: { pluginId: 'acme.issues', localId: 'issue' },
-                key: '42',
-                value: { issueId: 42 },
-                presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+                ...stagedMediaAttachment,
                 content: {
                     kind: 'stagedMedia',
-                    handle: {
-                        v: 1,
-                        id: 'stage-1',
-                        executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-                        owner: { pluginId: 'acme.issues', localId: 'issue' },
-                        mediaKind: 'image',
-                        mimeType: 'image/png',
-                        name: 'screenshot.png',
-                        sizeBytes: 1234,
-                        sha256: 'a'.repeat(64),
-                    },
+                    handle: { ...stagedMediaAttachment.content.handle, mimeType: 'application/pdf' },
                 },
-            }],
+            } as unknown as typeof stagedMediaAttachment],
         })).toEqual({ status: 'unavailable' });
+    });
+
+    it('reopens a queued media message instead of refusing the edit outright', () => {
+        expect(hydratePendingMessageComposerAttachmentDrafts({
+            happierStructuredInputV1: {
+                v: 1,
+                composerAttachments: [stagedMediaAttachment],
+            },
+        })).toEqual({
+            status: 'ready',
+            attachments: [stagedMediaAttachment],
+        });
     });
 
     it('keeps a media-bearing admitted attachment unavailable rather than dropping its media id or inventing a content handle', () => {

@@ -1138,26 +1138,44 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
                 signal: AbortSignal,
                 _conversationSessionId: string | null,
                 phase: 'settings' | 'prepare' | 'connection',
-              ) => createAccountVoiceOperationService({
-                providerId,
-                contribution: {
-                  pluginId: input.pluginId,
-                  localId: declaration.id,
-                },
-                recipientContract,
-                signal,
-                isCurrent,
-                materializeConnectedAccountHeaders:
-                  createVoiceClientMediatedCredentialHeadersMaterializer({
-                    contribution: {
-                      pluginId: input.pluginId,
-                      localId: declaration.id,
-                    },
-                    platform: hostPlatform,
-                    phase,
-                    isCurrent,
-                  }),
-              })
+              ) => {
+                // The selected daemon is part of this credential authority, the
+                // same way it is for raw access: the mediated RPC stays on the
+                // target captured here instead of following a target that moves
+                // mid-invocation.
+                const machineId = resolveVoiceExecutionMachineId();
+                return createAccountVoiceOperationService({
+                  providerId,
+                  contribution: {
+                    pluginId: input.pluginId,
+                    localId: declaration.id,
+                  },
+                  recipientContract,
+                  signal,
+                  isCurrent,
+                  materializeConnectedAccountHeaders:
+                    createVoiceClientMediatedCredentialHeadersMaterializer({
+                      contribution: {
+                        pluginId: input.pluginId,
+                        localId: declaration.id,
+                      },
+                      platform: hostPlatform,
+                      phase,
+                      // A projected external declaration names the daemon
+                      // projection it came from; a first-party declaration
+                      // compiled into this client has none to name.
+                      declarationAuthority: clientRuntimeIdentity
+                        ? { kind: 'projected', cacheIdentity: clientRuntimeIdentity }
+                        : { kind: 'bundled' },
+                      machineId,
+                      isCurrent,
+                      isInvocationCurrent: () => (
+                        machineId !== null
+                        && resolveVoiceExecutionMachineId() === machineId
+                      ),
+                    }),
+                });
+              }
             : null;
           const contribution = createExternalVoiceProviderRuntimeContribution({
             host,

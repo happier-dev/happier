@@ -11,7 +11,6 @@ const voiceConfigState = vi.hoisted(() => ({
   DISABLE_PERMISSION_REQUESTS: false,
   DISABLE_SESSION_STATUS: true,
   DISABLE_MESSAGES: false,
-  DISABLE_SESSION_FOCUS: false,
   DISABLE_READY_EVENTS: false,
   ENABLE_DEBUG_LOGGING: true,
 }));

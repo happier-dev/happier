@@ -146,15 +146,22 @@ export function createAutomationsDomain<S extends AutomationsDomain>({
                     return state;
                 }
                 const existing = state.automationRunsByAutomationId[automationId] ?? [];
+                const retained = sortRunsNewestFirst([...existing, ...runs]);
+                // The projection is a bounded newest-first window. Paging past
+                // its end returns rows this client will never render, so the
+                // cursor must not advance past what the reader can inspect:
+                // otherwise "load more" keeps consuming history invisibly.
+                const retainedIds = new Set(retained.map((run) => run.id));
+                const pageFullyRetained = runs.every((run) => retainedIds.has(run.id));
                 return {
                     ...state,
                     automationRunsByAutomationId: {
                         ...state.automationRunsByAutomationId,
-                        [automationId]: sortRunsNewestFirst([...existing, ...runs]),
+                        [automationId]: retained,
                     },
                     automationRunNextCursorByAutomationId: {
                         ...state.automationRunNextCursorByAutomationId,
-                        [automationId]: nextCursor,
+                        [automationId]: pageFullyRetained ? nextCursor : null,
                     },
                 };
             }),

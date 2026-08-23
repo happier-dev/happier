@@ -5,6 +5,8 @@ const openSessionHandoffPickerMock = vi.hoisted(() => vi.fn());
 const runSessionHandoffUiFlowMock = vi.hoisted(() => vi.fn());
 const modalConfirmMock = vi.hoisted(() => vi.fn());
 const readSessionHandoffSessionActivityMock = vi.hoisted(() => vi.fn());
+const releaseUserRequestLeaseMock = vi.hoisted(() => vi.fn());
+const acquireUserRequestLeaseMock = vi.hoisted(() => vi.fn(() => releaseUserRequestLeaseMock));
 
 vi.mock('@/components/sessions/handoff/openSessionHandoffPicker', () => ({
     openSessionHandoffPicker: (...args: unknown[]) => openSessionHandoffPickerMock(...args),
@@ -26,6 +28,7 @@ vi.mock('./readSessionHandoffSessionActivity', () => ({
 vi.mock('./runSessionHandoffUiFlow', () => ({
     runSessionHandoffUiFlow: (...args: unknown[]) => runSessionHandoffUiFlowMock(...args),
 }));
+vi.mock('@/sync/sync', () => ({ sync: { acquireUserRequestLease: acquireUserRequestLeaseMock } }));
 
 installSessionHandoffCommonModuleMocks({
     modal: async () => {
@@ -45,6 +48,8 @@ describe('runSessionHandoffPickerFlow', () => {
         modalConfirmMock.mockReset();
         readSessionHandoffSessionActivityMock.mockReset();
         readSessionHandoffSessionActivityMock.mockReturnValue({ active: false });
+        acquireUserRequestLeaseMock.mockClear();
+        releaseUserRequestLeaseMock.mockClear();
     });
 
     it('returns null when the picker is dismissed', async () => {
@@ -107,12 +112,16 @@ describe('runSessionHandoffPickerFlow', () => {
                 ignoredIncludeGlobs: ['dist/**'],
             },
             context: {
+                actionRequestId: expect.any(String),
                 defaultSessionId: 'sess_1',
                 serverId: 'server_a',
                 surface: 'ui',
                 placement: 'session_action_menu',
             },
         });
+        expect(runSessionHandoffUiFlowMock).toHaveBeenCalledTimes(1);
+        expect(acquireUserRequestLeaseMock).toHaveBeenCalledTimes(1);
+        expect(releaseUserRequestLeaseMock).toHaveBeenCalledTimes(1);
         expect(result).toEqual({ ok: true, handoffId: 'handoff_1' });
     });
 
@@ -167,4 +176,5 @@ describe('runSessionHandoffPickerFlow', () => {
         expect(runSessionHandoffUiFlowMock).not.toHaveBeenCalled();
         expect(result).toEqual({ ok: false, handled: true });
     });
+
 });

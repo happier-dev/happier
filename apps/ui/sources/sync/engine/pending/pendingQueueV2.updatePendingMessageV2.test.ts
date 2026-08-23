@@ -418,6 +418,64 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             });
     });
 
+    it('persists an edited attachment whose media is still transfer-staged', async () => {
+        const sessionId = 's_test_pending_edit_composer_attachment_staged_media';
+        // A Pending row is Message ingress: the daemon's SessionMedia finalizer replaces this
+        // staged claim when the row is sent, so the edit must be saved, not refused.
+        const stagedAttachment = {
+            v: 1,
+            instanceId: 'issue-44',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '44',
+            value: { issueId: 44 },
+            presentation: { label: 'Issue #44', typeLabel: 'Issue' },
+            content: {
+                kind: 'stagedMedia',
+                handle: {
+                    v: 1,
+                    id: 'stage-44',
+                    executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+                    owner: { pluginId: 'acme.issues', localId: 'issue' },
+                    mediaKind: 'image',
+                    mimeType: 'image/png',
+                    name: 'screenshot.png',
+                    sizeBytes: 1234,
+                    sha256: 'a'.repeat(64),
+                },
+            },
+        } as const;
+        const rawRecord = {
+            role: 'user' as const,
+            content: { type: 'text' as const, text: 'old text' },
+            meta: {
+                happierStructuredInputV1: { v: 1, composerAttachments: [stagedAttachment] },
+            },
+        };
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1', localId: 'p1', createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted', text: 'old text', rawRecord,
+        });
+
+        let body: unknown = null;
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text: 'edited text',
+            structuredInput: { v: 1, composerAttachments: [stagedAttachment] },
+            encryption: null,
+            request: async (_path, init) => {
+                body = JSON.parse(String(init?.body ?? 'null'));
+                return new Response(null, { status: 204 });
+            },
+        });
+
+        expect((body as { content: { v: { meta: Record<string, unknown> } } }).content.v.meta)
+            .toEqual({
+                happierStructuredInputV1: { v: 1, composerAttachments: [stagedAttachment] },
+            });
+    });
+
     it('removes only the deleted composer attachment when PATCHing a pending edit', async () => {
         const sessionId = 's_test_pending_edit_composer_attachment_delete';
         const removedAttachment = {

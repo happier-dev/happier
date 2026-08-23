@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol';
+import type { VoiceRealtimeCanonicalEvent } from '@happier-dev/plugin-sdk/voice/client';
 
 import type {
   VoiceRealtimeConnection,
@@ -11,6 +12,7 @@ import {
   readCanonicalVoiceTranscriptSnapshot,
 } from '@/voice/transcript/voiceConversationTranscript';
 import { createRealtimeToolBarrier } from '@/voice/tools/realtimeToolBarrier';
+import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 import {
   createVoiceConversationController,
   type VoiceConversationControllerDeps,
@@ -1702,6 +1704,104 @@ describe('VoiceConversationController', () => {
     expect(fixture.close).toHaveBeenCalledWith({
       code: 'replaced',
       detail: 'voice_provider_not_selected',
+    });
+  });
+
+  describe('inbound liveness', () => {
+    const STALL_MS = VOICE_RUNTIME_CONFIG_DEFAULTS.realtime.inboundWatchdog.stallTimeoutMs;
+    const AWAITING_MS = VOICE_RUNTIME_CONFIG_DEFAULTS.realtime.inboundWatchdog.awaitingResponseTimeoutMs;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    });
+
+    function createStallFixture(controlEvent: VoiceRealtimeJsonValue) {
+      const first = createConnectionFixture('webrtc');
+      const second = createConnectionFixture('webrtc');
+      first.events.push(controlEvent);
+      let index = 0;
+      const machine = createMachineFixture();
+      const controller = createVoiceConversationController({
+        adapter: createAdapter({
+          decodeControl: (event) => [event as unknown as VoiceRealtimeCanonicalEvent],
+        }),
+        machine: machine.machine,
+        createConnection: async () => [first.connection, second.connection][index++]!,
+        isSelectionCurrent: () => true,
+        onCanonicalEvent: async () => {},
+        waitBeforeReconnect: async () => {},
+        maxReconnectAttempts: 1,
+      });
+      return { first, second, machine, controller };
+    }
+
+    it('reconnects an attempt that stays open but stops delivering audio mid-turn', async () => {
+      const { first, second, controller } = createStallFixture({ type: 'assistant_output_started' });
+
+      await controller.start({ controlSessionId: 'inbound-stall-speaking' });
+      await vi.waitFor(() => expect(first.connect).toHaveBeenCalledTimes(1));
+
+      // A transport that stays nominally open but stops delivering content
+      // otherwise hangs forever: the assistant never finishes speaking and the
+      // user has no exit.
+      await vi.advanceTimersByTimeAsync(STALL_MS);
+      await vi.waitFor(() => expect(second.connect).toHaveBeenCalledTimes(1));
+      expect(first.close).toHaveBeenCalledWith({ code: 'remote_close' });
+
+      second.finishEvents();
+      await controller.stop();
+    });
+
+    it('reconnects an attempt that dies while the assistant is still thinking', async () => {
+      const { first, second, controller } = createStallFixture({ type: 'input_speech_stopped' });
+
+      await controller.start({ controlSessionId: 'inbound-stall-awaiting' });
+      await vi.waitFor(() => expect(first.connect).toHaveBeenCalledTimes(1));
+
+      // Response generation legitimately outlasts an inter-chunk gap, so the
+      // thinking window must not fire on the tighter speaking timeout.
+      await vi.advanceTimersByTimeAsync(STALL_MS);
+      expect(second.connect).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(AWAITING_MS - STALL_MS);
+      await vi.waitFor(() => expect(second.connect).toHaveBeenCalledTimes(1));
+
+      second.finishEvents();
+      await controller.stop();
+    });
+
+    it('never reconnects an idle attempt that is legitimately listening in silence', async () => {
+      const { first, second, controller } = createStallFixture({ type: 'assistant_output_stopped' });
+
+      await controller.start({ controlSessionId: 'inbound-idle-silence' });
+      await vi.waitFor(() => expect(first.connect).toHaveBeenCalledTimes(1));
+
+      await vi.advanceTimersByTimeAsync(AWAITING_MS * 3);
+      expect(second.connect).not.toHaveBeenCalled();
+
+      first.finishEvents();
+      await controller.stop();
+    });
+
+    it('cancels the stall timer when the attempt ends', async () => {
+      const { second, controller } = createStallFixture({ type: 'assistant_output_started' });
+
+      await controller.start({ controlSessionId: 'inbound-stall-ended' });
+      // The speaking window is armed while the assistant is producing audio.
+      await vi.waitFor(() => expect(vi.getTimerCount()).toBe(1));
+
+      await controller.stop();
+
+      // End retires the timer itself rather than relying on a retired attempt
+      // to no-op a stall that still fires minutes later.
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(AWAITING_MS * 3);
+      expect(second.connect).not.toHaveBeenCalled();
     });
   });
 

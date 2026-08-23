@@ -127,6 +127,12 @@ export type ChatListInternalProps = Readonly<{
         machineStatusKnown: boolean;
         serverId: string | null;
     }> | null;
+    /**
+     * Supplied only while the EXACT owner's operation status read has FAILED, so the
+     * read-only fallback card can offer that owner one manual re-read. `null` for every
+     * other reader and every other hydration status.
+     */
+    onCheckAgainExternalSessionOperation: (() => void) | null;
     isWarmKeepAliveInstance?: boolean;
     routeHydrationPending?: boolean;
 } & TranscriptSessionCommonProps>;

@@ -1,5 +1,10 @@
 import type { CreateMicSessionOptions, MicSession } from './MicSession';
 import { isPermissionDeniedMicrophoneError } from '@/utils/platform/microphonePermissions';
+import {
+    createMicLifecycleInvalidation,
+    joinMicAcquisition,
+    type MicAcquisitionAttempt,
+} from './micAcquisitionLifecycle';
 
 type AudioContextCtor = new () => AudioContext;
 
@@ -39,39 +44,15 @@ function resolveDefaultAudioContext(): AudioContext | null {
     }
 }
 
-/**
- * One `getUserMedia` attempt, joined through an outcome that never rejects.
- *
- * Teardown can release every caller waiting on an attempt before the browser
- * settles it, so the attempt's own rejection is observed here rather than left
- * for whichever caller happened to still be awaiting it.
- */
-type AcquisitionAttempt = Readonly<{
-    outcome: Promise<Readonly<{ error: unknown }> | null>;
-}>;
-
-type LifecycleInvalidation = Readonly<{
-    invalidated: Promise<void>;
-    invalidate: () => void;
-}>;
-
-function createLifecycleInvalidation(): LifecycleInvalidation {
-    let invalidate!: () => void;
-    const invalidated = new Promise<void>((resolve) => {
-        invalidate = resolve;
-    });
-    return { invalidated, invalidate };
-}
-
 export function createWebMicSession(options: CreateWebMicSessionOptions = {}): MicSession {
     let stream: MediaStream | null = null;
     let audioContext: AudioContext | null = null;
     let muted = false;
     let activeTrack: MediaStreamTrack | null = null;
-    let ensureActiveInFlight: AcquisitionAttempt | null = null;
+    let ensureActiveInFlight: MicAcquisitionAttempt | null = null;
     let teardownInFlight: Promise<void> | null = null;
     let lifecycleVersion = 0;
-    let lifecycleInvalidated = createLifecycleInvalidation();
+    let lifecycleInvalidated = createMicLifecycleInvalidation();
     let trackEndedListener: EventListener | null = null;
     let trackMuteListener: EventListener | null = null;
     let trackUnmuteListener: EventListener | null = null;
@@ -352,26 +333,8 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
         }
     };
 
-    /**
-     * Waits for an acquisition attempt, but never past the lifecycle that owns it:
-     * a `getUserMedia` the browser never settles must not pin the caller (and, one
-     * frame up, Stop) forever. Returns `false` when teardown claimed the lifecycle
-     * first, in which case the late attempt releases its own stream.
-     */
-    const joinAcquisition = async (attempt: AcquisitionAttempt): Promise<boolean> => {
-        const { invalidated } = lifecycleInvalidated;
-        const outcome = await Promise.race([
-            attempt.outcome.then((failure) => ({ invalidated: false as const, failure })),
-            invalidated.then(() => ({ invalidated: true as const })),
-        ]);
-        if (outcome.invalidated) {
-            return false;
-        }
-        if (outcome.failure) {
-            throw outcome.failure.error;
-        }
-        return true;
-    };
+    const joinAcquisition = async (attempt: MicAcquisitionAttempt): Promise<boolean> =>
+        await joinMicAcquisition(attempt, lifecycleInvalidated);
 
     const ensureActive = async (): Promise<void> => {
             const pendingTeardown = teardownInFlight;
@@ -428,7 +391,7 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
                 }
             })();
 
-            const attempt: AcquisitionAttempt = {
+            const attempt: MicAcquisitionAttempt = {
                 outcome: acquire.then(() => null, (error: unknown) => ({ error })),
             };
             ensureActiveInFlight = attempt;
@@ -463,7 +426,7 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
             // tracks, and its rejection is already consumed by the attempt outcome.
             ensureActiveInFlight = null;
             lifecycleInvalidated.invalidate();
-            lifecycleInvalidated = createLifecycleInvalidation();
+            lifecycleInvalidated = createMicLifecycleInvalidation();
             const teardown = (async () => {
                 const activeContext = audioContext;
                 retireActiveStream();

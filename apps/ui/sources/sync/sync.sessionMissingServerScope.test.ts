@@ -482,6 +482,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             refreshSessionMessages: async () => undefined,
             loadOlderMessages: async () => ({ loaded: 0, hasMore: false, status: 'no_more' as const }),
             readMessages: () => [],
+            readMessagesRevision: () => 0,
+            subscribeHistorySources: () => () => {},
             resolveProviderLabel: () => 'Voice provider',
             deleteSession: async () => ({ success: true }),
             canDeleteSession: () => true,

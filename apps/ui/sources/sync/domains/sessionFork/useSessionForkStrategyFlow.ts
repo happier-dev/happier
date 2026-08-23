@@ -6,6 +6,8 @@ import { forkSession } from '@/sync/ops';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { randomUUID } from '@/platform/randomUUID';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
 
 import { completeSessionForkNavigation } from './completeSessionForkNavigation';
 import {
@@ -65,11 +67,22 @@ export type SessionForkStrategyFlow = Readonly<{
 }>;
 
 function readSessionCandidates(): readonly SessionForkChildCandidate[] {
-    const sessions = storage.getState().sessions as Record<string, { metadata?: unknown } | undefined>;
+    const sessions = storage.getState().sessions as Record<string, {
+        metadata?: unknown;
+        metadataLayoutVersion?: number;
+        ownerMetadataView?: unknown;
+    } | undefined>;
     const out: SessionForkChildCandidate[] = [];
     for (const [sessionId, session] of Object.entries(sessions)) {
         if (!session) continue;
-        out.push({ sessionId, metadata: session.metadata });
+        out.push({
+            sessionId,
+            metadata: readSessionOwnerMetadataView({
+                metadata: session.metadata ?? null,
+                metadataLayoutVersion: session.metadataLayoutVersion,
+                ownerMetadataView: session.ownerMetadataView,
+            }),
+        });
     }
     return out;
 }
@@ -78,6 +91,7 @@ function readMatchingChildSessionIds(params: Readonly<{
     parentSessionId: string;
     forkPoint: SessionForkPoint;
     route: SessionForkOperationRoute;
+    requestId: string;
 }>): Set<string> {
     const known = new Set<string>();
     for (const candidate of readSessionCandidates()) {
@@ -142,8 +156,8 @@ export function useSessionForkStrategyFlow(params: Readonly<{
         } catch {
             // Anything that fails AFTER navigation is best-effort follow-up: the
             // fork exists and the user is already looking at it, and the restored
-            // draft was written locally before hydration. Only a failure that
-            // never reached navigation leaves the child unopened.
+            // draft was written only after the child lineage was proven. Only a
+            // failure that never reached navigation leaves the child unopened.
             if (!navigated) {
                 applyPhase({ type: 'opening', route, childSessionId, stalled: true });
                 return;
@@ -166,22 +180,25 @@ export function useSessionForkStrategyFlow(params: Readonly<{
             parentSessionId: request.parentSessionId,
             forkPoint: request.forkPoint,
             route,
+            requestId: requestIdFor(route),
         });
 
+        const releaseUserRequestLease = sync.acquireUserRequestLease();
         try {
+            const requestId = requestIdFor(route);
+            actionOperationPresentationCoordinator.register({ requestId, onStart: 'current' });
             const result = await forkSession({
                 ...(request.machineId ? { machineId: request.machineId } : {}),
                 ...(request.serverId ? { serverId: request.serverId } : {}),
                 parentSessionId: request.parentSessionId,
                 forkPoint: request.forkPoint,
                 strategy: route,
-                requestId: requestIdFor(route),
+                requestId,
                 ...(typeof request.replayMaxSeedChars === 'number'
                     ? { replayMaxSeedChars: request.replayMaxSeedChars }
                     : {}),
                 ...(request.replaySummaryRunner ? { replaySummaryRunner: request.replaySummaryRunner } : {}),
             });
-
             const outcome = classifySessionForkRpcOutcome(result);
             if (outcome.type === 'created') {
                 await openChild(route, outcome.childSessionId);
@@ -195,10 +212,16 @@ export function useSessionForkStrategyFlow(params: Readonly<{
                 setFailure({ route, kind: outcome.kind, message: outcome.message });
             }
             applyPhase({ type: 'choosing' });
+        } catch {
+            // The historical request was issued with a stable request id. An
+            // ambiguous transport result reconciles that identity and never
+            // replays the fork mutation.
+            applyPhase({ type: 'unknown', route, checking: false, lastCheck: null });
         } finally {
+            releaseUserRequestLease();
             inFlightRef.current = false;
         }
-    }, [applyPhase, openChild, phase.type, request, requestIdFor]);
+    }, [applyPhase, onNavigated, openChild, phase.type, request, requestIdFor]);
 
     const checkForFork = React.useCallback(async (): Promise<void> => {
         if (inFlightRef.current) return;
@@ -219,6 +242,7 @@ export function useSessionForkStrategyFlow(params: Readonly<{
                 parentSessionId: request.parentSessionId,
                 forkPoint: request.forkPoint,
                 route,
+                requestId: requestIdFor(route),
                 knownChildSessionIds: knownChildrenRef.current,
             });
             if (lookup.type === 'found') {
@@ -234,7 +258,7 @@ export function useSessionForkStrategyFlow(params: Readonly<{
         } finally {
             inFlightRef.current = false;
         }
-    }, [applyPhase, openChild, phase, request]);
+    }, [applyPhase, openChild, phase, request, requestIdFor]);
 
     const retryOpen = React.useCallback(async (): Promise<void> => {
         if (inFlightRef.current) return;

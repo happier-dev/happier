@@ -1165,7 +1165,7 @@ export function buildSpawnSessionOptionsFromAuthoringDraft(params: Readonly<{
             ? { approvedNewDirectoryCreation: params.approvedNewDirectoryCreation }
             : {}),
         backendTarget,
-        ...(fields.profileId.length > 0 || params.draft.profileId === '' ? { profileId: fields.profileId } : {}),
+        ...(fields.profileId.length > 0 ? { profileId: fields.profileId } : {}),
         ...(params.draft.environmentVariables ? { environmentVariables: params.draft.environmentVariables } : {}),
         ...(fields.resumeSessionId ? { resume: fields.resumeSessionId } : {}),
         ...(normalizeOptionalString(params.draft.permissionMode) ? { permissionMode: params.draft.permissionMode!.trim() as SpawnSessionOptions['permissionMode'] } : {}),

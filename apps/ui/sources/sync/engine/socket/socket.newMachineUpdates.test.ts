@@ -388,6 +388,27 @@ describe('socket update handling: machine-activity for unknown machine', () => {
     });
 });
 
+describe('socket update handling: Action operation snapshot ephemerals', () => {
+    it('routes the encrypted snapshot through the single observation ingress', async () => {
+        const updateActionOperationSnapshot = vi.fn();
+
+        await handleEphemeralSocketUpdate(buildEphemeralParams({
+            update: {
+                type: 'action-operation-snapshot',
+                machineId: 'machine-1',
+                ciphertext: 'sealed-snapshot',
+            },
+            updateActionOperationSnapshot,
+        }));
+
+        expect(updateActionOperationSnapshot).toHaveBeenCalledWith({
+            type: 'action-operation-snapshot',
+            machineId: 'machine-1',
+            ciphertext: 'sealed-snapshot',
+        });
+    });
+});
+
 describe('socket update handling: execution-run-updated ephemerals', () => {
     it('notifies execution run activity so polling can recheck quickly', () => {
         const listener = vi.fn();

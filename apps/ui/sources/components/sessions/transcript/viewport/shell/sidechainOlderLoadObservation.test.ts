@@ -500,6 +500,7 @@ describe('resolveSidechainOlderLoadObservation', () => {
             paginationSnapshot: {
                 hasMore: true,
                 insideThreshold: true,
+                loadFailed: false,
                 phase: 'armed',
                 suspendedReasons: ['negative-offset'],
             },
@@ -592,6 +593,7 @@ describe('resolveSidechainOlderLoadObservation', () => {
                 return {
                     hasMore: true,
                     insideThreshold: true,
+                    loadFailed: false,
                     phase: 'cooldown',
                     suspendedReasons: ['transaction-open'],
                 };
@@ -667,6 +669,7 @@ describe('resolveSidechainOlderLoadObservation', () => {
             getPaginationSnapshot: () => ({
                 hasMore: true,
                 insideThreshold: false,
+                loadFailed: false,
                 phase: 'armed',
                 suspendedReasons: [],
             }),

@@ -29,6 +29,27 @@ export function transcriptBlockIndexFromContentIndex(contentIndex: number): numb
     return normalizeTranscriptBlockIndex(contentIndex) ?? 0;
 }
 
+/**
+ * Chronology-only ordering test for placing a row inside an already-materialized list.
+ *
+ * Returns true only when `candidate` is unambiguously older than `existing`. Rows the
+ * transcript cannot distinguish — same `seq`, or same `createdAt` when `seq` is unusable —
+ * return false so callers keep arrival order instead of reshuffling a single row's blocks.
+ * Unlike `compareTranscriptMessagesOldestFirst` there is no id tie-break: allocated ids are
+ * not chronological, so using them to place a row would invent an ordering.
+ */
+export function isTranscriptRowStrictlyOlder(
+    candidate: Readonly<{ seq?: number | null; createdAt: number }>,
+    existing: Readonly<{ seq?: number | null; createdAt: number }>,
+): boolean {
+    const candidateSeq = normalizeTranscriptSeq(candidate.seq);
+    const existingSeq = normalizeTranscriptSeq(existing.seq);
+    if (candidateSeq !== null && existingSeq !== null) {
+        return candidateSeq < existingSeq;
+    }
+    return candidate.createdAt < existing.createdAt;
+}
+
 export function compareTranscriptMessagesOldestFirst(
     a: TranscriptOrderFields | Message,
     b: TranscriptOrderFields | Message,

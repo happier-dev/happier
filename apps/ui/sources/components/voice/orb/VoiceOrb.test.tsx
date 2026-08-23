@@ -421,6 +421,51 @@ describe('VoiceOrb', () => {
         expect(findTransportControl(screen, labels.transport.end)).toHaveLength(1);
     });
 
+    /**
+     * §2.7 — the bar is one row until the room for one row is gone. At 320px with 200% text or
+     * the longest supported localization, transport plus contextual controls cannot share a line,
+     * and the thing that must never be pushed off the edge is End Voice or a recovery action.
+     *
+     * So the outer composition wraps, the transport and contextual groups keep their content
+     * width, and the meter is the only child that can absorb or surrender leftover space: with
+     * `flexBasis: 0` it takes what the controls left over and can never push one onto another
+     * line. This is asserted on the emitted layout contract because a unit renderer runs no
+     * flexbox engine; the pixel result stays a browser/device gate.
+     */
+    it('wraps the bar and makes the meter, not a control, surrender space first', async () => {
+        const control = createControl({ live: true, canStop: true, canMute: true, surfaceState: 'listening' });
+        const { screen } = await renderOrb({
+            control,
+            expanded: true,
+            extraControls: [{
+                id: 'open-conversation',
+                label: 'Open the conversation this Voice session belongs to',
+                weight: 'primary',
+            }],
+        });
+
+        const bar = flattenStyle(screen.findByTestId('voice.orb.bar')?.props.style);
+        expect(bar.flexWrap).toBe('wrap');
+        // Still pinned: the bar never absorbs the sheet clamp.
+        expect(bar.flexShrink).toBe(0);
+
+        const meter = flattenStyle(screen.findByTestId('voice.orb.bar.meter')?.props.style);
+        expect(meter.flexGrow).toBe(1);
+        expect(meter.flexBasis).toBe(0);
+        expect(meter.minWidth).toBe(0);
+
+        const transport = flattenStyle(screen.findByTestId('voice.orb.bar.transport')?.props.style);
+        expect(transport.flexShrink).toBe(0);
+        expect(transport.flexGrow).toBeUndefined();
+
+        // Everything the gate names is still mounted and operable at once.
+        expect(findTransportControl(screen, labels.transport.end)).toHaveLength(1);
+        expect(findTransportControl(screen, labels.transport.mute)).toHaveLength(1);
+        expect(findTransportControl(screen, 'Open the conversation this Voice session belongs to'))
+            .toHaveLength(1);
+        expect(screen.findByTestId('voice.orb.bar.meter')).not.toBeNull();
+    });
+
     it('does not scroll a sheet that fits, and grows instead when the room is there', async () => {
         const { screen } = await renderOrb({ expanded: true, availableSheetHeight: 900 });
 

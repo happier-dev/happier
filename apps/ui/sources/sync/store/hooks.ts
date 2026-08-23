@@ -2644,11 +2644,16 @@ export function useAllArtifacts(): DecryptedArtifact[] {
 }
 
 export function useAutomations(): AutomationDefinition[] {
-  return getStorage()(
-    useShallow((state) => {
-      if (!state.isDataReady) return emptyArray as AutomationDefinition[];
-      return sortValuesByUpdatedAtDescending(state.automations);
-    })
+  // An Account can hold the full approved Automation bound, and a selector runs
+  // on every store mutation. Subscribe to the stable record instead and order
+  // it once per actual Automation change (see the note on useSessionMessages).
+  const isDataReady = getStorage()((state) => state.isDataReady);
+  const automations = getStorage()((state) => state.automations);
+  return React.useMemo(
+    () => (isDataReady
+      ? sortValuesByUpdatedAtDescending(automations)
+      : emptyArray as AutomationDefinition[]),
+    [isDataReady, automations],
   );
 }
 

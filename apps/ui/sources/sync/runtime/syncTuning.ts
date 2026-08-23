@@ -40,6 +40,13 @@ export type SyncTuning = Readonly<{
     machineDisplayHydrationConcurrencyLimit: number;
     machineDisplayHydrationMaxRows: number;
     sidechainDemandHydrationConcurrencyLimit: number;
+    /**
+     * Concurrent private Automation definition detail reads a routed
+     * Automation surface may have in flight against one server. It bounds the
+     * request fan-out of a screen that resolves one detail per listed
+     * definition, which the Account definition ceiling allows to be large.
+     */
+    automationDefinitionDetailHydrationConcurrencyLimit: number;
     /** Number of most-recently-viewed unprotected sessions whose transcripts stay hydrated. */
     sessionTranscriptRetentionRecentKeepCount: number;
     /** Idle grace before an unprotected hydrated transcript may be evicted. */
@@ -226,6 +233,7 @@ export function loadSyncTuning(opts?: {
         machineDisplayHydrationConcurrencyLimit: 4,
         machineDisplayHydrationMaxRows: 64,
         sidechainDemandHydrationConcurrencyLimit: 2,
+        automationDefinitionDetailHydrationConcurrencyLimit: 4,
         sessionTranscriptRetentionRecentKeepCount: 3,
         sessionTranscriptRetentionGraceMs: 3 * 60 * 1000,
         sessionTranscriptRetentionSweepDebounceMs: 1_000,
@@ -328,6 +336,7 @@ export function loadSyncTuning(opts?: {
         machineDisplayHydrationConcurrencyLimit: readNumber(merged, 'machineDisplayHydrationConcurrencyLimit', { min: 1, max: 20 }) ?? defaults.machineDisplayHydrationConcurrencyLimit,
         machineDisplayHydrationMaxRows: readNumber(merged, 'machineDisplayHydrationMaxRows', { min: 1, max: 10_000 }) ?? defaults.machineDisplayHydrationMaxRows,
         sidechainDemandHydrationConcurrencyLimit: readNumber(merged, 'sidechainDemandHydrationConcurrencyLimit', { min: 1, max: 8 }) ?? defaults.sidechainDemandHydrationConcurrencyLimit,
+        automationDefinitionDetailHydrationConcurrencyLimit: readNumber(merged, 'automationDefinitionDetailHydrationConcurrencyLimit', { min: 1, max: 20 }) ?? defaults.automationDefinitionDetailHydrationConcurrencyLimit,
         sessionTranscriptRetentionRecentKeepCount: readNumber(merged, 'sessionTranscriptRetentionRecentKeepCount', { min: 0, max: 200 }) ?? defaults.sessionTranscriptRetentionRecentKeepCount,
         sessionTranscriptRetentionGraceMs: readNumber(merged, 'sessionTranscriptRetentionGraceMs', { min: 0, max: 24 * 60 * 60 * 1000 }) ?? defaults.sessionTranscriptRetentionGraceMs,
         sessionTranscriptRetentionSweepDebounceMs: readNumber(merged, 'sessionTranscriptRetentionSweepDebounceMs', { min: 0, max: 60_000 }) ?? defaults.sessionTranscriptRetentionSweepDebounceMs,

@@ -1024,7 +1024,11 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         );
         expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
         expect(findAgentInput(screen).props.value).toBe('');
-        expect(screen.findByTestId('session-pendingQueue-resumeFailed')).toBeTruthy();
+        const queuedWarning = screen.findByTestId('session-pendingQueue-resumeFailed');
+        expect(queuedWarning).toBeTruthy();
+        // Ordinary pending-message recovery remains a retry. Only the
+        // transition path knows the exact input is already in custody.
+        expect(queuedWarning?.props.actionLabel).toBe('common.retry');
 
         await screen.unmount();
     });

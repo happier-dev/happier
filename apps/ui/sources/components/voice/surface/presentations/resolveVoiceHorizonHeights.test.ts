@@ -101,6 +101,42 @@ describe('Horizon vessel minimum height', () => {
         expect(heights.availableHeight).toBeLessThan(heights.desiredHeight);
     });
 
+    it('does not let the composer scaffold clamp the vessel below its own floor', () => {
+        // Keyboard up on a phone at 200% web text: the status row wraps to 96pt
+        // and a recoverable error puts a 44pt button plus its gap in the actions
+        // block, so the floor is 182pt while the scaffold offers 150pt.
+        const heights = resolveVoiceHorizonHeights({
+            viewportHeight: 780,
+            safeAreaBottom: 34,
+            statusRowHeight: 96,
+            actionsBlockHeight: 60,
+            conversational: true,
+            availablePanelHeight: 150,
+        });
+
+        expect(heights.minimumHeight).toBe(182);
+        // The scaffold's reservation may squeeze the transcript to nothing. It may
+        // not cut End Voice and Retry off the bottom (§2.7).
+        expect(heights.availableHeight).toBeGreaterThanOrEqual(heights.minimumHeight);
+        // …and it borrows only from the reservation, never past the physical region.
+        expect(heights.availableHeight).toBeLessThanOrEqual(780 - 34);
+    });
+
+    it('still yields to a physical region smaller than the vessel floor', () => {
+        const heights = resolveVoiceHorizonHeights({
+            viewportHeight: 120,
+            safeAreaBottom: 34,
+            statusRowHeight: 96,
+            actionsBlockHeight: 60,
+            conversational: false,
+            availablePanelHeight: 40,
+        });
+
+        expect(heights.minimumHeight).toBe(182);
+        // 120 - 34 is all there physically is; the floor cannot invent pixels.
+        expect(heights.availableHeight).toBe(86);
+    });
+
     it('grows with a long translation or 200% text instead of clipping the controls', () => {
         // A wrapped status label plus a wrapped target caption at 200% web text:
         // the row reports far more than its 36pt default-scale height.

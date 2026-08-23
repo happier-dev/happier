@@ -2038,6 +2038,7 @@ describe('useCreateNewSession permission seeding', () => {
         currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
         const eventDraft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: event,
+            observation: { kind: 'checkpointedPull' },
             setupResult: {
                 v: 1,
                 sourceInstanceId: 'repository:42',
@@ -2188,6 +2189,7 @@ describe('useCreateNewSession permission seeding', () => {
         currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
         const eventDraft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: event,
+            observation: { kind: 'checkpointedPull' },
             setupResult: {
                 v: 1,
                 sourceInstanceId: 'repository:42',
@@ -2321,6 +2323,7 @@ describe('useCreateNewSession permission seeding', () => {
         currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
         const eventDraft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: event,
+            observation: { kind: 'checkpointedPull' },
             setupResult: {
                 v: 1,
                 sourceInstanceId: 'repository:42',
@@ -2466,6 +2469,7 @@ describe('useCreateNewSession permission seeding', () => {
         currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
         const eventDraft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: event,
+            observation: { kind: 'checkpointedPull' },
             setupResult: {
                 v: 1,
                 sourceInstanceId: 'repository:42',
@@ -2610,6 +2614,7 @@ describe('useCreateNewSession permission seeding', () => {
         currentPluginEventProjection.value = projectionInputsForPluginEvent(replacement);
         const eventDraft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: setupEvent,
+            observation: { kind: 'checkpointedPull' },
             setupResult: {
                 v: 1,
                 sourceInstanceId: 'repository:42',
@@ -2743,6 +2748,7 @@ describe('useCreateNewSession permission seeding', () => {
         currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
         const eventDraft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: event,
+            observation: { kind: 'checkpointedPull' },
             setupResult: {
                 v: 1,
                 sourceInstanceId: 'repository:42',
@@ -2990,6 +2996,7 @@ describe('useCreateNewSession permission seeding', () => {
         currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
         const eventDraft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: event,
+            observation: { kind: 'checkpointedPull' },
             setupResult: {
                 v: 1,
                 sourceInstanceId: 'repository:42',
@@ -3123,6 +3130,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         const eventDraft: PluginEventAutomationAuthoringDraft = {
             eventRef: { pluginId: 'acme.github', localId: 'events/repository' },
+            observation: { kind: 'checkpointedPull' },
             expectedEventImmutableGenerationId: 'github-generation-a',
             setupActionRef: { pluginId: 'acme.github', localId: 'setup/repository-source' },
             expectedSetupActionImmutableGenerationId: 'github-generation-a',
@@ -3246,6 +3254,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         const eventDraft: PluginEventAutomationAuthoringDraft = {
             eventRef: { pluginId: 'acme.github', localId: 'events/repository' },
+            observation: { kind: 'checkpointedPull' },
             expectedEventImmutableGenerationId: 'github-generation-a',
             setupActionRef: { pluginId: 'acme.github', localId: 'setup/repository-source' },
             expectedSetupActionImmutableGenerationId: 'github-generation-a',

@@ -60,6 +60,12 @@ export type WorkspaceStatFileResponse =
       kind?: 'file' | 'directory' | 'other';
       sizeBytes?: number;
       modifiedMs?: number;
+      /**
+       * Status-change time, when the daemon reports it. Size and modification
+       * time alone cannot distinguish an equal-size edit that preserved mtime,
+       * so callers that need a revision to answer for bytes include this.
+       */
+      changedMs?: number;
     }>
   | Readonly<{ success: false; error: string; errorCode?: string }>;
 

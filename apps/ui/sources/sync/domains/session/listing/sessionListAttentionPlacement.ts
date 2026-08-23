@@ -394,7 +394,14 @@ function resolveAttentionCandidate(params: Readonly<{
     // one. Its former reason is a fact about the session that has since
     // changed; replaying it would paint an approved permission, a handled
     // request, or a cleared failure back onto the row the user just resolved.
-    const resolvedReason = reason ?? 'ready';
+    // Standing is the band's FLOOR, so it must not pre-empt retention either.
+    // Retention relied on an opened row having no live reason left; the floor
+    // supplies one, so without this it fires the moment the earned reason
+    // clears and reason priority drops the row to the bottom of the band under
+    // the reader. A kept row is held with the same neutral reason as any other
+    // retained row, and only reaches the floor once navigation releases it.
+    const heldFromStandingFloor = reason === 'standing' && params.retainedKeys.has(key);
+    const resolvedReason = heldFromStandingFloor ? 'ready' : reason ?? 'ready';
     return {
         item: params.item,
         row: params.row,

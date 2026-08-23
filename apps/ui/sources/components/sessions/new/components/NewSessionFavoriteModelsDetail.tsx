@@ -67,6 +67,7 @@ type FavoriteModelOption = Readonly<{
     icon?: React.ReactNode;
     description: string;
     accessibilityLabel?: string;
+    disabled?: boolean;
 }>;
 
 type FavoriteModelSnapshot = Readonly<{
@@ -260,8 +261,23 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         const native = new Map<string, FavoriteModelAvailability>();
         const provider = new Map<string, FavoriteModelAvailability>();
         const providerAccessibilityLabelByRefKey = new Map<string, string>();
+        // A row the canonical projection refuses is not missing: it exists and
+        // the projection already computed why it cannot be selected. Keeping
+        // that presentation is what lets a favorite render as refused with its
+        // reason instead of as an ordinary row whose press does nothing.
+        const refusedPresentationByValue = new Map<string, FavoriteModelOption>();
         for (const option of sections.flatMap((section) => section.options)) {
-            if (option.disabled === true || option.value === null) continue;
+            if (option.value === null) continue;
+            if (option.disabled === true) {
+                refusedPresentationByValue.set(sessionModelSelectionKey(option.value), {
+                    value: sessionModelSelectionKey(option.value),
+                    label: option.label || option.value.modelId,
+                    description: option.description ?? '',
+                    ...(option.accessibilityLabel ? { accessibilityLabel: option.accessibilityLabel } : {}),
+                    disabled: true,
+                });
+                continue;
+            }
             const availability = {
                 modelId: option.value.modelId,
                 modelLabel: option.label || option.value.modelId,
@@ -286,7 +302,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
                 modelId: modelOption.extendedContextModelId,
             });
         }
-        return { native, provider, providerAccessibilityLabelByRefKey };
+        return { native, provider, providerAccessibilityLabelByRefKey, refusedPresentationByValue };
     }, [
         hiddenNativeKeys,
         props.entry.backendTargetKey,
@@ -299,6 +315,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
     const availabilityById = selectableModelAvailability.native;
     const providerAvailabilityByRefKey = selectableModelAvailability.provider;
     const providerAccessibilityLabelByRefKey = selectableModelAvailability.providerAccessibilityLabelByRefKey;
+    const refusedPresentationByValue = selectableModelAvailability.refusedPresentationByValue;
 
     const availableFavorites = React.useMemo(() => resolveAvailableFavoriteModelsForBackend({
         favorites: props.favoriteModelSelections,
@@ -383,6 +400,10 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         })),
         ...staleFavorites.map((favorite) => {
             const modelId = normalizeFavoriteModelId(getFavoriteModelRef(favorite).modelId);
+            const refused = refusedPresentationByValue.get(buildFavoriteOptionValue(favorite.selection));
+            if (refused) {
+                return { ...refused, icon: renderFavoriteModelOptionIcon(props.entry) };
+            }
             const snapshot = favorite.providerDisplaySnapshot;
             const modelLabel = favorite.modelLabel || modelId;
             return {
@@ -399,7 +420,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
                     : undefined,
             };
         }),
-    ], [props.entry, providerAccessibilityLabelByRefKey, selectableFavorites, staleFavorites]);
+    ], [props.entry, providerAccessibilityLabelByRefKey, refusedPresentationByValue, selectableFavorites, staleFavorites]);
 
     const favoriteValues = React.useMemo(() => options.map((option) => option.value), [options]);
     const availableValues = React.useMemo(() => selectableFavorites.map((model) => (

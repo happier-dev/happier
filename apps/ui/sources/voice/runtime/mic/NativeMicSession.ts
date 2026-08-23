@@ -15,6 +15,11 @@ import {
     acquireVoiceForegroundRecordingAudioMode,
     type VoiceAudioModeLease,
 } from '@/voice/runtime/voiceAudioMode';
+import {
+    createMicLifecycleInvalidation,
+    joinMicAcquisition,
+    type MicAcquisitionAttempt,
+} from './micAcquisitionLifecycle';
 
 type CreateNativeMicSessionOptions = Readonly<{
     ensurePermission?: () => Promise<void>;
@@ -45,8 +50,9 @@ type CreateExpoAudioRecordingMicSessionOptions = Readonly<{
 export function createNativeMicSession(options: CreateNativeMicSessionOptions = {}): MicSession {
     let muted = false;
     let stream: MediaStream | null = null;
-    let activation: Promise<void> | null = null;
+    let activation: MicAcquisitionAttempt | null = null;
     let lifecycleEpoch = 0;
+    let lifecycleInvalidated = createMicLifecycleInvalidation();
     let activeTrack: MediaStreamTrack | null = null;
     let trackEndedListener: (() => void) | null = null;
 
@@ -101,9 +107,12 @@ export function createNativeMicSession(options: CreateNativeMicSessionOptions = 
         },
         ensureActive: async () => {
             if (stream) return;
-            if (activation) return await activation;
+            if (activation) {
+                await joinMicAcquisition(activation, lifecycleInvalidated);
+                return;
+            }
             const startEpoch = lifecycleEpoch;
-            const nextActivation = (async () => {
+            const acquire = (async () => {
                 await ensurePermission?.();
                 const acquired = await options.acquireStream?.();
                 if (!acquired) return;
@@ -115,9 +124,12 @@ export function createNativeMicSession(options: CreateNativeMicSessionOptions = 
                 stream = acquired;
                 attachTrackListeners(acquired);
             })();
+            const nextActivation: MicAcquisitionAttempt = {
+                outcome: acquire.then(() => null, (error: unknown) => ({ error })),
+            };
             activation = nextActivation;
             try {
-                await nextActivation;
+                await joinMicAcquisition(nextActivation, lifecycleInvalidated);
             } finally {
                 if (activation === nextActivation) activation = null;
             }
@@ -130,6 +142,15 @@ export function createNativeMicSession(options: CreateNativeMicSessionOptions = 
         isMuted: () => muted,
         teardown: async () => {
             lifecycleEpoch += 1;
+            // Ownership moves here, so an outstanding acquisition is abandoned
+            // rather than joined: the epoch bump makes a late native stream
+            // release itself, and its rejection is already consumed by the
+            // attempt outcome. Native `getUserMedia` is not abortable, so
+            // joining it would make End Voice wait on a promise only the
+            // platform can settle.
+            activation = null;
+            lifecycleInvalidated.invalidate();
+            lifecycleInvalidated = createMicLifecycleInvalidation();
             detachTrackListeners();
             const activeStream = stream;
             stream = null;

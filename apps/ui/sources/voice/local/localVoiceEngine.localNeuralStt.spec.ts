@@ -143,7 +143,7 @@ describe('local voice engine local neural STT (streaming)', () => {
     });
 
     sherpaStreamingPushFrame.mockResolvedValue({ text: 'hello sherpa', isEndpoint: false });
-    sherpaStreamingFinish.mockResolvedValue({ text: 'hello sherpa' });
+    sherpaStreamingFinish.mockResolvedValue({ status: 'finalized', text: 'hello sherpa' });
 
     const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
 
@@ -201,7 +201,11 @@ describe('local voice engine local neural STT (streaming)', () => {
       },
     });
     sherpaStreamingPushFrame.mockResolvedValueOnce({ text: 'provisional command', isEndpoint: false });
-    sherpaStreamingFinish.mockRejectedValueOnce(new Error('recognizer_finalization_failed'));
+    // The reachable production case: the model pack was invalidated (or the job
+    // cancelled) while the tail decode was claimed, so native reports a
+    // non-finalized outcome rather than throwing. Dictation must not submit the
+    // interim partial the user already saw as if it were the final transcript.
+    sherpaStreamingFinish.mockResolvedValueOnce({ status: 'cancelled' });
 
     const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
     await toggleLocalVoiceTurn('s-finalization-failure');
@@ -316,7 +320,7 @@ describe('local voice engine local neural STT (streaming)', () => {
     });
 
     sherpaStreamingPushFrame.mockResolvedValue({ text: 'hello sherpa', isEndpoint: false });
-    sherpaStreamingFinish.mockResolvedValue({ text: 'hello sherpa' });
+    sherpaStreamingFinish.mockResolvedValue({ status: 'finalized', text: 'hello sherpa' });
 
     const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
 

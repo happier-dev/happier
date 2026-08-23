@@ -1,7 +1,7 @@
 import {
     AccountProfileSchema,
     isConnectedServiceCredentialHealthStatusUsable,
-    readLinkedExternalSessionV1FromMetadata,
+    readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
     readServerEnabledBit,
 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
@@ -42,7 +42,7 @@ describe('buildDemoWorld', () => {
             configOptions: expect.arrayContaining([expect.objectContaining({ id: expect.any(String) })]),
         });
         expect(getSessionStorageKind(richSession)).toBe('direct');
-        expect(readLinkedExternalSessionV1FromMetadata(richSession?.metadata)).toMatchObject({
+        expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(richSession?.metadata)).toMatchObject({
             v: 1,
             agentId: 'opencode',
             machineId: DEMO_MACHINE_ID,

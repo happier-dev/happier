@@ -209,7 +209,11 @@ describe('useNewSessionBackendTargetState', () => {
         expect(observed).not.toBeNull();
         expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('backend:acme.review.backend');
         expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBeNull();
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedRuntimeCarrierAgentId).toBeNull();
+        // The projected Agent id is the operational runtime identity and must
+        // survive: discarding it is what silently removes model/mode/config
+        // probing for an installed Agent. It is still not bundled static policy.
+        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedRuntimeCarrierAgentId)
+            .toBe('acme.review.backend');
         expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedUiAgentType).toBe('acme.review.backend');
         expect(getPermissionModeOptionsForAgentType(observed!.selectedUiAgentType)).toEqual([]);
     });

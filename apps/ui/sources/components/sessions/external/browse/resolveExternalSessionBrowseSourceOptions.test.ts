@@ -416,7 +416,7 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
         ]);
     });
 
-    it('offers the OpenCode managed default plus an attach source bound to the active server setting', async () => {
+    it('replaces the OpenCode managed default with the attach source bound to the active server setting', async () => {
         const { resolveExternalSessionBrowseSourceOptions } = await externalSessionBrowseModulePromise;
         const projection = createOpenCodeProjection();
         const resolve = (settings: Readonly<Record<string, unknown>>) => resolveExternalSessionBrowseSourceOptions({
@@ -430,29 +430,35 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
         const managedDefault = { key: 'opencode:default', source: { kind: 'opencodeServer' } };
 
         expect(resolve({})).toEqual([expect.objectContaining(managedDefault)]);
+        // `agentSettingOverride` is an override, not an addition: an admitted
+        // operator-configured server REPLACES the managed default so the user is
+        // never offered two competing OpenCode endpoints for one server.
         expect(resolve({
             opencodeServerBaseUrl: 'http://127.0.0.1:9999',
             opencodeServerBaseUrlByServerIdV1: { cloud: 'http://127.0.0.1:4096' },
         })).toEqual([
-            expect.objectContaining(managedDefault),
             expect.objectContaining({
                 key: 'opencode:opencodeServer:setting:opencodeServerBaseUrl',
                 source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
                 detail: 'http://127.0.0.1:4096/',
             }),
         ]);
-        // A server the user runs off this machine is a browsable source; only
-        // a malformed or credential-bearing URL yields nothing.
+        // A server the user runs off this machine is a browsable source when it is
+        // reached over TLS.
         expect(resolve({
-            opencodeServerBaseUrlByServerIdV1: { cloud: 'http://10.0.0.7:4096' },
+            opencodeServerBaseUrlByServerIdV1: { cloud: 'https://10.0.0.7:4096' },
         })).toEqual([
-            expect.objectContaining(managedDefault),
             expect.objectContaining({
                 key: 'opencode:opencodeServer:setting:opencodeServerBaseUrl',
-                source: { kind: 'opencodeServer', baseUrl: 'http://10.0.0.7:4096/' },
-                detail: 'http://10.0.0.7:4096/',
+                source: { kind: 'opencodeServer', baseUrl: 'https://10.0.0.7:4096/' },
+                detail: 'https://10.0.0.7:4096/',
             }),
         ]);
+        // Plaintext `http:` off loopback is refused by the canonical endpoint rule, so
+        // the override never materializes and the managed default stands.
+        expect(resolve({
+            opencodeServerBaseUrlByServerIdV1: { cloud: 'http://10.0.0.7:4096' },
+        })).toEqual([expect.objectContaining(managedDefault)]);
         expect(resolve({ opencodeServerBaseUrl: 'nonsense' })).toEqual([
             expect.objectContaining(managedDefault),
         ]);

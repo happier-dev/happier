@@ -484,6 +484,9 @@ export function createVoiceDictationController(deps: Readonly<{
         || (event.kind === 'interruption_ended' && !event.shouldResume)
         || (event.kind === 'focus_changed' && event.state === 'lost_permanent')
         || (event.kind === 'lifecycle_changed' && event.state === 'background')
+        // The native graph this attempt records through is gone, so the attempt
+        // is capturing nothing no matter how healthy it still looks here.
+        || event.kind === 'audio_graph_terminal'
     );
 
     deps.nativeAudioSessionCoordinator?.subscribe((event) => {

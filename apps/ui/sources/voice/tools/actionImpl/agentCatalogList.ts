@@ -1,9 +1,11 @@
 import { AGENT_IDS, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
-import { t } from '@/text';
 import {
+    AgentsBackendsListOutputSchema,
     readBackendTargetRefV2,
     readLegacyConfiguredAcpBackendId,
+    providerCatalogPermitsUnlistedModelIdV1,
     readProviderSettingsFromAccountSettingsV1,
+    type AgentsBackendsListOutput,
     type BackendTargetRefV1,
 } from '@happier-dev/protocol';
 import {
@@ -17,6 +19,7 @@ import { adaptDaemonContributionRegistryProjectionToMergedProjectionInputs } fro
 import {
   getResolvedBackendCatalogEntries,
 } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type {
   MergedBackendProjectionEntry,
@@ -223,8 +226,10 @@ async function projectVoiceToolProviderModels(params: Readonly<{
   const hasProviderModels = items.some((item) => item.providerConnectionId !== null);
   const supportsProviderFreeform = projection.groups.some((group) => (
     group.authorization.authorized
-    && group.supportsFreeformModelIds
-    && group.manualModelPolicy === 'allowed'
+    && providerCatalogPermitsUnlistedModelIdV1({
+      manualModelPolicy: group.manualModelPolicy,
+      agentSupportsFreeformModelIds: group.supportsFreeformModelIds,
+    })
   ));
 
   return {
@@ -237,33 +242,7 @@ async function projectVoiceToolProviderModels(params: Readonly<{
   };
 }
 
-type AgentUiConnectedService = NonNullable<ReturnType<typeof getAgentCore>>['uiConnectedService'];
-type VoiceToolConnectedService = Readonly<{
-  serviceId: AgentUiConnectedService['serviceId'];
-  label: string;
-  connectRoute: AgentUiConnectedService['connectRoute'];
-}>;
-
-function resolveVoiceToolConnectedService(service: AgentUiConnectedService): VoiceToolConnectedService {
-  return {
-    serviceId: service.serviceId,
-    label: t(service.labelKey),
-    connectRoute: service.connectRoute,
-  };
-}
-
-type VoiceToolBackendCatalogItem = Readonly<{
-  targetKey: string;
-  label: string;
-  enabled: boolean;
-  agentId?: string;
-  subtitle?: string | null;
-  experimental?: boolean;
-  uiConnectedService?: VoiceToolConnectedService | null;
-  flavorAliases?: readonly string[];
-  supportsModelSelection?: boolean;
-  supportsFreeformModels?: boolean;
-}>;
+type VoiceToolBackendCatalogItem = AgentsBackendsListOutput['items'][number];
 
 function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
   includeDisabled: boolean;
@@ -293,19 +272,18 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
     const enabled = backendEnabledByTargetKey?.[effectiveTargetKey] !== false;
     if (!params.includeDisabled && !enabled) continue;
 
-    const core = entry.builtInAgentId ? getAgentCore(entry.builtInAgentId) : null;
-    if (entry.builtInAgentId && core) {
+    const executionTarget = resolveAgentExecutionTargetForBackendTarget({
+      backendTarget: entry.backendTarget,
+      daemonMergedProjectionInputs: params.daemonMergedProjectionInputs,
+    });
+
+    if (entry.kind === 'builtInAgent' && entry.builtInAgentId) {
       items.push({
         targetKey: effectiveTargetKey,
         label: entry.title,
-        subtitle: entry.subtitle,
         enabled,
         agentId: entry.builtInAgentId,
-        experimental: core.availability.experimental === true,
-        uiConnectedService: resolveVoiceToolConnectedService(core.uiConnectedService),
-        flavorAliases: core.flavorAliases,
-        supportsModelSelection: core.model.supportsSelection === true,
-        supportsFreeformModels: core.model.supportsFreeform === true,
+        ...(executionTarget ? { identity: executionTarget.identity } : {}),
       });
       continue;
     }
@@ -315,14 +293,9 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
       items.push({
         targetKey: effectiveTargetKey,
         label: entry.title,
-        subtitle: entry.subtitle,
         enabled,
         ...(probeAgentId ? { agentId: probeAgentId } : {}),
-        experimental: false,
-        uiConnectedService: null,
-        flavorAliases: [],
-        supportsModelSelection: probeAgentId != null,
-        supportsFreeformModels: probeAgentId != null,
+        ...(executionTarget ? { identity: executionTarget.identity } : {}),
       });
       continue;
     }
@@ -330,13 +303,9 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
     items.push({
       targetKey: effectiveTargetKey,
       label: entry.title,
-      subtitle: entry.subtitle,
       enabled,
-      experimental: false,
-      uiConnectedService: null,
-      flavorAliases: [],
-      supportsModelSelection: true,
-      supportsFreeformModels: true,
+      backendId: entry.backendId,
+      ...(entry.subtitle ? { description: entry.subtitle } : {}),
     });
   }
 
@@ -351,7 +320,7 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
     .map(({ item }) => item);
 }
 
-export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>): Promise<unknown> {
+export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>): Promise<AgentsBackendsListOutput> {
   const includeDisabled = params.includeDisabled === true;
   const limitRaw = Number(params.limit);
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : null;
@@ -372,7 +341,9 @@ export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDi
     : null;
   const items = resolveBackendCatalogItemsForVoiceTool({ includeDisabled, daemonMergedProjectionInputs });
 
-  return { items: limit ? items.slice(0, limit) : items };
+  return AgentsBackendsListOutputSchema.parse({
+    items: limit ? items.slice(0, limit) : items,
+  });
 }
 
 export async function listAgentModelsForVoiceTool(params: Readonly<{

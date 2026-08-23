@@ -131,7 +131,7 @@ describe('useHostActivelyViewed', () => {
     });
 
     it('reports a hidden Tauri window as inactive', async () => {
-        const fake = installHost({ tauri: true, visibility: 'hidden' });
+        const fake = installHost({ tauri: true, visibility: 'hidden', focused: false });
         try {
             // `isRuntimeActive()` returns true for every Tauri host so background
             // probes keep polling in a desktop webview. Motion must not: a 60 Hz
@@ -143,11 +143,27 @@ describe('useHostActivelyViewed', () => {
         }
     });
 
-    it('reports an unfocused but visible Tauri window as inactive', async () => {
+    it('reports a visible but unfocused desktop window as viewed', async () => {
+        // The hands-free posture: the user is talking to Voice while their
+        // editor holds focus. The window is on screen, so its context is still
+        // what the user is looking at and its motion is still watched.
         const fake = installHost({ tauri: true, visibility: 'visible', focused: false });
         try {
             const { readHostActivelyViewed } = await import('./useHostActivelyViewed');
-            expect(readHostActivelyViewed()).toBe(false);
+            expect(readHostActivelyViewed()).toBe(true);
+        } finally {
+            fake.restore();
+        }
+    });
+
+    it('escapes a wedged hidden visibilityState when the desktop window reports focus', async () => {
+        // macOS can leave a desktop webview latched at 'hidden' with no further
+        // visibilitychange. A focused document cannot be hidden, so focus is the
+        // contradiction that releases the latch.
+        const fake = installHost({ tauri: true, visibility: 'hidden', focused: true });
+        try {
+            const { readHostActivelyViewed } = await import('./useHostActivelyViewed');
+            expect(readHostActivelyViewed()).toBe(true);
         } finally {
             fake.restore();
         }
@@ -217,13 +233,9 @@ describe('useHostActivelyViewed', () => {
 
             expect(observed).toEqual([true, true, true]);
 
+            // Focus alone never withdraws a visible window.
             act(() => {
                 fake.setFocused(false);
-            });
-            expect(observed).toEqual([false, false, false]);
-
-            act(() => {
-                fake.setFocused(true);
             });
             expect(observed).toEqual([true, true, true]);
 
@@ -231,6 +243,22 @@ describe('useHostActivelyViewed', () => {
                 fake.setVisibility('hidden');
             });
             expect(observed).toEqual([false, false, false]);
+
+            // Regaining focus while still latched at 'hidden' releases the latch.
+            act(() => {
+                fake.setFocused(true);
+            });
+            expect(observed).toEqual([true, true, true]);
+
+            act(() => {
+                fake.setFocused(false);
+            });
+            expect(observed).toEqual([false, false, false]);
+
+            act(() => {
+                fake.setVisibility('visible');
+            });
+            expect(observed).toEqual([true, true, true]);
         } finally {
             fake.restore();
         }

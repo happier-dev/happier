@@ -6,7 +6,7 @@ import {
   type VoicePcmCapture,
   type VoicePcmCaptureLease,
 } from '@happier-dev/audio-stream-native';
-import { getOptionalHappierSherpaNativeModule } from '@happier-dev/sherpa-native';
+import { getOptionalHappierSherpaNativeModule, type SherpaNativeStreamingFinalResult } from '@happier-dev/sherpa-native';
 import { ensureModelPackInstalled } from '@/voice/modelPacks/installer.native';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
 import {
@@ -23,7 +23,7 @@ import type { SttController, SttStartParams, SttStopResult } from './sttControll
 type SherpaNativeModuleLike = Readonly<{
   createStreamingRecognizer(params: { jobId: string; assetsDir: string; sampleRate: number; channels: number; language: string | null }): Promise<void>;
   pushAudioFrame(params: { jobId: string; pcm16leBase64: string; sampleRate: number; channels: number }): Promise<{ text: string; isEndpoint: boolean }>;
-  finishStreaming(params: { jobId: string }): Promise<{ text: string }>;
+  finishStreaming(params: { jobId: string }): Promise<SherpaNativeStreamingFinalResult>;
   cancel(params: { jobId: string }): Promise<void>;
 }>;
 
@@ -76,11 +76,18 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
       endpointController.clearSession(current.sessionId);
       current.abortController.abort();
       current.abortCleanup();
+      // Signal the native cancel before waiting on the capture drain and the
+      // push tail, not after: the frame already inside the recognizer decodes for
+      // as long as it takes, and awaiting the tail first means the mark only
+      // lands once the work it was meant to stop has finished. Native cancel is a
+      // registry mark that runs while a decode is in flight, so this is what makes
+      // the awaits below return promptly instead of what delays them.
+      const sherpa = getOptionalSherpaNativeModule();
+      const cancelled = sherpa?.cancel({ jobId: current.jobId }).catch(() => {});
       await current.captureLease.release().catch(() => {});
       await current.captureLease.waitForDrain().catch(() => {});
       await current.pushTail.catch(() => {});
-      const sherpa = getOptionalSherpaNativeModule();
-      await sherpa?.cancel({ jobId: current.jobId }).catch(() => {});
+      await cancelled;
     })();
     clearHandleAttempt = attempt;
     try {
@@ -305,8 +312,16 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
           throw new Error('local_neural_stt_runtime_unavailable_during_finalization');
         }
         const final = await sherpa.finishStreaming({ jobId: current.jobId });
+        if (final.status !== 'finalized') {
+          // Native could not finalize this job: it was cancelled, or its model
+          // pack was invalidated while the tail decode was claimed. The retained
+          // transcript is the last revisable interim partial, never a final one,
+          // so this fails typed rather than submitting unfinalized text.
+          throw new Error(`local_neural_stt_not_finalized:${final.status}`);
+        }
         const text = typeof final.text === 'string' ? final.text.trim() : '';
         if (text) current.transcript = text;
+        // A finalized empty transcript is silence, which is a successful result.
         return { finalText: current.transcript.trim() };
       } catch {
         const sherpa = getOptionalSherpaNativeModule();

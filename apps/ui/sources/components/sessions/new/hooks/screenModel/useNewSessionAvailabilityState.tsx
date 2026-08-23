@@ -145,6 +145,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
             settings: params.settings,
             experiments,
             resumeSessionId: params.resumeSessionId ?? '',
+            machineId: params.selectedMachineId,
         });
         if (relevantKeys.length === 0) return [];
 

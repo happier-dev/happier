@@ -32,7 +32,10 @@ export async function saveVoiceHistoryExportArtifactToWeb(
   ) {
     throw new Error('Voice History export is unavailable on this platform');
   }
-  const objectUrl = URL.createObjectURL(new Blob([artifact.content], {
+  // The chunk sequence is handed straight to Blob as its part list: the browser
+  // copies each part once, and no concatenated whole-document string is built
+  // alongside it.
+  const objectUrl = URL.createObjectURL(new Blob([...artifact.chunks()], {
     type: artifact.mimeType,
   }));
   try {
@@ -68,7 +71,13 @@ export async function shareVoiceHistoryExportArtifactNative(
   }
 
   const file = new FileSystem.File(baseDirectory, artifact.fileName);
-  file.write(artifact.content);
+  // Appending chunk by chunk keeps at most one chunk resident: the first write
+  // creates/replaces the file exactly as a whole-document write did.
+  let isFirstChunk = true;
+  for (const chunk of artifact.chunks()) {
+    file.write(chunk, isFirstChunk ? undefined : { append: true });
+    isFirstChunk = false;
+  }
   try {
     await Sharing.shareAsync(file.uri, {
       mimeType: artifact.mimeType,

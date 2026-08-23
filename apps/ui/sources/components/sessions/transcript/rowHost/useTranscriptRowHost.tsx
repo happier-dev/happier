@@ -25,6 +25,7 @@ import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/
 import { resolveTranscriptRowPaintedIdentities } from '@/components/sessions/transcript/motion/transcriptRowPaintedIdentities';
 import { resolveTranscriptUtteranceIdentity } from '@/components/sessions/transcript/motion/transcriptFreshnessGate';
 import { OlderLoadProgressOverlay } from '@/components/sessions/transcript/OlderLoadProgressOverlay';
+import { OlderLoadRetryOverlay } from '@/components/sessions/transcript/OlderLoadRetryOverlay';
 import { CatchUpProgressOverlay } from '@/components/sessions/transcript/CatchUpProgressOverlay';
 import { resolveTranscriptListShellEdgeSlots } from '@/components/sessions/transcript/viewport/shell/transcriptListShellEdgeSlots';
 import {
@@ -118,6 +119,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         messagePins,
         messagesById,
         metadata,
+        onCheckAgainExternalSessionOperation,
         onDismissExternalSessionOperation,
         onDismissPluginTranscriptActivity,
         onOpenPluginTranscriptActivityAction,
@@ -343,6 +345,9 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                         <ExternalSessionOperationSharedCard
                             presentation={item.presentation}
                             onDismiss={onDismissExternalSessionOperation}
+                            {...(onCheckAgainExternalSessionOperation
+                                ? { onCheckAgain: onCheckAgainExternalSessionOperation }
+                                : {})}
                         />
                     )}
                 </TranscriptEnterWrapper>
@@ -576,6 +581,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         messagesById,
         metadata,
         operationRowCapabilities,
+        onCheckAgainExternalSessionOperation,
         onDismissExternalSessionOperation,
         onDismissPluginTranscriptActivity,
         onOpenPluginTranscriptActivityAction,
@@ -616,6 +622,8 @@ export type TranscriptItemsEdgeSlotsDeps = Readonly<{
     mainTranscriptListShellFrame: Parameters<typeof resolveTranscriptListShellEdgeSlots>[0]['frame'];
     onRequestSwitchToRemote: ChatListInternalProps['onRequestSwitchToRemote'];
     olderPaginationIsLoadingOlder: boolean;
+    olderPaginationLoadFailed: boolean;
+    onRetryOlderPagination: () => void;
     renderTranscriptItemAtIndex: (item: ChatTranscriptListItem, index: number) => React.ReactNode;
     sessionId: string;
     showCatchUpOverlay: boolean;
@@ -635,6 +643,8 @@ export function useTranscriptItemsEdgeSlots(deps: TranscriptItemsEdgeSlotsDeps) 
         mainTranscriptListShellFrame,
         onRequestSwitchToRemote,
         olderPaginationIsLoadingOlder,
+        olderPaginationLoadFailed,
+        onRetryOlderPagination,
         renderTranscriptItemAtIndex,
         sessionId,
         showCatchUpOverlay,
@@ -668,10 +678,13 @@ export function useTranscriptItemsEdgeSlots(deps: TranscriptItemsEdgeSlotsDeps) 
         visualTopNode: listHeaderNode,
         visualBottomNode: listFooterNode,
     }), [listFooterNode, listHeaderNode, mainTranscriptListShellFrame]);
-    const olderLoadOverlay =
-        (olderPaginationIsLoadingOlder || isLoadingOlder) && !showFirstPaintPlaceholder ? (
-            <OlderLoadProgressOverlay />
-        ) : null;
+    const olderLoadOverlay = showFirstPaintPlaceholder
+        ? null
+        : (olderPaginationIsLoadingOlder || isLoadingOlder)
+            ? <OlderLoadProgressOverlay />
+            : olderPaginationLoadFailed
+                ? <OlderLoadRetryOverlay onRetry={onRetryOlderPagination} />
+                : null;
     const catchUpOverlay = (
         <CatchUpProgressOverlay
             isCatchingUp={showCatchUpOverlay}

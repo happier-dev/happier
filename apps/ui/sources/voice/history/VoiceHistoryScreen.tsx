@@ -130,16 +130,9 @@ function VoiceHistoryStateMessage(props: Readonly<{
 
 function VoiceHistoryActionMessage(props: Readonly<{ message: string }>) {
   return (
-    <>
-      <Text testID="voice-history-action-message" style={styles.actionMessage}>
-        {props.message}
-      </Text>
-      <ExternalSessionOperationAccessibilityStatus
-        announcement={props.message}
-        statusTestID="voice-history-operation-status"
-        transitionKey={props.message}
-      />
-    </>
+    <Text testID="voice-history-action-message" style={styles.actionMessage}>
+      {props.message}
+    </Text>
   );
 }
 
@@ -154,7 +147,6 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
     () => props.consumer ?? createDefaultVoiceHistoryConsumer(),
   );
   const saveExport = props.saveExportArtifact ?? saveVoiceHistoryExportArtifact;
-  const [snapshot, setSnapshot] = React.useState<VoiceHistorySnapshot>(EMPTY_SNAPSHOT);
   const [query, setQuery] = React.useState('');
   const queryRef = React.useRef('');
   const [loadState, setLoadState] = React.useState<InitialLoadState>('loading');
@@ -163,6 +155,29 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
   const [clearing, setClearing] = React.useState(false);
   const [actionMessage, setActionMessage] = React.useState<string | null>(null);
   const requestEpochRef = React.useRef(0);
+  /*
+   * The rendered snapshot is derived from the consumer, never mirrored into
+   * screen state. History is a live Account surface: a voice turn that lands
+   * while this screen is open, a page loaded by an export, or a provider label
+   * that resolves late all change what `read()` answers with no interaction to
+   * hang a `setState` on, and a mirrored copy showed whatever the last one
+   * returned. The revision changes only for those causes, so an unrelated
+   * session write costs one string comparison.
+   */
+  const subscribeConsumer = React.useCallback(
+    (listener: () => void) => consumer.subscribe(listener),
+    [consumer],
+  );
+  const readConsumerRevision = React.useCallback(() => consumer.getRevision(), [consumer]);
+  const revision = React.useSyncExternalStore(
+    subscribeConsumer,
+    readConsumerRevision,
+    readConsumerRevision,
+  );
+  const snapshot: VoiceHistorySnapshot = React.useMemo(
+    () => (loadState === 'loading' ? EMPTY_SNAPSHOT : consumer.read(query)),
+    [consumer, loadState, query, revision],
+  );
 
   const showOperationError = React.useCallback((error: unknown, fallback: string) => {
     if (isVoiceHistoryOperationSupersededError(error)) {
@@ -182,9 +197,8 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
     setLoadState('loading');
     setActionMessage(null);
     try {
-      const next = await consumer.open(query);
+      await consumer.open(query);
       if (requestEpoch !== requestEpochRef.current) return;
-      setSnapshot(next);
       setLoadState('ready');
     } catch (error) {
       if (requestEpoch !== requestEpochRef.current) return;
@@ -205,20 +219,15 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
   const onSearchChange = React.useCallback((nextQuery: string) => {
     queryRef.current = nextQuery;
     setQuery(nextQuery);
-    setSnapshot(consumer.read(nextQuery));
     setActionMessage(null);
-  }, [consumer]);
+  }, []);
 
   const loadOlder = React.useCallback(async () => {
     if (loadingOlder) return;
     setLoadingOlder(true);
     setActionMessage(null);
-    const requestedQuery = queryRef.current;
     try {
-      const next = await consumer.loadOlder(requestedQuery);
-      setSnapshot(queryRef.current === requestedQuery
-        ? next
-        : consumer.read(queryRef.current));
+      await consumer.loadOlder(queryRef.current);
     } catch (error) {
       showOperationError(error, t('settingsVoice.history.loadOlderFailed'));
     } finally {
@@ -233,7 +242,6 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
     try {
       const artifact = await consumer.exportHistory({ range: 'all' });
       await saveExport(artifact);
-      setSnapshot(consumer.read(queryRef.current));
       setActionMessage(t('settingsVoice.history.exportSucceeded'));
     } catch (error) {
       showOperationError(error, t('settingsVoice.history.exportFailed'));
@@ -260,7 +268,6 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
       await consumer.clear();
       queryRef.current = '';
       setQuery('');
-      setSnapshot(consumer.read());
       setLoadState('ready');
       setActionMessage(t('settingsVoice.history.clearSucceeded'));
     } catch (error) {
@@ -270,59 +277,96 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
     }
   }, [clearing, consumer, showOperationError]);
 
+  /*
+   * Loading, failure and recovery are rendered as ordinary text, which a screen
+   * reader never re-reads on its own. The announcement below is derived from the
+   * same state that chooses the visible content, and it is rendered from ONE
+   * region that outlives every transition: a live region mounted with its
+   * message already inside it is not announced, so an announcer that appears
+   * together with each state could never fire.
+   */
+  const statusAnnouncement = (() => {
+    switch (loadState) {
+      case 'loading':
+        return t('settingsVoice.history.loading');
+      case 'error':
+        return `${t('settingsVoice.history.errorTitle')}. ${t('settingsVoice.history.errorBody')}`;
+      case 'upgrade_required':
+        return `${t('settingsVoice.history.upgradeRequiredTitle')}. `
+          + t('settingsVoice.history.upgradeRequiredBody');
+      case 'superseded':
+        return `${t('settingsVoice.history.supersededTitle')}. `
+          + t('settingsVoice.history.supersededBody');
+      default:
+        return actionMessage ?? '';
+    }
+  })();
+  const withAccessibilityStatus = (content: React.ReactNode) => (
+    <>
+      {content}
+      {statusAnnouncement ? (
+        <ExternalSessionOperationAccessibilityStatus
+          announcement={statusAnnouncement}
+          statusTestID="voice-history-operation-status"
+          transitionKey={`${loadState}\u0001${statusAnnouncement}`}
+        />
+      ) : null}
+    </>
+  );
+
   if (loadState === 'loading') {
-    return (
+    return withAccessibilityStatus(
       <View testID="voice-history-loading" style={styles.loading}>
         <ActivitySpinner size="large" />
         <Text style={styles.stateBody}>{t('settingsVoice.history.loading')}</Text>
-      </View>
+      </View>,
     );
   }
 
   if (loadState === 'error') {
-    return (
+    return withAccessibilityStatus(
       <VoiceHistoryStateMessage
         testID="voice-history-error"
         icon="cloud-slash"
         title={t('settingsVoice.history.errorTitle')}
         body={t('settingsVoice.history.errorBody')}
         retry={() => { void open(); }}
-      />
+      />,
     );
   }
 
   if (loadState === 'upgrade_required') {
-    return (
+    return withAccessibilityStatus(
       <VoiceHistoryStateMessage
         testID="voice-history-upgrade-required"
         icon="arrow-up"
         title={t('settingsVoice.history.upgradeRequiredTitle')}
         body={t('settingsVoice.history.upgradeRequiredBody')}
-      />
+      />,
     );
   }
 
   if (loadState === 'superseded') {
-    return (
+    return withAccessibilityStatus(
       <VoiceHistoryStateMessage
         testID="voice-history-superseded"
         icon="arrows-left-right"
         title={t('settingsVoice.history.supersededTitle')}
         body={t('settingsVoice.history.supersededBody')}
         retry={() => { void open(); }}
-      />
+      />,
     );
   }
 
   if (!snapshot.sessionId) {
-    return (
+    return withAccessibilityStatus(
       <VoiceHistoryStateMessage
         testID="voice-history-empty"
         icon="clock"
         title={t('settingsVoice.history.emptyTitle')}
         body={t('settingsVoice.history.emptyBody')}
         actionMessage={actionMessage}
-      />
+      />,
     );
   }
 
@@ -405,7 +449,7 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
     </View>
   );
 
-  return (
+  return withAccessibilityStatus(
     <View testID="voice-history-screen" style={styles.screen}>
       <VirtualizedList
         testID="voice-history-list"
@@ -433,7 +477,7 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
       />
-    </View>
+    </View>,
   );
 });
 

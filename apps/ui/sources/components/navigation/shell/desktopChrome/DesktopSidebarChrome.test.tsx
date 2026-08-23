@@ -467,6 +467,7 @@ describe('DesktopSidebarChrome', () => {
             'sidebar-back-button',
             'sidebar-forward-button',
             'sidebar-inbox-button',
+            'desktop-sidebar-action-operations',
             'nav-settings',
             'sidebar-collapse-button',
         ]);

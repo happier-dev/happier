@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { WebPcmCaptureError } from '@/voice/runtime/input/WebPcmCapture.web';
+
 import {
   createWebSocketPcmMedia,
   decodePcm16LeBase64,
@@ -123,6 +125,59 @@ describe('WebSocketPcmMedia', () => {
 
     expect(stopPlayback).toHaveBeenCalledTimes(1);
     expect(onOutputLevel).toHaveBeenLastCalledWith(0);
+  });
+
+  it('publishes a terminal notification when browser capture fails mid-session', async () => {
+    const stopPlayback = vi.fn();
+    const stopCapture = vi.fn(async () => {});
+    const onInputError = vi.fn();
+    let failCapture!: (error: WebPcmCaptureError) => void;
+    const media = createWebSocketPcmMedia({
+      mic: { getStream: () => ({} as MediaStream), getAudioContext: () => ({ currentTime: 0 } as AudioContext) },
+      input: { sampleRate: 24_000, chunkMs: 20 },
+      output: { sampleRate: 24_000, maxBufferedMs: 1_000 },
+      onInputChunk: vi.fn(),
+      onInputError,
+      createCapture: vi.fn(({ onError }) => {
+        let active = false;
+        failCapture = (error) => onError?.(error);
+        return {
+          start: vi.fn(async () => { active = true; }),
+          stop: vi.fn(async () => { active = false; await stopCapture(); }),
+          waitForDrain: vi.fn(async () => {}),
+          isActive: () => active,
+          level: () => 0,
+        };
+      }),
+      createOutputScheduler: vi.fn(() => ({
+        enqueue: vi.fn(() => true), clear: vi.fn(), stop: stopPlayback,
+        beginCandidate: vi.fn(() => 'ducked' as const), resolveCandidate: vi.fn(),
+        waitForDrain: vi.fn(async () => {}), playbackCursorMs: () => 0, outputLevel: () => 0,
+      })),
+    });
+
+    // The connection subscribes to the same terminal contract the native sibling
+    // exposes; without it a dead capture leaves the session open, deaf and mute.
+    expect(typeof media.pcm.subscribeTerminal).toBe('function');
+    const terminal = vi.fn();
+    media.pcm.subscribeTerminal?.(terminal);
+
+    await media.pcm.start(new AbortController().signal);
+    failCapture('pcm_capture_device_lost');
+
+    expect(onInputError).toHaveBeenCalledWith('pcm_capture_device_lost');
+    expect(terminal).toHaveBeenCalledTimes(1);
+    expect(terminal.mock.calls[0]?.[0]).toMatchObject({ message: 'pcm_capture_device_lost' });
+
+    // The failure is latched, so a subscriber attached after the fault still
+    // learns the media is dead instead of waiting on a stream that never resumes.
+    const late = vi.fn();
+    media.pcm.subscribeTerminal?.(late);
+    expect(late).toHaveBeenCalledTimes(1);
+
+    for (let tick = 0; tick < 10; tick += 1) await Promise.resolve();
+    expect(stopPlayback).toHaveBeenCalledTimes(1);
+    expect(stopCapture).toHaveBeenCalledTimes(1);
   });
 
   it('bounds output queued before playback startup', () => {

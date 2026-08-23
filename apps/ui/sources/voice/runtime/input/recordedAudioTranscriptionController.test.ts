@@ -26,6 +26,7 @@ const prepareDaemonVoiceInferenceSttSourceSpy = vi.fn(async (_params: unknown) =
 }));
 const bundledSpeechTranscribeSpy = vi.fn(async (params: Readonly<{
     entry: Readonly<{ declaration?: Readonly<{ title?: unknown }> }>;
+    originMachineId?: string | null;
 }>) => String(params.entry.declaration?.title ?? 'missing'));
 
 vi.mock('react-native', async () => {
@@ -151,6 +152,56 @@ describe('recordedAudioTranscriptionController', () => {
             code: 'provider_unavailable',
         });
         expect(bundledSpeechTranscribeSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('uploads registered-speech recorded audio to the machine the attempt captured', async () => {
+        // The local-neural path already pins the attempt's daemon. The registered
+        // speech path dropped it, so a mid-attempt auto-selection change split
+        // the multi-phase upload across two daemons.
+        const pluginId = 'acme.live-speech';
+        const providerId = `${pluginId}/stt`;
+        const executableHost = createPluginUiExecutableModuleHost();
+        onTestFinished(async () => {
+            await withdrawProjectedExternalVoiceProviders(executableHost);
+            bundledSpeechTranscribeSpy.mockClear();
+        });
+        createProjectedExternalVoiceProviderDerivedScopeFactory({
+            projection: createExternalSpeechProjection({ generation: 1, pluginId, title: 'Runtime A' }),
+            hostPlatform: 'web',
+            executableHost,
+        });
+        bundledSpeechTranscribeSpy.mockClear();
+
+        const { createRecordedAudioTranscriptionController } = await import('./recordedAudioTranscriptionController');
+        const controller = createRecordedAudioTranscriptionController();
+        await expect(controller.transcribe({
+            uri: 'file:///rec.wav',
+            executionMachineId: 'machine-attempt',
+            settings: {
+                voice: {
+                    providerId: 'local_direct',
+                    assistantLanguage: 'en',
+                    providers: {
+                        local_direct: {
+                            schemaVersion: 1,
+                            config: {
+                                stt: { provider: providerId },
+                                networkTimeoutMs: 15_000,
+                            },
+                        },
+                        [providerId]: {
+                            schemaVersion: 1,
+                            config: { model: 'synthetic-stt-v1' },
+                        },
+                    },
+                },
+            },
+        })).resolves.toBe('Runtime A');
+
+        expect(bundledSpeechTranscribeSpy).toHaveBeenCalledTimes(1);
+        expect(bundledSpeechTranscribeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            originMachineId: 'machine-attempt',
+        }));
     });
 
     it('delegates provider routing through the configured recorded-audio STT controller map', async () => {

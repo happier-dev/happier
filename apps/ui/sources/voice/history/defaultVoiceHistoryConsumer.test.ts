@@ -110,6 +110,8 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
         status: 'no_more',
       }),
       readMessages: () => [],
+      readMessagesRevision: () => 0,
+      subscribeMessages: () => () => {},
       deleteSession: async () => ({ success: true }),
       canDeleteSession: () => true,
       retireLocalSession: () => undefined,
@@ -262,6 +264,8 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
         status: 'no_more',
       }),
       readMessages: () => [],
+      readMessagesRevision: () => 0,
+      subscribeMessages: () => () => {},
       deleteSession: async () => ({ success: true }),
       canDeleteSession: () => true,
       retireLocalSession: () => undefined,
@@ -335,6 +339,8 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
         return { loaded: 0, hasMore: false, status: 'no_more' };
       },
       readMessages: () => [],
+      readMessagesRevision: () => 0,
+      subscribeMessages: () => () => {},
       deleteSession: async (_sessionId, authority) => {
         calls.push({ operation: 'delete', authority });
         return { success: true };
@@ -416,6 +422,8 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
         return { loaded: 0, hasMore: false, status: 'no_more' };
       },
       readMessages: () => [],
+      readMessagesRevision: () => 0,
+      subscribeMessages: () => () => {},
       deleteSession: async (_sessionId, authority) => {
         seenAuthorities.push(authority);
         return { success: true };

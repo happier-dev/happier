@@ -1,14 +1,13 @@
 import {
     HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
-    HappierStructuredInputV1EnvelopeSchema,
+    RawIngressStructuredInputV1Schema,
+    sanitizeSessionUserMessageSendMeta,
     type ComposerAttachmentDraftV1,
-    type ComposerAttachmentInputV1,
-    type HappierStructuredInputV1Envelope,
+    type RawIngressStructuredInputV1,
 } from '@happier-dev/protocol';
 import {
     admitMentionRefsV1ForText,
     hasRawStructuredInputSemanticContentV1,
-    readHappierStructuredInputV1FromMeta,
     type MentionRefV1,
 } from '@happier-dev/protocol/runtime';
 import { buildStructuredInputMetaOverrides } from '@/components/sessions/agentInput/structuredInputMentions';
@@ -78,29 +77,13 @@ function readRecord(value: unknown): Record<string, unknown> | null {
 }
 
 /**
- * Pending rows hold daemon-admitted attachment inputs. Only a contentless
- * record is representable in the draft owner: a SessionMedia id cannot be
- * reconstructed as the transfer-owned staged handle a draft requires.
- */
-function hydrateContentlessComposerAttachmentDraft(
-    attachment: ComposerAttachmentInputV1,
-): ComposerAttachmentDraftV1 | null {
-    if (attachment.content !== undefined) return null;
-    return {
-        v: attachment.v,
-        instanceId: attachment.instanceId,
-        attachment: attachment.attachment,
-        key: attachment.key,
-        value: attachment.value,
-        presentation: attachment.presentation,
-    };
-}
-
-/**
- * Pending Messages store admitted attachment records. A contentless record can
- * be returned to the canonical draft owner unchanged; media ids cannot become
- * draft content handles without the transfer owner, so that edit remains
- * unavailable rather than losing the selected attachment.
+ * A Pending row is Message *ingress*: the queue re-sends its stored metadata verbatim
+ * through the send RPC, so its attachments are drafts and a media one still carries the
+ * transfer-owned staged claim. Reading the row through the persisted envelope refused every
+ * queued media message outright — the draft owner can hold that claim unchanged. A durable
+ * SessionMedia id is the one shape that cannot come back: it is not reconstructible as a
+ * staged handle, and the ingress envelope rejects it, so that edit stays unavailable rather
+ * than losing the selected attachment.
  */
 export function hydratePendingMessageComposerAttachmentDrafts(
     metadata: unknown,
@@ -114,7 +97,7 @@ export function hydratePendingMessageComposerAttachmentDrafts(
     if (!rawEnvelope) {
         return { status: 'unavailable' };
     }
-    const envelope = HappierStructuredInputV1EnvelopeSchema.safeParse(rawEnvelope);
+    const envelope = RawIngressStructuredInputV1Schema.safeParse(rawEnvelope);
     if (!envelope.success) return { status: 'unavailable' };
 
     for (const [key, value] of Object.entries(rawEnvelope)) {
@@ -124,13 +107,7 @@ export function hydratePendingMessageComposerAttachmentDrafts(
         }
     }
 
-    const attachments: ComposerAttachmentDraftV1[] = [];
-    for (const attachment of envelope.data.composerAttachments ?? []) {
-        const draft = hydrateContentlessComposerAttachmentDraft(attachment);
-        if (!draft) return { status: 'unavailable' };
-        attachments.push(draft);
-    }
-
+    const attachments: readonly ComposerAttachmentDraftV1[] = envelope.data.composerAttachments ?? [];
     const mentions = envelope.data.mentions ?? [];
     if (mentions.length > 0) {
         if (typeof text !== 'string') return { status: 'unavailable' };
@@ -149,38 +126,37 @@ export function hydratePendingMessageComposerAttachmentDrafts(
 }
 
 export type PendingMessageComposerEditStructuredInputBuild =
-    | Readonly<{ status: 'ready'; structuredInput: HappierStructuredInputV1Envelope }>
+    | Readonly<{ status: 'ready'; structuredInput: RawIngressStructuredInputV1 }>
     | Readonly<{ status: 'unavailable' }>;
 
 /**
- * The exit half of the rule `hydratePendingMessageComposerAttachmentDrafts`
- * already enforces on entry: a Pending row persists admitted, contentless
- * attachment records only. The canonical envelope reader is a sanitizer — it
- * drops every record it cannot admit, and a draft that still owns a
- * transfer-staged claim is exactly such a record. Durable media finalization
- * belongs to Message admission, which a queued row has not reached, so a save
- * that would lose the selection is refused rather than silently completed.
+ * The exit half of the rule `hydratePendingMessageComposerAttachmentDrafts` enforces on
+ * entry: a Pending row is Message ingress, so it may carry a draft whose media is still the
+ * transfer-owned staged claim. The daemon's SessionMedia finalizer replaces that claim when
+ * the row is eventually sent — this write-back must not require finalization a queued row has
+ * not reached, and must not silently drop the record instead.
  *
- * The length comparison is the whole guard: the admitted record schema is
- * strict, so a record is admitted whole or not at all, and the sanitizer
- * preserves order for the ones it keeps.
+ * The length comparison is the whole guard: the ingress record schema is strict, so a record
+ * survives whole or not at all, and the boundary sanitizer preserves order for the ones it
+ * keeps.
  */
 export function buildPendingMessageComposerEditStructuredInput(input: Readonly<{
     text: string;
     mentions: readonly ComposerStructuredInputMention[];
     attachments: readonly ComposerAttachmentDraftV1[];
 }>): PendingMessageComposerEditStructuredInputBuild {
-    const structuredInput: HappierStructuredInputV1Envelope = readHappierStructuredInputV1FromMeta(
-        buildStructuredInputMetaOverrides({
-            mentions: input.mentions,
-            text: input.text,
-            composerAttachments: input.attachments,
-        }),
-    ) ?? { v: 1 };
-    if ((structuredInput.composerAttachments ?? []).length !== input.attachments.length) {
+    const meta = sanitizeSessionUserMessageSendMeta(buildStructuredInputMetaOverrides({
+        mentions: input.mentions,
+        text: input.text,
+        composerAttachments: input.attachments,
+    }));
+    const envelope = readRecord(meta[HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]) ?? { v: 1 };
+    const parsed = RawIngressStructuredInputV1Schema.safeParse(envelope);
+    if (!parsed.success) return { status: 'unavailable' };
+    if ((parsed.data.composerAttachments ?? []).length !== input.attachments.length) {
         return { status: 'unavailable' };
     }
-    return { status: 'ready', structuredInput };
+    return { status: 'ready', structuredInput: parsed.data };
 }
 
 export function isEmptyPendingMessageComposerSemanticDraftSnapshot(

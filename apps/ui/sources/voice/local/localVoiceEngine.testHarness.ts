@@ -75,7 +75,9 @@ export const sherpaStreamingPushFrame = vi.fn<(...args: any[]) => Promise<{ text
   text: '',
   isEndpoint: false,
 });
-export const sherpaStreamingFinish = vi.fn<(...args: any[]) => Promise<{ text: string }>>().mockResolvedValue({ text: '' });
+export const sherpaStreamingFinish = vi
+  .fn<(...args: any[]) => Promise<{ status: 'finalized'; text: string } | { status: 'cancelled' } | { status: 'missing' }>>()
+  .mockResolvedValue({ status: 'finalized', text: '' });
 export const sherpaStreamingCancel = vi.fn(async () => {});
 export const ensureModelPackInstalled = vi.fn(async () => ({
     packDirUri: 'file:///docs/happier/voice/modelPacks/dummy-pack',
@@ -806,7 +808,7 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
         audioStreamStop.mockResolvedValue(undefined);
         audioSessionRelease.mockResolvedValue(undefined);
         sherpaStreamingPushFrame.mockResolvedValue({ text: '', isEndpoint: false });
-        sherpaStreamingFinish.mockResolvedValue({ text: '' });
+        sherpaStreamingFinish.mockResolvedValue({ status: 'finalized', text: '' });
         sherpaStreamingCreate.mockResolvedValue(undefined);
         sherpaStreamingCancel.mockResolvedValue(undefined);
         ensureModelPackInstalled.mockResolvedValue({

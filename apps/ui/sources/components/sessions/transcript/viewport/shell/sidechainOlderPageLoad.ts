@@ -1,8 +1,6 @@
-export type SidechainOlderPageLoadResult = Readonly<{
-    loaded: number;
-    hasMore: boolean;
-    status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
-}>;
+import type { TranscriptOlderPageLoadResult } from '@/sync/domains/messages/transcriptOlderPageLoad';
+
+export type SidechainOlderPageLoadResult = TranscriptOlderPageLoadResult;
 
 export type SidechainOlderPageLoadFn = () => Promise<SidechainOlderPageLoadResult>;
 

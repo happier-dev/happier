@@ -34,6 +34,25 @@ export const BUILT_IN_VOICE_UI_ENTRIES: readonly VoiceUiRuntimeContribution[] = 
     projectSettings: (envelope: Readonly<{ schemaVersion: number; config: unknown }> | null) =>
       projectVersionOneSettings(envelope, VoiceLocalConversationSchema),
   } satisfies VoiceUiRuntimeContribution),
+  /**
+   * `local_direct` is deliberately selection-less: it declares no
+   * `selectionOptions`, so `projectVoiceProviderSelectionRows` emits no picker
+   * row for it and `selectVoiceProviderOption` refuses every option id. That
+   * matches the released contract — every released picker offered exactly one
+   * "Local" row and wrote `local_conversation`; no picker in this repository's
+   * history ever wrote `providerId: 'local_direct'`. The entry stays registered
+   * because the released `voiceSettings` parse enum still accepts the id and
+   * the released `voice.adapters.local_direct` block is the source the
+   * credential/config compatibility migration reads.
+   *
+   * Current ceiling: nothing can select this provider, so its adapter,
+   * `LocalDirectSection`, and QA branch are reachable only for a settings
+   * document that already names it. Removal condition: retire this entry, its
+   * adapter, and its panel once the released-data migration canonicalizes
+   * `providerId: 'local_direct'` away and no supported released `voiceSettings`
+   * shape can still carry it. Adding `selectionOptions` here instead would
+   * introduce a second "Local" picker row that no released client ever had.
+   */
   Object.freeze({
     kind: 'voice.conversation-provider.v1',
     pluginId: 'happier.voice.builtin',

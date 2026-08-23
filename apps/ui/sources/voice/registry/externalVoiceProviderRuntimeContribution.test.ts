@@ -986,6 +986,24 @@ describe('external Voice provider host composition', () => {
       ...createHostFixture({ transcriptEvents: [], lifecycleEvents: [] }),
       projectVoiceSettings: () => ({ providerId: phaseProviderId, providerConfig: {} }),
     });
+    // One arm activates from a daemon-projected client runtime and one from a
+    // declaration compiled into this client, because only the projected arm can
+    // name the registry generation the daemon must still be on.
+    const projectedClientRuntimeIdentity = declaredPhase === 'connection'
+      ? Object.freeze({
+          pluginId,
+          contributionId: parsedPhaseDeclaration.id,
+          artifactDigest: `sha256:${'a'.repeat(64)}` as const,
+          hostAppVersion: '1.0.0',
+          hostUiApiVersion: '1',
+          reactVersion: '19.0.0',
+          reactNativeVersion: '0.79.0',
+          platform: 'web',
+          channel: 'stable',
+          nativeCapabilitiesDigest: `sha256:${'b'.repeat(64)}` as const,
+          projectionGeneration: 7,
+        })
+      : null;
     const scope = createExternalVoiceProviderActivationScope({
       pluginId,
       declarations: [parsedPhaseDeclaration],
@@ -995,6 +1013,14 @@ describe('external Voice provider host composition', () => {
       recipientContractsByLocalId: {
         [parsedPhaseDeclaration.id]: recipientContract,
       },
+      ...(projectedClientRuntimeIdentity
+        ? {
+            generation: '7',
+            clientRuntimeIdentitiesByLocalId: {
+              [parsedPhaseDeclaration.id]: projectedClientRuntimeIdentity,
+            },
+          }
+        : {}),
     });
     try {
       scope.api.voiceProviders.register(parsedPhaseDeclaration.id, {
@@ -1043,11 +1069,26 @@ describe('external Voice provider host composition', () => {
       expect(accountRequests).toEqual([declaredPhase]);
       expect(mediatedCredentialMachineRpc).toHaveBeenCalledTimes(1);
       expect(mediatedCredentialMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
+        machineId: 'machine-1',
         method: RPC_METHODS.DAEMON_VOICE_CLIENT_MEDIATED_CREDENTIAL_MATERIALIZE,
         payload: expect.objectContaining({
           contribution,
           phase: declaredPhase,
           operationId: 'client-auth',
+          // A daemon-projected activation names the exact projection it came
+          // from; one compiled into this client names none. Both bind the
+          // daemon to the exact Connected Account the attempt was authorized
+          // under.
+          declarationAuthority: projectedClientRuntimeIdentity
+            ? { kind: 'projected', cacheIdentity: projectedClientRuntimeIdentity }
+            : { kind: 'bundled' },
+          expectedSelection: {
+            kind: 'account',
+            account: {
+              service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+              accountId: 'codex-work',
+            },
+          },
         }),
       }));
       expect(providerFetch).toHaveBeenCalledTimes(1);
@@ -1426,6 +1467,7 @@ describe('external Voice provider host composition', () => {
       resolveContributedAction: fixture.resolve,
       readNavigationBinding: () => ({
         openSurface,
+        targetKind: 'app' as const,
         registerOwner: () => () => {},
       }),
     }));
@@ -1940,7 +1982,10 @@ describe('external Voice provider host composition', () => {
     ]);
     expect(execute).not.toHaveBeenCalled();
     expect(hostCreateSdkHandleConnection).toHaveBeenCalledTimes(1);
-    expect(getAttemptTools).toHaveBeenCalledWith({ effectCalls: 'none', exposure: 'voice_assistant' });
+    // The packed leaf's first conversation declaration is an Agent-session
+    // realtime execution, so its realtime surface publishes only the
+    // current-UI tools rather than the full Voice-assistant inventory.
+    expect(getAttemptTools).toHaveBeenCalledWith({ effectCalls: 'none', exposure: 'current_ui_only' });
     expect(attemptToolExecute).toHaveBeenCalledWith({ limit: 10 });
     expect(fixtureEvents).toContainEqual({
       kind: 'catalog',

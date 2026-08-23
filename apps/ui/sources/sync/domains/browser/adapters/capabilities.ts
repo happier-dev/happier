@@ -59,6 +59,8 @@ function buildUnavailableAutomationActions(
         press: action,
         scroll: action,
         hover: action,
+        upload: action,
+        drag: action,
         waitFor: action,
         evaluate: action,
         elementPicker: action,
@@ -226,6 +228,11 @@ function buildBrowserAutomationActions(
         press: syntheticAction,
         scroll: syntheticAction,
         hover: syntheticAction,
+        // Injected-page `upload` attaches payload-supplied file content to a file input; it cannot
+        // read a host path from the page. `drag` synthesises the HTML5 drag sequence. Both are
+        // untrusted synthetic input, exactly like `click`/`type`.
+        upload: syntheticAction,
+        drag: syntheticAction,
         waitFor: syntheticAction,
         navigate: {
             available: navigationAvailable,

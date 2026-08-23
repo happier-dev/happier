@@ -8,11 +8,9 @@ export type TranscriptPrependOlderLoadOptions = Readonly<{
     showLoadingIndicator?: boolean;
 }>;
 
-export type TranscriptPrependOlderLoadResult = Readonly<{
-    loaded: number;
-    hasMore: boolean;
-    status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
-}>;
+import type { TranscriptOlderPageLoadResult } from '@/sync/domains/messages/transcriptOlderPageLoad';
+
+export type TranscriptPrependOlderLoadResult = TranscriptOlderPageLoadResult;
 
 export type TranscriptPrependOlderLoadSyncOptions = Readonly<{
     limit: number;

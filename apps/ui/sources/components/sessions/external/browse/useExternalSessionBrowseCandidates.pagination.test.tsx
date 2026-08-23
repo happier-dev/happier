@@ -227,6 +227,41 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
         expect(hook.getCurrent().nextCursor).toBe('cursor-2');
     });
 
+    it('rebuilds from the root once when the daemon resets a dead continuation', async () => {
+        candidatesListSpy
+            .mockResolvedValueOnce(page([
+                { remoteSessionId: 'one', title: 'One', updatedAtMs: 1 },
+            ], 'cursor-1'))
+            .mockResolvedValueOnce({
+                ok: true,
+                candidates: [],
+                nextCursor: null,
+                cursorReset: true,
+            })
+            .mockResolvedValueOnce(page([
+                { remoteSessionId: 'one', title: 'One', updatedAtMs: 1 },
+                { remoteSessionId: 'two', title: 'Two', updatedAtMs: 2 },
+            ], null));
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates(params));
+
+        await act(async () => {
+            await hook.getCurrent().loadMore();
+        });
+        await flushHookEffects();
+
+        // The reset is not a failure: no error is surfaced, the rejected
+        // continuation is gone, and the root rebuild republished the listing.
+        expect(hook.getCurrent().error).toBeNull();
+        expect(hook.getCurrent().nextCursor).toBeNull();
+        expect(hook.getCurrent().candidates.map((candidate) => candidate.remoteSessionId))
+            .toEqual(['one', 'two']);
+        expect(hook.getCurrent().candidatesAuthoritative).toBe(true);
+        // Exactly one rebuild: the dead cursor is never sent again.
+        expect(candidatesListSpy).toHaveBeenCalledTimes(3);
+        expect(candidatesListSpy.mock.calls[2]?.[0]).not.toHaveProperty('cursor');
+    });
+
     it('preserves canonical link and import annotations from the daemon response', async () => {
         candidatesListSpy.mockResolvedValueOnce(page([{
             remoteSessionId: 'one',

@@ -35,6 +35,10 @@ import { buildInboxSessionState } from '@/hooks/inbox/buildInboxSessionState';
 import { useInboxSessionMessagesById } from '@/hooks/inbox/useInboxSessionMessagesById';
 import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import {
+    useAllActionOperations,
+} from '@/sync/domains/actionOperations/useActionOperations';
+import { ActionOperationLedger } from '@/components/inbox/actionOperations/ActionOperationLedger';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -91,6 +95,7 @@ function HeaderTitleTablet() {
 }
 
 export const InboxView = React.memo(({}: InboxViewProps) => {
+    const actionOperations = useAllActionOperations();
     const router = useRouter();
     const friendRequests = useFriendRequests();
     const requestedFriends = useRequestedFriends();
@@ -130,6 +135,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
 
     const isLoading = friendsEnabled ? (!feedLoaded || !friendsLoaded) : false;
     const isEmpty = !isLoading &&
+        actionOperations.length === 0 &&
         openApprovals.length === 0 &&
         sessionsNeedingAttention.length === 0 &&
         unreadSessions.length === 0 &&
@@ -165,6 +171,8 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
             <ScrollView contentContainerStyle={scrollContentStyle}>
                 <RecoveryKeyReminderBanner />
 
+                {body === 'content' && <ActionOperationLedger />}
+
                 {body === 'loading' && (
                     <View style={styles.emptyContainer}>
                         <ActivitySpinner size="large" color={theme.colors.text.secondary} />
@@ -181,6 +189,9 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                         />
                         <Text style={styles.emptyTitle}>{t('inbox.emptyTitle')}</Text>
                         <Text style={styles.emptyDescription}>{t('inbox.emptyDescription')}</Text>
+                        <Text style={[styles.emptyDescription, { marginTop: 6 }]}>
+                            {t('inbox.actionOperations.emptyDescription')}
+                        </Text>
                     </View>
                 )}
 

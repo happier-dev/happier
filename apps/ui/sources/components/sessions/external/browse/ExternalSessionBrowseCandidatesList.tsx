@@ -41,6 +41,8 @@ import {
     type ExternalSessionBrowseCandidate,
     type ExternalSessionBrowsePreparation,
 } from './useExternalSessionBrowseCandidates';
+import type { ExternalSessionsBrowseInteraction } from './ExternalSessionsBrowseScreen';
+import { isExternalSessionBrowseCandidateOfflineInert } from './resolveExternalSessionBrowseCandidateOfflineInert';
 
 type AppTheme = Theme;
 
@@ -312,6 +314,8 @@ function buildCandidateVirtualizedSource(params: Readonly<{
     getInteractionState: () => Readonly<{
         candidateActionsDisabled: boolean;
         linkingSessionId: string | null;
+        offline: boolean;
+        interaction: ExternalSessionsBrowseInteraction;
     }>;
     theme: AppTheme;
     density: ReturnType<typeof useResolvedItemDensity>;
@@ -365,12 +369,24 @@ function buildCandidateVirtualizedSource(params: Readonly<{
     const getOptionId = (candidateIndex: number): string => (
         readExternalSessionBrowseCandidateKey(getCandidate(candidateIndex))
     );
+    /**
+     * Linking is single-flight at the screen owner: while one link is in flight it
+     * drops every other candidate activation. A row that still looks pressable but
+     * is silently ignored is a lie, so activation is withheld from the whole list —
+     * not only the pending row — for as long as a link is outstanding. The pending
+     * row keeps its own spinner, and closing the surface stays available.
+     */
     const isFocusableOptionIndex = (candidateIndex: number): boolean => {
         const interaction = params.getInteractionState();
         return !interaction.candidateActionsDisabled
+            && interaction.linkingSessionId === null
             && candidateIndex >= 0
             && candidateIndex < params.candidates.length
-            && getOptionId(candidateIndex) !== interaction.linkingSessionId;
+            && !isExternalSessionBrowseCandidateOfflineInert({
+                offline: interaction.offline,
+                interaction: interaction.interaction,
+                linkedSessionId: params.candidates[candidateIndex]?.linkedSessionId,
+            });
     };
 
     return {
@@ -378,7 +394,12 @@ function buildCandidateVirtualizedSource(params: Readonly<{
         optionCount: params.candidates.length,
         get stateKey(): string {
             const interaction = params.getInteractionState();
-            return `${interaction.candidateActionsDisabled ? 'disabled' : 'enabled'}\u0000${interaction.linkingSessionId ?? ''}`;
+            return [
+                interaction.candidateActionsDisabled ? 'disabled' : 'enabled',
+                interaction.linkingSessionId ?? '',
+                interaction.offline ? 'offline' : 'online',
+                interaction.interaction,
+            ].join('\u0000');
         },
         getOption: (candidateIndex: number): SelectionListOption => {
             const candidate = getCandidate(candidateIndex);
@@ -419,7 +440,13 @@ function buildCandidateVirtualizedSource(params: Readonly<{
                 ),
                 rightAccessory: () => renderBrowseCandidateRightAccessory(candidate),
                 onSelect: () => params.onSelectCandidate(candidate, params.selectionAuthorityGeneration),
-                disabled: interaction.candidateActionsDisabled || isPending,
+                disabled: interaction.candidateActionsDisabled
+                    || interaction.linkingSessionId !== null
+                    || isExternalSessionBrowseCandidateOfflineInert({
+                        offline: interaction.offline,
+                        interaction: interaction.interaction,
+                        linkedSessionId: candidate.linkedSessionId,
+                    }),
                 loading: isPending,
             };
         },
@@ -431,14 +458,13 @@ function buildCandidateVirtualizedSource(params: Readonly<{
             return -1;
         },
         getFirstFocusableOptionIndex: (): number => {
-            if (params.getInteractionState().candidateActionsDisabled) return -1;
             for (const candidateIndex of navigationOptionIndexes) {
                 if (isFocusableOptionIndex(candidateIndex)) return candidateIndex;
             }
             return -1;
         },
         getNextFocusableOptionIndex: (currentCandidateIndex: number, direction: -1 | 1): number => {
-            if (params.getInteractionState().candidateActionsDisabled || navigationOptionIndexes.length === 0) return -1;
+            if (navigationOptionIndexes.length === 0) return -1;
             const currentNavigationIndex = navigationOptionIndexes.indexOf(currentCandidateIndex);
             let navigationIndex = currentNavigationIndex >= 0
                 ? currentNavigationIndex
@@ -563,6 +589,7 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
     cancelled?: boolean;
     linkingSessionId: string | null;
     candidateActionsDisabled?: boolean;
+    interaction?: ExternalSessionsBrowseInteraction;
     searchQuery: string;
     onSearchQueryChange: (query: string) => void;
     selectionAuthorityGeneration: number;
@@ -590,13 +617,19 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
         [],
     );
     const candidateActionsDisabled = props.candidateActionsDisabled === true;
+    const offline = props.offline === true;
+    const interaction: ExternalSessionsBrowseInteraction = props.interaction ?? 'openSession';
     const interactionStateRef = React.useRef({
         candidateActionsDisabled,
         linkingSessionId: props.linkingSessionId,
+        offline,
+        interaction,
     });
     interactionStateRef.current = {
         candidateActionsDisabled,
         linkingSessionId: props.linkingSessionId,
+        offline,
+        interaction,
     };
     const getInteractionState = React.useCallback(() => interactionStateRef.current, []);
     const virtualizedOptionSource = React.useMemo(
@@ -799,7 +832,10 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
                     hasMore: props.nextCursor !== null,
                     loadingMore: props.loadingMore || retainedRowsLoading,
                     requestKey: props.paginationRequestKey,
-                    error: props.error ?? projectionFailureMessage ?? stoppedIndexNotice,
+                    // Retained rows outlive the connection. Without the offline
+                    // presentation here the footer falls through to the end-of-list
+                    // marker and asserts the listing is complete while it is stale.
+                    error: presentationError ?? projectionFailureMessage ?? stoppedIndexNotice,
                     onEndReached: props.onLoadMore,
                     onRetry: props.onRetry,
                     loadingLabel: t('common.loading'),

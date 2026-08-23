@@ -1,6 +1,12 @@
 import * as React from 'react';
 
-import { buildAcpConfigOptionOverridesV1FromConfigOptions } from '@happier-dev/protocol';
+import {
+    buildAcpConfigOptionOverridesV1FromConfigOptions,
+    ProviderConnectionIdSchema,
+    type FeatureDecision,
+    type SessionAgentTransitionSelectionV1,
+    type SessionModelSelectionV1,
+} from '@happier-dev/protocol';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
@@ -20,8 +26,14 @@ import {
     readSessionDraftValue,
     writeSessionDraftValue,
 } from '@/sync/domains/input/draftValues/sessionDraftValueStore';
-import type { SessionArmedAgentContinuation } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type {
+    SessionArmedAgentContinuation,
+    SessionArmedAgentContinuationSubmission,
+} from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import {
+    serverAccountScopeKeySuffix,
+    type ServerAccountScope,
+} from '@/sync/domains/scope/serverAccountScope';
 import type { Settings } from '@/sync/domains/settings/settings';
 
 import {
@@ -49,7 +61,6 @@ import {
 type ArmedAgentContinuation = SessionArmedAgentContinuation;
 
 const ARMED_AGENT_CONTINUATION_FIELD_ID = 'routing.agentContinuation' as const;
-const ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID = 'routing.agentContinuationSubmission' as const;
 
 /**
  * The lifetime of one armed choice, as a key. Formed in one place so the value
@@ -59,6 +70,22 @@ const ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID = 'routing.agentContinuationS
  */
 function buildArmedContinuationIdentityKey(armScopeKey: string, arm: ArmedAgentContinuation): string {
     return `${armScopeKey} ${arm.backendTargetKey} ${JSON.stringify(arm.intent)}`;
+}
+
+function isSameArmedContinuation(
+    persisted: ArmedAgentContinuation | undefined,
+    expected: ArmedAgentContinuation,
+): boolean {
+    return persisted?.backendTargetKey === expected.backendTargetKey
+        && JSON.stringify(persisted.intent) === JSON.stringify(expected.intent)
+        && JSON.stringify(persisted.submission) === JSON.stringify(expected.submission);
+}
+
+function isSameArmedContinuationSubmission(
+    actual: SessionArmedAgentContinuationSubmission | undefined,
+    expected: SessionArmedAgentContinuationSubmission,
+): boolean {
+    return actual !== undefined && JSON.stringify(actual) === JSON.stringify(expected);
 }
 
 type UseInSessionAgentPickerControlsParams = Readonly<{
@@ -95,7 +122,7 @@ type UseInSessionAgentPickerControlsParams = Readonly<{
      * rail, and no armed intent — and the submit path reads only the armed
      * intent, so it cannot be reached behind a closed gate.
      */
-    featureEnabled: boolean;
+    featureDecision: SessionAgentContinuationFeatureDecision;
     source: SessionAgentContinuationSourceState;
     /** Where continuation support is inspected, and how long an answer holds. */
     machine: SessionAgentContinuationMachineTarget;
@@ -106,6 +133,9 @@ type UseInSessionAgentPickerControlsParams = Readonly<{
      */
     detail: SessionAgentPickerTargetDetailContext;
 }>;
+
+/** The canonical decision's state is enough for this owner to distinguish a real disable from uncertainty. */
+export type SessionAgentContinuationFeatureDecision = Readonly<Pick<FeatureDecision, 'state'>> | null;
 
 export type SessionAgentPickerTargetDetailContext = Readonly<{
     settings: Settings;
@@ -123,6 +153,97 @@ const DEFAULT_TARGET_SELECTION: SessionAgentPickerSelection = {
     sessionModeId: null,
     configOverrides: {},
 };
+
+function buildTargetSelection(
+    entry: ResolvedBackendCatalogEntry,
+    selection: SessionAgentPickerSelection,
+    configUpdatedAt = 0,
+): SessionAgentTransitionSelectionV1 {
+    const overrides = buildAcpConfigOptionOverridesV1FromConfigOptions({
+        configOptions: selection.configOverrides,
+        updatedAt: configUpdatedAt,
+    });
+    return {
+        v: 1,
+        agentId: entry.agentId,
+        ...(selection.modelId !== 'default' ? { modelId: selection.modelId } : {}),
+        ...(selection.modelSelection?.ref.providerConnectionId
+            ? { providerConnectionId: selection.modelSelection.ref.providerConnectionId }
+            : {}),
+        ...(selection.sessionModeId !== null ? { acpSessionModeId: selection.sessionModeId } : {}),
+        ...(overrides ? { sessionConfigOptionOverrides: overrides } : {}),
+    };
+}
+
+function projectPersistedArmSelection(arm: ArmedAgentContinuation): SessionAgentPickerSelection {
+    const selection = arm.intent.selection;
+    const modelId = selection.modelId ?? 'default';
+    const modelSelection: SessionModelSelectionV1 | null = selection.modelId
+        ? selection.providerConnectionId == null
+            ? {
+                v: 1,
+                // The draft's transition selection is authoritative. This timestamp
+                // only satisfies the detail component's local selection shape; it is
+                // never written back as a new model decision.
+                updatedAt: 0,
+                ref: {
+                    agentTargetKey: arm.backendTargetKey,
+                    providerConnectionId: null,
+                    modelId: selection.modelId,
+                },
+            }
+            : {
+                v: 1,
+                // The draft's transition selection is authoritative. This timestamp
+                // only satisfies the detail component's local selection shape; it is
+                // never written back as a new model decision.
+                updatedAt: 0,
+                ref: {
+                    agentTargetKey: arm.backendTargetKey,
+                    providerConnectionId: ProviderConnectionIdSchema.parse(selection.providerConnectionId),
+                    modelId: selection.modelId,
+                },
+            }
+        : null;
+    return {
+        modelId,
+        modelSelection,
+        modelLabel: arm.modelLabel ?? null,
+        sessionModeId: selection.acpSessionModeId ?? null,
+        configOverrides: Object.fromEntries(
+            Object.entries(selection.sessionConfigOptionOverrides?.overrides ?? {})
+                .flatMap(([configId, override]) => (
+                    typeof override?.value === 'string' && override.value.trim().length > 0
+                        ? [[configId, override.value.trim()] as const]
+                        : []
+                )),
+        ),
+    };
+}
+
+function buildArmedContinuation(
+    entry: ResolvedBackendCatalogEntry,
+    sourceAgentId: string,
+    selection: SessionAgentPickerSelection,
+): ArmedAgentContinuation {
+    return {
+        backendTargetKey: entry.backendTargetKey,
+        // `default` is the absence of a model choice, so there is no model to
+        // name and the composer's chip names the Agent instead.
+        modelLabel: selection.modelId !== 'default'
+            ? selection.modelLabel ?? null
+            : null,
+        intent: {
+            v: 1,
+            mode: 'same_session',
+            sourceAgentId,
+            // Inspection uses a stable timestamp-free projection. The persisted
+            // selection is a real new choice, so its existing canonical builder
+            // owns the timestamp on the wire envelope.
+            selection: buildTargetSelection(entry, selection, Date.now()),
+        },
+    };
+}
 
 /**
  * How the running Agent's row names itself, per reported-model status.
@@ -162,7 +283,21 @@ export type InSessionAgentPickerControls = Readonly<{
      * Agent's own defaults. The composer's engine chip names it.
      */
     armedContinuationModelLabel: string | null;
+    /** The pre-dispatch exact input snapshot, if this arm has one. */
+    armedContinuationSubmission: ArmedAgentContinuation['submission'] | null;
+    /**
+     * The submitted snapshot's intent, retained for reconciliation even when the
+     * original next-message arm is no longer an eligible promise.
+     */
+    armedContinuationSubmissionIntent: ArmedAgentContinuation['intent'] | null;
     clearArmedContinuation: () => void;
+    /** Clears exactly the persisted submission that canonical custody consumed. */
+    clearArmedContinuationSubmissionIfCurrent: (submission: SessionArmedAgentContinuationSubmission) => boolean;
+    /**
+     * Captures the exact canonical user-message request before the transition
+     * RPC leaves this process. The existing arm remains the one persisted owner.
+     */
+    recordArmedContinuationSubmission: (submission: SessionArmedAgentContinuationSubmission) => boolean;
     /**
      * The reader is reaching for the Agent chip — hovering it, focusing it, or
      * pressing it down. Continuation support is inspected from here, so a Session
@@ -239,7 +374,10 @@ function resolveTargetRowUnavailableText(
 export function useInSessionAgentPickerControls(
     params: UseInSessionAgentPickerControlsParams,
 ): InSessionAgentPickerControls {
-    const { accountScope, currentAgentId, currentAgentLabel, entries, featureEnabled, sessionId, source } = params;
+    const { accountScope, currentAgentId, currentAgentLabel, entries, sessionId, source } = params;
+    const featureEnabled = params.featureDecision?.state === 'enabled';
+    const featureDefinitelyDisabled = params.featureDecision?.state === 'disabled';
+    const accountScopeKey = accountScope ? serverAccountScopeKeySuffix(accountScope) : 'local';
 
     const currentAgentReportedStatus = resolveReportedModelStatus(params.currentAgentSessionActive);
     // Read once per mount rather than at module evaluation: this file is reached
@@ -255,17 +393,38 @@ export function useInSessionAgentPickerControls(
 
     const [armed, setArmed] = React.useState<ArmedAgentContinuation | null>(null);
     const draftSessionId = sessionId.trim().length > 0 ? sessionId.trim() : null;
+    const persistedArmedContinuation = draftSessionId === null
+        ? undefined
+        : readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+    // A submitted input remains custody even after the arm that promised a
+    // next-message transition loses eligibility. It remains in the one existing
+    // draft record until SessionView has reconciled canonical custody.
+    const retainedSubmissionArm = armed === null && persistedArmedContinuation?.submission !== undefined
+        ? persistedArmedContinuation
+        : null;
+    const submissionArm = armed?.submission !== undefined
+        ? armed
+        : retainedSubmissionArm;
 
     // The armed Agent is written straight through to the Session draft that already
     // holds the message it belongs to, so both halves of one composer decision have
     // one lifetime. Arming is a deliberate, rare gesture rather than a keystroke, so
     // it is flushed immediately: the reader may leave the screen in the next frame.
     const persistArmedContinuation = React.useCallback((next: ArmedAgentContinuation | null) => {
-        setArmed(next);
-        if (draftSessionId === null) return;
+        if (draftSessionId === null) {
+            setArmed(next);
+            return;
+        }
         if (next === null) {
+            const persisted = readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+            if (persisted?.submission !== undefined) {
+                setArmed(null);
+                return;
+            }
+            setArmed(null);
             clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
         } else {
+            setArmed(next);
             writeSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID, next);
         }
         flushSessionDraftValues(accountScope);
@@ -278,30 +437,43 @@ export function useInSessionAgentPickerControls(
     // with the choice carried across it by the draft. Demanding the gesture again
     // would leave the composer promising "Continue with {Agent}" while the rail it
     // depends on is still undecided, so the persisted arm is its own intent signal.
-    const hasPersistedArmedContinuation = React.useMemo(() => (
-        draftSessionId !== null
-        && typeof readSessionDraftValue(
-            accountScope,
-            draftSessionId,
-            ARMED_AGENT_CONTINUATION_FIELD_ID,
-        ) !== 'undefined'
-    ), [accountScope, draftSessionId]);
+    const hasPersistedArmedContinuation = persistedArmedContinuation !== undefined;
 
     const targetEntries = React.useMemo(() => entries.filter((entry) => (
         entry.backendTargetKey !== source.currentBackendTargetKey
     )), [entries, source.currentBackendTargetKey]);
 
+    // This is the existing picker/authoring selection owner. A restored arm
+    // projects into it so the detail pane continues to show the exact model,
+    // provider, mode and config choice the draft will send.
+    const [selectionByTargetKey, setSelectionByTargetKey] = React.useState<
+        ReadonlyMap<string, SessionAgentPickerSelection>
+    >(() => new Map());
+    const readTargetSelection = React.useCallback(
+        (backendTargetKey: string): SessionAgentPickerSelection => (
+            selectionByTargetKey.get(backendTargetKey) ?? DEFAULT_TARGET_SELECTION
+        ),
+        [selectionByTargetKey],
+    );
+    const targetSelectionByTargetKey = React.useMemo(() => new Map(
+        targetEntries.map((entry) => [
+            entry.backendTargetKey,
+            buildTargetSelection(entry, readTargetSelection(entry.backendTargetKey)),
+        ] as const),
+    ), [readTargetSelection, targetEntries]);
+
     // A Session that cannot continue with any Agent asks its machine nothing, and
     // everything else the local rules already reject — a target that cannot host a
     // Session, an unproven ACP target — is decided here for free.
     const sessionReason = resolveSessionAgentContinuationSessionReason(source);
-    const inspectableTargetAgentIds = React.useMemo(() => (
+    const inspectableTargetSelections = React.useMemo(() => (
         sessionReason === null && featureEnabled
             ? targetEntries
                 .filter((entry) => entry.kind === 'builtInAgent' && entry.capabilities?.session?.supported !== false)
-                .map((entry) => entry.agentId)
+                .map((entry) => targetSelectionByTargetKey.get(entry.backendTargetKey))
+                .filter((selection): selection is SessionAgentTransitionSelectionV1 => selection !== undefined)
             : []
-    ), [featureEnabled, sessionReason, targetEntries]);
+    ), [featureEnabled, sessionReason, targetEntries, targetSelectionByTargetKey]);
 
     // The rail decision has to be settled BEFORE the popover paints, or the
     // popover opens at one width and then grows by the width of the rail. That is
@@ -312,7 +484,7 @@ export function useInSessionAgentPickerControls(
     // wins is a coin flip, and the reader sees the loser. The question is
     // therefore asked as soon as the rail is a live possibility for this Session.
     //
-    // It is still not asked for every Session. `inspectableTargetAgentIds` is
+    // It is still not asked for every Session. `inspectableTargetSelections` is
     // already empty for a closed gate, a read-only or external Session and one
     // with no other Agent; the inspection hook itself never calls a machine it
     // knows is offline; and one answer serves the whole realtime connection.
@@ -320,14 +492,14 @@ export function useInSessionAgentPickerControls(
         sessionId,
         machine: params.machine,
         machinePresence: source.machinePresence,
-        targetAgentIds: inspectableTargetAgentIds,
+        targetSelections: inspectableTargetSelections,
         // Asked on APPROACH where a pointer can announce one. A mouse has to travel
         // over the Agent chip to click it and a keyboard has to focus it, which is a
         // real head start; where the primary pointer can give none — a finger —
         // the question falls back to being asked as soon as the rail is a live
         // possibility, because a rail arriving after the popover has painted is a
         // worse outcome than an early ask.
-        demanded: inspectableTargetAgentIds.length > 0
+        demanded: inspectableTargetSelections.length > 0
             && (pickerApproached || hasPersistedArmedContinuation || !pointerCanSignalIntent),
     });
     const readInspection = inspections.read;
@@ -338,10 +510,11 @@ export function useInSessionAgentPickerControls(
             eligibility: resolveSessionAgentContinuationEligibility({
                 entry,
                 source,
-                inspection: readInspection(entry.agentId),
+                inspection: readInspection(targetSelectionByTargetKey.get(entry.backendTargetKey)
+                    ?? buildTargetSelection(entry, DEFAULT_TARGET_SELECTION)),
             }),
         }))
-    ), [readInspection, source, targetEntries]);
+    ), [readInspection, source, targetEntries, targetSelectionByTargetKey]);
 
     // The rail exists to offer a choice, and a question still in flight is not a
     // choice. Only a target the machine has actually cleared sustains the rail:
@@ -377,36 +550,41 @@ export function useInSessionAgentPickerControls(
     // steady answer, and a rail frozen on the optimistic pending value would be a
     // list of dead rows, which is worse still.
     //
-    // So the decision moves in one direction per open. It starts at "no rail",
-    // becomes "rail" the moment one target is proven switchable, and settles at
-    // "no rail" once every target has answered and none was. Whichever it reaches
-    // first is what that popover keeps until it closes.
+    // The first visible render decides the whole open. A cached positive answer
+    // therefore opens with the rail, while an unresolved answer opens without it
+    // and cannot inject a new column after the reader has started navigating.
     //
     // While the picker is closed the live value is used directly: nothing is on
     // screen to disturb, and the next open must start from the truth.
     const railLatchRef = React.useRef<Readonly<{ open: boolean; decided: boolean | null }>>(
         { open: false, decided: null },
     );
-    if (railLatchRef.current.open !== pickerVisible) {
-        railLatchRef.current = { open: pickerVisible, decided: null };
-    }
-    if (pickerVisible && railLatchRef.current.decided === null) {
-        if (railOffersRowsNow) {
-            railLatchRef.current = { open: true, decided: true };
-        } else if (railDecisionSettled) {
-            railLatchRef.current = { open: true, decided: false };
-        }
-    }
     const railOffersRows = pickerVisible
         ? railLatchRef.current.decided === true
         : railOffersRowsNow;
+    const onAgentPickerVisibilityChange = React.useCallback((visible: boolean) => {
+        // The visibility event, rather than a later render, defines a popover's
+        // semantic start. A close and reopen batched by React must therefore
+        // take a fresh snapshot instead of carrying the prior open's geometry.
+        if (railLatchRef.current.open !== visible) {
+            railLatchRef.current = {
+                open: visible,
+                decided: visible ? railOffersRowsNow : null,
+            };
+        }
+        setPickerVisible(visible);
+    }, [railOffersRowsNow]);
 
     // UI rail visibility and arm validity deliberately diverge during a fresh
     // inspection. A changed runtime pair turns every cached answer into
     // `checking`; that is not proof an existing choice is stale. Preserve an arm
     // until the replacement inspection settles, then keep it only when the rail
     // can still offer its cancellation gesture.
-    const armMayRemain = !railDecisionSettled || railOffersRowsNow;
+    // An unresolved feature decision fails closed for presentation, but it is
+    // not evidence that an existing persisted choice is stale. Only the
+    // canonical decision's definite disabled state clears it.
+    const armMayRemain = !featureDefinitelyDisabled
+        && (!featureEnabled || !railDecisionSettled || railOffersRows);
 
     // An armed choice belongs to one Session, one running Agent, one open feature
     // gate, and one settled rail decision. If any established fact changes
@@ -423,22 +601,40 @@ export function useInSessionAgentPickerControls(
     // into a transition the machine now refuses, and a refusal deliberately KEEPS
     // the arm, so not even sending clears it. Leaving the Session was the only
     // escape.
-    const armScopeKey = `${featureEnabled ? 'on' : 'off'}:${armMayRemain ? 'rail' : 'norail'}:${sessionId}\u0000${source.currentBackendTargetKey ?? ''}`;
-    const armScopeKeyRef = React.useRef(armScopeKey);
+    const armScopeKey = `${accountScopeKey}\u0000${featureDefinitelyDisabled ? 'disabled' : 'not-disabled'}:${armMayRemain ? 'rail' : 'norail'}:${sessionId}\u0000${source.currentBackendTargetKey ?? ''}`;
+    const armScopeRef = React.useRef({ key: armScopeKey, accountScope });
     // A render may not write to storage, so the invalidation records the fact and
-    // the reconciler below takes the persisted half away with the live one.
-    const invalidatedArmRef = React.useRef(false);
-    if (armScopeKeyRef.current !== armScopeKey) {
-        armScopeKeyRef.current = armScopeKey;
+    // the reconciler below compare-clears the old scope's persisted half with
+    // the live one. It must never write into the newly active Account scope.
+    const invalidatedArmRef = React.useRef<Readonly<{
+        accountScope: ServerAccountScope | null;
+        arm: ArmedAgentContinuation;
+    }> | null>(null);
+    if (armScopeRef.current.key !== armScopeKey) {
+        const previousScope = armScopeRef.current;
+        armScopeRef.current = { key: armScopeKey, accountScope };
         if (armed !== null) {
             setArmed(null);
-            invalidatedArmRef.current = true;
+            invalidatedArmRef.current = { accountScope: previousScope.accountScope, arm: armed };
         }
     }
 
     const clearArmedContinuation = React.useCallback(() => {
         persistArmedContinuation(null);
     }, [persistArmedContinuation]);
+
+    const clearArmedContinuationSubmissionIfCurrent = React.useCallback((
+        expected: SessionArmedAgentContinuationSubmission,
+    ): boolean => {
+        if (draftSessionId === null) {
+            return isSameArmedContinuationSubmission(armed?.submission, expected);
+        }
+        const persisted = readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+        if (!isSameArmedContinuationSubmission(persisted?.submission, expected)) return false;
+        clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+        flushSessionDraftValues(accountScope);
+        return true;
+    }, [accountScope, armed?.submission, draftSessionId]);
 
     // The submission identity for the armed choice, derived from the choice
     // itself rather than minted at whichever affordance established it.
@@ -450,11 +646,9 @@ export function useInSessionAgentPickerControls(
     // copy, and replaced the moment the reader picks a different Agent, model,
     // mode or configuration, because that is a different switch.
     //
-    // It identifies the TRANSITION, not the draft, so an edited draft retried
-    // under the same arm deliberately keeps it: the daemon correlates a repeated
-    // invocation against the divider derived from this value, and the canonical
-    // admission owner — not this identity — is what refuses a reused identity
-    // whose content differs.
+    // It identifies the transition. An edited composer keeps this localId, but
+    // its first exact wire input is retained inside the arm and reused on retry;
+    // localId alone is not a differing-content guard at the server boundary.
     const armedIdentityKey = armed === null ? null : buildArmedContinuationIdentityKey(armScopeKey, armed);
     const armedLocalIdRef = React.useRef<Readonly<{ key: string; localId: string }> | null>(null);
     if (armedIdentityKey === null) {
@@ -463,6 +657,21 @@ export function useInSessionAgentPickerControls(
         armedLocalIdRef.current = { key: armedIdentityKey, localId: randomUUID() };
     }
     const armedContinuationLocalId = armedLocalIdRef.current?.localId ?? null;
+
+    const recordArmedContinuationSubmission = React.useCallback((submission: SessionArmedAgentContinuationSubmission): boolean => {
+        if (!featureEnabled || armed === null) return false;
+        if (armedLocalIdRef.current?.localId !== submission.localId) return false;
+        // A localId identifies one logical transition. If an indeterminate call
+        // is retried after the composer changes, preserve the FIRST exact
+        // snapshot: a later retry dispatches that first input, and replacing its
+        // currentness fence would clear the newer draft for the wrong message.
+        if (armed.submission !== undefined) return true;
+        persistArmedContinuation({
+            ...armed,
+            submission,
+        });
+        return true;
+    }, [armed, featureEnabled, persistArmedContinuation]);
 
     // Restoring an arm is not rehydrating it. An armed choice is only meaningful
     // in the context it was made in, and persistence must not defeat the scope
@@ -476,29 +685,61 @@ export function useInSessionAgentPickerControls(
     // answered, "not eligible" only means "not answered yet", and clearing on that
     // would throw away a good arm every time the reader returns to the Session.
     //
-    // A closed gate is deliberately NOT treated as proof of staleness. The feature
-    // decision fails closed, so an unresolved one looks exactly like a disabled
-    // one; the arm is simply not restored, and it is re-validated properly on the
-    // next visit where the gate is genuinely open.
     const reconciledArmScopeKeyRef = React.useRef<string | null>(null);
     React.useEffect(() => {
         if (draftSessionId === null) return;
 
-        if (invalidatedArmRef.current) {
-            invalidatedArmRef.current = false;
+        const invalidation = invalidatedArmRef.current;
+        if (invalidation !== null) {
+            invalidatedArmRef.current = null;
             reconciledArmScopeKeyRef.current = armScopeKey;
-            clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
-            flushSessionDraftValues(accountScope);
+            const persisted = readSessionDraftValue(
+                invalidation.accountScope,
+                draftSessionId,
+                ARMED_AGENT_CONTINUATION_FIELD_ID,
+            );
+            if (isSameArmedContinuation(persisted, invalidation.arm) && persisted?.submission === undefined) {
+                clearSessionDraftValue(
+                    invalidation.accountScope,
+                    draftSessionId,
+                    ARMED_AGENT_CONTINUATION_FIELD_ID,
+                );
+                flushSessionDraftValues(invalidation.accountScope);
+            }
+            return;
+        }
+
+        if (featureDefinitelyDisabled) {
+            reconciledArmScopeKeyRef.current = armScopeKey;
+            const persisted = readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+            if (persisted?.submission === undefined && typeof persisted !== 'undefined') {
+                clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+                flushSessionDraftValues(accountScope);
+            }
             return;
         }
 
         if (reconciledArmScopeKeyRef.current === armScopeKey) return;
         if (!featureEnabled || !railDecisionSettled || currentAgentId === null) return;
-        reconciledArmScopeKeyRef.current = armScopeKey;
         if (armed !== null) return;
 
         const persisted = readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
         if (typeof persisted === 'undefined') return;
+
+        const persistedTargetSelection = projectPersistedArmSelection(persisted);
+        const inspectedSelection = targetSelectionByTargetKey.get(persisted.backendTargetKey);
+        const entryForPersistedArm = targetEntries.find((entry) => entry.backendTargetKey === persisted.backendTargetKey);
+        if (
+            entryForPersistedArm !== undefined
+            && JSON.stringify(inspectedSelection) !== JSON.stringify(buildTargetSelection(entryForPersistedArm, persistedTargetSelection))
+        ) {
+            setSelectionByTargetKey((current) => {
+                const next = new Map(current);
+                next.set(persisted.backendTargetKey, persistedTargetSelection);
+                return next;
+            });
+            return;
+        }
 
         const row = targetRows.find(({ entry }) => entry.backendTargetKey === persisted.backendTargetKey);
         const stillHonourable = row !== undefined
@@ -506,33 +747,21 @@ export function useInSessionAgentPickerControls(
             && row.entry.agentId === persisted.intent.selection.agentId
             && persisted.intent.sourceAgentId === currentAgentId;
         if (stillHonourable) {
-            // A restored arm is not automatically a fresh attempt. If this
-            // Session already submitted THIS switch and its effect is still
-            // unestablished, the submission identity is retained with it: the
-            // daemon dedupes a repeat against the divider derived from that
-            // value, so re-minting here is what turned a retry into a second
-            // message and a second divider for a switch that may already have
-            // happened. A reader who re-armed elsewhere gets a fresh identity,
-            // because that is a different switch.
-            const submission = readSessionDraftValue(
-                accountScope,
-                draftSessionId,
-                ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID,
-            );
-            if (
-                typeof submission !== 'undefined'
-                && JSON.stringify(submission.intent) === JSON.stringify(persisted.intent)
-            ) {
+            if (persisted.submission) {
                 armedLocalIdRef.current = {
                     key: buildArmedContinuationIdentityKey(armScopeKey, persisted),
-                    localId: submission.localId,
+                    localId: persisted.submission.localId,
                 };
             }
+            reconciledArmScopeKeyRef.current = armScopeKey;
             setArmed(persisted);
             return;
         }
-        clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
-        flushSessionDraftValues(accountScope);
+        reconciledArmScopeKeyRef.current = armScopeKey;
+        if (persisted.submission === undefined) {
+            clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+            flushSessionDraftValues(accountScope);
+        }
     }, [
         accountScope,
         armScopeKey,
@@ -540,27 +769,78 @@ export function useInSessionAgentPickerControls(
         currentAgentId,
         draftSessionId,
         featureEnabled,
+        featureDefinitelyDisabled,
         railDecisionSettled,
+        targetEntries,
         targetRows,
+        targetSelectionByTargetKey,
     ]);
 
-    const armedTargetKey = armed?.backendTargetKey ?? null;
+    const armedTargetKey = featureEnabled ? armed?.backendTargetKey ?? null : null;
 
-    // Each target row keeps its own model/mode/config choice while the picker is
-    // open, so walking between Agents does not silently carry one Agent's model on
-    // to another. Nothing here is applied until the row's explicit apply.
-    const [selectionByTargetKey, setSelectionByTargetKey] = React.useState<
-        ReadonlyMap<string, SessionAgentPickerSelection>
-    >(() => new Map());
-    const readTargetSelection = React.useCallback(
-        (backendTargetKey: string): SessionAgentPickerSelection => (
-            selectionByTargetKey.get(backendTargetKey) ?? DEFAULT_TARGET_SELECTION
-        ),
-        [selectionByTargetKey],
-    );
+    // A target detail choice may change model, provider connection, mode or
+    // configuration. It is not armable until the inspection has answered for
+    // that exact full selection; the existing picker selection remains the
+    // authority while this tiny pending reference waits for that answer.
+    const pendingArmRef = React.useRef<Readonly<{
+        backendTargetKey: string;
+        sourceAgentId: string;
+        selection: SessionAgentPickerSelection;
+    }> | null>(null);
+
+    const armExactSelection = React.useCallback((
+        entry: ResolvedBackendCatalogEntry,
+        sourceAgentId: string,
+        selection: SessionAgentPickerSelection,
+    ) => {
+        const eligibility = resolveSessionAgentContinuationEligibility({
+            entry,
+            source,
+            inspection: readInspection(buildTargetSelection(entry, selection)),
+        });
+        if (eligibility.status === 'eligible') {
+            pendingArmRef.current = null;
+            persistArmedContinuation(buildArmedContinuation(entry, sourceAgentId, selection));
+            return;
+        }
+        // Changing a selected target's configuration invalidates the former
+        // exact choice. Hold no arm while the new complete selection is being
+        // inspected; an answered refusal simply leaves it clear.
+        persistArmedContinuation(null);
+        pendingArmRef.current = eligibility.status === 'checking'
+            ? { backendTargetKey: entry.backendTargetKey, sourceAgentId, selection }
+            : null;
+    }, [persistArmedContinuation, readInspection, source]);
+
+    React.useEffect(() => {
+        const pending = pendingArmRef.current;
+        if (pending === null) return;
+        if (!featureEnabled || currentAgentId !== pending.sourceAgentId) {
+            pendingArmRef.current = null;
+            return;
+        }
+        const entry = targetEntries.find((candidate) => candidate.backendTargetKey === pending.backendTargetKey);
+        if (!entry || JSON.stringify(readTargetSelection(entry.backendTargetKey)) !== JSON.stringify(pending.selection)) {
+            pendingArmRef.current = null;
+            return;
+        }
+        const eligibility = resolveSessionAgentContinuationEligibility({
+            entry,
+            source,
+            inspection: readInspection(buildTargetSelection(entry, pending.selection)),
+        });
+        if (eligibility.status === 'checking') return;
+        pendingArmRef.current = null;
+        if (eligibility.status === 'eligible') {
+            persistArmedContinuation(buildArmedContinuation(entry, pending.sourceAgentId, pending.selection));
+        }
+    }, [currentAgentId, featureEnabled, persistArmedContinuation, readInspection, readTargetSelection, source, targetEntries]);
 
     const targetOptions = React.useMemo(() => {
-        if (!railOffersRows) return [];
+        // A retained submitted snapshot is already in custody reconciliation. It
+        // is not a next-message arm, and offering another one before the existing
+        // localId is spent could overwrite the only retry identity.
+        if (!featureEnabled || !railOffersRows || retainedSubmissionArm !== null) return [];
         // A continuation intent has to name the Agent it leaves. The rail decision
         // already proves one exists, but it is latched through a ref now, so the
         // proof is re-established here as a value the nested callbacks can carry.
@@ -617,44 +897,6 @@ export function useInSessionAgentPickerControls(
                 // selection, and a picker that alone demanded a second tap both broke
                 // that consistency and hid its own primary action below the fold.
                 // Nothing is sent either way — the choice arms the next message.
-                const armWithSelection = (selection: SessionAgentPickerSelection) => {
-                    persistArmedContinuation({
-                        backendTargetKey: entry.backendTargetKey,
-                        // `default` is the absence of a model choice, so there is no
-                        // model to name and the composer's chip names the Agent instead.
-                        modelLabel: selection.modelId !== 'default'
-                            ? selection.modelLabel ?? null
-                            : null,
-                        intent: {
-                            v: 1,
-                            mode: 'same_session',
-                            sourceAgentId,
-                            selection: {
-                                v: 1,
-                                agentId: entry.agentId,
-                                // `default` means "use the Agent's own settings", which
-                                // is the absence of a choice, not a model named default.
-                                ...(selection.modelId !== 'default' ? { modelId: selection.modelId } : {}),
-                                ...(selection.modelSelection?.ref.providerConnectionId
-                                    ? { providerConnectionId: selection.modelSelection.ref.providerConnectionId }
-                                    : {}),
-                                ...(selection.sessionModeId !== null
-                                    ? { acpSessionModeId: selection.sessionModeId }
-                                    : {}),
-                                // The wire carries a timestamped override envelope,
-                                // not a flat map; its canonical builder owns that
-                                // shape and its clock.
-                                ...(() => {
-                                    const overrides = buildAcpConfigOptionOverridesV1FromConfigOptions({
-                                        configOptions: selection.configOverrides,
-                                    });
-                                    return overrides ? { sessionConfigOptionOverrides: overrides } : {};
-                                })(),
-                            },
-                        },
-                    });
-                };
-
                 return {
                     detailTitle: t('session.agentContinuation.detailTitle', { agent: entry.title }),
                     // This Agent's own models, thinking tiers and configuration, from
@@ -688,13 +930,13 @@ export function useInSessionAgentPickerControls(
                             // picker, and re-speaking on each model tap would nag. The
                             // submission identity is derived from the intent, so it
                             // re-mints itself for what is genuinely a different switch.
-                            armWithSelection(next);
+                            armExactSelection(entry, sourceAgentId, next);
                         },
                     }),
                     // Fired on deliberate activation of the row — tap, click, Enter or
                     // Space — never on hover or pointer travel.
                     onSelectImmediate: () => {
-                        armWithSelection(readTargetSelection(entry.backendTargetKey));
+                        armExactSelection(entry, sourceAgentId, readTargetSelection(entry.backendTargetKey));
                         // The one thing a vanished confirm step would otherwise cost a
                         // screen-reader user: what just changed, and that nothing was sent.
                         announceAccessibilityMessage(
@@ -710,11 +952,13 @@ export function useInSessionAgentPickerControls(
     }, [
         armedTargetKey,
         currentAgentId,
+        featureEnabled,
         params.detail,
         params.favoriteBackendTargetKeys,
-        persistArmedContinuation,
+        armExactSelection,
         railOffersRows,
         readTargetSelection,
+        retainedSubmissionArm,
         targetEntries,
         targetRows,
     ]);
@@ -782,11 +1026,15 @@ export function useInSessionAgentPickerControls(
     return {
         composeAgentPickerOptions,
         agentPickerSelectedOptionId,
-        armedContinuation: armed?.intent ?? null,
-        armedContinuationLocalId,
-        armedContinuationModelLabel: armed?.modelLabel ?? null,
+        armedContinuation: featureEnabled ? armed?.intent ?? null : null,
+        armedContinuationLocalId: featureEnabled ? armedContinuationLocalId : null,
+        armedContinuationModelLabel: featureEnabled ? armed?.modelLabel ?? null : null,
+        armedContinuationSubmission: submissionArm?.submission ?? null,
+        armedContinuationSubmissionIntent: submissionArm?.intent ?? null,
         clearArmedContinuation,
+        clearArmedContinuationSubmissionIfCurrent,
+        recordArmedContinuationSubmission,
         onAgentPickerIntent: signalAgentPickerIntent,
-        onAgentPickerVisibilityChange: setPickerVisible,
+        onAgentPickerVisibilityChange,
     };
 }

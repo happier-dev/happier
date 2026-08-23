@@ -1051,7 +1051,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
     expect(runtime.adapter.resolveSurfaceCapabilities?.({})).not.toHaveProperty('agentRuntime');
     await runtime.adapter.start({ sessionId: 'session-1' });
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ controlSessionId: 'session-1' }));
-    expect(host.voiceHooks.onStarted).toHaveBeenCalledWith('session-1');
+    expect(host.voiceHooks.onStarted).toHaveBeenCalledWith('session-1', 'session_context');
     expect(onConnected).toHaveBeenCalledWith('session-1');
     expect(openLevelWriter).toHaveBeenCalledWith({ channel: 'input', sourceId: 'realtime_example:session-1' });
     expect(openLevelWriter).not.toHaveBeenCalledWith({ channel: 'output', sourceId: expect.any(String) });

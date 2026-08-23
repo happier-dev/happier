@@ -454,6 +454,59 @@ describe('ChainTranscriptList', () => {
         expect(screen.root.findAllByProps({ testID: 'transcript-older-load-progress-overlay' }).length).toBe(0);
     });
 
+    it('offers a retry at the older edge when the page read fails, and re-reads on press', async () => {
+        // A FAILED older read used to be indistinguishable from a loaded empty page, so the
+        // reader was left parked at the edge with no failure shown and nothing to press.
+        const { ChainTranscriptList } = await import('./ChainTranscriptList');
+        const deferred = createDeferred<ChainTranscriptLoadResult>();
+        const loadOlder = vi.fn(async () => await deferred.promise);
+
+        const screen = await renderScreen(
+            React.createElement(ChainTranscriptList, {
+                sessionId: 's1',
+                datasetKey: JSON.stringify(['s1', 'retry-sidechain']),
+                messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+                metadata: null,
+                interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+                loadOlder,
+            }),
+        );
+
+        const list = getLegendList(screen);
+        await act(async () => {
+            fireShellLayout(screen, 500);
+            setShellContentHeight(list, 1000);
+            list.props.onScroll({
+                nativeEvent: {
+                    contentOffset: { y: 120 },
+                    contentSize: { height: 1000 },
+                    layoutMeasurement: { height: 500 },
+                },
+            });
+            await settleListEffects();
+        });
+        expect(loadOlder).toHaveBeenCalledTimes(1);
+        expect(screen.root.findAllByProps({ testID: 'transcript-older-load-retry-overlay' }).length).toBe(0);
+
+        await act(async () => {
+            deferred.resolve({ loaded: 0, hasMore: true, status: 'retryable_error' });
+            await settleListEffects();
+        });
+
+        expect(screen.root.findAllByProps({ testID: 'transcript-older-load-progress-overlay' }).length).toBe(0);
+        const retryOverlays = screen.root.findAllByProps({ testID: 'transcript-older-load-retry-overlay' });
+        expect(retryOverlays.length).toBeGreaterThan(0);
+
+        const retryAction = screen.root.findAllByProps({ testID: 'transcript.olderLoad.failed.retry' })
+            .find((node) => typeof node.props?.onPress === 'function');
+        expect(retryAction).toBeDefined();
+        await act(async () => {
+            retryAction!.props.onPress();
+            await settleListEffects();
+        });
+        expect(loadOlder).toHaveBeenCalledTimes(2);
+    });
+
     it('loads older when scrolled near the top (even if onStartReached is not fired)', async () => {
                 const { ChainTranscriptList } = await import('./ChainTranscriptList');
         const deferred = createDeferred<{ loaded: number; hasMore: boolean; status: 'loaded' }>();

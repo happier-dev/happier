@@ -146,6 +146,9 @@ async function transcribeWithRegisteredSpeechProvider(input: Readonly<{
       uri: input.params.uri,
       providerConfig,
       fallbackLanguage: resolveRecordedAudioLanguage({ explicitLanguage: null, settings: input.params.settings }),
+      // The attempt already captured its daemon; the registered speech upload
+      // must land on that same machine, exactly like the local-neural path.
+      originMachineId: input.params.executionMachineId ?? null,
       signal: input.params.signal,
     });
   } catch (error) {

@@ -472,6 +472,17 @@ export function createBundledRealtimeProviderRuntime(
           mic.setMuted(false);
           host.machine.transitionToAcquiringMic(input.controlSessionId, providerId, input.attemptId);
           try {
+            // Prompt, lease, THEN capture. The platform audio session is chosen
+            // when the capture track is created — Android reads
+            // `AudioManager.mode`, the communication route and AEC availability
+            // at that moment — so opening the WebRTC track before the canonical
+            // lease is held leaves the whole call on the media route without
+            // echo cancellation. Permission prompting is deliberately split out
+            // so an unanswered prompt does not hold the exclusive lease.
+            await mic.ensurePermission?.();
+            abortIfRequested(input.signal);
+            attempt.audioModeLease = await host.acquireAudioMode(providerId);
+            abortIfRequested(input.signal);
             await mic.ensureActive();
           } catch (error) {
             if (isPermissionDeniedMicrophoneError(error)) {
@@ -513,7 +524,8 @@ export function createBundledRealtimeProviderRuntime(
         // Native host-PCM capture acquires the existing coordinator lease at
         // its stream owner. Taking the provider-managed exclusive lease here
         // would create a competing capture authority before PCM starts.
-        if (!usesHostPcmCapture || host.getPlatform() === 'web') {
+        // `host_webrtc` already took the lease above, ahead of its capture track.
+        if (!usesHostWebRtcMic && (!usesHostPcmCapture || host.getPlatform() === 'web')) {
           attempt.audioModeLease = await host.acquireAudioMode(providerId);
         }
         abortIfRequested(input.signal);

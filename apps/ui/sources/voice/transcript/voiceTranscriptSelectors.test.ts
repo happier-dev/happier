@@ -14,6 +14,17 @@ function buildUserMessage(seq: number) {
     };
 }
 
+function buildCountingUserMessage(seq: number, reads: { count: number }) {
+    const message = buildUserMessage(seq);
+    return {
+        ...message,
+        get content() {
+            reads.count += 1;
+            return { type: 'text', text: `msg-${seq}` };
+        },
+    };
+}
+
 describe('voiceTranscriptSelectors', () => {
     it('uses the canonical local id when a persisted acknowledgement also has a server id', () => {
         const entries = selectVoiceTranscriptEntriesForConversationSession({
@@ -123,6 +134,80 @@ describe('voiceTranscriptSelectors', () => {
         const thirdA = selectVoiceTranscriptEntriesForConversationSession(changedState, 'A');
         expect(thirdA).not.toBe(firstA);
         expect(thirdA).toHaveLength(3);
+    });
+
+    it('projects only the rendered window, not every message it then discards', () => {
+        // Real measurement, not arithmetic: each message counts the reads of its
+        // own `content`, which is the field text extraction has to touch. A long
+        // conversation re-projects on every append, so paying that per-message
+        // cost for every message outside the window is the whole defect.
+        const total = VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW * 5;
+        const reads = { count: 0 };
+        const messages = Array.from({ length: total }, (_unused, index) =>
+            buildCountingUserMessage(index + 1, reads));
+
+        const entries = selectVoiceTranscriptEntriesForConversationSession(
+            { sessionMessages: { 'carrier-s1': { messages } } },
+            'carrier-s1',
+        );
+
+        // Same answer as an unbounded projection would give.
+        expect(entries).toHaveLength(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW);
+        expect(entries[0]?.id).toBe(`m-${total - VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 1}`);
+        expect(entries[entries.length - 1]?.id).toBe(`m-${total}`);
+        // …reached without extracting the 800 messages outside the window.
+        expect(reads.count).toBe(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW);
+    });
+
+    it('keeps the exact newest window for legacy input the store never ordered', () => {
+        // Older persisted slices are not guaranteed to be in projection order, so
+        // the bounded walk still has to establish the order before taking a tail.
+        const total = VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 40;
+        const ascending = Array.from({ length: total }, (_unused, index) => buildUserMessage(index + 1));
+        const shuffled = [...ascending];
+        for (let index = 0; index < shuffled.length; index += 1) {
+            const swapWith = (index * 7 + 3) % shuffled.length;
+            const held = shuffled[index]!;
+            shuffled[index] = shuffled[swapWith]!;
+            shuffled[swapWith] = held;
+        }
+        expect(shuffled.map((message) => message.createdAt)).not.toEqual(
+            ascending.map((message) => message.createdAt),
+        );
+
+        const entries = selectVoiceTranscriptEntriesForConversationSession(
+            { sessionMessages: { 'carrier-unordered': { messages: shuffled } } },
+            'carrier-unordered',
+        );
+
+        expect(entries.map((entry) => entry.id)).toEqual(
+            ascending
+                .slice(total - VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW)
+                .map((message) => message.id),
+        );
+    });
+
+    it('keeps a text-free message from shrinking the rendered window', () => {
+        // The window counts projected entries, not stored messages: a message with
+        // no renderable text is skipped and the walk reaches one further back.
+        const total = VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 10;
+        const messages = Array.from({ length: total }, (_unused, index) => {
+            const message = buildUserMessage(index + 1);
+            // Two blanks inside the window, one outside it.
+            return index === total - 3 || index === total - 8 || index === 2
+                ? { ...message, content: { type: 'text', text: '   ' } }
+                : message;
+        });
+
+        const entries = selectVoiceTranscriptEntriesForConversationSession(
+            { sessionMessages: { 'carrier-blanks': { messages } } },
+            'carrier-blanks',
+        );
+
+        expect(entries).toHaveLength(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW);
+        expect(entries.some((entry) => entry.id === `m-${total - 2}`)).toBe(false);
+        expect(entries.some((entry) => entry.id === `m-${total - 7}`)).toBe(false);
+        expect(entries[entries.length - 1]?.id).toBe(`m-${total}`);
     });
 
     it('bounds the per-conversation memo cache under churn (LRU eviction)', () => {

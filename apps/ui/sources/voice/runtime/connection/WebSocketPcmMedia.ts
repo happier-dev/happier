@@ -228,12 +228,34 @@ export function createWebSocketPcmMedia(input: Readonly<{
   let stopped = false;
   let stopPromise: Promise<void> | null = null;
   let latestInputLevel = 0;
+  let terminalError: Error | null = null;
+  const terminalListeners = new Set<(error: Error) => void>();
   const publishOutputLevel = (level: number): void => {
     try {
       input.onOutputLevel?.(Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0)));
     } catch {
       // Meter observers are diagnostics/UI only and cannot retain media.
     }
+  };
+
+  /**
+   * The browser sibling of the native PCM terminal contract. A capture fault
+   * stops both media halves, so the connection must learn the session is dead:
+   * without this the transport stays nominally open while the microphone and
+   * the assistant's voice are both gone. The failure is latched so a subscriber
+   * attached after the fault is told immediately rather than waiting forever.
+   */
+  const failTerminal = (error: Error): void => {
+    if (terminalError || stopped) return;
+    terminalError = error;
+    for (const listener of terminalListeners) {
+      try {
+        listener(error);
+      } catch {
+        // One observer cannot prevent connection teardown or other observers.
+      }
+    }
+    void stopMedia();
   };
 
   const stopMedia = async (): Promise<void> => {
@@ -266,6 +288,7 @@ export function createWebSocketPcmMedia(input: Readonly<{
       const context = input.mic.getAudioContext?.() ?? null;
       if (!context) throw Object.assign(new Error('pcm_media_unavailable'), { code: 'pcm_media_unavailable' });
       stopped = false;
+      terminalError = null;
       playback = createOutputScheduler({ context, ...input.output });
       capture = createCapture({
         mic: {
@@ -284,7 +307,7 @@ export function createWebSocketPcmMedia(input: Readonly<{
           } catch {
             // Diagnostic observers must not retain capture or playback resources.
           } finally {
-            void stopMedia();
+            failTerminal(Object.assign(new Error(error), { code: error }));
           }
         },
         onChunk({ bytes, level }) {
@@ -309,6 +332,11 @@ export function createWebSocketPcmMedia(input: Readonly<{
     },
     async stop(): Promise<void> {
       await stopMedia();
+    },
+    subscribeTerminal(listener: (error: Error) => void): Readonly<{ remove: () => void }> {
+      terminalListeners.add(listener);
+      if (terminalError) listener(terminalError);
+      return Object.freeze({ remove: () => terminalListeners.delete(listener) });
     },
     playbackCursorMs: (): number => playback?.playbackCursorMs() ?? 0,
   });

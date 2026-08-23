@@ -58,6 +58,13 @@ export type OlderPaginationState = Readonly<{
      */
     rearmEligible: boolean;
     hasMore: boolean;
+    /**
+     * The last ATTEMPTED older read failed. Rows and the older cursor are retained, so the
+     * exact same read can be retried. Distinct from `hasMore === false` (terminal) and from
+     * a zero-row success: only a failure is user-actionable, and the automatic threshold
+     * re-arm cannot be relied on because the reader may already be parked at the edge.
+     */
+    loadFailed: boolean;
     suspendedReasons: ReadonlySet<OlderPaginationSuspendReason>;
 }>;
 
@@ -84,8 +91,14 @@ export type OlderPaginationScrollObservation = Readonly<{
 export type OlderPaginationEvent =
     | (Readonly<{ type: 'scrollObserved' }> & OlderPaginationScrollObservation)
     | Readonly<{ type: 'loadStarted' }>
-    | Readonly<{ type: 'loadFinished'; loaded: number; hasMore: boolean; error?: boolean }>
+    /**
+     * `error` backs off through the cooldown for ANY non-progress outcome (unmet
+     * precondition, concurrent read, failure). `failed` is the narrower fact that the read
+     * was attempted and FAILED — the only outcome the reader can act on.
+     */
+    | Readonly<{ type: 'loadFinished'; loaded: number; hasMore: boolean; error?: boolean; failed?: boolean }>
     | Readonly<{ type: 'cooldownElapsed' }>
+    | Readonly<{ type: 'retryRequested' }>
     | Readonly<{ type: 'suspend'; reason: OlderPaginationSuspendReason }>
     | Readonly<{ type: 'resume'; reason: OlderPaginationSuspendReason }>
     | Readonly<{ type: 'reset' }>;
@@ -100,6 +113,7 @@ export function createInitialOlderPaginationState(): OlderPaginationState {
         successfulLoadAwaitingCommittedLayout: false,
         rearmEligible: true,
         hasMore: true,
+        loadFailed: false,
         suspendedReasons: EMPTY_SUSPENDED_REASONS,
     };
 }
@@ -269,6 +283,7 @@ export function reduceOlderPagination(state: OlderPaginationState, event: OlderP
                 committedExactEdgeDuringLoad: false,
                 successfulLoadAwaitingCommittedLayout: false,
                 rearmEligible: false,
+                loadFailed: false,
             };
         }
         case 'loadFinished': {
@@ -292,6 +307,7 @@ export function reduceOlderPagination(state: OlderPaginationState, event: OlderP
                 committedExactEdgeDuringLoad: successfulExactEdgeContinuation,
                 successfulLoadAwaitingCommittedLayout,
                 hasMore,
+                loadFailed: event.failed === true,
             };
         }
         case 'cooldownElapsed': {
@@ -308,6 +324,19 @@ export function reduceOlderPagination(state: OlderPaginationState, event: OlderP
                     : false,
                 successfulLoadAwaitingCommittedLayout:
                     state.successfulLoadAwaitingCommittedLayout && !rearm,
+            };
+        }
+        case 'retryRequested': {
+            // The reader asked for this exact page again. Automatic re-arm requires a
+            // threshold EXIT -> ENTER, which a reader parked at the older edge never
+            // produces, so an explicit retry arms directly. Suspensions still apply:
+            // `shouldLoadNow` remains the single gate on actually issuing the read.
+            if (!state.loadFailed || !state.hasMore) return state;
+            if (state.phase === 'loading' || state.phase === 'armed') return state;
+            return {
+                ...state,
+                phase: 'armed',
+                rearmEligible: true,
             };
         }
         case 'suspend': {

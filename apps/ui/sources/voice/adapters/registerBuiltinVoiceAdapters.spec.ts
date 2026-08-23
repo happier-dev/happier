@@ -360,6 +360,11 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
             'machines.list': {
               ...DEFAULT_ACTIONS_SETTINGS_V1.actions['machines.list'],
               enabled: false,
+              enabledPlacements: [],
+              disabledSurfaces: [],
+              disabledPlacements: [],
+              approvalRequiredSurfaces: [],
+              toolExposureModes: {},
             },
           },
         },

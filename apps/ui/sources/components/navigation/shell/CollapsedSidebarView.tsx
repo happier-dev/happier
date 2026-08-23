@@ -7,6 +7,7 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { t } from '@/text';
 import { SidebarExpandIcon } from './SidebarIcons';
+import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
 import { SidebarLogoButton } from './SidebarLogoButton';
 import {
     DESKTOP_SIDEBAR_CHROME_COLLAPSED_HORIZONTAL_PADDING_PX,
@@ -138,6 +139,7 @@ export const CollapsedSidebarView = React.memo((props: CollapsedSidebarViewProps
                     {resolvedDesktopWindowControls}
                 </DesktopShellWindowControlsHost>
                 {renderUpdateIndicatorWithFallback(props.desktopUpdateIndicator, logoButton)}
+                <ActionOperationActivityButton testID="collapsed-sidebar-action-operations" />
                 {Platform.OS === 'web' ? (
                     <Pressable
                         testID="sidebar-expand-button"

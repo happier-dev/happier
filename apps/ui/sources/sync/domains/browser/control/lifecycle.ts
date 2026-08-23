@@ -51,7 +51,26 @@ export type BrowserViewLifecycleSignal =
     | Readonly<{ kind: 'loadStarted'; url?: string | null }>
     | Readonly<{ kind: 'loadFinished'; url?: string | null }>
     | Readonly<{ kind: 'loadFailed'; errorCode: string; url?: string | null }>
-    | Readonly<{ kind: 'loadingProgress'; progress: number }>;
+    | Readonly<{ kind: 'loadingProgress'; progress: number }>
+    | Readonly<{
+        /**
+         * The engine's own authoritative navigation snapshot, including the BACK/FORWARD history
+         * flags. This is the only producer of `canGoBack`/`canGoForward` for a client-rendered
+         * engine: `viewOpened` seeds both false and nothing else writes them, so without this
+         * signal the toolbar's Back/Forward can never enable (G4).
+         *
+         * An engine emits it only where it has real history truth. React Native's `WebView` fires
+         * `onNavigationStateChange` from its load-start and load-finish paths ONLY (never from the
+         * error path), so this signal always trails the matching `loadStarted`/`loadFinished` and
+         * can never resurrect a failed load as `ready`.
+         */
+        kind: 'navigationStateChanged';
+        url?: string | null;
+        title?: string | null;
+        loading: boolean;
+        canGoBack: boolean;
+        canGoForward: boolean;
+      }>;
 
 /** A view-bound sink an engine calls to feed its load lifecycle back to the control reducer. */
 export type BrowserViewLifecycleEmitter = (signal: BrowserViewLifecycleSignal) => void;
@@ -92,5 +111,20 @@ export function browserViewLifecycleEvent(
             };
         case 'loadingProgress':
             return { ...base, kind: 'loadingProgressChanged', loadingProgress: signal.progress };
+        case 'navigationStateChanged': {
+            // While loading, the reported URL is the destination (pending); once the load settles it
+            // is the committed document. Splitting it this way keeps the address bar showing the
+            // pending target mid-navigation instead of the snapshot clearing it.
+            const url = signal.url ?? null;
+            return {
+                ...base,
+                kind: 'navigationStateChanged',
+                loadingState: signal.loading ? 'loading' : 'ready',
+                canGoBack: signal.canGoBack,
+                canGoForward: signal.canGoForward,
+                ...(url ? (signal.loading ? { pendingUrl: url } : { currentUrl: url }) : {}),
+                ...(signal.title ? { title: signal.title } : {}),
+            };
+        }
     }
 }

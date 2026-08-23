@@ -146,13 +146,17 @@ export function useNewSessionBackendTargetState(params: Readonly<{
             if (matched.catalogAgentId && isBundledAgentId(matched.catalogAgentId)) {
                 return matched.catalogAgentId;
             }
-            return null;
+            // An installed Agent with no bundled backing still has an
+            // operational runtime identity: the Agent the catalog resolved from
+            // the current projection. Discarding it is what makes model, mode
+            // and configuration probing silently disappear for that Agent.
+            return matched.agentId.trim() || null;
         }
         if (matched?.kind === 'configuredBackend') {
             return matched.catalogAgentId ?? null;
         }
         return selectedCatalogAgentId;
-    }, [backendTarget, explicitRoutePluginTarget, matched?.kind, matched?.catalogAgentId, params.projectionPhase, selectedCatalogAgentId]);
+    }, [backendTarget, explicitRoutePluginTarget, matched?.kind, matched?.agentId, matched?.catalogAgentId, params.projectionPhase, selectedCatalogAgentId]);
     React.useEffect(() => {
         const currentLastUsedBackendTargetKey = (() => {
             try {

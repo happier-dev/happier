@@ -187,6 +187,30 @@ describe('NativeMicSession', () => {
         expect(releaseStream).toHaveBeenCalledWith(acquiredStream);
     });
 
+    it('settles teardown and every pending activation when native acquisition never resolves', async () => {
+        const releaseStream = vi.fn();
+        // The native `getUserMedia` is not abortable. End Voice must still
+        // complete: teardown takes ownership of the lifecycle instead of
+        // joining an acquisition the platform may never settle.
+        const acquireStream = vi.fn(() => new Promise<MediaStream>(() => {}));
+        const session = createNativeMicSession({ acquireStream, releaseStream });
+
+        const first = session.ensureActive();
+        const second = session.ensureActive();
+        await Promise.resolve();
+        expect(acquireStream).toHaveBeenCalledTimes(1);
+
+        let activationSettled = false;
+        void Promise.all([first, second]).then(() => { activationSettled = true; });
+
+        await session.teardown();
+        for (let tick = 0; tick < 10; tick += 1) await Promise.resolve();
+
+        expect(activationSettled).toBe(true);
+        expect(session.getStream()).toBeNull();
+        expect(releaseStream).not.toHaveBeenCalled();
+    });
+
     afterEach(() => {
         (Platform as { OS: string }).OS = originalPlatformOs;
     });

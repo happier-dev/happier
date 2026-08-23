@@ -1,4 +1,4 @@
-import { isUnsafeTelemetryDataKey } from '@happier-dev/protocol';
+import { redactPeerMediationObservabilityMetadata } from '@happier-dev/protocol';
 
 import { peerMediationObservabilityFlowKey, peerMediationObservabilityScopeKey } from './keys';
 import type {
@@ -10,7 +10,12 @@ import type {
 } from './types';
 import type { PeerMediationObservabilityScopeV1 } from '@happier-dev/protocol';
 
-const HEADER_KEYS = new Set(['header', 'headers', 'requestheaders', 'responseheaders']);
+/**
+ * Relative-URL parse base for the shared redactor. The daemon binds `loopback.invalid` and the
+ * server binds `preview.invalid`; the UI only ever re-reads already-redacted producer metadata, so
+ * it binds its own base rather than pretending to be either producer.
+ */
+const UI_OBSERVABILITY_URL_BASE = 'http://observability.invalid';
 
 export function selectPeerMediationObservabilityScopeState(
     state: PeerMediationObservabilityUiStore,
@@ -34,34 +39,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function compactTelemetryKey(input: string): string {
-    return input.trim().replaceAll('_', '-').replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase().replaceAll('-', '');
-}
-
+/**
+ * Metadata redaction is owned by protocol (`metadataRedaction.ts`), which already documents this
+ * exact consolidation for the daemon/server copies. This selector used to carry a third fork with
+ * different rules: it dropped every header object outright instead of applying the shared
+ * safe-header allowlist, and it truncated nothing (DEC-8).
+ */
 function sanitizeMetadata(input: unknown): Record<string, unknown> | undefined {
     if (!isRecord(input)) return undefined;
-    const output: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(input)) {
-        const compactKey = compactTelemetryKey(key);
-        if (isUnsafeTelemetryDataKey(key) || HEADER_KEYS.has(compactKey)) {
-            continue;
-        }
-        if (isRecord(value)) {
-            const nested = sanitizeMetadata(value);
-            if (nested && Object.keys(nested).length > 0) {
-                output[key] = nested;
-            }
-            continue;
-        }
-        if (Array.isArray(value)) {
-            output[key] = value
-                .filter((item) => !isRecord(item))
-                .map((item) => item);
-            continue;
-        }
-        output[key] = value;
-    }
-    return output;
+    return {
+        ...redactPeerMediationObservabilityMetadata(input, { urlBase: UI_OBSERVABILITY_URL_BASE }),
+    };
 }
 
 function pickCounter(

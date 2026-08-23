@@ -12,10 +12,30 @@ import {
 } from '@/sync/runtime/external/externalSessionOperationPresentationIdentity';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-type HydratedProgressState = Readonly<{
-    key: string;
-    progress: ExternalSessionOperationProgressV1;
-}> | null;
+/**
+ * The SETTLED exact-owner status read for ONE operation identity.
+ *
+ * `unavailable` is a first-class outcome, not the absence of a read: a transient status
+ * read failure must stay distinguishable from "this reader is not the owner" and from
+ * "the machine is offline", because only the failure is recoverable by asking again.
+ *
+ * Only settled outcomes are recorded, so a refresh cannot blank an already-hydrated row:
+ * the reader keeps seeing the last good progress until the new read settles.
+ */
+type OwnerHydrationRead =
+    | Readonly<{
+        key: string;
+        outcome: 'ready';
+        progress: ExternalSessionOperationProgressV1;
+    }>
+    | Readonly<{ key: string; outcome: 'unavailable' }>;
+
+export type ExternalSessionOperationOwnerHydrationStatus =
+    | 'not_owner'
+    | 'offline'
+    | 'loading'
+    | 'ready'
+    | 'unavailable';
 
 function createOperationKey(params: Readonly<{
     machineId: string;
@@ -101,7 +121,14 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
         sequence: number;
     }> | null>(null);
     const mountedRef = React.useRef(true);
-    const [hydrated, setHydrated] = React.useState<HydratedProgressState>(null);
+    const [hydrated, setHydrated] = React.useState<OwnerHydrationRead | null>(null);
+    const hydratedRef = React.useRef<OwnerHydrationRead | null>(hydrated);
+    // One writer for the read outcome so the imperative mirror can never drift from state:
+    // `checkAgain` reads the mirror synchronously, before React has re-rendered.
+    const commitRead = React.useCallback((next: OwnerHydrationRead | null) => {
+        hydratedRef.current = next;
+        setHydrated(next);
+    }, []);
 
     React.useEffect(() => {
         mountedRef.current = true;
@@ -148,12 +175,13 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
                 )
             ) {
                 if (current.key === snapshot.key) {
-                    setHydrated(null);
+                    commitRead({ key: snapshot.key, outcome: 'unavailable' });
                 }
                 return;
             }
-            setHydrated({
+            commitRead({
                 key: snapshot.key,
+                outcome: 'ready',
                 progress: result.progress,
             });
         } catch {
@@ -163,10 +191,10 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
                 && latestRequestRef.current.sequence === sequence
                 && currentRef.current.key === snapshot.key
             ) {
-                setHydrated(null);
+                commitRead({ key: snapshot.key, outcome: 'unavailable' });
             }
         }
-    }, [sessionId]);
+    }, [commitRead, sessionId]);
 
     React.useEffect(() => {
         if (!authorized || !currentKey || !machineId || !presentation || !serverId) {
@@ -174,7 +202,7 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
                 key: null,
                 readEligible: false,
             };
-            setHydrated(null);
+            commitRead(null);
             return;
         }
         if (!readEligible) {
@@ -201,6 +229,7 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
         }), { tag: 'externalSessionOperation.ownerHydration' });
     }, [
         authorized,
+        commitRead,
         currentKey,
         loadCurrent,
         machineId,
@@ -220,11 +249,11 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
             || !current.presentation
             || !current.serverId
         ) {
-            setHydrated(null);
+            commitRead(null);
             return;
         }
         if (!current.readEligible) return;
-        setHydrated(null);
+        commitRead(null);
         if (!matchesExternalSessionOperationPresentation(
             progress,
             current.presentation,
@@ -235,23 +264,62 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
             presentation: current.presentation,
             serverId: current.serverId,
         }), { tag: 'externalSessionOperation.ownerActionRevalidation' });
+    }, [commitRead, loadCurrent]);
+
+    /**
+     * The exact owner's ONE manual recovery for a failed status read. It re-issues the
+     * same read against the CURRENT operation identity — never a captured stale one — and
+     * the existing request-sequence fence still discards any superseded response. It is
+     * inert unless the current read actually failed, so it cannot become a poll.
+     */
+    const checkAgain = React.useCallback(() => {
+        const current = currentRef.current;
+        if (
+            !current.authorized
+            || !current.readEligible
+            || !current.key
+            || !current.machineId
+            || !current.presentation
+            || !current.serverId
+        ) return;
+        const read = hydratedRef.current;
+        if (read?.key !== current.key || read.outcome !== 'unavailable') return;
+        fireAndForget(loadCurrent({
+            key: current.key,
+            machineId: current.machineId,
+            presentation: current.presentation,
+            serverId: current.serverId,
+        }), { tag: 'externalSessionOperation.ownerHydrationCheckAgain' });
     }, [loadCurrent]);
 
+    const currentRead = currentKey !== null && hydrated?.key === currentKey
+        ? hydrated
+        : null;
     const progress = (
         authorized
-        && currentKey !== null
-        && hydrated?.key === currentKey
+        && currentRead?.outcome === 'ready'
         && presentation
         && matchesExternalSessionOperationPresentation(
-            hydrated.progress,
+            currentRead.progress,
             presentation,
         )
     )
-        ? hydrated.progress
+        ? currentRead.progress
         : null;
+    const status: ExternalSessionOperationOwnerHydrationStatus = !authorized || !presentation
+        ? 'not_owner'
+        : !readEligible
+            ? 'offline'
+            : progress !== null
+                ? 'ready'
+                : currentRead?.outcome === 'unavailable'
+                    ? 'unavailable'
+                    : 'loading';
 
     return React.useMemo(() => ({
+        checkAgain,
         onActionResult,
         progress,
-    }), [onActionResult, progress]);
+        status,
+    }), [checkAgain, onActionResult, progress, status]);
 }

@@ -408,7 +408,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           ? { readCurrentUiContext: currentUiContextReader.readCurrentUiContext }
           : {}),
       });
-      if (outcome && !outcome.ok) {
+      if (outcome && 'ok' in outcome && !outcome.ok) {
         Modal.alert(t('common.error'), t('pluginRuntime.unavailableGeneric'));
       }
     })(), { tag: 'SessionHeaderActionMenu.execute.pluginHeaderAction' });

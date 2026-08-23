@@ -397,4 +397,53 @@ describe('unread attention placement', () => {
             attentionPlacementReason: 'ready',
         }));
     });
+
+    // Standing is the band's FLOOR and must not pre-empt retention. Retention
+    // relied on an opened row having no live reason left; the floor supplies
+    // one, so without this the kept row drops to the bottom of the band under
+    // the reader instead of holding its place until they navigate away.
+    it('holds a kept read row with the neutral reason instead of dropping it to the standing floor', () => {
+        const source = createSource(['selected-now-read']);
+        const standingPolicy = {
+            defaultStanding: false,
+            overridesBySessionKey: { 'server-a:selected-now-read': true },
+        };
+        const resolveRow = () => createRow({
+            id: 'selected-now-read',
+            latestTurnStatus: undefined,
+            latestTurnStatusObservedAt: undefined,
+            seq: 12,
+            lastViewedSessionSeq: 12,
+            hasUnreadMessages: false,
+            meaningfulActivityAt: nowMs - 5_000,
+        });
+
+        const retained = buildSessionListAttentionPlacement({
+            source,
+            options: {
+                mode: 'global',
+                standingPolicy,
+                retainSessionKeys: ['server-a:selected-now-read'],
+            },
+            nowMs,
+            resolveSessionRow: resolveRow,
+        });
+        expect(retained?.attentionItems[1]).toEqual(expect.objectContaining({
+            sessionId: 'selected-now-read',
+            attentionPlacementReason: 'ready',
+        }));
+
+        // Navigating away releases retention, and only then does the floor take
+        // over and sort the row behind every earned reason.
+        const released = buildSessionListAttentionPlacement({
+            source,
+            options: { mode: 'global', standingPolicy },
+            nowMs,
+            resolveSessionRow: resolveRow,
+        });
+        expect(released?.attentionItems[1]).toEqual(expect.objectContaining({
+            sessionId: 'selected-now-read',
+            attentionPlacementReason: 'standing',
+        }));
+    });
 });

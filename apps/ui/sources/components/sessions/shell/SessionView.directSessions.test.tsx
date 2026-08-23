@@ -3101,6 +3101,28 @@ describe('SessionView (direct sessions)', () => {
     },
   );
 
+  it('mounts the Voice surface even when the configured next-start provider is Off', async () => {
+    /*
+     * Presentation is the Voice surface's own decision (`resolveVoicePresentedProviderId`):
+     * a running attempt keeps its surface after the user selects Off, because hiding it
+     * would leave an open microphone with no control to stop it. The session host is not a
+     * second decision-maker — gating the mount on the *configured* next-start provider
+     * unmounted the surface out from under a live attempt.
+     */
+    featureEnabledState.voice = true;
+    settingsState.current = { voice: { providerId: 'off' } };
+    settingByKeyState.current = {
+      voice: { providerId: 'off' },
+      toolViewDetailLevelDefault: 'title',
+    };
+
+    await renderSessionViewAndSettle({ routeServerId: 'server-a' });
+
+    expect(voiceSurfacePropsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ variant: 'session', sessionId: 's1' }),
+    );
+  });
+
   it('passes session-scoped open approval artifacts to AgentInput', async () => {
     storageState.artifacts = {
       approval_1: {

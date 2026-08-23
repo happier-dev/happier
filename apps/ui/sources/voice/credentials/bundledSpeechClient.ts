@@ -65,9 +65,14 @@ export class BundledSpeechDaemonClient {
     fileName: string;
     model: string;
     language: string | null;
+    /** Target captured when the originating attempt started, if it had one. */
+    originMachineId?: string | null;
     signal?: AbortSignal | null;
   }>): Promise<string> {
     const target = getSpeechTarget(params.entry);
+    // Upload init, chunk, finalize, abort and transcribe all name one daemon's
+    // `uploadId`; the target is resolved once so no phase can land elsewhere.
+    const machine = this.machine.bindOperation(params.originMachineId);
     const reader = await openLocalUploadSourceReader(params.source);
     try {
       if (!reader.sizeBytes || reader.sizeBytes > DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES) {
@@ -76,7 +81,7 @@ export class BundledSpeechDaemonClient {
       const uploaded = await uploadInChunks({
         totalBytes: reader.sizeBytes,
         readBytes: reader.readBytes,
-        init: async () => parseCredentialResponse(DaemonVoiceSpeechTranscribeUploadInitResponseSchema, await this.machine.invoke(
+        init: async () => parseCredentialResponse(DaemonVoiceSpeechTranscribeUploadInitResponseSchema, await machine.invoke(
           RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_INIT,
           {
             target: target.ref,
@@ -86,19 +91,19 @@ export class BundledSpeechDaemonClient {
           },
           params.signal,
         )),
-        sendChunk: async (payload) => parseCredentialResponse(DaemonVoiceSpeechTranscribeUploadChunkResponseSchema, await this.machine.invoke(
+        sendChunk: async (payload) => parseCredentialResponse(DaemonVoiceSpeechTranscribeUploadChunkResponseSchema, await machine.invoke(
           RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_CHUNK, payload, params.signal,
         )),
-        finalize: async (payload) => parseCredentialResponse(DaemonVoiceSpeechTranscribeUploadFinalizeResponseSchema, await this.machine.invoke(
+        finalize: async (payload) => parseCredentialResponse(DaemonVoiceSpeechTranscribeUploadFinalizeResponseSchema, await machine.invoke(
           RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_FINALIZE, payload, params.signal,
         )),
-        abort: async (payload) => parseCredentialResponse(DaemonVoiceSpeechTranscribeUploadAbortResponseSchema, await this.machine.invoke(
+        abort: async (payload) => parseCredentialResponse(DaemonVoiceSpeechTranscribeUploadAbortResponseSchema, await machine.invoke(
           RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_ABORT, payload,
         )),
         signal: params.signal ?? null,
       });
       if (!uploaded.success) throw new VoiceCredentialClientError('transfer_failed');
-      const response = parseCredentialResponse(DaemonVoiceSpeechTranscribeResponseSchema, await this.machine.invoke(
+      const response = parseCredentialResponse(DaemonVoiceSpeechTranscribeResponseSchema, await machine.invoke(
         RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE,
         {
           target: target.ref,
@@ -126,12 +131,17 @@ export class BundledSpeechDaemonClient {
     format: 'mp3' | 'wav';
     speakingRate: number | null;
     pitch: number | null;
+    /** Target captured when the originating attempt started, if it had one. */
+    originMachineId?: string | null;
     signal?: AbortSignal | null;
   }>): Promise<Readonly<{ bytes: Uint8Array; mimeType: 'audio/mpeg' | 'audio/wav' }>> {
     const target = getSpeechTarget(params.entry);
+    // Synthesis publishes a `downloadId` that only the synthesizing daemon can
+    // serve, so chunk, finalize and abort stay bound to that same machine.
+    const machine = this.machine.bindOperation(params.originMachineId);
     const recipient = createTransferRecipientKeyPair();
-    const { signal, entry: _entry, ...request } = params;
-    const started = parseCredentialResponse(DaemonVoiceSpeechSynthesizeResponseSchema, await this.machine.invoke(
+    const { signal, entry: _entry, originMachineId: _originMachineId, ...request } = params;
+    const started = parseCredentialResponse(DaemonVoiceSpeechSynthesizeResponseSchema, await machine.invoke(
       RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE,
       {
         target: target.ref,
@@ -145,13 +155,13 @@ export class BundledSpeechDaemonClient {
     const chunks: Uint8Array[] = [];
     const result = await downloadInChunks({
       init: async () => ({ success: true as const, ...started }),
-      readChunk: async (payload) => parseCredentialResponse(DaemonVoiceSpeechDownloadChunkResponseSchema, await this.machine.invoke(
+      readChunk: async (payload) => parseCredentialResponse(DaemonVoiceSpeechDownloadChunkResponseSchema, await machine.invoke(
         RPC_METHODS.DAEMON_VOICE_SPEECH_DOWNLOAD_CHUNK, payload, signal,
       )),
-      finalize: async (payload) => parseCredentialResponse(DaemonVoiceSpeechDownloadFinalizeResponseSchema, await this.machine.invoke(
+      finalize: async (payload) => parseCredentialResponse(DaemonVoiceSpeechDownloadFinalizeResponseSchema, await machine.invoke(
         RPC_METHODS.DAEMON_VOICE_SPEECH_DOWNLOAD_FINALIZE, payload, signal,
       )),
-      abort: async (payload) => parseCredentialResponse(DaemonVoiceSpeechDownloadAbortResponseSchema, await this.machine.invoke(
+      abort: async (payload) => parseCredentialResponse(DaemonVoiceSpeechDownloadAbortResponseSchema, await machine.invoke(
         RPC_METHODS.DAEMON_VOICE_SPEECH_DOWNLOAD_ABORT, payload,
       )),
       recipientSecretKeySeed: recipient.recipientSecretKeySeed,

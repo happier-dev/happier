@@ -1,6 +1,10 @@
 import * as React from 'react';
 
 import { useCommittedTranscriptRef } from '@/components/sessions/transcript/viewport/lifecycle/host/useCommittedTranscriptRef';
+import type {
+    TranscriptOlderPageLoadResult,
+    TranscriptOlderPageLoadStatus,
+} from '@/sync/domains/messages/transcriptOlderPageLoad';
 
 import {
     createInitialOlderPaginationState,
@@ -14,13 +18,9 @@ import {
     type OlderPaginationSuspendReason,
 } from './olderPaginationMachine';
 
-export type TranscriptOlderPaginationLoadStatus = 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+export type TranscriptOlderPaginationLoadStatus = TranscriptOlderPageLoadStatus;
 
-export type TranscriptOlderPaginationLoadResult = Readonly<{
-    status: TranscriptOlderPaginationLoadStatus;
-    loaded: number;
-    hasMore: boolean;
-}>;
+export type TranscriptOlderPaginationLoadResult = TranscriptOlderPageLoadResult;
 
 export type TranscriptOlderPaginationLoadTrigger = 'threshold-enter' | 'post-cooldown' | 'readiness-open';
 
@@ -41,6 +41,7 @@ export type TranscriptOlderPaginationSnapshot = Readonly<{
     suspendedReasons: readonly OlderPaginationSuspendReason[];
     hasMore: boolean;
     insideThreshold: boolean;
+    loadFailed: boolean;
 }>;
 
 export type UseTranscriptOlderPaginationInput = Readonly<{
@@ -61,6 +62,10 @@ export type UseTranscriptOlderPaginationResult = Readonly<{
     isNearOlderEdge: (metrics: TranscriptOlderPaginationScrollMetrics) => boolean;
     isLoadingOlder: boolean;
     hasMore: boolean;
+    /** The last attempted older read failed; rows and the cursor are retained. */
+    loadFailed: boolean;
+    /** Re-issue the failed older read from the retained cursor. No-op unless `loadFailed`. */
+    retryLoad: () => void;
     getSnapshot: () => TranscriptOlderPaginationSnapshot;
     reset: () => void;
 }>;
@@ -69,7 +74,7 @@ type LoadFinishedEvent = Extract<OlderPaginationEvent, { type: 'loadFinished' }>
 
 function mapLoadResultToFinishedEvent(result: TranscriptOlderPaginationLoadResult | null): LoadFinishedEvent {
     if (!result) {
-        return { type: 'loadFinished', loaded: 0, hasMore: true, error: true };
+        return { type: 'loadFinished', loaded: 0, hasMore: true, error: true, failed: true };
     }
     if (result.status === 'no_more') {
         return { type: 'loadFinished', loaded: Math.max(0, Math.trunc(result.loaded)), hasMore: false };
@@ -81,8 +86,16 @@ function mapLoadResultToFinishedEvent(result: TranscriptOlderPaginationLoadResul
             hasMore: result.hasMore !== false,
         };
     }
-    // 'not_ready' | 'in_flight': nothing was loaded; back off through the cooldown.
-    return { type: 'loadFinished', loaded: 0, hasMore: true, error: true };
+    // 'retryable_error' | 'not_ready' | 'in_flight': nothing was loaded; back off through
+    // the cooldown. Only an ATTEMPTED-and-FAILED read latches the user-actionable failure —
+    // an unmet precondition or a concurrent read is not something the reader can retry.
+    return {
+        type: 'loadFinished',
+        loaded: 0,
+        hasMore: true,
+        error: true,
+        ...(result.status === 'retryable_error' ? { failed: true } : {}),
+    };
 }
 
 function normalizeDelayMs(value: number): number {
@@ -108,6 +121,7 @@ export function useTranscriptOlderPagination(input: UseTranscriptOlderPagination
 
     const [isLoadingOlder, setIsLoadingOlder] = React.useState(false);
     const [hasMore, setHasMore] = React.useState(stateRef.current.hasMore);
+    const [loadFailed, setLoadFailed] = React.useState(stateRef.current.loadFailed);
     const settleSpinnerRef = React.useRef<() => void>(() => {});
 
     const dispatch = React.useCallback((event: OlderPaginationEvent) => {
@@ -116,6 +130,9 @@ export function useTranscriptOlderPagination(input: UseTranscriptOlderPagination
         stateRef.current = next;
         if (next.hasMore !== previous.hasMore && mountedRef.current) {
             setHasMore(next.hasMore);
+        }
+        if (next.loadFailed !== previous.loadFailed && mountedRef.current) {
+            setLoadFailed(next.loadFailed);
         }
         // Single spinner SETTLE owner: the indicator settles only when the machine's
         // continuous busy-near-edge signal drops (load chain over, threshold exited, or
@@ -199,7 +216,7 @@ export function useTranscriptOlderPagination(input: UseTranscriptOlderPagination
             try {
                 finished = mapLoadResultToFinishedEvent(await inputRef.current.loadOlder({ trigger }));
             } catch {
-                finished = { type: 'loadFinished', loaded: 0, hasMore: true, error: true };
+                finished = { type: 'loadFinished', loaded: 0, hasMore: true, error: true, failed: true };
             }
             if (!isOperationCurrent(operationGeneration)) return;
             dispatch(finished);
@@ -260,8 +277,19 @@ export function useTranscriptOlderPagination(input: UseTranscriptOlderPagination
             suspendedReasons: Array.from(state.suspendedReasons),
             hasMore: state.hasMore,
             insideThreshold: state.insideThreshold,
+            loadFailed: state.loadFailed,
         };
     }, []);
+
+    // Explicit reader-driven recovery for a failed older read. The machine still owns the
+    // decision (`retryRequested` arms only a failed, non-terminal, non-loading pager) and
+    // `maybeStartLoad` still owns the readiness gate, so this adds no second decision-maker.
+    const retryLoad = React.useCallback(() => {
+        if (!stateRef.current.loadFailed) return;
+        clearCooldownTimeout();
+        dispatch({ type: 'retryRequested' });
+        maybeStartLoadRef.current('readiness-open');
+    }, [clearCooldownTimeout, dispatch]);
 
     const reset = React.useCallback(() => {
         operationGenerationRef.current += 1;
@@ -287,6 +315,8 @@ export function useTranscriptOlderPagination(input: UseTranscriptOlderPagination
         isNearOlderEdge,
         isLoadingOlder,
         hasMore,
+        loadFailed,
+        retryLoad,
         getSnapshot,
         reset,
     };

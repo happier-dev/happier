@@ -380,7 +380,10 @@ export function useComposerScopePluginPresentation(
     // The one qualified-destination owner for the scope this Composer is
     // mounted in. Both the declarative control host below and every physical
     // Composer surface reach navigation through it, so a Composer-origin open
-    // and a control-origin open cannot resolve differently.
+    // and a control-origin open cannot resolve differently. A scope with no
+    // enclosing destination owner supplies nothing, so the mounted controller
+    // installs no `openSurface` and the method refuses as factually
+    // unsupported instead of resolving after doing nothing.
     const destinationNavigation = usePluginSurfaceDestinationNavigationBinding();
     const openDestinationSurface = destinationNavigation?.openSurface;
     const renderComposerSurface = React.useCallback((request: ComposerPluginSurfaceMountRequest): React.ReactNode => {
@@ -408,10 +411,14 @@ export function useComposerScopePluginPresentation(
                 machineId={snapshot.host.machineId ?? null}
                 parentLifetime={surfaceLifetime}
                 transactionApplier={transactionApplier}
+                {...(openDestinationSurface === undefined
+                    ? {}
+                    : { openSurface: openDestinationSurface })}
             />
         );
     }, [
         composerSurfaceCatalog,
+        openDestinationSurface,
         params.projectionInputs?.pluginProjectionV2,
         physicalTargetKey,
         surfaceLifetime,
@@ -621,7 +628,6 @@ export function useComposerScopePluginPresentation(
         renderAttachmentPreviewSurface,
         surfaceLifetime,
     ]);
-    const destinationNavigation = usePluginSurfaceDestinationNavigationBinding();
     const composerControlHost = React.useMemo<PluginComposerControlHost>(() => ({
         scope: params.composer.kind,
         isCurrent: () => surfaceLifetime?.isCurrent() === true,

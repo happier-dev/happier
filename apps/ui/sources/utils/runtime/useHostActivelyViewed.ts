@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { AppState } from 'react-native';
 
-import { isTauriMainWindowActivelyViewed } from '@/desktop/window/isTauriMainWindowActivelyViewed';
+import { isDesktopMainWindowVisible } from '@/desktop/window/desktopMainWindowPresence';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { isRuntimeActive } from './isRuntimeActive';
@@ -18,12 +18,18 @@ type ViewLike = Readonly<{
  * Whether the app is genuinely being looked at right now.
  *
  * This is a stricter question than `isRuntimeActive()`, which asks "may a
- * background probe run?" and answers `true` for every Tauri host so polling
- * survives a desktop webview that never reports visibility. Motion cannot use
- * that answer: a 60 Hz loop behind a hidden or unfocused window is pure cost the
- * user never sees. The desktop branch therefore composes the canonical
- * actively-viewed fact instead of restating it, and an unfocused-but-visible
- * window counts as not viewed.
+ * background probe run?" and answers `true` for every desktop host so polling
+ * survives a webview that never reports visibility. Motion and disclosure
+ * cannot use that answer: a 60 Hz loop behind a hidden window is pure cost, and
+ * context described for a window nobody can see is disclosure nobody asked for.
+ * The desktop branch therefore composes the canonical window-presence fact
+ * instead of restating it.
+ *
+ * Visibility is the gate, not focus. A visible unfocused window is still being
+ * looked at — that is the hands-free posture, and the web build already keeps
+ * both context and motion for a visible unfocused tab. `isDesktopMainWindowFocused`
+ * exists for the narrower "attention already landed here" question that
+ * notification suppression asks; it is not this one.
  *
  * The host is watched once for the app's lifetime rather than once per consumer,
  * like `useReducedMotionPreference`: visibility cannot differ between consumers,
@@ -41,7 +47,7 @@ let watchStarted = false;
 const listeners = new Set<() => void>();
 
 function readHostActivelyViewedNow(): boolean {
-    return isDesktopHost() ? isTauriMainWindowActivelyViewed() : isRuntimeActive();
+    return isDesktopHost() ? isDesktopMainWindowVisible() : isRuntimeActive();
 }
 
 function publishHostActivelyViewed(): void {

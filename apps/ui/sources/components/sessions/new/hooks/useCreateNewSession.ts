@@ -3,6 +3,8 @@ import * as React from 'react';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
+import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { readLegacyScheduleAutomationDefinition } from '@/sync/domains/automations/automationLegacyScheduleDefinition';
 import {
     isAutomationTemplateEncryptionMaterialUnavailableError,
@@ -67,6 +69,7 @@ import { captureExceptionIfEnabled } from '@/utils/system/sentry';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { createNewSessionActionOperationOrigin } from '@/components/sessions/new/navigation/newSessionActionOperationOrigin';
 import type { SessionMcpSelectionV1 } from '@happier-dev/protocol';
 import type { SessionSpawnSourceContextV1 } from '@happier-dev/protocol';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
@@ -516,7 +519,12 @@ export function useCreateNewSession(params: Readonly<{
                     selectedProfileId: latest.useProfiles ? latest.selectedProfileId : null,
                 });
             };
-            const isLaunchScopeStillActive = (): boolean => resolveCurrentLaunchScopeKey() === launchScopeKey;
+            const isLaunchScopeStillCurrent = (): boolean => (
+                resolveCurrentLaunchScopeKey() === launchScopeKey
+            );
+            const isLaunchScopeStillActive = (): boolean => (
+                mountedRef.current && isLaunchScopeStillCurrent()
+            );
 
             const sessionPrompt = opts?.inputTextOverride ?? current.promptStore.getPrompt();
             const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
@@ -806,6 +814,7 @@ export function useCreateNewSession(params: Readonly<{
                 environmentVariables = buildSpawnEnvironmentVariablesFromUiState({
                     agentId: staticAgentId,
                     settings: current.settings,
+                    machineId: selectedMachineId,
                     environmentVariables,
                     newSessionOptions: {
                         ...(current.agentNewSessionOptions ?? {}),
@@ -890,6 +899,7 @@ export function useCreateNewSession(params: Readonly<{
                 ? buildSpawnSessionExtrasFromUiState({
                     agentId: staticAgentId,
                     settings: current.settings,
+                    machineId: selectedMachineId,
                     resumeSessionId: current.resumeSessionId,
                     newSessionOptions: current.agentNewSessionOptions,
                     sessionConfigOptionOverrides: current.sessionConfigOptionOverrides,
@@ -1171,8 +1181,7 @@ export function useCreateNewSession(params: Readonly<{
                     return;
                 }
 
-                const actionResult = await executeSessionSpawnNewAction(
-                    buildSessionSpawnNewInputV2FromAuthoringDraft({
+                const spawnInput = buildSessionSpawnNewInputV2FromAuthoringDraft({
                         draft: authoringDraft,
                         creationKey: launchAttempt.attemptId,
                         executionTarget: {
@@ -1185,9 +1194,25 @@ export function useCreateNewSession(params: Readonly<{
                         configurationUpdatedAtMs: spawnPermissionModeUpdatedAt,
                         initialMessage: initialMessageText || null,
                         sourceContext: current.sourceContext ?? null,
-                    }),
-                    { surface: 'ui' },
-                );
+                    });
+                const releaseUserRequestLease = sync.acquireUserRequestLease();
+                actionOperationPresentationCoordinator.register({
+                    requestId: launchAttempt.attemptId,
+                    onStart: 'current',
+                    ...(current.draftScope
+                        ? { origin: createNewSessionActionOperationOrigin(current.draftScope) }
+                        : {}),
+                });
+                const actionResult = await (async () => {
+                    try {
+                        return await executeSessionSpawnNewAction(spawnInput, {
+                            surface: 'ui',
+                            actionRequestId: launchAttempt.attemptId,
+                        });
+                    } finally {
+                        releaseUserRequestLease();
+                    }
+                })();
                 if (!actionResult.ok) {
                     launchAttempt = markNewSessionLaunchAttemptFailed(launchAttempt, {
                         phase: 'spawning',
@@ -1248,7 +1273,7 @@ export function useCreateNewSession(params: Readonly<{
             }
 
             if (createdSessionId) {
-                if (!isLaunchScopeStillActive()) {
+                if (!isLaunchScopeStillCurrent()) {
                     publishLaunchAttempt(null);
                     current.setIsCreating(false);
                     return;
@@ -1513,13 +1538,17 @@ export function useCreateNewSession(params: Readonly<{
                     }
                 }
 
-                if (!isLaunchScopeStillActive()) {
+                if (!isLaunchScopeStillCurrent()) {
                     publishLaunchAttempt(null);
                     current.setIsCreating(false);
                     return;
                 }
 
                 if (postSpawnFollowUpError) {
+                    actionOperationStore.markFollowUpNeedsAttention(
+                        launchAttempt.attemptId,
+                        t('inbox.actionOperations.followUpNeedsAttention'),
+                    );
                     const retryFailureClassification = classifyCurrentPostSpawnFailure(postSpawnFollowUpError);
                     launchAttempt = markNewSessionLaunchAttemptFailed(launchAttempt, {
                         phase: postSpawnFailurePhase,
@@ -1539,12 +1568,9 @@ export function useCreateNewSession(params: Readonly<{
                             draftText: initialMessageText || sessionPrompt,
                         });
                     }
-                    if (createdSessionRouteOpened && isSessionHydratedForDraftRestore(createdSessionId)) {
-                        current.disableDraftPersistence?.();
-                        clearNewSessionDraftForLaunchParams(current);
+                    if (mountedRef.current) {
+                        current.setIsCreating(false);
                     }
-
-                    current.setIsCreating(false);
                     return;
                 } else {
                     launchAttempt = markNewSessionLaunchAttemptComplete(launchAttempt);
@@ -1560,7 +1586,7 @@ export function useCreateNewSession(params: Readonly<{
                     });
                 }
 
-                if (!createdSessionRouteOpened) {
+                if (!createdSessionRouteOpened && isLaunchScopeStillActive()) {
                     const openedCreatedSessionRoute = await openCreatedSessionRouteWithRecovery();
                     if (!openedCreatedSessionRoute) {
                         if (!isLaunchScopeStillActive()) {
@@ -1573,7 +1599,9 @@ export function useCreateNewSession(params: Readonly<{
                 }
                 publishLaunchAttempt(null);
                 if (!opts?.deferAcceptedDraftClearToDocument) {
-                    current.disableDraftPersistence?.();
+                    if (mountedRef.current) {
+                        current.disableDraftPersistence?.();
+                    }
                     clearNewSessionDraftForLaunchParams(current);
                 }
             } else {

@@ -38,6 +38,7 @@ import {
     resolveExternalSessionBrowseSourceOptions,
 } from './resolveExternalSessionBrowseSourceOptions';
 import { ExternalSessionBrowseCandidatesList } from './ExternalSessionBrowseCandidatesList';
+import { isExternalSessionBrowseCandidateOfflineInert } from './resolveExternalSessionBrowseCandidateOfflineInert';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     readExternalSessionBrowseCandidateKey,
@@ -318,6 +319,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const {
         candidates,
         candidatesAuthoritative,
+        publishedSearchTerm,
         nextCursor,
         paginationRequestKey,
         loading,
@@ -354,9 +356,16 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
      * that index serves are live throughout. Rows retained from a superseded request
      * keep their inert treatment through `candidatesAuthoritative`, which is false
      * until the request owning the current scope has published.
+     *
+     * The search field is debounced, so between a keystroke and the request there is
+     * an interval in which the visible query has already moved on while the rows still
+     * answer the previous one. `candidatesAuthoritative` cannot see that: no new
+     * request has started yet. Comparing the visible query with the one the hook
+     * actually published closes the interval.
      */
     const candidateActionsAllowed = daemonMergedProjectionReady
         && candidatesAuthoritative
+        && publishedSearchTerm === searchQuery.trim()
         && !rootRefreshFailed;
     const candidateActionAuthorityKey = React.useMemo(() => JSON.stringify({
         machineId: effectiveSelectedMachineId,
@@ -463,6 +472,16 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     ) => {
         if (!candidateActionsAllowed) return;
         /**
+         * Offline is decided per row by the shared owner, so the guard here and the
+         * row's disabled presentation cannot disagree: an activation that needs the
+         * machine is inert, while opening an already linked session stays local.
+         */
+        if (isExternalSessionBrowseCandidateOfflineInert({
+            offline: selectedMachineIsOffline,
+            interaction,
+            linkedSessionId: candidate.linkedSessionId,
+        })) return;
+        /**
          * A press captured before the browse scope changed carries the previous
          * scope's machine, Agent and source. Every branch below acts on that
          * captured scope — navigating, picking, or creating a link — so the
@@ -542,7 +561,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                 setLinkingSessionId(null);
             }
         }
-    }, [candidateActionsAllowed, effectiveSelectedMachineId, interaction, lockScope?.serverId, props, router, selectedProviderId, selectedSource]);
+    }, [candidateActionsAllowed, effectiveSelectedMachineId, interaction, lockScope?.serverId, props, router, selectedMachineIsOffline, selectedProviderId, selectedSource]);
 
     return (
         <PopoverScope boundaryRef={popoverBoundaryRef}>
@@ -700,6 +719,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                     cancelled={cancelled}
                     linkingSessionId={linkingSessionId}
                     candidateActionsDisabled={!candidateActionsAllowed}
+                    interaction={interaction}
                     agentId={selectedAgentProjection?.iconAgentId ?? selectedProviderId}
                     agentLabel={selectedAgentProjection?.title ?? null}
                     machineLabel={selectedMachineLabel}

@@ -6,6 +6,7 @@ import {
     type RawMessageNormalizationSequenceState,
 } from '@/sync/typesRaw';
 import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
+import type { ActionOperationSnapshotEphemeralV1 } from '@happier-dev/protocol';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import {
@@ -2149,6 +2150,7 @@ export function handleEphemeralSocketUpdate(params: {
     getSession: (sessionId: string) => Session | undefined;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     updateExternalSessionTranscript?: (update: ExternalSessionTranscriptUpdatedEphemeralUpdate) => Promise<void> | void;
+    updateActionOperationSnapshot?: (update: ActionOperationSnapshotEphemeralV1) => Promise<void> | void;
 }): Promise<void> {
     const {
         update,
@@ -2160,6 +2162,7 @@ export function handleEphemeralSocketUpdate(params: {
         getSession,
         applyMessages,
         updateExternalSessionTranscript,
+        updateActionOperationSnapshot,
     } = params;
 
     const updateData = parseEphemeralUpdate(update);
@@ -2180,6 +2183,9 @@ export function handleEphemeralSocketUpdate(params: {
     } else if (updateData.type === 'external-session-transcript-invalidated') {
         if (!shouldContinue()) return Promise.resolve();
         return Promise.resolve(updateExternalSessionTranscript?.(updateData as ExternalSessionTranscriptUpdatedEphemeralUpdate));
+    } else if (updateData.type === 'action-operation-snapshot') {
+        if (!shouldContinue()) return Promise.resolve();
+        return Promise.resolve(updateActionOperationSnapshot?.(updateData));
     } else if (updateData.type === 'transcript-stream-segment' || updateData.type === 'transcript-stream-segment-delta') {
         // Both live-stream forms route through the same queue controller: it drops deltas for
         // hidden sessions outright (checkpoints keep them fresh) and flushes deferred snapshots

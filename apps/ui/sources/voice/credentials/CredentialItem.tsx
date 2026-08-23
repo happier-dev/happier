@@ -8,7 +8,10 @@ import type {
   RecipientContractV1,
   VoiceProviderContribution,
 } from '@happier-dev/protocol';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import {
+  buildQualifiedPluginContributionKey,
+  resolveRequiredRecipientContractApprovalDigestV1,
+} from '@happier-dev/protocol';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
@@ -162,9 +165,13 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
       return null;
     }
   }, [props.recipientContract]);
-  const requiredRecipientContractDigest = props.recipientContractDigest
-    ?? recipientApproval?.digest
-    ?? null;
+  // What a stored approval must still match before the credential may be used.
+  // A first-party bundled recipient carries no such fence, so a release that
+  // changes its mediated operations does not revoke an existing approval. The
+  // disclosure itself is unchanged: it is driven by the contract's presence.
+  const requiredRecipientContractDigest = props.recipientContract
+    ? resolveRequiredRecipientContractApprovalDigestV1(props.recipientContract)
+    : props.recipientContractDigest ?? null;
   const credentialStatus = props.contribution
     ? resolveAccountVoiceCredentialStatus({
         settings,
@@ -377,9 +384,11 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
         }
         const confirmRecipientContract = async (): Promise<boolean> => {
           if (!props.recipientContract && !props.recipientContractDigest) return true;
-          if (!recipientApproval
-            || (props.recipientContractDigest
-              && props.recipientContractDigest !== recipientApproval.digest)) {
+          // `props.recipientContractDigest` is this same contract's digest,
+          // produced by this same function at the registry entry, so comparing
+          // the two can only ever agree. The contract failing to normalize into
+          // an approval is the real unapprovable case.
+          if (!recipientApproval) {
             throw Object.assign(new Error('invalid_voice_recipient_contract_approval'), {
               code: 'invalid_voice_recipient_contract_approval',
             });

@@ -22,7 +22,8 @@ const EMPTY_ENTRIES: ReadonlyArray<Readonly<{ id: string; createdAt: number; kin
 const EMPTY_CANONICAL_ENTRIES: readonly CanonicalVoiceTranscriptItem[] = Object.freeze([]);
 const EMPTY_SURFACE_ENTRIES: readonly VoiceSurfaceTranscriptEntry[] = Object.freeze([]);
 const EMPTY_SESSIONS: Record<string, unknown> = {};
-const EMPTY_SESSION_MESSAGES: Record<string, unknown> = {};
+/** Stable stand-in for "no slice to project", so the snapshot never churns. */
+const NO_SESSION_MESSAGES_SLICE: unknown = Object.freeze({});
 
 export function useVoiceSurfaceConversationState(params: Readonly<{
     providerId: string;
@@ -124,21 +125,37 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
         () => controlSessionCandidates[0] ?? null,
         [controlSessionCandidates],
     );
-    // Only subscribe to the (potentially large) sessionMessages map and recompute
-    // the transcript projection when the activity feed is actually shown. When the
-    // feed is disabled we read a stable empty constant so message appends in any
-    // session never re-run the projection or re-render the surface.
-    const sessionMessages = useStoreSnapshot(
+    /*
+     * Subscribe to the bound conversation's own message slice, not to the whole
+     * `sessionMessages` map.
+     *
+     * The map's identity is replaced by an append in *any* session, so selecting
+     * it re-rendered the entire surface — planet, meter and transcript — once per
+     * unrelated write while the feed was open (M3: five writes, five renders).
+     * The per-session slice is the store's own subscription unit: an unrelated
+     * write leaves it untouched, so `useStoreSnapshot`'s `Object.is` bail-out
+     * ends the write there. When the feed is off, or nothing is bound yet, a
+     * stable constant keeps even that comparison out of the projection path.
+     */
+    const selectConversationMessagesSlice = React.useCallback(
+        (state: any): unknown => (
+            transcriptEnabled && openConversationSessionId
+                ? state?.sessionMessages?.[openConversationSessionId] ?? NO_SESSION_MESSAGES_SLICE
+                : NO_SESSION_MESSAGES_SLICE
+        ),
+        [openConversationSessionId, transcriptEnabled],
+    );
+    const conversationMessagesSlice = useStoreSnapshot(
         storage as any,
-        transcriptEnabled ? selectSessionMessages : selectNoSessionMessages,
+        selectConversationMessagesSlice,
     );
     const transcriptEntries = React.useMemo(() => {
         if (!transcriptEnabled || !openConversationSessionId) return EMPTY_ENTRIES;
         return selectVoiceTranscriptEntriesForConversationSession(
-            { sessionMessages },
+            { sessionMessages: { [openConversationSessionId]: conversationMessagesSlice } },
             openConversationSessionId,
         );
-    }, [transcriptEnabled, openConversationSessionId, sessionMessages]);
+    }, [transcriptEnabled, openConversationSessionId, conversationMessagesSlice]);
     const subscribeCanonical = React.useCallback(
         (listener: () => void) => openConversationSessionId
             ? subscribeCanonicalVoiceTranscript(openConversationSessionId, listener)
@@ -174,12 +191,4 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
         transcriptEntries: mergedTranscriptEntries,
         visibleTranscriptEntries,
     };
-}
-
-function selectSessionMessages(state: any): Record<string, unknown> {
-    return state?.sessionMessages ?? EMPTY_SESSION_MESSAGES;
-}
-
-function selectNoSessionMessages(): Record<string, unknown> {
-    return EMPTY_SESSION_MESSAGES;
 }

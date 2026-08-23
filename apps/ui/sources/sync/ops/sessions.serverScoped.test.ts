@@ -909,11 +909,11 @@ describe('sessions ops server-scoped routing', () => {
                 profileScope: { serverId: 'server-a', accountId: 'account-a' },
                 machines: {
                     ...state.machines,
-                    'machine-1': { id: 'machine-1', daemonState: { startedWithCliVersion: version } } as any,
+                    'machine-1': { id: 'machine-1', daemonState: { cliVersion: version } } as any,
                 },
                 machineListByServerId: {
                     ...state.machineListByServerId,
-                    'server-b': [{ id: 'machine-1', daemonState: { startedWithCliVersion: version } } as any],
+                    'server-b': [{ id: 'machine-1', daemonState: { cliVersion: version } } as any],
                 },
             }));
         };

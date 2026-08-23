@@ -2163,6 +2163,9 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       }),
       readMessages: (sessionId) =>
         readStoredSessionMessages(storage.getState(), sessionId),
+      readMessagesRevision: (sessionId) =>
+        storage.getState().sessionMessages[sessionId]?.messagesVersion ?? 0,
+      subscribeHistorySources: (listener) => storage.subscribe(() => { listener(); }),
       resolveProviderLabel: () => 'OpenAI Realtime',
       deleteSession,
       canDeleteSession: canDeleteVoiceHistorySession,
@@ -2297,6 +2300,9 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       }),
       readMessages: (sessionId) =>
         readStoredSessionMessages(storage.getState(), sessionId),
+      readMessagesRevision: (sessionId) =>
+        storage.getState().sessionMessages[sessionId]?.messagesVersion ?? 0,
+      subscribeMessages: (listener) => storage.subscribe(() => { listener(); }),
       deleteSession,
       canDeleteSession: canDeleteVoiceHistorySession,
       retireLocalSession: (sessionId) =>

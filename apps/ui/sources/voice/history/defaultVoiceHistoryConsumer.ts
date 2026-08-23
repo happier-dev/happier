@@ -170,6 +170,8 @@ export type DefaultVoiceHistoryRuntime = Readonly<{
     authority: ServerAccountSessionRequestAuthority,
   ): Promise<VoiceHistoryPageResult>;
   readMessages(sessionId: string): readonly Message[];
+  readMessagesRevision(sessionId: string): number;
+  subscribeMessages(listener: () => void): () => void;
   deleteSession(
     sessionId: string,
     authority: ServerAccountSessionRequestAuthority,
@@ -228,7 +230,16 @@ export function createDefaultVoiceHistoryConsumerFromRuntime(
     loadOlderMessages: (sessionId, scope) =>
       runtime.loadOlderMessages(sessionId, scope.authority),
     readMessages: runtime.readMessages,
+    readMessagesRevision: runtime.readMessagesRevision,
     readProjectionRevision: () => providerRegistry.getRevision?.() ?? 0,
+    subscribeHistorySources: (listener) => {
+      const unsubscribeMessages = runtime.subscribeMessages(listener);
+      const unsubscribeRegistry = providerRegistry.subscribe?.(listener);
+      return () => {
+        unsubscribeMessages();
+        unsubscribeRegistry?.();
+      };
+    },
     resolveProviderLabel: (source) => {
       return resolveVoiceHistoryProviderLabel(providerRegistry, source, tLoose)
         ?? source?.contributionId
@@ -291,6 +302,14 @@ export function createDefaultVoiceHistoryConsumer() {
       sync.loadOlderMessages(sessionId, { authority }),
     readMessages: (sessionId) =>
       readStoredSessionMessages(storage.getState(), sessionId),
+    // The canonical per-session message revision the transcript hooks already
+    // subscribe to. History keys its projection on this instead of the identity
+    // of `readStoredSessionMessages`, which materializes a new array per call.
+    readMessagesRevision: (sessionId) =>
+      storage.getState().sessionMessages[sessionId]?.messagesVersion ?? 0,
+    // One store subscription, filtered downstream by the History revision: an
+    // unrelated session's write costs a revision comparison and stops there.
+    subscribeMessages: (listener) => storage.subscribe(() => { listener(); }),
     deleteSession: sessionDeleteWithServerAccountAuthority,
     canDeleteSession: canDeleteVoiceHistorySession,
     retireLocalSession: (sessionId) => sync.retireLocalSession(sessionId),

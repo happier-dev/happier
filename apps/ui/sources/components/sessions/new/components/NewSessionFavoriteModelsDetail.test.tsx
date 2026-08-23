@@ -333,6 +333,58 @@ describe('NewSessionFavoriteModelsDetail', () => {
         );
     });
 
+    it('keeps the canonical disabled presentation for a favorite the projection refuses', async () => {
+        const providerFavorite = FavoriteModelSelectionV1Schema.parse({
+            selection: {
+                v: 1, updatedAt: 1,
+                ref: { agentTargetKey: 'agent:codex', providerConnectionId: 'pc_work', modelId: 'blocked-model' },
+            },
+            modelLabel: 'Blocked model', backendLabel: 'Codex', catalogAgentId: 'codex', builtInAgentId: 'codex',
+        });
+        providerGroupsByTargetKey['agent:codex'] = [{
+            connectionId: providerFavorite.selection.ref.providerConnectionId,
+            providerName: 'Gateway', connectionName: 'Work', connectionRole: 'named', connectionDisplayNameMode: 'custom',
+            connectionRevision: 1, authorization: { authorized: true }, manualModelPolicy: 'allowed', supportsFreeformModelIds: true,
+            suppressedConnectedServiceIds: [], modelLoadAction: 'descriptor_absent',
+            rows: [{
+                ref: providerFavorite.selection.ref,
+                descriptor: { id: 'blocked-model', name: 'Blocked model', description: 'From Work' },
+                sources: { manual: false, static: true, probe: false }, confidence: 'verified_static',
+                compatibility: {
+                    result: { status: 'incompatible', reasons: [] },
+                    compatibilityFingerprint: 'compatibility:v1:blocked',
+                    confirmed: false,
+                },
+                endpointHealth: 'available', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible',
+            }],
+        }];
+        const onSelectFavoriteModel = vi.fn();
+        const { NewSessionFavoriteModelsDetail } = await import('./NewSessionFavoriteModelsDetail');
+
+        await renderScreen(<NewSessionFavoriteModelsDetail
+            favoriteModelSelections={[providerFavorite]}
+            resolvedBackendEntries={[createBuiltInEntry('codex', 'Codex')]}
+            selectedBackendTargetKey="agent:codex"
+            selectedModelId="default"
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            settings={settings}
+            onSelectFavoriteModel={onSelectFavoriteModel}
+            onToggleFavoriteModel={vi.fn()}
+        />);
+
+        const picker = optionPickerOverlayProps.at(-1);
+        const exactValue = favoriteOptionValue('agent:codex', 'blocked-model', 'pc_work');
+        const blocked = picker?.options.find((option) => option.value === exactValue);
+        // The projection already decided this row is unselectable and why; the
+        // favorites pane must show that decision rather than an enabled-looking
+        // row whose press silently does nothing.
+        expect(blocked?.disabled).toBe(true);
+        expect(blocked?.description).toContain('settingsProviders.compatibility.incompatible');
+        picker?.onSelect?.(exactValue);
+        expect(onSelectFavoriteModel).not.toHaveBeenCalled();
+    });
+
     it('keeps duplicate Provider favorite names collision-safe for assistive technology', async () => {
         const favorites = ['pc_gateway_a', 'pc_gateway_b'].map((connectionId) => (
             FavoriteModelSelectionV1Schema.parse({

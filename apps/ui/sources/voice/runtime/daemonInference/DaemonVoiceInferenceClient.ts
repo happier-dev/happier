@@ -181,6 +181,16 @@ export type DaemonSegmentedTtsSession = Readonly<{
     cancel: () => Promise<void>;
 }>;
 
+/**
+ * Deadline a model install RPC declares to the daemon.
+ *
+ * This is a request deadline, not a stall budget: the daemon aborts the install
+ * (and rolls its staging back) when it elapses, so it has to outlast a real
+ * pack download rather than the ordinary interactive RPC default. Installs are
+ * otherwise bounded by the caller's own signal, not by a clock.
+ */
+export const VOICE_MODEL_INSTALL_RPC_TIMEOUT_MS = 30 * 60_000;
+
 export class DaemonVoiceInferenceClient {
     private readonly deps: DaemonVoiceInferenceClientDeps;
 
@@ -281,6 +291,8 @@ export class DaemonVoiceInferenceClient {
 
     async installModel(params: Readonly<{
         packId: string;
+        /** Caller lifetime; the daemon cancels the install when it ends. */
+        signal?: AbortSignal | null;
     }>, scope?: DaemonVoiceInferenceModelMachineScope): Promise<DaemonVoiceInferenceModelStatus> {
         const machineId = await this.resolveMachineId(scope);
         const response = parseSchema(
@@ -289,6 +301,11 @@ export class DaemonVoiceInferenceClient {
                 machineId,
                 method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
                 payload: { packId: params.packId },
+                // The declared deadline is what the daemon aborts the install on,
+                // so the ordinary short RPC default would kill a legitimate
+                // multi-minute model download partway through.
+                timeoutMs: VOICE_MODEL_INSTALL_RPC_TIMEOUT_MS,
+                ...(params.signal ? { signal: params.signal } : {}),
             }),
         );
         throwIfErrorResponse(response);

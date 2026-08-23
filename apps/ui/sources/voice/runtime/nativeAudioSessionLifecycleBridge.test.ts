@@ -66,6 +66,35 @@ describe('createNativeAudioSessionLifecycleBridge', () => {
     await vi.waitFor(() => expect(controller.stop).toHaveBeenCalledWith('voice-global'));
   });
 
+  it('stops the session when the native audio graph reports itself terminal', async () => {
+    // A media-services reset or an unrecoverable engine configuration change
+    // leaves the native graph dead while the session still looks connected.
+    // Nothing else observes that, so the lifecycle owner has to end the session.
+    const reset = createHarness();
+    reset.emit({ generation: 1, kind: 'audio_graph_terminal', reason: 'media_services_reset' });
+    await vi.waitFor(() => expect(reset.controller.stop).toHaveBeenCalledWith('voice-global'));
+
+    const configuration = createHarness();
+    configuration.emit({
+      generation: 1,
+      kind: 'audio_graph_terminal',
+      reason: 'configuration_unrecoverable',
+    });
+    await vi.waitFor(() => expect(configuration.controller.stop).toHaveBeenCalledWith('voice-global'));
+  });
+
+  it('leaves an ordinary route change to the native owner instead of ending the session', async () => {
+    // Route changes are constant and survivable; the native owner is the only
+    // party that can tell a survivable one from a dead graph, and it says so
+    // with `audio_graph_terminal`.
+    const { controller, emit } = createHarness();
+    emit({ generation: 1, kind: 'route_changed', route: 'BluetoothHFP' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(controller.stop).not.toHaveBeenCalled();
+    expect(controller.setMuted).not.toHaveBeenCalled();
+  });
+
   it('removes the native listener and makes queued work inert on disposal', async () => {
     const { bridge, controller, emit, remove } = createHarness();
     bridge.dispose();

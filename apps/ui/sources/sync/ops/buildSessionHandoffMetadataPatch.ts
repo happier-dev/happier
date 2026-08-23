@@ -9,7 +9,7 @@ import {
 } from '@happier-dev/agents/session/state/metadataWriters';
 import {
     buildLinkedExternalSessionMetadataV1,
-    readLinkedExternalSessionV1FromMetadata,
+    readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
     removeLinkedExternalSessionMetadataV1,
     normalizeSessionHandoffWorkspaceRootPath,
     type ExternalSessionAgentId,
@@ -104,7 +104,7 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
 
     if (input.sessionStorageAfter === 'direct') {
         delete next.externalHistoryImportV1;
-        const externalSessionV1 = readLinkedExternalSessionV1FromMetadata({
+        const externalSessionV1 = readNonAuthoritativeLinkedExternalSessionV1FromMetadata({
           externalSessionV1: {
             v: 1,
             agentId: input.agentId,

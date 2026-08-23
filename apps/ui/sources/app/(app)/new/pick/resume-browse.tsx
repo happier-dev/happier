@@ -10,6 +10,7 @@ import { getResolvedBackendCatalogEntries, resolveBackendTargetOperationalAgentI
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { ExternalSessionsBrowseScreen } from '@/components/sessions/external/browse/ExternalSessionsBrowseScreen';
 import { ExternalSessionsBrowseRouteGate } from '@/components/sessions/external/browse/ExternalSessionsBrowseRouteGate';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption';
 import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { resolveResumePickerBackendTarget } from '@/components/sessions/new/navigation/resolveResumePickerBackendTarget';
@@ -50,10 +51,6 @@ function pickFirstNonEmpty(...values: readonly RouteParamValue[]): string | null
         if (normalized) return normalized;
     }
     return null;
-}
-
-function isPluginLikeBackendTarget(target: BackendTargetRefV2 | null | undefined): boolean {
-    return !!(target && target.kind === 'backend' && !target.configuredBackendId && !isBundledAgentId(target.backendId));
 }
 
 function ResumeBrowsePickerScreenContent(props: Readonly<{
@@ -149,19 +146,18 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);
-    const awaitingCarrierProjection = React.useMemo(() => {
-        const requestedBackendTargetKey = pickFirstNonEmpty(params.backendTargetKey);
-        if (!requestedBackendTargetKey || !requestedBackendTargetKey.startsWith('backend:')) {
-            return false;
-        }
-        if (daemonMergedProjection.phase !== 'loading') {
-            return false;
-        }
-        if (isPluginLikeBackendTarget(effectiveBackendTarget) && operationalAgentId === null) {
-            return true;
-        }
-        return selectedBackendEntry == null && operationalAgentId === null;
-    }, [daemonMergedProjection.phase, effectiveBackendTarget, operationalAgentId, params.backendTargetKey, selectedBackendEntry]);
+    /**
+     * A loading projection is a retained loading state, never a dismissal trigger.
+     *
+     * `lockScope` is null while the daemon projection is in flight for a BUNDLED Agent
+     * for exactly the same reason it is null for an unresolved plugin carrier: the
+     * projection that decides browse capability and the locked source has not arrived
+     * yet. Narrowing the wait to `backend:*` carriers made a cold deep link or reload of
+     * this picker pop itself before it could mount. Only an authoritative non-loading
+     * phase (`ready`, `unsupported`, `error`, or `idle` when there is no machine at all)
+     * may prove the lock unavailable.
+     */
+    const awaitingProjection = daemonMergedProjection.phase === 'loading';
 
     const lockScope = React.useMemo(() => {
         if (!effectiveMachineId) return null;
@@ -187,9 +183,9 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
     }, [accountProfile, agentOptionState, daemonMergedProjectionInputs?.pluginProjectionV2, effectiveMachineId, effectiveServerId, operationalAgentId, settings]);
 
     React.useEffect(() => {
-        if (lockScope || awaitingCarrierProjection) return;
+        if (lockScope || awaitingProjection) return;
         safeRouterBack({ router, navigation, fallbackHref: '/new' });
-    }, [awaitingCarrierProjection, lockScope, navigation, router]);
+    }, [awaitingProjection, lockScope, navigation, router]);
 
     const headerTitle = t('externalSessions.browseTitle');
     const headerBackTitle = t('common.cancel');
@@ -226,6 +222,18 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
                             if (returnMode === 'dispatch') {
                                 safeRouterBack({ router, navigation, fallbackHref: '/new' });
                             }
+                        }}
+                    />
+                ) : awaitingProjection ? (
+                    <SurfaceStateCard
+                        testID="external-sessions-browse-route-loading"
+                        kind="loading"
+                        accessibilitySemantics="status"
+                        title={t('common.loading')}
+                        reason={t('externalSessions.settingsIntegrationInventoryLoadingSubtitle')}
+                        secondaryAction={{
+                            label: t('common.close'),
+                            onPress: () => safeRouterBack({ router, navigation, fallbackHref: '/new' }),
                         }}
                     />
                 ) : null}

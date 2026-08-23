@@ -55,4 +55,52 @@ describe('selected Voice machine client', () => {
     expect(dispatchedMachineIds).toEqual(['machine-a']);
     expect(resolveMachineId).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps every phase of one bound operation on the machine it started on', async () => {
+    // A composite STT/TTS operation names daemon-side state (`uploadId`,
+    // `downloadId`) that only the initiating machine holds. Re-resolving the
+    // mutable automatic target between phases sends `chunk` to a machine that
+    // never saw `init` — `transfer_not_found` — and strands the real temporary
+    // state on the initiating machine until its TTL expires.
+    const resolveMachineId = vi.fn<(override?: unknown) => string | null>()
+      .mockReturnValueOnce('machine-a')
+      .mockReturnValue('machine-b');
+    const { machineRpc, dispatchedMachineIds } = createRecordingMachineRpc({ ok: true });
+    const client = createSelectedVoiceMachineClient({ resolveMachineId, machineRpc });
+
+    const operation = client.bindOperation();
+    await operation.invoke('daemon.voice.speech.transcribeUpload.init', {});
+    await operation.invoke('daemon.voice.speech.transcribeUpload.chunk', {});
+    await operation.invoke('daemon.voice.speech.transcribeUpload.finalize', {});
+    await operation.invoke('daemon.voice.speech.transcribe', {});
+
+    expect(operation.machineId).toBe('machine-a');
+    expect(dispatchedMachineIds).toEqual(['machine-a', 'machine-a', 'machine-a', 'machine-a']);
+    expect(resolveMachineId).toHaveBeenCalledTimes(1);
+  });
+
+  it('replays a captured origin machine through the resolver so replacement and reachability still decide', async () => {
+    // The dictation attempt captured its target when capture was admitted. The
+    // bound operation asks the same resolver for that origin rather than
+    // trusting the raw id, so a replaced machine is followed.
+    const resolveMachineId = vi.fn<(override?: unknown) => string | null>(() => 'machine-replacement');
+    const { machineRpc, dispatchedMachineIds } = createRecordingMachineRpc({ ok: true });
+    const client = createSelectedVoiceMachineClient({ resolveMachineId, machineRpc });
+
+    const operation = client.bindOperation('  machine-origin  ');
+    await operation.invoke('daemon.voice.speech.transcribeUpload.init', {});
+
+    expect(resolveMachineId).toHaveBeenCalledWith({ machineId: 'machine-origin' });
+    expect(dispatchedMachineIds).toEqual(['machine-replacement']);
+  });
+
+  it('fails closed before the operation starts when the captured origin is unreachable', async () => {
+    const { machineRpc, dispatchedMachineIds } = createRecordingMachineRpc({ ok: true });
+    const client = createSelectedVoiceMachineClient({ resolveMachineId: () => null, machineRpc });
+
+    expect(() => client.bindOperation('machine-origin')).toThrow(
+      expect.objectContaining({ code: 'machine_unavailable' }),
+    );
+    expect(dispatchedMachineIds).toEqual([]);
+  });
 });

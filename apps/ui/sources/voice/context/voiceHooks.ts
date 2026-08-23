@@ -81,6 +81,17 @@ function resolvePolicy(sessionId: string): VoiceSessionUpdatePolicy {
   });
 }
 
+/**
+ * The single authority over ambient disclosure caused by observing this
+ * device's UI. Both automatic current-UI navigation updates and the
+ * session-focus announcement exist only because the user navigated here, so
+ * `currentUiContextMode` owns them: `off` and `on_demand` withhold every
+ * automatic announcement, `automatic` admits the bounded ones.
+ */
+function isAmbientCurrentUiDisclosureEnabled(): boolean {
+  return readVoicePrivacySettings(storage.getState().settings).currentUiContextMode === 'automatic';
+}
+
 function getVoiceContextPrefs(sessionId: string) {
   const settings = storage.getState().settings;
   const targetState = resolveEffectiveVoiceTargetState(sessionId);
@@ -256,7 +267,7 @@ export const voiceHooks = {
     snapshot: CurrentUiContextSnapshotV1 | null,
     automaticUpdateProjector: CurrentUiContextAutomaticUpdateProjector,
   ) {
-    if (readVoicePrivacySettings(storage.getState().settings).currentUiContextMode !== 'automatic') return;
+    if (!isAmbientCurrentUiDisclosureEnabled()) return;
     const update = automaticUpdateProjector.project(snapshot);
     if (!update) return;
     // Remember it only once a sink took it, so an update composed while no
@@ -284,10 +295,17 @@ export const voiceHooks = {
   },
 
   onSessionFocus(sessionId: string, metadata?: SessionMetadata) {
-    if (VOICE_CONFIG.DISABLE_SESSION_FOCUS) return;
+    // Focus is a local target signal first: it selects this device's voice
+    // target and does not override an explicit active target. That selection
+    // never leaves the device, so no disclosure setting governs it.
     useVoiceTargetStore.getState().setLastFocusedSessionId(sessionId);
 
-    // This is used as an activity signal; it does not override the active target.
+    // Announcing the focus does leave the device, and the only thing that
+    // produces it is the user navigating here — so it is current-UI context
+    // and answers to that mode, not to a second switch. The per-session update
+    // level still bounds how much stored-session detail the announcement may
+    // carry, exactly as it does for every other session update.
+    if (!isAmbientCurrentUiDisclosureEnabled()) return;
     if (resolvePolicy(sessionId).level === 'none') return;
     reportSession(sessionId);
     reportContextualUpdate(sessionId, formatSessionFocus(sessionId, metadata, getVoiceContextPrefs(sessionId)), 'session_context');

@@ -17,7 +17,11 @@ import {
     selectLocalServicePublicPreviewRowsForPreview,
     type LocalServicePublicPreviewState,
 } from '@/sync/domains/local/services/publicPreview/store';
-import { resolveLocalServicePublicPreviewCreateDisabledSubtitle } from '@/sync/domains/local/services/publicPreview/presentation';
+import {
+    resolveLocalServicePreviewUnavailableSubtitle,
+    resolveLocalServicePublicPreviewCreateDisabledSubtitle,
+} from '@/sync/domains/local/services/publicPreview/presentation';
+import { useLocalServiceCapabilityDisabledReasons } from '@/hooks/server/useLocalServiceCapabilityDisabledReasons';
 import { t } from '@/text';
 
 type PublicPreviewTarget = Readonly<{
@@ -129,6 +133,9 @@ export function LocalServicePublicPreviewControls(props: Readonly<{
     actions?: LocalServicePublicPreviewActions;
     testID?: string;
 }>): React.ReactElement | null {
+    // The server names the exact unmet prerequisite; without it every disabled row says the same
+    // generic sentence and an operator cannot tell which variable is wrong (audit P1-3).
+    const capabilityDisabledReasons = useLocalServiceCapabilityDisabledReasons();
     const state = props.state;
     const actions = props.actions;
     if (!state || !actions) {
@@ -149,6 +156,7 @@ export function LocalServicePublicPreviewControls(props: Readonly<{
             state,
             activeExposureCount,
             previewId: target.previewId,
+            capabilityDisabledReasons: capabilityDisabledReasons.publicPreview,
         }),
     }));
     const creatableTargets: readonly PublicPreviewCreatableTarget[] = targetRows
@@ -160,7 +168,9 @@ export function LocalServicePublicPreviewControls(props: Readonly<{
         .map((row): PublicPreviewDisabledTarget | null => {
             const subtitle = hasPreviewId(row.target)
                 ? row.createDisabledSubtitle
-                : (row.createDisabledSubtitle ?? t('localServices.publicPreview.disabledNoPreviewSubtitle'));
+                : (row.createDisabledSubtitle ?? resolveLocalServicePreviewUnavailableSubtitle({
+                    capabilityDisabledReasons: capabilityDisabledReasons.preview,
+                }));
             return subtitle ? { ...row.target, subtitle } : null;
         })
         .filter((target): target is PublicPreviewDisabledTarget => Boolean(target));

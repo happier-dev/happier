@@ -39,7 +39,7 @@ vi.mock('@happier-dev/audio-stream-native', () => ({
 
 const sherpaStreamingCreate = vi.fn(async () => {});
 const sherpaStreamingPushFrame = vi.fn(async () => ({ text: '', isEndpoint: false }));
-const sherpaStreamingFinish = vi.fn(async () => ({ text: '' }));
+const sherpaStreamingFinish = vi.fn(async () => ({ status: 'finalized', text: '' }));
 const sherpaCancel = vi.fn(async () => {});
 
 vi.mock('@happier-dev/sherpa-native', () => ({
@@ -125,7 +125,7 @@ describe('SherpaStreamingSttController (native shared capture)', () => {
     sherpaStreamingPushFrame.mockReset();
     sherpaStreamingPushFrame.mockResolvedValue({ text: '', isEndpoint: false });
     sherpaStreamingFinish.mockReset();
-    sherpaStreamingFinish.mockResolvedValue({ text: '' });
+    sherpaStreamingFinish.mockResolvedValue({ status: 'finalized', text: '' });
     sherpaCancel.mockReset();
     sherpaCancel.mockResolvedValue(undefined);
     ensureModelPackInstalled.mockReset();
@@ -281,7 +281,7 @@ describe('SherpaStreamingSttController (native shared capture)', () => {
   it('releases and drains exactly its lease before finalizing, and detaches abort ownership', async () => {
     const abortController = new AbortController();
     const removeAbortListener = vi.spyOn(abortController.signal, 'removeEventListener');
-    sherpaStreamingFinish.mockResolvedValueOnce({ text: 'final words' });
+    sherpaStreamingFinish.mockResolvedValueOnce({ status: 'finalized', text: 'final words' });
     const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
     const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
     await controller.start({ micSession: createMicSession(), sink: createSink(), signal: abortController.signal });
@@ -323,6 +323,54 @@ describe('SherpaStreamingSttController (native shared capture)', () => {
     expect(sherpaCancel).toHaveBeenCalledTimes(1);
   });
 
+  it('fails typed rather than submitting the last interim partial when native reports the job cancelled', async () => {
+    // The pack was invalidated (or the job cancelled) while the tail decode was
+    // claimed: there is no final transcript, only the revisable partial the user
+    // already saw. Submitting it is user-visible wrong text.
+    sherpaStreamingPushFrame.mockResolvedValueOnce({ text: 'provisional words', isEndpoint: false });
+    sherpaStreamingFinish.mockResolvedValueOnce({ status: 'cancelled' });
+    const sink = createSink();
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await controller.start({ micSession: createMicSession(), sink });
+    await emitAudioFrame();
+    expect(sink.onPartial).toHaveBeenCalledWith('provisional words');
+
+    await expect(controller.stop()).resolves.toEqual({
+      error: expect.objectContaining({
+        kind: 'provider_error',
+        reason: 'local_neural_stt_finalization_failed',
+      }),
+    });
+  });
+
+  it('fails typed rather than submitting the last interim partial when native no longer holds the job', async () => {
+    sherpaStreamingPushFrame.mockResolvedValueOnce({ text: 'provisional words', isEndpoint: false });
+    sherpaStreamingFinish.mockResolvedValueOnce({ status: 'missing' });
+    const sink = createSink();
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await controller.start({ micSession: createMicSession(), sink });
+    await emitAudioFrame();
+
+    await expect(controller.stop()).resolves.toEqual({
+      error: expect.objectContaining({
+        kind: 'provider_error',
+        reason: 'local_neural_stt_finalization_failed',
+      }),
+    });
+  });
+
+  it('keeps a finalized empty utterance a successful empty transcript', async () => {
+    // Silence is not a failure: the job finalized, it simply had nothing to say.
+    sherpaStreamingFinish.mockResolvedValueOnce({ status: 'finalized', text: '' });
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await controller.start({ micSession: createMicSession(), sink: createSink() });
+
+    await expect(controller.stop()).resolves.toEqual({ finalText: '' });
+  });
+
   it('maps dropped or failed subscriber frames to typed errors and cleanup', async () => {
     const sink = createSink();
     const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
@@ -343,6 +391,39 @@ describe('SherpaStreamingSttController (native shared capture)', () => {
     await vi.waitFor(() => expect(runtime.release).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => {
       expect(secondSink.onError).toHaveBeenCalledWith(expect.objectContaining({ reason: 'local_neural_stt_pcm_frame_failed' }));
+    });
+  });
+
+  it('marks the native job cancelled before waiting on the capture drain', async () => {
+    // The frame already inside the recognizer decodes for as long as it takes.
+    // Waiting for the capture drain first means the cancel only lands once the
+    // work it was meant to stop has already finished, so the ordering is the
+    // whole contract here -- a hung drain must not hide the cancel.
+    const order: string[] = [];
+    let resolveDrain!: () => void;
+    sherpaCancel.mockImplementationOnce(async () => {
+      order.push('cancel');
+    });
+    runtime.waitForDrain.mockImplementationOnce(() => {
+      order.push('drain');
+      return new Promise<void>((resolve) => {
+        resolveDrain = resolve;
+      });
+    });
+
+    const sink = createSink();
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await controller.start({ micSession: createMicSession(), sink });
+
+    runtime.captureRequest?.onDroppedFrames?.(1);
+
+    await vi.waitFor(() => expect(order).toEqual(['cancel', 'drain']));
+    expect(sherpaCancel).toHaveBeenCalledTimes(1);
+
+    resolveDrain();
+    await vi.waitFor(() => {
+      expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({ reason: 'local_neural_stt_pcm_backpressure' }));
     });
   });
 

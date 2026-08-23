@@ -5,11 +5,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { resetSessionDraftValueCachesForTests } from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+import {
+    readSessionDraftValue,
+    resetSessionDraftValueCachesForTests,
+} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { deleteRawSessionDraftValues } from '@/sync/domains/state/sessionDraftValuesPersistence';
 import { t } from '@/text';
 
-import { useInSessionAgentPickerControls } from './useInSessionAgentPickerControls';
+import {
+    useInSessionAgentPickerControls,
+    type SessionAgentContinuationFeatureDecision,
+} from './useInSessionAgentPickerControls';
 import type {
     SessionAgentContinuationMachineTarget,
     SessionAgentContinuationSourceState,
@@ -118,22 +125,25 @@ const AVAILABLE = {
 
 type HookProps = Readonly<{
     sessionId?: string;
+    accountScope?: ServerAccountScope | null;
     entries?: readonly ResolvedBackendCatalogEntry[];
     source?: SessionAgentContinuationSourceState;
     machine?: SessionAgentContinuationMachineTarget;
-    featureEnabled?: boolean;
+    featureDecision?: SessionAgentContinuationFeatureDecision;
     sessionActive?: boolean | null;
 }>;
 
 async function renderControls(props: HookProps = {}) {
     return renderHook((hookProps: HookProps) => useInSessionAgentPickerControls({
         sessionId: hookProps.sessionId ?? 'session-1',
-        accountScope: null,
+        accountScope: hookProps.accountScope ?? null,
         currentAgentId: 'claude',
         currentAgentLabel: 'Claude Code',
         currentAgentSessionActive: hookProps.sessionActive ?? true,
         entries: hookProps.entries ?? [entry('claude'), entry('codex')],
-        featureEnabled: hookProps.featureEnabled ?? true,
+        featureDecision: hookProps.featureDecision === undefined
+            ? { state: 'enabled' }
+            : hookProps.featureDecision,
         source: hookProps.source ?? supportedSource,
         machine: hookProps.machine ?? onlineMachine,
         detail: detailContext,
@@ -164,6 +174,8 @@ describe('useInSessionAgentPickerControls', () => {
         machineRpcWithServerScope.mockReset();
         machineRpcWithServerScope.mockResolvedValue(AVAILABLE);
         hoverCapablePrimaryPointer.current = false;
+        detailSelectionChangeRef.current = null;
+        detailModelSummaryRef.current = null;
     });
 
     it('offers the rest of the Agent catalog beside the Agent already running', async () => {
@@ -276,7 +288,7 @@ describe('useInSessionAgentPickerControls', () => {
         // cannot matter: a closed gate, a Session that cannot be written to or whose
         // transcript is its Agent's own, and a Session with no other Agent.
         for (const props of [
-            { featureEnabled: false },
+            { featureDecision: { state: 'disabled' as const } },
             { source: { ...supportedSource, canEditSession: false } },
             { source: { ...supportedSource, storageKind: 'direct' as const } },
             { entries: [entry('claude')] },
@@ -476,6 +488,73 @@ describe('useInSessionAgentPickerControls', () => {
         expect(announceAccessibilityMessage).toHaveBeenCalledTimes(1);
     });
 
+    it('waits for inspection of the exact model, provider, mode and config before re-arming', async () => {
+        const hook = await renderControls();
+        await openPicker(hook);
+        await act(async () => {
+            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+        });
+        const firstLocalId = hook.getCurrent().armedContinuationLocalId;
+
+        let resolveChangedSelection: ((value: unknown) => void) | null = null;
+        machineRpcWithServerScope.mockClear();
+        machineRpcWithServerScope.mockImplementation((params: {
+            payload: { selection: Record<string, unknown> };
+        }) => {
+            expect(params.payload.selection).toMatchObject({
+                v: 1,
+                agentId: 'codex',
+                modelId: 'opus-5',
+                providerConnectionId: 'provider-1',
+                acpSessionModeId: 'plan',
+                sessionConfigOptionOverrides: {
+                    overrides: { reasoning: { value: 'high' } },
+                },
+            });
+            return new Promise((resolve) => { resolveChangedSelection = resolve; });
+        });
+
+        await act(async () => {
+            optionsOf(hook.getCurrent())[1]?.renderDetailContent?.({ onRequestClose: () => {} });
+            detailSelectionChangeRef.current?.({
+                modelId: 'opus-5',
+                modelSelection: {
+                    v: 1,
+                    updatedAt: 7,
+                    ref: {
+                        agentTargetKey: 'backend:codex',
+                        providerConnectionId: 'provider-1',
+                        modelId: 'opus-5',
+                    },
+                },
+                sessionModeId: 'plan',
+                configOverrides: { reasoning: 'high' },
+            });
+            await Promise.resolve();
+        });
+
+        // The default-selection answer is not a proxy for this choice. While
+        // the exact selection is unanswered, the old arm cannot redirect a send.
+        expect(hook.getCurrent().armedContinuation).toBeNull();
+        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            resolveChangedSelection?.(AVAILABLE);
+            await Promise.resolve();
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(hook.getCurrent().armedContinuation?.selection).toMatchObject({
+            modelId: 'opus-5',
+            providerConnectionId: 'provider-1',
+            acpSessionModeId: 'plan',
+            sessionConfigOptionOverrides: {
+                overrides: { reasoning: { value: 'high' } },
+            },
+        });
+        expect(hook.getCurrent().armedContinuationLocalId).not.toBe(firstLocalId);
+    });
+
     it('names the armed row for screen readers instead of wrapping a subtitle under it', async () => {
         const hook = await renderControls();
         await openPicker(hook);
@@ -519,7 +598,7 @@ describe('useInSessionAgentPickerControls', () => {
         // `sessions.agentSwitching` is server-represented and fails closed. A rail
         // rendered against a missing or disabled bit would offer — and announce —
         // a switch this deployment will refuse.
-        const hook = await renderControls({ featureEnabled: false });
+        const hook = await renderControls({ featureDecision: { state: 'disabled' } });
         await openPicker(hook);
 
         expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
@@ -536,11 +615,106 @@ describe('useInSessionAgentPickerControls', () => {
         });
         expect(hook.getCurrent().armedContinuation).not.toBeNull();
 
-        await hook.rerender({ featureEnabled: false });
+        await hook.rerender({ featureDecision: { state: 'disabled' } });
+        await act(async () => { await Promise.resolve(); });
 
         // The submit path reads exactly this value, so a stale arm surviving a
         // closing gate is the whole gate bypassed.
         expect(hook.getCurrent().armedContinuation).toBeNull();
+        expect(readSessionDraftValue(null, 'session-1', 'routing.agentContinuation')).toBeUndefined();
+
+        // A definite disable is a destructive policy decision, not a temporary
+        // presentation state: turning the bit back on must not resurrect an arm
+        // formed under the old policy.
+        await hook.rerender({ featureDecision: { state: 'enabled' } });
+        expect(hook.getCurrent().armedContinuation).toBeNull();
+    });
+
+    it('fails closed while feature state is unresolved without spending an existing arm', async () => {
+        const hook = await renderControls();
+        await openPicker(hook);
+        await act(async () => {
+            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+        });
+        const localId = hook.getCurrent().armedContinuationLocalId;
+
+        await hook.rerender({ featureDecision: null });
+
+        // Presentation is closed while the decision is unknown, but uncertainty
+        // is not evidence that a saved choice is invalid.
+        expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
+        expect(hook.getCurrent().armedContinuation).toBeNull();
+        expect(readSessionDraftValue(null, 'session-1', 'routing.agentContinuation')).toBeDefined();
+
+        await hook.rerender({ featureDecision: { state: 'enabled' } });
+
+        expect(hook.getCurrent().armedContinuation?.selection.agentId).toBe('codex');
+        expect(hook.getCurrent().armedContinuationLocalId).toBe(localId);
+    });
+
+    it('clears the previous Account arm so returning to it cannot resurrect the switch', async () => {
+        const accountA = { serverId: 'server-1', accountId: 'account-a' } as const;
+        const accountB = { serverId: 'server-1', accountId: 'account-b' } as const;
+        const hook = await renderControls({ accountScope: accountA });
+        await openPicker(hook);
+        await act(async () => {
+            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+        });
+        const accountALocalId = hook.getCurrent().armedContinuationLocalId;
+
+        await hook.rerender({ accountScope: accountB });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(hook.getCurrent().armedContinuation).toBeNull();
+        expect(readSessionDraftValue(accountB, 'session-1', 'routing.agentContinuation')).toBeUndefined();
+        expect(readSessionDraftValue(accountA, 'session-1', 'routing.agentContinuation')).toBeUndefined();
+
+        await hook.rerender({ accountScope: accountA });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(hook.getCurrent().armedContinuation).toBeNull();
+        expect(hook.getCurrent().armedContinuationLocalId).not.toBe(accountALocalId);
+    });
+
+    it('keeps the first exact handoff snapshot for one stable localId', async () => {
+        const hook = await renderControls();
+        await openPicker(hook);
+        await act(async () => {
+            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+        });
+        const localId = hook.getCurrent().armedContinuationLocalId;
+        if (!localId) throw new Error('expected an armed localId');
+
+        await act(async () => {
+            expect(hook.getCurrent().recordArmedContinuationSubmission({
+                localId,
+                input: { text: 'first message', localId, meta: {} },
+                currentness: {
+                    text: 'first message',
+                    mentions: [],
+                    composerAttachments: [],
+                    attachmentDraftIds: [],
+                },
+            })).toBe(true);
+        });
+        await act(async () => {
+            expect(hook.getCurrent().recordArmedContinuationSubmission({
+                localId,
+                input: { text: 'newer retry', localId, meta: {} },
+                currentness: {
+                    text: 'newer retry',
+                    mentions: [],
+                    composerAttachments: [],
+                    attachmentDraftIds: [],
+                },
+            })).toBe(true);
+        });
+
+        expect(hook.getCurrent().armedContinuationSubmission).toMatchObject({
+            localId,
+            input: { text: 'first message', localId },
+            currentness: { text: 'first message' },
+        });
     });
 
     it('drops an armed choice that no longer belongs to the Session it was made in', async () => {
@@ -784,6 +958,38 @@ describe('useInSessionAgentPickerControls', () => {
 
         // …and the answers cannot change what this open popover already is.
         expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual(whileWaiting);
+    });
+
+    it('does not add the rail after a popover has already opened without it', async () => {
+        // The popover shape is decided from facts available at its first visible
+        // render. A late positive answer belongs to the next open; otherwise the
+        // rail appears beside a reader who is already navigating the current-Agent
+        // option.
+        let resolveInspection: ((value: unknown) => void) | null = null;
+        machineRpcWithServerScope.mockImplementation(() => new Promise((resolve) => {
+            resolveInspection = resolve;
+        }));
+        const hook = await renderControls();
+
+        await openPicker(hook);
+        expect(optionsOf(hook.getCurrent()).map((option) => option.id))
+            .toEqual(['engine:claude']);
+
+        await act(async () => {
+            resolveInspection?.(AVAILABLE);
+            await Promise.resolve();
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(optionsOf(hook.getCurrent()).map((option) => option.id))
+            .toEqual(['engine:claude']);
+
+        await act(async () => {
+            hook.getCurrent().onAgentPickerVisibilityChange(false);
+            hook.getCurrent().onAgentPickerVisibilityChange(true);
+        });
+        expect(optionsOf(hook.getCurrent()).map((option) => option.id))
+            .toEqual(['engine:claude', 'backend:codex']);
     });
 
     it('holds a rail it has already shown for the rest of that open popover', async () => {

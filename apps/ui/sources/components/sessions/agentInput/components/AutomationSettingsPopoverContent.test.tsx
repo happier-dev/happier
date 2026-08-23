@@ -172,6 +172,10 @@ describe('AutomationSettingsPopoverContent', () => {
             sourceStatus: 'idle',
             sourceDisplayLabel: null,
             sourceInstanceId: null,
+            availableObservationTransports: ['checkpointedPull'],
+            observationTransport: 'checkpointedPull',
+            setObservationTransport: vi.fn(),
+            webhookEndpoint: null,
             configureSource: vi.fn(),
             watcherCandidates: [],
             selectedWatcherOrigin: null,
@@ -279,6 +283,10 @@ describe('AutomationSettingsPopoverContent', () => {
             sourceStatus: 'idle',
             sourceDisplayLabel: null,
             sourceInstanceId: null,
+            availableObservationTransports: ['checkpointedPull'],
+            observationTransport: 'checkpointedPull',
+            setObservationTransport: vi.fn(),
+            webhookEndpoint: null,
             configureSource: vi.fn(),
             watcherCandidates: [{
                 materialization: {

@@ -138,10 +138,29 @@ export function resolveVoiceHorizonHeights(input: VoiceHorizonHeightsInput): Voi
         reservedAvailableHeight,
         Math.min(minimumHeight, unreservedRegion),
     );
+    /*
+     * The scaffold's panel ceiling is subject to the same rule as the host-chrome
+     * reserve above, and for the same reason.
+     *
+     * `availablePanelHeight` is what the session scaffold has left after the
+     * header, the composer and keyboard avoidance — reservations for other
+     * chrome, not the physical region. Applied as a bare `Math.min` it clamped
+     * the vessel *below its own minimum* under keyboard + 200% text (a 96pt
+     * status row and a 60pt actions block put the floor at 182pt against a
+     * ~150pt panel), and `overflow: hidden` then cut End Voice and Retry off the
+     * bottom — the one thing §2.7 says is never cut. The transcript is the child
+     * that gives way (it is `flex: 1`; the status row and actions block are
+     * not), so honouring the floor squeezes the feed to nothing rather than
+     * clipping the way out. Physical viewport and safe area still bound it.
+     */
     const availablePanelHeight = normalizeMeasuredHeight(input.availablePanelHeight ?? 0);
-    const availableHeight = availablePanelHeight > 0
+    const panelClampedHeight = availablePanelHeight > 0
         ? Math.min(viewportAvailableHeight, availablePanelHeight)
         : viewportAvailableHeight;
+    const availableHeight = Math.max(
+        panelClampedHeight,
+        Math.min(minimumHeight, unreservedRegion),
+    );
 
     return { minimumHeight, desiredHeight, availableHeight };
 }

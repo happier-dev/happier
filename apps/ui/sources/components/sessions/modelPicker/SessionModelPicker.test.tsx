@@ -12,6 +12,22 @@ import {
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
 import { SelectionList } from '@/components/ui/selectionList/SelectionList';
 
+/**
+ * Committing a freeform model id is a SUBMIT, not a keystroke: the overlay's custom
+ * input only stores the draft on change and commits on `onSubmitEditing`/blur. A test
+ * that stopped at `changeText` asserted the binding without ever exercising it.
+ */
+function submitCustomModelValue(screen: Readonly<{
+    findByTestId: (testID: string) => { props: Record<string, unknown> } | null;
+}>): void {
+    const input = screen.findByTestId('model-picker-overlay-custom-input');
+    const onSubmitEditing = input?.props.onSubmitEditing;
+    if (typeof onSubmitEditing !== 'function') {
+        throw new Error('Custom model input is not wired for submit');
+    }
+    act(() => { (onSubmitEditing as () => void)(); });
+}
+
 describe('SessionModelPicker', () => {
     it('keeps selection styling on the requested model and marks the reported runtime model separately', async () => {
         const requested = {
@@ -188,36 +204,52 @@ describe('SessionModelPicker', () => {
         );
         await screen.pressByTestIdAsync('model-picker-overlay-custom');
         act(() => screen.changeTextByTestId('model-picker-overlay-custom-input', 'native-unlisted'));
+        submitCustomModelValue(screen);
         expect(onSelect).toHaveBeenCalledWith({
             agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'native-unlisted',
         });
         expect(clear).toHaveBeenCalledOnce();
     });
 
-    it('binds freeform entry to the exact selected Provider connection', async () => {
+    const freeformProviderGroup = (freeformPolicy: Readonly<{
+        manualModelPolicy: 'allowed' | 'catalog-only';
+        supportsFreeformModelIds: boolean;
+    }>) => {
         const connectionId = ProviderConnectionIdSchema.parse('pc_freeform');
         const selected = { agentTargetKey: 'backend:codex', providerConnectionId: connectionId, modelId: 'listed' } as const;
-        const providerGroups = [{
-            connectionId, providerName: 'Gateway', connectionName: 'Work',
-            connectionRole: 'named' as const, connectionDisplayNameMode: 'custom' as const, connectionRevision: 1,
-            authorization: { authorized: true as const }, manualModelPolicy: 'allowed' as const,
-            supportsFreeformModelIds: true, suppressedConnectedServiceIds: [], modelLoadAction: 'descriptor_absent' as const,
-            rows: [{
-                ref: selected, descriptor: { id: 'listed', name: 'Listed' },
-                sources: { manual: false, static: true, probe: false }, confidence: 'verified_static' as const,
-                compatibility: {
-                    result: { status: 'verified' as const, selectedProtocol: 'openai-responses' as const, evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-07-12' } },
-                    compatibilityFingerprint: 'compatibility:v1:freeform', confirmed: true,
-                },
-                endpointHealth: 'available' as const, catalog: { stale: false }, loadState: 'unknown' as const, visibility: 'visible' as const,
-            }],
-        }];
+        return {
+            connectionId,
+            selected,
+            group: {
+                connectionId, providerName: 'Gateway', connectionName: 'Work',
+                connectionRole: 'named' as const, connectionDisplayNameMode: 'custom' as const, connectionRevision: 1,
+                authorization: { authorized: true as const },
+                manualModelPolicy: freeformPolicy.manualModelPolicy,
+                supportsFreeformModelIds: freeformPolicy.supportsFreeformModelIds,
+                suppressedConnectedServiceIds: [], modelLoadAction: 'descriptor_absent' as const,
+                rows: [{
+                    ref: selected, descriptor: { id: 'listed', name: 'Listed' },
+                    sources: { manual: false, static: true, probe: false }, confidence: 'verified_static' as const,
+                    compatibility: {
+                        result: { status: 'verified' as const, selectedProtocol: 'openai-responses' as const, evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-07-12' } },
+                        compatibilityFingerprint: 'compatibility:v1:freeform', confirmed: true,
+                    },
+                    endpointHealth: 'available' as const, catalog: { stale: false }, loadState: 'unknown' as const, visibility: 'visible' as const,
+                }],
+            },
+        };
+    };
+
+    it('binds freeform entry to the exact selected Provider connection', async () => {
+        const { connectionId, selected, group } = freeformProviderGroup({
+            manualModelPolicy: 'allowed', supportsFreeformModelIds: true,
+        });
         const onSelect = vi.fn();
         const screen = await renderScreen(
             <SessionModelPicker
                 agentTargetKey="backend:codex"
                 nativeModels={[]}
-                providerGroups={providerGroups}
+                providerGroups={[group]}
                 providerProjectionAuthoritative
                 selected={selected}
                 effectiveLabel="Listed"
@@ -226,9 +258,33 @@ describe('SessionModelPicker', () => {
         );
         await screen.pressByTestIdAsync('model-picker-overlay-custom');
         act(() => screen.changeTextByTestId('model-picker-overlay-custom-input', 'provider/unlisted'));
+        submitCustomModelValue(screen);
         expect(onSelect).toHaveBeenCalledWith({
             agentTargetKey: 'backend:codex', providerConnectionId: connectionId, modelId: 'provider/unlisted',
         });
+    });
+
+    // Offering the entry is a promise the launch owner has to keep: an id the
+    // two-sided policy refuses is rejected at spawn as `provider_model_not_found`,
+    // so the picker must not offer custom entry when either side is closed.
+    it.each([
+        ['the Provider refuses manual ids', { manualModelPolicy: 'catalog-only' as const, supportsFreeformModelIds: true }],
+        ['the Agent refuses unverifiable ids', { manualModelPolicy: 'allowed' as const, supportsFreeformModelIds: false }],
+    ])('offers no freeform entry on the selected connection when %s', async (_label, freeformPolicy) => {
+        const { selected, group } = freeformProviderGroup(freeformPolicy);
+        const screen = await renderScreen(
+            <SessionModelPicker
+                agentTargetKey="backend:codex"
+                nativeModels={[]}
+                providerGroups={[group]}
+                providerProjectionAuthoritative
+                selected={selected}
+                effectiveLabel="Listed"
+                onSelect={() => {}}
+            />,
+        );
+
+        expect(screen.findAllByProps({ testID: 'model-picker-overlay-custom' })).toHaveLength(0);
     });
 
     it('does not guess a freeform target when multiple Provider connections are eligible', async () => {

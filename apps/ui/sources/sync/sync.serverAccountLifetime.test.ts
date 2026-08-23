@@ -261,6 +261,10 @@ const eventRunDetail = AutomationV3RunDetailSchema.parse({
     executionInputEnvelope: null,
     resultEnvelope: null,
     legacySummaryCiphertext: null,
+    executionNativeRunId: null,
+    executionNativeCallId: null,
+    executionNativeSidechainId: null,
+    events: [],
 });
 
 describe('Sync Server/Account lifetime reset boundary', () => {
@@ -497,6 +501,7 @@ describe('Sync Server/Account lifetime reset boundary', () => {
                 privateContent: {
                     recipe: { kind: 'unavailable', reason: 'currentnessUnavailable' },
                     result: { kind: 'unavailable', reason: 'currentnessUnavailable' },
+                    failureDetail: { kind: 'unavailable', reason: 'currentnessUnavailable' },
                 },
             });
             expect(getAutomationRunDetailV3).toHaveBeenCalledWith(

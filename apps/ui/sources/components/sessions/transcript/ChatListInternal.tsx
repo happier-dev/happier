@@ -404,6 +404,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         suspendedReasons: [],
         hasMore: true,
         insideThreshold: false,
+        loadFailed: false,
     });
     const observeNativePrependOwnerRef = React.useRef<() => void>(() => {});
     const invalidateNativePrependOwnerRef = React.useRef<() => void>(() => {});
@@ -1881,6 +1882,8 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         isLoadingOlder,
         mainTranscriptListShellFrame,
         olderPaginationIsLoadingOlder: olderPagination.isLoadingOlder,
+        olderPaginationLoadFailed: olderPagination.loadFailed,
+        onRetryOlderPagination: olderPagination.retryLoad,
         onRequestSwitchToRemote: props.onRequestSwitchToRemote,
         renderTranscriptItemAtIndex,
         sessionId: props.sessionId,

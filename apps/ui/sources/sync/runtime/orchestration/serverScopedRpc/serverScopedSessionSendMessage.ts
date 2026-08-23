@@ -1,6 +1,5 @@
 import {
-  hasAdmittedComposerAttachmentSelectionV1,
-  readHappierStructuredInputV1FromMeta,
+  readIngressComposerAttachmentSelectionV1,
   type PendingRequestedActionV1,
 } from '@happier-dev/protocol';
 
@@ -96,8 +95,18 @@ function resolveServerScopedPendingRequestedAction(params: Readonly<{
   };
 }
 
-function hasAdmittedComposerAttachmentSelection(metaOverrides: Record<string, unknown> | null | undefined): boolean {
-  return hasAdmittedComposerAttachmentSelectionV1(readHappierStructuredInputV1FromMeta(metaOverrides));
+/**
+ * The Composer submits its raw pre-admission metadata: a media attachment still carries the
+ * transfer-owned staged claim that the daemon's SessionMedia finalizer replaces during
+ * admission. Reading it through the admitted-only projection dropped exactly those
+ * attachments, so an image- or video-only turn looked blank and was never sent. The
+ * canonical ingress-envelope owner answers the question this gate actually asks, and still
+ * rejects a selection it cannot read rather than sending an empty turn.
+ */
+function hasSubmittableComposerAttachmentSelection(
+  metaOverrides: Record<string, unknown> | null | undefined,
+): boolean {
+  return (readIngressComposerAttachmentSelectionV1(metaOverrides) ?? []).length > 0;
 }
 
 export function createServerScopedSessionSendMessage(deps?: Partial<ServerScopedSessionSendMessageDeps>): Readonly<{
@@ -134,7 +143,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
       const localId = normalizeServerScopeId(args.messageLocalId) || randomUUID();
       if (
         !sessionId
-        || (!message.trim() && !hasAdmittedComposerAttachmentSelection(args.metaOverrides))
+        || (!message.trim() && !hasSubmittableComposerAttachmentSelection(args.metaOverrides))
       ) {
         return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       }

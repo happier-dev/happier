@@ -20,6 +20,9 @@ const styles = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         alignItems: 'center',
     },
+    countBadgeNeutral: {
+        backgroundColor: theme.colors.accent.blue,
+    },
     countText: {
         color: theme.colors.button.primary.tint,
         fontSize: 8,
@@ -74,7 +77,14 @@ const styles = StyleSheet.create((theme) => ({
 
 type TabBadgeProps =
     | Readonly<{ variant: 'dot'; style?: StyleProp<ViewStyle>; testID?: string }>
-    | Readonly<{ variant: 'count'; value: number; max?: number; style?: StyleProp<ViewStyle>; testID?: string }>
+    | Readonly<{
+        variant: 'count';
+        value: number;
+        max?: number;
+        tone?: 'alert' | 'neutral';
+        style?: StyleProp<ViewStyle>;
+        testID?: string;
+    }>
     | Readonly<{
         variant: 'diff';
         added: number;
@@ -96,7 +106,14 @@ export function TabBadge(props: TabBadgeProps): React.ReactElement {
 
     if (props.variant === 'count') {
         return (
-            <View testID={props.testID} style={props.style ? [styles.countBadge, props.style] : styles.countBadge}>
+            <View
+                testID={props.testID}
+                style={[
+                    styles.countBadge,
+                    props.tone === 'neutral' ? styles.countBadgeNeutral : null,
+                    props.style ?? null,
+                ]}
+            >
                 <Text style={styles.countText}>{formatBadgeCount(props.value, props.max)}</Text>
             </View>
         );

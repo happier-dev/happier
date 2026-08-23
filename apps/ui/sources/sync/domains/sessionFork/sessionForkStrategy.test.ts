@@ -171,6 +171,44 @@ describe('findForkChildForRequest', () => {
         })).toEqual({ type: 'found', childSessionId: 'child_latest' });
     });
 
+    it('finds a branch-and-edit child by its durable request identity rather than an adjacent cutoff guess', () => {
+        expect(findForkChildForRequest({
+            ...base,
+            route: 'replay',
+            requestId: 'fork-request-ours',
+            candidates: [
+                candidate('child_branch_and_edit', {
+                    v: 1,
+                    parentSessionId: 'parent_1',
+                    // The daemon's canonical resolver excluded the clicked
+                    // user message at seq 12 from the persisted child.
+                    parentCutoffSeqInclusive: 11,
+                    strategy: 'replay',
+                    requestId: 'fork-request-ours',
+                }),
+            ],
+        })).toEqual({ type: 'found', childSessionId: 'child_branch_and_edit' });
+    });
+
+    it('never adopts a concurrent identical fork from another client', () => {
+        expect(findForkChildForRequest({
+            ...base,
+            route: 'replay',
+            requestId: 'fork-request-ours',
+            candidates: [
+                candidate('child-other-client', {
+                    v: 1,
+                    parentSessionId: 'parent_1',
+                    // This client clicked an agent row at the same exact
+                    // cutoff, so cutoff/strategy alone would misadopt it.
+                    parentCutoffSeqInclusive: 12,
+                    strategy: 'replay',
+                    requestId: 'fork-request-other-client',
+                }),
+            ],
+        })).toEqual({ type: 'none' });
+    });
+
     it('refuses to guess when several new children match', () => {
         expect(findForkChildForRequest({
             ...base,

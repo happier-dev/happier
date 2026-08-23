@@ -378,6 +378,54 @@ describe('createAutomationsDomain', () => {
         expect((harness.get() as PaginatedRunsState).automationRunNextCursorByAutomationId.a1).toBeUndefined();
     });
 
+    it('stops advancing the run cursor once a fetched older page falls outside the bounded window', () => {
+        const harness = createHarness();
+        const domain = harness.get() as PaginatedRunsState;
+        const max = loadSyncTuning().automationRunsMaxEntriesPerAutomation;
+
+        domain.setAutomationRuns(
+            'a1',
+            Array.from({ length: max }, (_, index) =>
+                run({ id: `r${index + 1}`, automationId: 'a1', scheduledAt: max - index }),
+            ) as any,
+            'cursor-1',
+        );
+        // An older page is strictly older than everything retained, so the
+        // bounded newest-first window evicts every fetched row.
+        domain.appendAutomationRuns(
+            'a1',
+            'cursor-1',
+            [run({ id: 'older-1', automationId: 'a1', scheduledAt: -2 })] as any,
+            'cursor-2',
+        );
+
+        expect(harness.get().automationRunsByAutomationId.a1?.some((entry) => entry.id === 'older-1'))
+            .toBe(false);
+        expect((harness.get() as PaginatedRunsState).automationRunNextCursorByAutomationId.a1).toBeNull();
+    });
+
+    it('keeps advancing the run cursor while fetched older pages stay inside the bounded window', () => {
+        const harness = createHarness();
+        const domain = harness.get() as PaginatedRunsState;
+
+        domain.setAutomationRuns(
+            'a1',
+            [run({ id: 'r1', automationId: 'a1', scheduledAt: 10 })] as any,
+            'cursor-1',
+        );
+        domain.appendAutomationRuns(
+            'a1',
+            'cursor-1',
+            [run({ id: 'older-1', automationId: 'a1', scheduledAt: 5 })] as any,
+            'cursor-2',
+        );
+
+        expect(harness.get().automationRunsByAutomationId.a1?.map((entry) => entry.id))
+            .toEqual(['r1', 'older-1']);
+        expect((harness.get() as PaginatedRunsState).automationRunNextCursorByAutomationId.a1)
+            .toBe('cursor-2');
+    });
+
     it('retains only bounded newest runs per automation', () => {
         const harness = createHarness();
         const max = loadSyncTuning().automationRunsMaxEntriesPerAutomation;

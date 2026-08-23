@@ -19,6 +19,14 @@ import type { BulkTransferFileDestination } from '@/sync/domains/transfers/runti
 
 type VoiceDiagnosticsMachineClient = Readonly<{
   invoke(method: string, payload: unknown, signal?: AbortSignal | null): Promise<unknown>;
+  /**
+   * Optional on the injected shape so an already-pinned client (see
+   * `createVoiceDiagnosticsClientForMachine`) can omit it; the artifact export
+   * falls back to that client's single target when it is absent.
+   */
+  bindOperation?: (originMachineId?: string | null) => Readonly<{
+    invoke(method: string, payload: unknown, signal?: AbortSignal | null): Promise<unknown>;
+  }>;
 }>;
 
 function parseResponse<T>(
@@ -68,11 +76,14 @@ export function createVoiceDiagnosticsClient(
       onInit?: ((input: Readonly<{ name: string; sizeBytes: number }>) => Promise<void>) | null;
       onProgress?: ((input: Readonly<{ downloadedBytes: number; totalBytes: number }>) => void) | null;
     }>) {
+      // Init publishes a `downloadId` that only the resolving daemon can serve;
+      // chunk, finalize and abort stay on that machine for the whole export.
+      const bound = machine.bindOperation?.() ?? machine;
       return await downloadBulkPayloadViaMachineRpcToDestination({
         destination: input.destination,
         init: async ({ recipientPublicKeyBase64 }) => parseResponse(
           VoiceSpeechDiagnosticArtifactDownloadInitResponseV1Schema,
-          await machine.invoke(
+          await bound.invoke(
             RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_INIT,
             {
               artifactId: input.artifactId,
@@ -84,7 +95,7 @@ export function createVoiceDiagnosticsClient(
         ),
         readChunk: async (request) => parseResponse(
           VoiceSpeechDiagnosticArtifactDownloadChunkResponseV1Schema,
-          await machine.invoke(
+          await bound.invoke(
             RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_CHUNK,
             request,
             input.signal,
@@ -92,13 +103,13 @@ export function createVoiceDiagnosticsClient(
         ),
         finalize: async (request) => parseResponse(
           VoiceSpeechDiagnosticArtifactDownloadCloseResponseV1Schema,
-          await machine.invoke(
+          await bound.invoke(
             RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_FINALIZE,
             request,
             input.signal,
           ),
         ),
-        abort: async (request) => await machine.invoke(
+        abort: async (request) => await bound.invoke(
           RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_ABORT,
           request,
           input.signal,

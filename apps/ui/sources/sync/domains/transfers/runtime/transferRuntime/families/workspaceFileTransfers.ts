@@ -33,6 +33,8 @@ type WorkspaceStatFileResponse =
         kind?: 'file' | 'directory' | 'other';
         sizeBytes?: number;
         modifiedMs?: number;
+        /** Status-change time; the byte-sensitive half of a file revision. */
+        changedMs?: number;
       }>
     | WorkspaceRpcFailure;
 

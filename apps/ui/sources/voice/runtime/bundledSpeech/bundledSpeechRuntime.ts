@@ -70,6 +70,8 @@ export function createBundledSpeechRuntime(input: Readonly<{
       uri: string;
       providerConfig: unknown;
       fallbackLanguage: string | null;
+      /** Daemon the originating capture attempt was admitted against. */
+      originMachineId?: string | null;
       signal?: AbortSignal | null;
     }>): Promise<string | null> {
       const { contribution, declaration, settings } = readDescriptor(providerId, 'stt');
@@ -103,6 +105,7 @@ export function createBundledSpeechRuntime(input: Readonly<{
         fileName: `recording.${mimeType === 'audio/wav' ? 'wav' : mimeType.split('/')[1]}`,
         model: correspondence.transcribe.model,
         language,
+        originMachineId: params.originMachineId ?? null,
         signal: params.signal,
       });
       return text.trim() || null;

@@ -38,6 +38,9 @@ import {
 } from './domains/state/storageTypes';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { PauseController } from '@/utils/timing/pauseController';
+import { createUserRequestLeaseOwner } from '@/sync/runtime/connectivity/userRequestLease';
+import { consumeActionOperationSnapshotPush } from '@/sync/domains/actionOperations/consumeActionOperationSnapshotPush';
+import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
 import {
     assertServerReachabilityAuthenticated,
     invalidateAllServerReachabilitySupervisors,
@@ -250,6 +253,7 @@ import { voiceHooks } from '@/voice/context/voiceHooks';
 import { notifyActivityReady } from '@/activity/notifications/runtime/activityLocalNotificationBus';
 import { Message } from './domains/messages/messageTypes';
 import { isRecoveredHistoryTranscriptObservation } from './domains/messages/transcriptObservationProvenance';
+import type { TranscriptOlderPageLoadResult } from './domains/messages/transcriptOlderPageLoad';
 import { EncryptionCache } from './encryption/encryptionCache';
 import { nowServerMs } from './runtime/time';
 import {
@@ -475,7 +479,7 @@ import {
     readPendingLocalId,
     hasRawComposerAttachmentSelectionV1,
     SessionUserMessageSendResponseSchema,
-    type HappierStructuredInputV1Envelope,
+    type RawIngressStructuredInputV1,
     type ExternalSessionTranscriptInvalidationV1,
     type PendingDeliveryBlockedReason,
     type PendingRequestedActionV1,
@@ -1089,6 +1093,7 @@ class Sync {
         anonID!: string;
         private credentials!: AuthCredentials;
         private pauseController = new PauseController();
+        private userRequestLeaseOwner = createUserRequestLeaseOwner();
         private activeEndpointSupervisor: ManagedEndpointSupervisor | null = null;
       private syncTuning: SyncTuning = loadSyncTuning();
       private resumeInFlight: Promise<void> | null = null;
@@ -1416,6 +1421,7 @@ class Sync {
                   return;
               }
               if (nextAppState === 'active') {
+                  this.userRequestLeaseOwner.cancelDeferredRoutineTeardown();
                   this.clearNativeInactiveCheckpointTimer();
                   this.isForeground = true;
                   this.resumeNativeCryptoWorkerDispatchAfterForeground('Sync.nativeCryptoWorkerQueue.active.appState');
@@ -1432,15 +1438,22 @@ class Sync {
               } else {
                   this.isForeground = false;
                   this.markNativeCryptoWorkerBackgroundQuiescent();
-                  setServerReachabilityNetworkAllowed(false);
                   log.log(`📱 App state changed to: ${nextAppState}`);
                   this.pauseController.pause();
-                  try {
-                      apiSocket.disconnect();
-                  } catch {
-                      // ignore
+                  const teardownConnectivity = () => {
+                      setServerReachabilityNetworkAllowed(false);
+                      try {
+                          apiSocket.disconnect();
+                      } catch {
+                          // ignore
+                      }
+                      fireAndForget(stopServerReachabilitySupervisors(), { tag: 'Sync.stopServerReachabilitySupervisors' });
+                  };
+                  if (Platform.OS === 'web') {
+                      this.userRequestLeaseOwner.deferRoutineTeardown(teardownConnectivity);
+                  } else {
+                      teardownConnectivity();
                   }
-                  fireAndForget(stopServerReachabilitySupervisors(), { tag: 'Sync.stopServerReachabilitySupervisors' });
                   if (nextAppState === 'inactive') {
                       this.scheduleNativeInactiveCheckpoint();
                   } else {
@@ -1458,17 +1471,36 @@ class Sync {
                   const pauseForWebBackground = (tag: string) => {
                       this.isForeground = false;
                       this.markNativeCryptoWorkerBackgroundQuiescent();
-                      setServerReachabilityNetworkAllowed(false);
                       this.pauseController.pause();
-                      try {
-                          apiSocket.disconnect();
-                      } catch {
-                          // ignore
-                      }
-                      fireAndForget(stopServerReachabilitySupervisors(), { tag });
                       this.flushBackgroundSyncCheckpointsNow();
+                      const teardownConnectivity = () => {
+                          setServerReachabilityNetworkAllowed(false);
+                          try {
+                              apiSocket.disconnect();
+                          } catch {
+                              // ignore
+                          }
+                          fireAndForget(stopServerReachabilitySupervisors(), { tag });
+                      };
+                      this.userRequestLeaseOwner.deferRoutineTeardown(teardownConnectivity);
+                  };
+                  const pauseForWebHardBoundary = (tag: string) => {
+                      this.isForeground = false;
+                      this.markNativeCryptoWorkerBackgroundQuiescent();
+                      this.pauseController.pause();
+                      this.flushBackgroundSyncCheckpointsNow();
+                      this.userRequestLeaseOwner.crossHardBoundary(() => {
+                          setServerReachabilityNetworkAllowed(false);
+                          try {
+                              apiSocket.disconnect();
+                          } catch {
+                              // ignore
+                          }
+                          fireAndForget(stopServerReachabilitySupervisors(), { tag });
+                      });
                   };
                   const resumeForWebForeground = (tag: string) => {
+                      this.userRequestLeaseOwner.cancelDeferredRoutineTeardown();
                       this.isForeground = true;
                       this.resumeNativeCryptoWorkerDispatchAfterForeground(`${tag}.nativeCryptoWorkerQueue`);
                       setServerReachabilityNetworkAllowed(true);
@@ -1498,7 +1530,7 @@ class Sync {
                       }
                   };
                   const onPageHide = () => {
-                      pauseForWebBackground('Sync.stopServerReachabilitySupervisors.pagehide');
+                      pauseForWebHardBoundary('Sync.stopServerReachabilitySupervisors.pagehide');
                   };
                   const onPageShow = (event?: { persisted?: boolean }) => {
                       const state = String(doc.visibilityState ?? '').trim().toLowerCase();
@@ -1507,7 +1539,7 @@ class Sync {
                       }
                   };
                   const onFreeze = () => {
-                      pauseForWebBackground('Sync.stopServerReachabilitySupervisors.freeze');
+                      pauseForWebHardBoundary('Sync.stopServerReachabilitySupervisors.freeze');
                   };
                   const onResume = () => {
                       resumeForWebForeground('Sync.resumeSync.page-lifecycle-resume');
@@ -2126,7 +2158,7 @@ class Sync {
         this.warmCacheBootHydration = null;
         this.flushPendingSettingsForCurrentScopeNow();
         this.clearActiveAccountSettingsScope();
-        apiSocket.disconnect();
+        this.userRequestLeaseOwner.crossHardBoundary(() => apiSocket.disconnect());
         this.activityAccumulator.reset();
         this.machineActivityAccumulator.reset();
 
@@ -2292,6 +2324,10 @@ class Sync {
     public disconnectServer(): void {
         this.resetServerScopedRuntimeState();
         clearWarmCacheAccountScope();
+    }
+
+    public acquireUserRequestLease(): () => void {
+        return this.userRequestLeaseOwner.acquire();
     }
 
     /**
@@ -4316,7 +4352,7 @@ class Sync {
         sessionId: string,
         pendingId: string,
         text: string,
-        structuredInput?: HappierStructuredInputV1Envelope,
+        structuredInput?: RawIngressStructuredInputV1,
         options?: Readonly<{ replacementLocalId?: string }>,
     ): Promise<void> {
         const { outboxScope, request } = await this.resolvePendingQueueOwnerContext(sessionId);
@@ -6972,11 +7008,7 @@ class Sync {
           sidechainId?: string | null;
           beforeSeqOverride?: number;
           limit?: number;
-      }>): Promise<{
-          loaded: number;
-          hasMore: boolean;
-          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
-      }> {
+      }>): Promise<TranscriptOlderPageLoadResult> {
           if (params.scope === 'main') {
               const session = storage.getState().sessions[params.sessionId] ?? null;
               const externalSessionLink = readExternalSessionLink(
@@ -7103,7 +7135,9 @@ class Sync {
                       };
                   } catch (error) {
                       console.error('Failed to load older direct session messages:', error);
-                      return { loaded: 0, hasMore: knownHasMore ?? true, status: 'loaded' };
+                      // A FAILED read, not an empty page: rows and the accepted older cursor are
+                      // untouched, so the reader must see the failure and be able to retry it.
+                      return { loaded: 0, hasMore: knownHasMore ?? true, status: 'retryable_error' };
                   } finally {
                       this.sessionMessagesLoadingOlderByKey.delete(loadingKey);
                       this.replayDeferredMessagesFetch(params.sessionId);
@@ -7273,18 +7307,16 @@ class Sync {
               return { loaded: result.applied, hasMore, status: 'loaded' };
           } catch (error) {
               console.error('Failed to load older messages:', error);
-              return { loaded: 0, hasMore: knownHasMore ?? true, status: 'loaded' };
+              // A FAILED read, not an empty page: `beforeSeq` and the applied rows are
+              // untouched, so the reader must see the failure and be able to retry it.
+              return { loaded: 0, hasMore: knownHasMore ?? true, status: 'retryable_error' };
           } finally {
               this.sessionMessagesLoadingOlderByKey.delete(pagingKey);
               this.replayDeferredMessagesFetch(params.sessionId);
           }
       }
 
-      public async loadOlderMessages(sessionId: string, options?: LoadOlderMessagesOptions): Promise<{
-          loaded: number;
-          hasMore: boolean;
-          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
-      }> {
+      public async loadOlderMessages(sessionId: string, options?: LoadOlderMessagesOptions): Promise<TranscriptOlderPageLoadResult> {
           if (options?.authority) {
               const authority = options.authority;
               const normalizedSessionId = String(sessionId ?? '').trim();
@@ -7358,11 +7390,7 @@ class Sync {
           return this.loadOlderMessagesForChain({ sessionId, scope: 'main', limit: options?.limit });
       }
 
-      public async loadOlderMessagesFromCursor(sessionId: string, beforeSeq: number, options?: LoadOlderMessagesOptions): Promise<{
-          loaded: number;
-          hasMore: boolean;
-          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
-      }> {
+      public async loadOlderMessagesFromCursor(sessionId: string, beforeSeq: number, options?: LoadOlderMessagesOptions): Promise<TranscriptOlderPageLoadResult> {
           return this.loadOlderMessagesForChain({ sessionId, scope: 'main', beforeSeqOverride: beforeSeq, limit: options?.limit });
       }
 
@@ -7595,11 +7623,7 @@ class Sync {
           }
       }
 
-      public async loadOlderSidechainMessages(sessionId: string, sidechainId: string): Promise<{
-          loaded: number;
-          hasMore: boolean;
-          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
-      }> {
+      public async loadOlderSidechainMessages(sessionId: string, sidechainId: string): Promise<TranscriptOlderPageLoadResult> {
           const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
           const normalizedSidechainId = typeof sidechainId === 'string' ? sidechainId.trim() : '';
           if (!normalizedSessionId || !normalizedSidechainId) {
@@ -7634,11 +7658,7 @@ class Sync {
           });
       }
 
-        public async loadOlderMessagesForkAware(childSessionId: string, options?: LoadOlderMessagesOptions): Promise<{
-            loaded: number;
-            hasMore: boolean;
-            status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
-        }> {
+        public async loadOlderMessagesForkAware(childSessionId: string, options?: LoadOlderMessagesOptions): Promise<TranscriptOlderPageLoadResult> {
             const fork = getForkedTranscriptSnapshotCached(storage.getState() as any, childSessionId);
             if (!fork) return this.loadOlderMessages(childSessionId, options);
 
@@ -8627,6 +8647,7 @@ class Sync {
 
     private handleEphemeralUpdate = (update: unknown) => {
         const sourceServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || null;
+        const accountScope = getActiveServerAccountScope();
         const shouldContinue = this.createServerScopeGuard();
         const getSessionEncryption = this.encryption
             ? this.encryption.getSessionEncryption.bind(this.encryption)
@@ -8648,6 +8669,15 @@ class Sync {
                 ephemeralUpdate,
                 { sourceServerId, shouldContinue },
             ),
+            updateActionOperationSnapshot: accountScope && this.encryption
+                ? (ephemeralUpdate) => consumeActionOperationSnapshotPush({
+                    update: ephemeralUpdate,
+                    accountId: accountScope.accountId,
+                    openSnapshot: (ciphertext) => this.encryption?.openActionOperationSnapshotRaw(ciphertext) ?? null,
+                    shouldContinue,
+                    onSnapshot: (snapshot) => actionOperationPresentationCoordinator.observe(snapshot),
+                })
+                : undefined,
         }), { tag: 'Sync.handleEphemeralUpdate' });
     }
 
@@ -8781,7 +8811,11 @@ class Sync {
                 },
             );
             if (hydration.kind !== 'available' || !shouldContinue()) return;
-            await this.fetchMessages(binding.sessionId);
+            // The hydration ALREADY enqueued this Session's canonical messages sync unit,
+            // which is the one owner of transcript rehydration. Awaiting that queue keeps
+            // the replacement read to a single pass; a direct `fetchMessages` here raced
+            // the enqueued unit and produced a second, competing source read.
+            await this.getOrCreateMessagesSync(binding.sessionId).awaitQueue();
             return;
         }
         if (decision.reason === 'source_unavailable') {

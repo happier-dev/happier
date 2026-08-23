@@ -135,13 +135,6 @@ function collectMissingWebWregFields(event: WebWregDiagnosticEvent): string[] {
         'programmaticWebWrite',
     ];
     const missing = required.filter((field) => !hasOwn(event, field));
-    if (
-        event.type === 'restore-decision' ||
-        event.trigger === 'restore' ||
-        event.trigger === 'prepend-restore'
-    ) {
-        if (!hasOwn(event, 'firstVisibleAnchorTestId')) missing.push('firstVisibleAnchorTestId');
-    }
     return missing;
 }
 

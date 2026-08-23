@@ -15,9 +15,6 @@ export const VOICE_CONFIG = {
   /** Disable message forwarding */
   DISABLE_MESSAGES: false,
 
-  /** Disable session focus notifications */
-  DISABLE_SESSION_FOCUS: false,
-
   /** Disable ready event notifications */
   DISABLE_READY_EVENTS: false,
 

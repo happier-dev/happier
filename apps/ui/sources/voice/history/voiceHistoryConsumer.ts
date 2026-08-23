@@ -4,7 +4,9 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import type { SessionDeleteResult } from '@/sync/ops/sessions';
 import { compareTranscriptMessagesOldestFirst } from '@/sync/domains/messages/transcriptOrdering';
+import type { TranscriptOlderPageLoadResult } from '@/sync/domains/messages/transcriptOlderPageLoad';
 
 export type VoiceHistoryProviderSource = NonNullable<ConversationTurnOriginV1['source']>;
 
@@ -27,30 +29,19 @@ export type VoiceHistorySnapshot = Readonly<{
 export type VoiceHistoryExportArtifact = Readonly<{
   fileName: string;
   mimeType: 'application/json';
-  content: string;
+  /**
+   * The serialized JSON document, produced lazily in order.
+   *
+   * Export is "all of it": there is no page, row or byte ceiling, so the whole
+   * document can be larger than anything worth holding twice. Platform targets
+   * stream these chunks straight into their sink (a `Blob` part list on web, an
+   * appending file write on native) instead of concatenating one giant string
+   * and then copying it again.
+   */
+  chunks: () => Iterable<string>;
   rowCount: number;
   range: 'loaded' | 'all';
 }>;
-
-export const VOICE_HISTORY_EXPORT_LIMITS = Object.freeze({
-  maxPages: 64,
-  maxRows: 5_000,
-  maxBytes: 8 * 1024 * 1024,
-});
-
-export type VoiceHistoryExportLimit = 'pages' | 'rows' | 'bytes';
-
-export class VoiceHistoryExportLimitError extends Error {
-  readonly code = 'voice_history_export_limit_exceeded';
-
-  constructor(
-    readonly limit: VoiceHistoryExportLimit,
-    readonly maximum: number,
-  ) {
-    super(`Voice History export exceeded its ${limit} limit (${maximum})`);
-    this.name = 'VoiceHistoryExportLimitError';
-  }
-}
 
 export class VoiceHistoryOperationSupersededError extends Error {
   readonly code = 'voice_history_operation_superseded';
@@ -90,11 +81,7 @@ export function isVoiceHistoryClearActiveCallError(error: unknown): boolean {
     );
 }
 
-export type VoiceHistoryPageResult = Readonly<{
-  loaded: number;
-  hasMore: boolean;
-  status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
-}>;
+export type VoiceHistoryPageResult = TranscriptOlderPageLoadResult;
 
 export type VoiceHistoryCapturedScope = Readonly<{
   key: string;
@@ -109,13 +96,29 @@ export type VoiceHistoryConsumerDeps<
   refreshSessionMessages(sessionId: string, scope: TScope): Promise<void>;
   loadOlderMessages(sessionId: string, scope: TScope): Promise<VoiceHistoryPageResult>;
   readMessages(sessionId: string): readonly Message[];
+  /**
+   * Per-session message revision, from the canonical message owner.
+   *
+   * The projection cannot be keyed on the identity of what `readMessages`
+   * returns: the canonical reader materializes a fresh array on every call
+   * (`readStoredSessionMessages`), so an identity key invalidated the memo on
+   * every read and re-projected the whole loaded slice for each keystroke.
+   */
+  readMessagesRevision(sessionId: string): string | number;
   /** Changes when provider labels/projections can change without new messages. */
   readProjectionRevision?(): string | number;
+  /**
+   * Notifies when a source behind {@link getVoiceHistoryRevision} may have
+   * changed — the message store, the provider registry, or the active scope.
+   * The consumer republishes it as its own revision, so an open History
+   * observes live writes instead of showing whatever the last read returned.
+   */
+  subscribeHistorySources(listener: () => void): () => void;
   resolveProviderLabel(source: VoiceHistoryProviderSource | null): string;
   deleteSession(
     sessionId: string,
     scope: TScope,
-  ): Promise<Readonly<{ success: boolean; message?: string }>>;
+  ): Promise<SessionDeleteResult>;
   canDeleteSession(sessionId: string): boolean;
   retireLocalSession(sessionId: string): void;
   runCarrierOperation<T>(operation: () => Promise<T>): Promise<T>;
@@ -168,40 +171,17 @@ function buildExportFileName(now: Date): string {
   return `happier-voice-history-${now.toISOString().replace(/[:.]/gu, '-')}.json`;
 }
 
-function assertExportRowLimit(rowCount: number): void {
-  if (rowCount > VOICE_HISTORY_EXPORT_LIMITS.maxRows) {
-    throw new VoiceHistoryExportLimitError(
-      'rows',
-      VOICE_HISTORY_EXPORT_LIMITS.maxRows,
-    );
-  }
-}
-
-function buildExportContent(input: Readonly<{
+function* serializeVoiceHistoryExport(input: Readonly<{
   exportedAt: string;
   range: 'loaded' | 'all';
   rows: readonly VoiceHistoryRow[];
-}>): string {
-  assertExportRowLimit(input.rows.length);
-  const encoder = new TextEncoder();
-  const chunks: string[] = [];
-  let byteLength = 0;
-  const append = (chunk: string) => {
-    byteLength += encoder.encode(chunk).byteLength;
-    if (byteLength > VOICE_HISTORY_EXPORT_LIMITS.maxBytes) {
-      throw new VoiceHistoryExportLimitError(
-        'bytes',
-        VOICE_HISTORY_EXPORT_LIMITS.maxBytes,
-      );
-    }
-    chunks.push(chunk);
-  };
-
-  append(
+}>): Generator<string> {
+  yield (
     `{\n  "version": 1,\n  "exportedAt": ${JSON.stringify(input.exportedAt)},`
-    + `\n  "range": ${JSON.stringify(input.range)},\n  "entries": [`,
+    + `\n  "range": ${JSON.stringify(input.range)},\n  "entries": [`
   );
-  input.rows.forEach((row, index) => {
+  let index = 0;
+  for (const row of input.rows) {
     const entry = JSON.stringify({
       id: row.id,
       role: row.role,
@@ -210,34 +190,56 @@ function buildExportContent(input: Readonly<{
       provider: row.providerLabel,
       source: row.source,
     }, null, 2).replace(/^/gmu, '    ');
-    append(`${index === 0 ? '' : ','}\n${entry}`);
-  });
-  append('\n  ]\n}');
-  return chunks.join('');
+    yield `${index === 0 ? '' : ','}\n${entry}`;
+    index += 1;
+  }
+  yield '\n  ]\n}';
 }
 
-export function createVoiceHistoryConsumer<
-  TScope extends VoiceHistoryCapturedScope,
->(deps: VoiceHistoryConsumerDeps<TScope>): Readonly<{
+export type VoiceHistoryConsumer = Readonly<{
   open(query?: string): Promise<VoiceHistorySnapshot>;
   read(query?: string): VoiceHistorySnapshot;
   loadOlder(query?: string): Promise<VoiceHistorySnapshot>;
   exportHistory(input: Readonly<{ range: 'loaded' | 'all' }>): Promise<VoiceHistoryExportArtifact>;
   clear(): Promise<Readonly<{ cleared: boolean }>>;
-}> {
+  /**
+   * External-store pair for the rendered History snapshot. `getRevision`
+   * changes exactly when a further `read()` could answer differently — the
+   * bound session, its message revision, provider projections, the pagination
+   * ceiling, or the active scope — so an open screen re-reads on a live write
+   * and ignores every unrelated one.
+   */
+  subscribe(listener: () => void): () => void;
+  getRevision(): string;
+}>;
+
+export function createVoiceHistoryConsumer<
+  TScope extends VoiceHistoryCapturedScope,
+>(deps: VoiceHistoryConsumerDeps<TScope>): VoiceHistoryConsumer {
   let sessionId: string | null = null;
   let scopeKey: string | null = null;
   let capturedScope: TScope | null = null;
   let hasMore: boolean | null = null;
   let operationEpoch = 0;
   let projectedSessionId: string | null = null;
-  let projectedMessages: readonly Message[] | null = null;
+  let projectedMessagesRevision: string | number | null = null;
   let projectedRevision: string | number | null = null;
   let projectedRows: readonly VoiceHistoryRow[] = Object.freeze([]);
+  const listeners = new Set<() => void>();
+
+  /*
+   * Emitted only from an operation's own continuation, never from `read()`.
+   * `read()` runs inside the screen's render (it is the external-store read),
+   * and its scope check can retire a stale binding; notifying from there would
+   * publish a store change while React is rendering.
+   */
+  const emit = (): void => {
+    for (const listener of [...listeners]) listener();
+  };
 
   const resetProjection = (): void => {
     projectedSessionId = null;
-    projectedMessages = null;
+    projectedMessagesRevision = null;
     projectedRevision = null;
     projectedRows = Object.freeze([]);
   };
@@ -281,17 +283,20 @@ export function createVoiceHistoryConsumer<
 
   const read = (query = ''): VoiceHistorySnapshot => {
     if (!sessionId || !isScopeCurrent()) return empty();
-    const messages = deps.readMessages(sessionId);
+    const messagesRevision = deps.readMessagesRevision(sessionId);
     const revision = deps.readProjectionRevision?.() ?? 0;
     if (
       projectedSessionId !== sessionId
-      || projectedMessages !== messages
+      || projectedMessagesRevision !== messagesRevision
       || projectedRevision !== revision
     ) {
       projectedSessionId = sessionId;
-      projectedMessages = messages;
+      projectedMessagesRevision = messagesRevision;
       projectedRevision = revision;
-      projectedRows = projectVoiceHistoryRows(messages, deps.resolveProviderLabel);
+      projectedRows = projectVoiceHistoryRows(
+        deps.readMessages(sessionId),
+        deps.resolveProviderLabel,
+      );
     }
     return {
       sessionId,
@@ -318,6 +323,7 @@ export function createVoiceHistoryConsumer<
     capturedScope = nextScope;
     sessionId = discoveredSessionId || null;
     hasMore = null;
+    emit();
     return sessionId;
   };
 
@@ -334,15 +340,41 @@ export function createVoiceHistoryConsumer<
       throw new VoiceHistoryOperationSupersededError();
     }
     if (!isScopeCurrent()) return null;
+    if (result.status === 'retryable_error') {
+      // The canonical pager ATTEMPTED the read and it FAILED, retaining rows and
+      // the older cursor so the same read can be retried. Returning it as an
+      // ordinary unchanged page made "Load older" look like a successful no-op
+      // and silently truncated an all-history export. Nothing changed, so the
+      // pagination ceiling and the projection are left exactly as they were.
+      throw new Error('Voice History could not load an older page');
+    }
     hasMore = result.hasMore;
     // The canonical message owner may append into its existing array while
     // paging. This operation is the mutation boundary, so invalidate here
     // without imposing a second message-version owner on History.
     resetProjection();
+    emit();
     return result;
   };
 
   return Object.freeze({
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      const unsubscribeSources = deps.subscribeHistorySources(listener);
+      return () => {
+        listeners.delete(listener);
+        unsubscribeSources();
+      };
+    },
+    getRevision() {
+      return [
+        deps.readScopeKey() ?? '',
+        sessionId ?? '',
+        sessionId ? deps.readMessagesRevision(sessionId) : '',
+        deps.readProjectionRevision?.() ?? 0,
+        hasMore === null ? '' : String(hasMore),
+      ].join('\u0001');
+    },
     async open(query = '') {
       const epoch = beginOperation();
       const discoveredSessionId = await discover(epoch);
@@ -369,49 +401,39 @@ export function createVoiceHistoryConsumer<
     async exportHistory(input) {
       const epoch = beginOperation();
       const expectedSessionId = sessionId;
-      let snapshot: VoiceHistorySnapshot | null = null;
       if (input.range === 'all' && expectedSessionId && isScopeCurrent()) {
-        let fetchedPages = 0;
-        snapshot = read();
-        let beforeCount = snapshot.loadedRowCount;
-        assertExportRowLimit(beforeCount);
+        // "All" means all of it. There is no page, row or byte ceiling: a
+        // ceiling turned a large history into no artifact at all, while the
+        // only export action the screen offers asks for the whole range.
         while (true) {
-          if (fetchedPages >= VOICE_HISTORY_EXPORT_LIMITS.maxPages) {
-            throw new VoiceHistoryExportLimitError(
-              'pages',
-              VOICE_HISTORY_EXPORT_LIMITS.maxPages,
-            );
-          }
           const page = await pageOnce(epoch, expectedSessionId);
           if (!page) break;
-          fetchedPages += 1;
           assertOperationCurrent(epoch);
-          snapshot = read();
-          const afterCount = snapshot.loadedRowCount;
-          assertExportRowLimit(afterCount);
           if (page.status === 'no_more' || page.hasMore === false) break;
           if (page.status === 'not_ready' || page.status === 'in_flight') {
             throw new Error(`Voice History pagination is ${page.status}`);
           }
-          if (page.loaded === 0 && afterCount === beforeCount) {
+          // `loaded` is the canonical count of rows the pager applied, so it
+          // reports cursor progress without projecting the growing slice.
+          if (page.loaded === 0) {
             throw new Error('Voice History pagination made no progress');
           }
-          beforeCount = afterCount;
         }
       }
       assertOperationCurrent(epoch);
-      snapshot ??= read();
+      // Exactly one projection, after the last page. Reading per page re-sorted
+      // and re-labelled the whole accumulated history for every page fetched.
+      const rows = read().rows;
       const now = deps.now();
-      const content = buildExportContent({
-        exportedAt: now.toISOString(),
-        range: input.range,
-        rows: snapshot.rows,
-      });
       return {
         fileName: buildExportFileName(now),
         mimeType: 'application/json',
-        content,
-        rowCount: snapshot.rows.length,
+        chunks: () => serializeVoiceHistoryExport({
+          exportedAt: now.toISOString(),
+          range: input.range,
+          rows,
+        }),
+        rowCount: rows.length,
         range: input.range,
       };
     },
@@ -429,7 +451,13 @@ export function createVoiceHistoryConsumer<
           throw new VoiceHistoryClearActiveCallError();
         }
         const result = await deps.deleteSession(deletingSessionId, deletingScope);
-        if (!result.success) {
+        // `session_absent` is the server confirming that this exact carrier is
+        // gone or was never ours, so it joins the deleted path: the binding and
+        // its decrypted rows must be retired even when no socket deletion update
+        // ever reaches this device. Every other failure — a lost delete
+        // condition above all — leaves the carrier alive and retryable, so local
+        // history is preserved rather than discarded on a transient conflict.
+        if (!result.success && result.code !== 'session_absent') {
           assertOperationCurrent(epoch);
           throw new Error(result.message || 'Voice History could not be cleared');
         }
@@ -447,6 +475,7 @@ export function createVoiceHistoryConsumer<
             if (isExactDeletedBindingCurrent()) {
               resetBinding();
             }
+            emit();
           }
           return true;
         };

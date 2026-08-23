@@ -22,6 +22,12 @@ export const ExternalSessionOperationSharedCard = React.memo(
     function ExternalSessionOperationSharedCard(props: Readonly<{
         presentation: ExternalSessionOperationSharedPresentationV1;
         onDismiss?: (actionRef: ExternalSessionOperationActionRef) => void;
+        /**
+         * Supplied only for the EXACT owner whose status read failed. The owner is
+         * otherwise indistinguishable from a non-owner reader here, and its only previous
+         * recoveries were a remount or an offline -> online transition.
+         */
+        onCheckAgain?: () => void;
     }>) {
         const presentation = presentExternalSessionOperationShared(props.presentation);
         const canDismiss = props.onDismiss !== undefined
@@ -31,10 +37,19 @@ export const ExternalSessionOperationSharedCard = React.memo(
         const dismissTitle = canDismiss
             ? t('externalSessions.operationActionDismiss')
             : null;
+        const onCheckAgain = props.onCheckAgain;
+        const checkAgainTitle = onCheckAgain
+            ? t('externalSessions.operationActionCheckAgain')
+            : null;
+        const readFailedSubtitle = onCheckAgain
+            ? t('externalSessions.operationStatusOwnerReadFailed')
+            : null;
         const accessibilityAnnouncement = [
             t(presentation.titleKey),
             t(presentation.statusKey),
             t(presentation.phaseKey),
+            readFailedSubtitle,
+            checkAgainTitle,
             dismissTitle,
         ].filter((part): part is string => part !== null).join('. ');
         const accessibilityTransitionKey = [
@@ -42,6 +57,7 @@ export const ExternalSessionOperationSharedCard = React.memo(
             props.presentation.status,
             props.presentation.phase,
             canDismiss ? 'dismissible' : 'read_only',
+            onCheckAgain ? 'owner_read_failed' : 'no_owner_recovery',
         ].join(':');
         return (
             <View testID="external-session-operation-shared-card">
@@ -62,6 +78,17 @@ export const ExternalSessionOperationSharedCard = React.memo(
                             t(presentation.phaseKey),
                         ].join('. ')}
                     />
+                    {onCheckAgain && checkAgainTitle && readFailedSubtitle ? (
+                        <Item
+                            testID="external-session-operation-action-check-again"
+                            title={checkAgainTitle}
+                            subtitle={readFailedSubtitle}
+                            onPress={onCheckAgain}
+                            showChevron={false}
+                            accessibilityRole="button"
+                            accessibilityLabel={[checkAgainTitle, readFailedSubtitle].join('. ')}
+                        />
+                    ) : null}
                     {canDismiss && dismissTitle ? (
                         <Item
                             testID="external-session-operation-action-dismiss"

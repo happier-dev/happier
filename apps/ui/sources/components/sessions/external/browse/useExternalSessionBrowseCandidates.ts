@@ -282,6 +282,12 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 loadGenerationRef.current += 1;
                 activeScopeAbortControllerRef.current?.abort();
                 activeScopeAbortControllerRef.current = null;
+                // The Account lifetime holds this registration until it is disposed or
+                // the Account is retired. Retiring the request without disposing leaves a
+                // dead closure (and its abort controller) alive for the rest of the
+                // Account, once per browse mount.
+                activeScopeAccountRetirementRef.current?.dispose();
+                activeScopeAccountRetirementRef.current = null;
                 activePageRequestKeysRef.current.clear();
                 setCandidatesAuthoritative(false);
                 setLoading(false);
@@ -306,6 +312,8 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             // publishes; a paging (`append`) request never revokes that authority.
             setCandidatesAuthoritative(false);
             if (!hasValidScope) {
+                activeScopeAccountRetirementRef.current?.dispose();
+                activeScopeAccountRetirementRef.current = null;
                 loadedScopeKeyRef.current = currentScopeKey;
                 setLoadedScopeKey(currentScopeKey);
                 seenPageContinuationsRef.current = {
@@ -591,6 +599,25 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             if (!pageResult) return;
             const { result } = pageResult;
 
+            /**
+             * The daemon answered that the continuation this request carried can no
+             * longer address a page. Retrying it is guaranteed to fail again, so the
+             * rejected continuation is dropped and the listing is rebuilt from the
+             * root exactly once — the rebuild carries no cursor, so it cannot come
+             * back here. Rows already on screen stay visible through the rebuild but
+             * stop being authoritative until it publishes.
+             */
+            if (requestedCursor !== null && result.ok && result.cursorReset === true) {
+                setNextPage(null);
+                setCandidatesAuthoritative(false);
+                seenPageContinuationsRef.current = {
+                    scopeKey: currentScopeKey,
+                    continuations: new Set<string>(),
+                };
+                await loadCandidates();
+                return;
+            }
+
             const ok = applyResult(result, append ? 'append' : 'replace', initialSearchMode);
             if (!ok || !shouldStartWithFastSearch || !result.ok || !result.searchIncomplete) {
                 return;
@@ -690,6 +717,8 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
     React.useEffect(() => () => {
         loadGenerationRef.current += 1;
         activeScopeAbortControllerRef.current?.abort();
+        activeScopeAccountRetirementRef.current?.dispose();
+        activeScopeAccountRetirementRef.current = null;
         activePageRequestKeysRef.current.clear();
     }, []);
 
@@ -730,6 +759,14 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
     return {
         candidates: scopeMatches ? candidates : [],
         candidatesAuthoritative: scopeMatches && candidatesAuthoritative,
+        /**
+         * The normalized query the rows on screen actually answer, or `null` while no
+         * request owning the current scope has published. A surface whose visible
+         * query runs ahead of this — a debounced search field between keystroke and
+         * request — is showing rows from a query the user has already replaced, and
+         * compares the two to decide whether those rows may still be acted on.
+         */
+        publishedSearchTerm: scopeMatches ? normalizedSearchTerm : null,
         nextCursor: scopeMatches ? nextPage?.cursor ?? null : null,
         paginationRequestKey,
         loading: loading || (enabled && !scopeMatches),

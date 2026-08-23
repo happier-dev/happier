@@ -23,6 +23,7 @@ import {
     openEncryptedDataKeyEnvelopeV1,
     sealAccountScopedBlobCiphertext,
     sealEncryptedDataKeyEnvelopeV1,
+    type AccountScopedCryptoMaterial,
 } from '@happier-dev/protocol';
 import { syncPerformanceTelemetry } from '../runtime/syncPerformanceTelemetry';
 import { createNativeCryptoWorker } from './nativeCryptoWorker/nativeCryptoWorker';
@@ -135,6 +136,7 @@ export class Encryption {
     // The secret behind `fallbackEncryption`. Sessions opened without their own
     // data key are sealed with it, so it is also their input-equality material.
     private readonly masterSecret: Uint8Array;
+    private readonly accountScopedCryptoMaterial: AccountScopedCryptoMaterial;
     readonly anonID: string;
     readonly contentDataKey: Uint8Array;
 
@@ -166,6 +168,9 @@ export class Encryption {
         this.anonID = anonID;
         this.contentKeyPair = contentKeyPair;
         this.masterSecret = masterSecret;
+        this.accountScopedCryptoMaterial = useDataKeyFallback
+            ? { type: 'dataKey', machineKey: masterSecret }
+            : { type: 'legacy', secret: masterSecret };
         this.fallbackEncryption = useDataKeyFallback
             ? new AES256Encryption(masterSecret, {
                 nativeCryptoWorker: this.createNativeJsonDecryptWorkerBinding(),
@@ -244,6 +249,14 @@ export class Encryption {
 
     getContentPrivateKey(): Uint8Array {
         return this.contentKeyPair.privateKey;
+    }
+
+    openActionOperationSnapshotRaw(ciphertext: string): unknown | null {
+        return openAccountScopedBlobCiphertext({
+            kind: 'action_operation_snapshot',
+            material: this.accountScopedCryptoMaterial,
+            ciphertext,
+        })?.value ?? null;
     }
 
     private resolveEncryptionScope(scope: EncryptionScopeInput = {}): ResolvedEncryptionScope {

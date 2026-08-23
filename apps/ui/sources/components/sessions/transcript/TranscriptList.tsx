@@ -8,7 +8,16 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
     TRANSCRIPT_TOP_GUTTER_PX,
 } from '@/components/sessions/transcript/_constants';
-import { orientTranscriptListItems } from '@/components/sessions/transcript/listOrientation';
+import {
+    mapTranscriptListIndexBetweenOrders,
+    orientTranscriptListItems,
+} from '@/components/sessions/transcript/listOrientation';
+import { OlderLoadProgressOverlay } from '@/components/sessions/transcript/OlderLoadProgressOverlay';
+import { OlderLoadRetryOverlay } from '@/components/sessions/transcript/OlderLoadRetryOverlay';
+import {
+    useTranscriptShellOlderPagination,
+} from '@/components/sessions/transcript/pagination/useTranscriptShellOlderPagination';
+import type { TranscriptOlderPageLoadResult } from '@/sync/domains/messages/transcriptOlderPageLoad';
 import { deriveTranscriptForkCommonForInteraction, useTranscriptSessionCommon } from '@/components/sessions/transcript/transcriptSessionCommon';
 import { useOptionalTranscriptSelectionState } from '@/components/sessions/transcript/messageSelection/TranscriptMessageSelectionContext';
 import { TranscriptListShell } from '@/components/sessions/transcript/viewport/shell/TranscriptListShell';
@@ -97,6 +106,12 @@ export const TranscriptList = React.memo((props: {
     interaction: TranscriptInteraction;
     bottomNotice?: TranscriptBottomNotice | null;
     isLoaded?: boolean;
+    /**
+     * Reads the next older page of this read-only transcript. Omitted when the caller has
+     * the whole history already; supplied by paged readers such as a public share, whose
+     * first response is only the newest page.
+     */
+    loadOlder?: () => Promise<TranscriptOlderPageLoadResult>;
 }) => {
     const transcriptSessionCommon = useTranscriptSessionCommon(props.sessionId);
     const { motionConfig } = useTranscriptMotionConfig();
@@ -168,6 +183,24 @@ export const TranscriptList = React.memo((props: {
         }
         return orientTranscriptListItems(props.messages, 'standard');
     }, [props.messages, shellFrame.dataOrder]);
+    const listOrientation = shellFrame.dataOrder === 'newest-first' ? 'inverted' : 'standard';
+    const messageCountRef = React.useRef(props.messages.length);
+    messageCountRef.current = props.messages.length;
+    const olderPagination = useTranscriptShellOlderPagination({
+        datasetKey: props.datasetKey,
+        dataOrder: shellFrame.dataOrder,
+        listRef,
+        loadOlder: props.loadOlder,
+        readCanonicalItemCount: () => messageCountRef.current,
+        readRenderedItemCount: () => messageCountRef.current,
+        readSourceIndexForRenderedIndex: (renderedIndex: number) =>
+            mapTranscriptListIndexBetweenOrders(
+                renderedIndex,
+                messageCountRef.current,
+                listOrientation,
+            ),
+        sessionId: props.sessionId,
+    });
     const shellEdgeSlots = React.useMemo(() => resolveTranscriptListShellEdgeSlots({
         frame: shellFrame,
         visualTopNode: <ListHeader isLoading={props.isLoaded === false} />,
@@ -286,6 +319,14 @@ export const TranscriptList = React.memo((props: {
                     renderItem={renderItem}
                     header={shellEdgeSlots.listHeaderNode}
                     footer={shellEdgeSlots.listFooterNode}
+                    {...olderPagination.shellProps}
+                    olderLoadOverlay={
+                        olderPagination.isLoadingOlder
+                            ? <OlderLoadProgressOverlay />
+                            : olderPagination.loadFailed
+                                ? <OlderLoadRetryOverlay onRetry={olderPagination.retryLoad} />
+                                : null
+                    }
                 />
             </TranscriptRowLayoutMutationProvider>
         </TranscriptMotionProvider>

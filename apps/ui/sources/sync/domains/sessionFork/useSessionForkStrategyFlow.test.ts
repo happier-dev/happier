@@ -7,13 +7,18 @@ import { standardCleanup } from '@/dev/testkit';
 const forkSessionMock = vi.hoisted(() => vi.fn());
 const completeSessionForkNavigationMock = vi.hoisted(() => vi.fn());
 const refreshSessionsMock = vi.hoisted(() => vi.fn());
+const releaseUserRequestLeaseMock = vi.hoisted(() => vi.fn());
+const acquireUserRequestLeaseMock = vi.hoisted(() => vi.fn(() => releaseUserRequestLeaseMock));
 const sessionsRef = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 
 vi.mock('@/sync/ops', () => ({ forkSession: forkSessionMock }));
 vi.mock('./completeSessionForkNavigation', () => ({
     completeSessionForkNavigation: completeSessionForkNavigationMock,
 }));
-vi.mock('@/sync/sync', () => ({ sync: { refreshSessions: refreshSessionsMock } }));
+vi.mock('@/sync/sync', () => ({ sync: {
+    refreshSessions: refreshSessionsMock,
+    acquireUserRequestLease: acquireUserRequestLeaseMock,
+} }));
 vi.mock('@/sync/domains/state/storage', () => ({
     storage: { getState: () => ({ sessions: sessionsRef.current }) },
 }));
@@ -48,6 +53,8 @@ beforeEach(() => {
     completeSessionForkNavigationMock.mockResolvedValue(undefined);
     refreshSessionsMock.mockReset();
     refreshSessionsMock.mockResolvedValue(undefined);
+    acquireUserRequestLeaseMock.mockClear();
+    releaseUserRequestLeaseMock.mockClear();
     sessionsRef.current = {};
 });
 
@@ -74,6 +81,22 @@ describe('useSessionForkStrategyFlow', () => {
             forkPoint: { type: 'seq', upToSeqInclusive: 12 },
             strategy: 'native',
         });
+        expect(acquireUserRequestLeaseMock).toHaveBeenCalledTimes(1);
+        expect(releaseUserRequestLeaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the one legacy dispatch when no daemon machine target can be probed', async () => {
+        forkSessionMock.mockResolvedValue({ ok: true, childSessionId: 'child_legacy' });
+        const { harness } = await mountFlow({
+            request: { ...REQUEST, machineId: null },
+        });
+
+        await act(async () => { await harness.getCurrent().submit('native'); });
+
+        expect(forkSessionMock).toHaveBeenCalledTimes(1);
+        expect(completeSessionForkNavigationMock).toHaveBeenCalledTimes(1);
+        expect(acquireUserRequestLeaseMock).toHaveBeenCalledTimes(1);
+        expect(releaseUserRequestLeaseMock).toHaveBeenCalledTimes(1);
     });
 
     it('carries the restored draft through navigation and finishes after navigating once', async () => {
@@ -157,6 +180,8 @@ describe('useSessionForkStrategyFlow', () => {
         });
         const { harness, onNavigated } = await mountFlow();
         await act(async () => { await harness.getCurrent().submit('replay'); });
+        const requestId = forkSessionMock.mock.calls[0]?.[0]?.requestId;
+        expect(typeof requestId).toBe('string');
 
         refreshSessionsMock.mockImplementation(async () => {
             sessionsRef.current = {
@@ -166,9 +191,12 @@ describe('useSessionForkStrategyFlow', () => {
                         forkV1: {
                             v: 1,
                             parentSessionId: 'parent_1',
-                            parentCutoffSeqInclusive: 12,
+                            // Branch-and-edit persisted the canonical cutoff
+                            // resolved from the clicked user message at seq 12.
+                            parentCutoffSeqInclusive: 11,
                             createdAtMs: 5,
                             strategy: 'replay',
+                            requestId,
                         },
                     },
                 },
@@ -177,10 +205,46 @@ describe('useSessionForkStrategyFlow', () => {
 
         await act(async () => { await harness.getCurrent().checkForFork(); });
 
-        expect(refreshSessionsMock).toHaveBeenCalledTimes(1);
+        expect(refreshSessionsMock).toHaveBeenCalledWith({ awaitSessionListHydration: true });
         expect(forkSessionMock).toHaveBeenCalledTimes(1);
         expect(completeSessionForkNavigationMock).toHaveBeenCalledWith(
             expect.objectContaining({ childSessionId: 'child_late' }),
+        );
+        expect(onNavigated).toHaveBeenCalledTimes(1);
+    });
+
+    it('reconciles a layout-1 child from its owner metadata view', async () => {
+        forkSessionMock.mockResolvedValue({
+            ok: false, errorCode: 'SESSION_WEBHOOK_TIMEOUT', errorMessage: 'timed out',
+        });
+        const { harness, onNavigated } = await mountFlow();
+        await act(async () => { await harness.getCurrent().submit('replay'); });
+        const requestId = forkSessionMock.mock.calls[0]?.[0]?.requestId;
+
+        refreshSessionsMock.mockImplementation(async () => {
+            sessionsRef.current = {
+                child_layout_1: {
+                    id: 'child_layout_1',
+                    metadataLayoutVersion: 1,
+                    metadata: { shared: true },
+                    ownerMetadataView: {
+                        forkV1: {
+                            v: 1,
+                            parentSessionId: 'parent_1',
+                            parentCutoffSeqInclusive: 11,
+                            createdAtMs: 5,
+                            strategy: 'replay',
+                            requestId,
+                        },
+                    },
+                },
+            };
+        });
+
+        await act(async () => { await harness.getCurrent().checkForFork(); });
+
+        expect(completeSessionForkNavigationMock).toHaveBeenCalledWith(
+            expect.objectContaining({ childSessionId: 'child_layout_1' }),
         );
         expect(onNavigated).toHaveBeenCalledTimes(1);
     });

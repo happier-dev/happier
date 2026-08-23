@@ -60,6 +60,19 @@ function writeTranscriptSelectorCache(key: string, entry: TranscriptSelectorCach
     transcriptSelectorCache.set(key, entry);
 }
 
+type TranscriptOrderKey = Readonly<{
+    record: Readonly<Record<string, unknown>>;
+    createdAt: number;
+    id: string;
+}>;
+
+/** The projection's one ordering rule, shared by the order check and the sort. */
+function compareTranscriptOrderKeys(left: TranscriptOrderKey, right: TranscriptOrderKey): number {
+    return left.createdAt === right.createdAt
+        ? left.id.localeCompare(right.id)
+        : left.createdAt - right.createdAt;
+}
+
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     if (!value || typeof value !== 'object') return null;
     return value as Readonly<Record<string, unknown>>;
@@ -109,12 +122,45 @@ export function selectVoiceTranscriptEntriesForConversationSession(
     }
 
     const messages = readStoredSessionMessages<unknown, unknown>(state, resolvedConversationSessionId);
-    const entries: VoiceTranscriptEntry[] = [];
+
+    /*
+     * Pass 1 reads ordering keys only — no text extraction, note-meta parse or
+     * interruption lookup. Those are the expensive per-message steps, and a long
+     * conversation re-projects on every append, so the old shape paid them for
+     * every message and then threw all but the newest `limit` away.
+     */
+    const orderKeys: TranscriptOrderKey[] = [];
+    let alreadyOrdered = true;
     for (const message of messages) {
         const record = readRecord(message);
         const entryId = resolveVoiceTranscriptEntryId(message);
         if (!record || !entryId) continue;
-        const text = extractMessageText(message);
+        const key: TranscriptOrderKey = {
+            record,
+            id: entryId,
+            createdAt: typeof record.createdAt === 'number' && Number.isFinite(record.createdAt) ? record.createdAt : 0,
+        };
+        const previous = orderKeys[orderKeys.length - 1];
+        if (previous && compareTranscriptOrderKeys(previous, key) > 0) alreadyOrdered = false;
+        orderKeys.push(key);
+    }
+    // The canonical store hands back `messageIdsOldestFirst` order, which already
+    // satisfies this comparator. Legacy slices persisted as a raw array carry no
+    // such guarantee, so the tail is only exact once they are ordered.
+    if (!alreadyOrdered) orderKeys.sort(compareTranscriptOrderKeys);
+
+    /*
+     * Pass 2 walks newest-first and stops at the window. The window counts
+     * *projected* entries, so a message with no renderable text is skipped and
+     * the walk reaches one further back — the same set the unbounded projection
+     * produced, without projecting the messages behind it. Older items remain in
+     * the message store and page in via existing session-message pagination;
+     * they are not dropped from persistence.
+     */
+    const newestFirst: VoiceTranscriptEntry[] = [];
+    for (let cursor = orderKeys.length - 1; cursor >= 0 && newestFirst.length < limit; cursor -= 1) {
+        const { record, id, createdAt } = orderKeys[cursor]!;
+        const text = extractMessageText(record);
         if (!text) continue;
         const kind =
             record.kind === 'user-text' || record.role === 'user'
@@ -122,30 +168,20 @@ export function selectVoiceTranscriptEntriesForConversationSession(
                 : hasVoiceTranscriptNoteMeta(record.meta)
                     ? 'note'
                     : 'assistant';
-        entries.push({
-            id: entryId,
-            createdAt: typeof record.createdAt === 'number' && Number.isFinite(record.createdAt) ? record.createdAt : 0,
+        newestFirst.push({
+            id,
+            createdAt,
             kind,
             text,
-            ...(kind === 'assistant' && isVoiceTurnInterrupted(entryId)
+            ...(kind === 'assistant' && isVoiceTurnInterrupted(id)
                 ? { interrupted: true }
                 : {}),
         });
     }
 
-    entries.sort((left, right) =>
-        left.createdAt === right.createdAt
-            ? left.id.localeCompare(right.id)
-            : left.createdAt - right.createdAt,
-    );
-
-    // Enforce the active render window: keep the most recent `limit` items.
-    // Older items remain in the message store and page in via existing
-    // session-message pagination; they are not dropped from persistence.
-    const windowed: ReadonlyArray<VoiceTranscriptEntry> = entries.length > limit
-        ? Object.freeze(entries.slice(entries.length - limit))
-        : Object.freeze(entries);
-    const result = windowed.length === 0 ? EMPTY_ENTRIES : windowed;
+    const result: ReadonlyArray<VoiceTranscriptEntry> = newestFirst.length === 0
+        ? EMPTY_ENTRIES
+        : Object.freeze(newestFirst.reverse());
     writeTranscriptSelectorCache(resolvedConversationSessionId, { slice, limit, interruptionVersion, result });
     return result;
 }

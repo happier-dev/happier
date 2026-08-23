@@ -151,8 +151,21 @@ export function createDaemonSpeechStreamTunnelTransport(
   let sendTail: Promise<void> = Promise.resolve();
   let lastDataCarrierSequence = 0;
 
-  const sendSubstreamPayload = async (substreamId: string, sequence: number, payloadBytes: Uint8Array): Promise<Uint8Array | null> => {
-    const send = async () => {
+  /**
+   * Preparing a carrier payload is asynchronous (AES-GCM sealing), and WebCrypto
+   * makes no promise about the completion order of concurrent operations. The
+   * daemon accepts only `lastCarrierSequence + 1`, so admission to the substream
+   * must cover preparation *and* the send: the tail is claimed synchronously by
+   * whichever caller arrives first, and a later sequence cannot overtake an
+   * earlier one that is still sealing. Waiting for the daemon's response stays
+   * outside the tail so bounded response pipelining is preserved.
+   */
+  const sendSubstreamPayload = async (
+    substreamId: string,
+    sequence: number,
+    preparePayloadBytes: () => Uint8Array | Promise<Uint8Array>,
+  ): Promise<Uint8Array | null> => {
+    const send = async (payloadBytes: Uint8Array) => {
       if (options.stream.sendSubstreamDataFrame) {
         await options.stream.sendSubstreamDataFrame(substreamId, {
           tunnelId: options.tunnelId,
@@ -176,9 +189,17 @@ export function createDaemonSpeechStreamTunnelTransport(
       seq: sequence,
       timeoutMs: options.responseTimeoutMs ?? DEFAULT_RESPONSE_TIMEOUT_MS,
       send: async () => {
-        const operation = sendTail.catch(() => {}).then(send);
-        sendTail = operation.catch(() => {});
-        await operation;
+        const previous = sendTail;
+        let release!: () => void;
+        sendTail = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        await previous;
+        try {
+          await send(await preparePayloadBytes());
+        } finally {
+          release();
+        }
       },
     });
   };
@@ -281,14 +302,13 @@ export function createDaemonSpeechStreamTunnelTransport(
           recipientPublicKey,
           randomBytes: getRandomBytes,
         });
-        const installPayload = await sealRequest({
+        const responseBytes = await sendSubstreamPayload(substreamId, 0, async () => await sealRequest({
           phase: 'install',
           sequence: 0,
           plaintext: new TextEncoder().encode(PEER_APPLICATION_ENCRYPTION_INSTALL_PROOF_V1),
           session,
           encryptedDataKeyEnvelopeBase64Url: encodeBase64(encryptedDataKeyEnvelope, 'base64url'),
-        });
-        const responseBytes = await sendSubstreamPayload(substreamId, 0, installPayload);
+        }));
         if (!responseBytes) throw new Error('daemon_voice_inference_encryption_confirmation_unavailable');
         const confirmation = await openEncryptedResponse({ phase: 'install', sequence: 0, responseBytes, session });
         if (new TextDecoder().decode(confirmation) !== PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1) {
@@ -330,10 +350,9 @@ export function createDaemonSpeechStreamTunnelTransport(
         }
         const sequence = input.seq + 1;
         try {
-          const payload = await sealRequest({
+          const responseBytes = await sendSubstreamPayload(substreamId, sequence, async () => await sealRequest({
             phase: 'data', sequence, plaintext: carrierFrame.payloadBytes, session,
-          });
-          const responseBytes = await sendSubstreamPayload(substreamId, sequence, payload);
+          }));
           if (!responseBytes) throw new Error('daemon_voice_inference_substream_response_unavailable');
           const plaintext = await openEncryptedResponse({ phase: 'data', sequence, responseBytes, session });
           lastDataCarrierSequence = Math.max(lastDataCarrierSequence, sequence);
@@ -346,7 +365,7 @@ export function createDaemonSpeechStreamTunnelTransport(
           return { ok: false, error: 'daemon_voice_inference_relay_encryption_failed', errorCode: 'internal_error' };
         }
       }
-      const responseBytes = await sendSubstreamPayload(substreamId, input.seq, carrierFrame.payloadBytes);
+      const responseBytes = await sendSubstreamPayload(substreamId, input.seq, () => carrierFrame.payloadBytes);
       if (!responseBytes) {
         return { ok: false, error: 'daemon_voice_inference_substream_response_unavailable', errorCode: 'internal_error' };
       }
@@ -361,13 +380,12 @@ export function createDaemonSpeechStreamTunnelTransport(
       if (!options.peerApplicationEncryption || !session) return await options.controlTransport.finish(input);
       const sequence = lastDataCarrierSequence + 1;
       try {
-        const payload = await sealRequest({
+        const responseBytes = await sendSubstreamPayload(session.substreamId, sequence, async () => await sealRequest({
           phase: 'finish',
           sequence,
           plaintext: new TextEncoder().encode(JSON.stringify({ finalSeq: input.finalSeq })),
           session,
-        });
-        const responseBytes = await sendSubstreamPayload(session.substreamId, sequence, payload);
+        }));
         if (!responseBytes) throw new Error('daemon_voice_inference_substream_response_unavailable');
         const plaintext = await openEncryptedResponse({ phase: 'finish', sequence, responseBytes, session });
         const response = SttStreamFinishResponseSchema.parse(JSON.parse(new TextDecoder().decode(plaintext)));

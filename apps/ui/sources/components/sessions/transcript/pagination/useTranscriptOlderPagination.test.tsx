@@ -137,11 +137,62 @@ describe('useTranscriptOlderPagination', () => {
         expect(hook.getCurrent().getSnapshot()).toEqual({
             hasMore: true,
             insideThreshold: true,
+            loadFailed: false,
             phase: 'loading',
             suspendedReasons: [],
         });
 
         await resolveLoad(pendingLoads, { status: 'loaded', loaded: 20, hasMore: true });
+    });
+
+    it('latches a retryable-error page as a recoverable failure and re-reads on retry', async () => {
+        // A FAILED read used to be reported as a loaded empty page, so the reader saw no
+        // failure and had nothing to press. Rows and the cursor are untouched, so the same
+        // page must stay retryable — and the retry must not need a threshold EXIT -> ENTER,
+        // which a reader parked at the older edge never produces.
+        vi.useFakeTimers();
+        const { input, loadOlder, pendingLoads } = createHarness();
+        const hook = await renderHook(() => useTranscriptOlderPagination(input));
+
+        await observe(hook, { offsetY: 120 });
+        expect(loadOlder).toHaveBeenCalledTimes(1);
+
+        await resolveLoad(pendingLoads, { status: 'retryable_error', loaded: 0, hasMore: true });
+
+        expect(hook.getCurrent().loadFailed).toBe(true);
+        expect(hook.getCurrent().hasMore).toBe(true);
+
+        // Parked at the edge: no further observation arrives, and no load starts by itself.
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(2000);
+        });
+        expect(loadOlder).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            hook.getCurrent().retryLoad();
+        });
+        expect(loadOlder).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().loadFailed).toBe(false);
+
+        await resolveLoad(pendingLoads, { status: 'loaded', loaded: 12, hasMore: true });
+        expect(hook.getCurrent().loadFailed).toBe(false);
+    });
+
+    it('does not offer retry for an unmet precondition or a concurrent read', async () => {
+        // `not_ready` / `in_flight` are not failures: nothing was attempted that the reader
+        // could retry, so surfacing a retry there would be a button that fixes nothing.
+        vi.useFakeTimers();
+        const { input, loadOlder, pendingLoads } = createHarness();
+        const hook = await renderHook(() => useTranscriptOlderPagination(input));
+
+        await observe(hook, { offsetY: 120 });
+        await resolveLoad(pendingLoads, { status: 'not_ready', loaded: 0, hasMore: true });
+
+        expect(hook.getCurrent().loadFailed).toBe(false);
+        await act(async () => {
+            hook.getCurrent().retryLoad();
+        });
+        expect(loadOlder).toHaveBeenCalledTimes(1);
     });
 
     it('exposes active suspension reasons in the reducer snapshot', async () => {
@@ -155,6 +206,7 @@ describe('useTranscriptOlderPagination', () => {
         expect(hook.getCurrent().getSnapshot()).toEqual({
             hasMore: true,
             insideThreshold: true,
+            loadFailed: false,
             phase: 'armed',
             suspendedReasons: ['transaction-open'],
         });

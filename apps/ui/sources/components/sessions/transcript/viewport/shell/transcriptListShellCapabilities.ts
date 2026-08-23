@@ -60,6 +60,8 @@ export type TranscriptListShellReadOnlyCapability = TranscriptListShellBoundedHy
     catchUpIndicator: false;
     composerVisible: false;
     kind: 'readOnly';
+    /** A shared transcript is served page by page, so it walks older pages like any other. */
+    olderPagination: true;
     permissionDisabledReason: 'public';
     toolNavigationDisabled: true;
 }>;
@@ -151,6 +153,7 @@ export function resolveReadOnlyTranscriptListShellFrame(params: Readonly<{
             catchUpIndicator: false,
             composerVisible: false,
             kind: 'readOnly',
+            olderPagination: true,
             permissionDisabledReason: 'public',
             streamingFollow: undefined,
             toolNavigationDisabled: true,

@@ -1109,11 +1109,53 @@ export async function sessionUnarchiveWithServerScope(
 }
 
 /**
+ * Why a session delete failed, when the server said something the caller can act on.
+ *
+ * - `session_absent`: the server answered 404 — the session is gone, or was never
+ *   owned by this Account. Nothing further will ever delete it, so a caller holding
+ *   local state for that exact id may safely retire it.
+ * - `session_delete_conflict`: the server answered 409 — it found the session but
+ *   lost the delete condition to a concurrent write. The session still exists and
+ *   the same delete can be retried; local state must be kept.
+ *
+ * Absent is deliberately not folded into the generic failure: collapsing the two
+ * either strands decrypted local rows for a session the server no longer has, or
+ * discards live rows on a transient conflict.
+ */
+export type SessionDeleteFailureCode = 'session_absent' | 'session_delete_conflict';
+
+export type SessionDeleteResult = Readonly<{
+    success: boolean;
+    message?: string;
+    code?: SessionDeleteFailureCode;
+}>;
+
+const SESSION_DELETE_FAILURE_CODE_BY_STATUS: Readonly<Record<number, SessionDeleteFailureCode>> = {
+    404: 'session_absent',
+    409: 'session_delete_conflict',
+};
+
+/**
+ * Single reader for a failed DELETE response, shared by every transport this module
+ * uses (active socket, scoped runtime fetch, server-Account authority) so one status
+ * cannot mean different things depending on which one carried the request.
+ */
+async function readSessionDeleteFailure(response: Response): Promise<SessionDeleteResult> {
+    const error = await response.text().catch(() => '');
+    const code = SESSION_DELETE_FAILURE_CODE_BY_STATUS[response.status];
+    return {
+        success: false,
+        message: error || 'Failed to delete session',
+        ...(code ? { code } : null),
+    };
+}
+
+/**
  * Permanently delete a session from the server
  * This will remove the session and all its associated data (messages, usage reports, access keys)
  * The session should be inactive before deletion
  */
-export async function sessionDelete(sessionId: string): Promise<{ success: boolean; message?: string }> {
+export async function sessionDelete(sessionId: string): Promise<SessionDeleteResult> {
     return await sessionDeleteWithServerScope(sessionId, {
         serverId: resolvePreferredServerIdForSessionId(sessionId) ?? null,
     });
@@ -1122,7 +1164,7 @@ export async function sessionDelete(sessionId: string): Promise<{ success: boole
 export async function sessionDeleteWithServerAccountAuthority(
     sessionId: string,
     authority: ServerAccountSessionRequestAuthority,
-): Promise<{ success: boolean; message?: string }> {
+): Promise<SessionDeleteResult> {
     try {
         const response = await authority.request(
             `/v1/sessions/${encodeURIComponent(sessionId)}`,
@@ -1132,11 +1174,7 @@ export async function sessionDeleteWithServerAccountAuthority(
             await response.json().catch(() => null);
             return { success: true };
         }
-        const error = await response.text().catch(() => '');
-        return {
-            success: false,
-            message: error || 'Failed to delete session',
-        };
+        return await readSessionDeleteFailure(response);
     } catch (error) {
         return {
             success: false,
@@ -1148,7 +1186,7 @@ export async function sessionDeleteWithServerAccountAuthority(
 export async function sessionDeleteWithServerScope(
     sessionId: string,
     opts?: Readonly<{ serverId?: string | null }>,
-): Promise<{ success: boolean; message?: string }> {
+): Promise<SessionDeleteResult> {
     const context = await resolveServerScopedSessionContext({ serverId: opts?.serverId ?? null });
     try {
         if (context.scope === 'active') {
@@ -1157,8 +1195,7 @@ export async function sessionDeleteWithServerScope(
                 await response.json().catch(() => null);
                 return { success: true };
             }
-            const error = await response.text().catch(() => '');
-            return { success: false, message: error || 'Failed to delete session' };
+            return await readSessionDeleteFailure(response);
         }
 
         const response = await runtimeFetchWithServerReachability({
@@ -1176,8 +1213,7 @@ export async function sessionDeleteWithServerScope(
             await response.json().catch(() => null);
             return { success: true };
         }
-        const error = await response.text().catch(() => '');
-        return { success: false, message: error || 'Failed to delete session' };
+        return await readSessionDeleteFailure(response);
     } catch (error) {
         return {
             success: false,

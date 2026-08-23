@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol';
 import type { ProviderBoundModelRef, ProviderErrorV1 } from '@happier-dev/protocol';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 
@@ -242,8 +243,10 @@ export function SessionModelPicker(props: Readonly<{
             ? props.providerGroups.find((group) => group.connectionId === selectedConnectionId) ?? null
             : null;
         if (selectedConnection?.authorization.authorized
-            && selectedConnection.manualModelPolicy === 'allowed'
-            && selectedConnection.supportsFreeformModelIds) {
+            && providerCatalogPermitsUnlistedModelIdV1({
+                manualModelPolicy: selectedConnection.manualModelPolicy,
+                agentSupportsFreeformModelIds: selectedConnection.supportsFreeformModelIds,
+            })) {
             return {
                 kind: 'connection' as const,
                 connectionId: selectedConnection.connectionId,
@@ -255,8 +258,10 @@ export function SessionModelPicker(props: Readonly<{
         }
         const eligibleConnections = props.providerGroups.filter((group) => (
             group.authorization.authorized
-            && group.manualModelPolicy === 'allowed'
-            && group.supportsFreeformModelIds
+            && providerCatalogPermitsUnlistedModelIdV1({
+                manualModelPolicy: group.manualModelPolicy,
+                agentSupportsFreeformModelIds: group.supportsFreeformModelIds,
+            })
         ));
         const onlyEligibleConnection = eligibleConnections.length === 1 ? eligibleConnections[0] : null;
         return onlyEligibleConnection ? {

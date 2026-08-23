@@ -3,11 +3,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
 const reducedMotionState = vi.hoisted(() => ({ reads: 0, value: false }));
+const hostViewedState = vi.hoisted(() => ({ reads: 0, value: true }));
 
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
     useReducedMotionPreference: () => {
         reducedMotionState.reads += 1;
         return reducedMotionState.value;
+    },
+}));
+
+vi.mock('@/utils/runtime/useHostActivelyViewed', () => ({
+    useHostActivelyViewed: () => {
+        hostViewedState.reads += 1;
+        return hostViewedState.value;
     },
 }));
 
@@ -72,6 +80,39 @@ describe('StatusDot', () => {
         expect(style.animationIterationCount).toBeUndefined();
         expect(style.backgroundColor).toBe('red');
         expect(reducedMotionState.reads).toBe(0);
+    });
+
+    it('stops pulsing while the host is not being viewed', async () => {
+        hostViewedState.value = false;
+        const { StatusDot } = await import('./StatusDot');
+        const screen = await renderScreen(React.createElement(StatusDot, {
+            color: 'red',
+            isPulsing: true,
+            size: 10,
+            testID: 'status-dot',
+        }));
+
+        const dot = screen.findByTestId('status-dot');
+        const style = flattenStyle(dot?.props.style);
+        // The dot keeps its pulsing colour and size — only the animation stops.
+        expect(style.backgroundColor).toBe('red');
+        expect(style.width).toBe(10);
+        expect(style.animationName).toBeUndefined();
+        expect(style.animationIterationCount).toBeUndefined();
+
+        hostViewedState.value = true;
+    });
+
+    it('does not subscribe to host visibility on the static path', async () => {
+        hostViewedState.reads = 0;
+        const { StatusDot } = await import('./StatusDot');
+        await renderScreen(React.createElement(StatusDot, {
+            color: 'red',
+            isPulsing: false,
+            size: 10,
+        }));
+
+        expect(hostViewedState.reads).toBe(0);
     });
 
     it('renders a static semantic web status when reduced motion is enabled', async () => {

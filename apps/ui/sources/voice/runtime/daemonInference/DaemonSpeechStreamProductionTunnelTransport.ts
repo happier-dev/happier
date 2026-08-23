@@ -21,6 +21,7 @@ import {
   readMachineLiveStreamRelayCaps,
   resolveMachineRpcRelayFallbackDecision,
   resolveMachineRpcRoutePolicy,
+  resolvePeerRouteFeatureId,
   readServerEnabledBit,
   type MachineTunnelCapabilities,
   type PeerLoopbackEndpointCandidateV1,
@@ -79,6 +80,18 @@ import type { DaemonSpeechStreamTransport } from './DaemonSpeechStreamSender';
 export const VOICE_MEDIA_TUNNEL_REQUEST_TIMEOUT_MS = 5_000;
 const VOICE_STT_TUNNEL_FETCH_TIMEOUT_MS = VOICE_MEDIA_TUNNEL_REQUEST_TIMEOUT_MS;
 const VOICE_STT_TUNNEL_NONCE_BYTES = 16;
+
+// The server mints voice-media route grants behind these same bits (`resolvePeerRouteFeatureId`
+// is the single owner), so attempting a route this client is allowed to use is exactly the set
+// the server will authorize.
+const VOICE_MEDIA_DIRECT_ROUTE_FEATURE_ID = resolvePeerRouteFeatureId({
+  flowKind: 'voice_media',
+  routeKind: 'loopback_direct',
+});
+const VOICE_MEDIA_SERVER_RELAY_FEATURE_ID = resolvePeerRouteFeatureId({
+  flowKind: 'voice_media',
+  routeKind: 'server_relay',
+});
 const VOICE_STT_TUNNEL_CACHE_POSITIVE_TTL_MS = 30_000;
 const VOICE_STT_TUNNEL_CACHE_NEGATIVE_TTL_MS = 5_000;
 
@@ -756,7 +769,7 @@ async function tryOpenDirectTunnel(
   }>,
 ): Promise<OpenedProductionVoiceMediaTunnel | null> {
   const directDecision = await resolveRuntimeFeatureDecision({
-    featureId: 'machines.tunnel.directPeer',
+    featureId: VOICE_MEDIA_DIRECT_ROUTE_FEATURE_ID,
     serverId: params.server.serverId,
     timeoutMs: VOICE_STT_TUNNEL_FETCH_TIMEOUT_MS,
   }).catch(() => null);
@@ -825,7 +838,7 @@ async function tryOpenServerRelayTunnel(
     return null;
   }
   const serverRoutedDecision = await resolveRuntimeFeatureDecision({
-    featureId: 'machines.liveStream.serverRouted',
+    featureId: VOICE_MEDIA_SERVER_RELAY_FEATURE_ID,
     serverId: params.server.serverId,
     timeoutMs: VOICE_STT_TUNNEL_FETCH_TIMEOUT_MS,
   }).catch(() => null);
@@ -985,7 +998,7 @@ export async function openProductionVoiceMediaTunnel(
 
   const caps = readTunnelCapabilities(serverFeatures);
   const directPeerEnabled = serverFeatures
-    ? readServerEnabledBit(serverFeatures, 'machines.tunnel.directPeer') === true
+    ? readServerEnabledBit(serverFeatures, VOICE_MEDIA_DIRECT_ROUTE_FEATURE_ID) === true
     : false;
   const shouldAttemptDirect = directPeerEnabled && input.requiredRouteKind !== 'server_relay';
   let signingUnavailable: PeerRouteSigningIdentityUnavailable | null = null;

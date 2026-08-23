@@ -97,6 +97,16 @@ const TERMINAL_NATIVE_EVENTS: ReadonlyArray<Readonly<{
             state: 'background',
         }),
     },
+    {
+        // Dictation records through the same native graph. A media-services
+        // reset kills it while the attempt still looks like it is listening.
+        label: 'dead native audio graph',
+        createEvent: (generation) => ({
+            generation,
+            kind: 'audio_graph_terminal',
+            reason: 'media_services_reset',
+        }),
+    },
 ];
 
 function createNativeCoordinatorHarness(): Readonly<{
@@ -289,8 +299,8 @@ describe('Dictation native audio lifecycle', () => {
             emit: native.emit,
         });
 
-        expect(dictation.recorderStop).toHaveBeenCalledTimes(6);
-        expect(native.restore).toHaveBeenCalledTimes(6);
+        expect(dictation.recorderStop).toHaveBeenCalledTimes(8);
+        expect(native.restore).toHaveBeenCalledTimes(8);
         await native.coordinator.dispose();
     });
 
@@ -305,12 +315,12 @@ describe('Dictation native audio lifecycle', () => {
             emit: native.emit,
         });
 
-        expect(nativeBoundary.recognizerStop).toHaveBeenCalledTimes(6);
-        expect(dictation.liveMicSessions).toHaveLength(6);
+        expect(nativeBoundary.recognizerStop).toHaveBeenCalledTimes(8);
+        expect(dictation.liveMicSessions).toHaveLength(8);
         expect(dictation.liveMicSessions.every((session) => (
             session.teardown.mock.calls.length === 1
         ))).toBe(true);
-        expect(native.restore).toHaveBeenCalledTimes(6);
+        expect(native.restore).toHaveBeenCalledTimes(8);
         await native.coordinator.dispose();
     });
 });

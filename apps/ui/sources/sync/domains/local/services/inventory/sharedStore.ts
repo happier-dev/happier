@@ -2,8 +2,13 @@ import { createLocalServicesSharedSubscriptionStore } from '../sharedSubscriptio
 import {
     type LocalServiceInventorySnapshotClientInput,
     type LocalServiceInventorySnapshotClientResult,
+    type LocalServiceInventoryWatchClientInput,
+    type LocalServiceInventoryWatchClientResult,
 } from './api';
-import { fetchLocalServiceInventorySnapshotViaMachineRpc } from './machineRpc';
+import {
+    fetchLocalServiceInventorySnapshotViaMachineRpc,
+    watchLocalServiceInventorySnapshotViaMachineRpc,
+} from './machineRpc';
 import {
     applyLocalServiceInventoryRefreshStarted,
     applyLocalServiceInventorySnapshot,
@@ -16,6 +21,10 @@ import {
 export type LocalServiceInventorySnapshotClient = (
     input: LocalServiceInventorySnapshotClientInput,
 ) => Promise<LocalServiceInventorySnapshotClientResult>;
+
+export type LocalServiceInventoryWatchClient = (
+    input: LocalServiceInventoryWatchClientInput,
+) => Promise<LocalServiceInventoryWatchClientResult>;
 
 export type LocalServiceInventoryStoreKeyInput = Readonly<{
     machineId: string;
@@ -33,6 +42,10 @@ export const EMPTY_LOCAL_SERVICE_INVENTORY_STATE: LocalServiceInventoryState = c
 
 const defaultSnapshotClient: LocalServiceInventorySnapshotClient = (input) => (
     fetchLocalServiceInventorySnapshotViaMachineRpc(input)
+);
+
+const defaultWatchClient: LocalServiceInventoryWatchClient = (input) => (
+    watchLocalServiceInventorySnapshotViaMachineRpc(input)
 );
 
 function normalizeInput(input: LocalServiceInventoryStoreKeyInput): NormalizedLocalServiceInventoryStoreKeyInput {
@@ -66,7 +79,8 @@ const store = createLocalServicesSharedSubscriptionStore<
     LocalServiceInventoryStoreKeyInput,
     LocalServiceInventoryState,
     LocalServiceInventorySnapshot,
-    LocalServiceInventorySnapshotClient
+    LocalServiceInventorySnapshotClient,
+    LocalServiceInventoryWatchClient
 >({
     emptyState: EMPTY_LOCAL_SERVICE_INVENTORY_STATE,
     createState: createLocalServiceInventoryState,
@@ -93,6 +107,25 @@ const store = createLocalServicesSharedSubscriptionStore<
         applyLocalServiceInventorySnapshot(state, failClosedSnapshot(state, input.machineId, nowMs()))
     ),
     applySnapshot: applyLocalServiceInventorySnapshot,
+    defaultWatchClient,
+    // Freshness comes from the daemon: one parked watch per subscribed machine, re-armed on each
+    // answer. `sinceGeneratedAt` closes the window between this store's snapshot read and its
+    // first watch so a service that starts in between is not missed.
+    watch: async ({ input, state, watchClient, signal }) => {
+        const result = await watchClient({
+            machineId: input.machineId,
+            serverId: input.serverId,
+            sessionId: input.sessionId,
+            sinceGeneratedAt: state.generatedAt,
+            ...(signal ? { signal } : {}),
+        });
+        if (!result.ok) {
+            return { status: 'unavailable' };
+        }
+        return result.changed
+            ? { status: 'changed', snapshot: result.snapshot }
+            : { status: 'idle' };
+    },
 });
 
 export function getLocalServiceInventoryState(
@@ -104,7 +137,11 @@ export function getLocalServiceInventoryState(
 export function subscribeLocalServiceInventoryStore(
     input: LocalServiceInventoryStoreKeyInput,
     listener: () => void,
-    options?: Readonly<{ snapshotClient?: LocalServiceInventorySnapshotClient; nowMs?: () => number }>,
+    options?: Readonly<{
+        snapshotClient?: LocalServiceInventorySnapshotClient;
+        watchClient?: LocalServiceInventoryWatchClient;
+        nowMs?: () => number;
+    }>,
 ): () => void {
     return store.subscribe(input, listener, options);
 }

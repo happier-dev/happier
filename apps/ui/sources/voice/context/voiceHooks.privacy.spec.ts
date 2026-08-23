@@ -74,6 +74,10 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     seedSession('s1');
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
     useVoiceTargetStore.getState().setTrackedSessionIds(['s1']);
+    // The local voice target must be re-established by each case, otherwise a
+    // previous case's focus makes a target assertion pass without the code
+    // under test ever running.
+    useVoiceTargetStore.getState().setLastFocusedSessionId(null);
     useVoiceContextSeenStore.getState().clearShownSessions();
   });
 
@@ -107,6 +111,9 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
           privacy: {
             ...s.settings.voice.privacy,
             sharePermissionRequests: false,
+            // onSessionFocus discloses only under the automatic current-UI
+            // mode; this test is about what the disclosure may contain.
+            currentUiContextMode: 'automatic',
           },
         },
       },
@@ -149,35 +156,73 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     expect(providerBoundPayloads).not.toContain('REPORTED_PERMISSION_SECRET');
   });
 
-  it.each(['onSessionOnline', 'onSessionOffline', 'onSessionFocus'] as const)(
-    'does not leak summary or path labels through %s status updates',
-    (hookName) => {
-      storage.setState((s: any) => ({
-        ...s,
+  it.each([
+    ['off', false],
+    ['on_demand', false],
+    ['automatic', true],
+  ] as const)(
+    'announces session focus to the provider only in automatic current-UI mode (%s)',
+    (currentUiContextMode, shouldAnnounce) => {
+      storage.setState((state: any) => ({
+        ...state,
         settings: {
-          ...s.settings,
+          ...state.settings,
           voice: {
-            ...s.settings.voice,
+            ...state.settings.voice,
             privacy: {
-              ...s.settings.voice.privacy,
-              shareSessionSummary: false,
-              shareFilePaths: false,
+              ...state.settings.voice.privacy,
+              currentUiContextMode,
             },
           },
         },
       }));
 
-      voiceHooks[hookName]('s1', {
-        summary: { text: 'PRIVATE HOOK SUMMARY' },
-        path: '/Users/alice/Company/PrivateHookRepo',
-      });
+      voiceHooks.onSessionFocus('s1', { summary: { text: 'Summary' } });
 
-      const payloads = fakeSink.sendContextualUpdate.mock.calls.map((call) => String(call[1] ?? '')).join('\n');
-      expect(payloads).not.toContain('PRIVATE HOOK SUMMARY');
-      expect(payloads).not.toContain('PrivateHookRepo');
-      expect(payloads).not.toContain('/Users/alice/Company/PrivateHookRepo');
+      // Focusing a session is an observation of this device's UI, so it always
+      // updates the local voice target; only the disclosure is mode-governed.
+      expect(useVoiceTargetStore.getState().lastFocusedSessionId).toBe('s1');
+
+      const payloads = fakeSink.sendContextualUpdate.mock.calls.map((call) => String(call[1] ?? ''));
+      if (!shouldAnnounce) {
+        expect(payloads).toEqual([]);
+        return;
+      }
+      const joined = payloads.join('\n');
+      expect(joined).toContain('became focused.');
+      expect(joined).toContain('# Session:');
     },
   );
+
+  it('withholds the automatic focus announcement for a session whose voice update level is none', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        voice: {
+          ...state.settings.voice,
+          privacy: {
+            ...state.settings.voice.privacy,
+            currentUiContextMode: 'automatic',
+          },
+          ui: {
+            ...state.settings.voice.ui,
+            updates: {
+              ...state.settings.voice.ui?.updates,
+              activeSession: 'none',
+            },
+          },
+        },
+      },
+    }));
+
+    voiceHooks.onSessionFocus('s1', { summary: { text: 'Summary' } });
+
+    // Enabling automatic current-UI context does not override the per-session
+    // update level the user set for this session.
+    expect(useVoiceTargetStore.getState().lastFocusedSessionId).toBe('s1');
+    expect(fakeSink.sendContextualUpdate).not.toHaveBeenCalled();
+  });
 
   it('redacts tool args in permission requests by default', () => {
     (voiceHooks as any).onAgentRequest('s1', 'r1', 'permission', 'execute', { secret: 'do_not_leak' });

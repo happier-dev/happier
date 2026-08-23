@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const waitForForkChildHydrationMock = vi.hoisted(() => vi.fn());
+const requireLocalSessionVisibleForRouteMock = vi.hoisted(() => vi.fn());
 const patchSessionMetadataWithRetryMock = vi.hoisted(() => vi.fn());
 const updateSessionDraftMock = vi.hoisted(() => vi.fn());
 
-vi.mock('./waitForForkChildHydration', () => ({
-    waitForForkChildHydration: (params: unknown) => waitForForkChildHydrationMock(params),
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/localSessionRouteReadiness', () => ({
+    requireLocalSessionVisibleForRoute: (params: unknown) => requireLocalSessionVisibleForRouteMock(params),
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -25,19 +25,19 @@ vi.mock('@/sync/domains/state/storage', () => ({
 
 describe('completeSessionForkNavigation', () => {
     beforeEach(() => {
-        waitForForkChildHydrationMock.mockReset();
+        requireLocalSessionVisibleForRouteMock.mockReset();
         patchSessionMetadataWithRetryMock.mockReset();
         updateSessionDraftMock.mockReset();
-        waitForForkChildHydrationMock.mockResolvedValue(undefined);
+        requireLocalSessionVisibleForRouteMock.mockResolvedValue(undefined);
         patchSessionMetadataWithRetryMock.mockResolvedValue(undefined);
     });
 
-    it('preserves the restored draft and completes hydration, navigation, and metadata persistence in order', async () => {
+    it('proves the expected child before restoring its draft, navigating, and persisting prompt metadata', async () => {
         const events: string[] = [];
         updateSessionDraftMock.mockImplementation(() => {
             events.push('draft');
         });
-        waitForForkChildHydrationMock.mockImplementation(async () => {
+        requireLocalSessionVisibleForRouteMock.mockImplementation(async () => {
             events.push('hydrate');
         });
         const navigate = vi.fn(async () => {
@@ -64,11 +64,11 @@ describe('completeSessionForkNavigation', () => {
         });
 
         expect(updateSessionDraftMock).toHaveBeenCalledWith('child', '  retry this  ');
-        expect(waitForForkChildHydrationMock).toHaveBeenCalledWith({
-            childSessionId: 'child',
-            parentSessionId: 'parent',
+        expect(requireLocalSessionVisibleForRouteMock).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'child',
             serverId: 'server-a',
-        });
+            isLocalSessionReady: expect.any(Function),
+        }));
         expect(navigate).toHaveBeenCalledWith('child', { serverId: 'server-a' });
         expect(patchSessionMetadataWithRetryMock).toHaveBeenCalledWith(
             'child',
@@ -81,11 +81,11 @@ describe('completeSessionForkNavigation', () => {
                 sourceMessageId: 'm1',
             }),
         }));
-        expect(events).toEqual(['draft', 'hydrate', 'navigate', 'persist']);
+        expect(events).toEqual(['hydrate', 'draft', 'navigate', 'persist']);
     });
 
-    it('does not navigate when required fork hydration fails', async () => {
-        waitForForkChildHydrationMock.mockRejectedValueOnce(new Error('child unavailable'));
+    it('does not write a restored draft, navigate, or persist prompt metadata for a wrong child', async () => {
+        requireLocalSessionVisibleForRouteMock.mockRejectedValueOnce(new Error('child unavailable'));
         const navigate = vi.fn();
         const { completeSessionForkNavigation } = await import('./completeSessionForkNavigation');
 
@@ -94,8 +94,11 @@ describe('completeSessionForkNavigation', () => {
             parentSessionId: 'parent',
             serverId: 'server-a',
             navigate,
+            restoredDraftText: 'retry this',
+            writeForkInitialPrompt: true,
         })).rejects.toThrow('child unavailable');
 
+        expect(updateSessionDraftMock).not.toHaveBeenCalled();
         expect(navigate).not.toHaveBeenCalled();
         expect(patchSessionMetadataWithRetryMock).not.toHaveBeenCalled();
     });
@@ -117,7 +120,7 @@ describe('completeSessionForkNavigation', () => {
             writeForkInitialPrompt: true,
         })).rejects.toThrow('metadata write failed');
 
-        expect(waitForForkChildHydrationMock).toHaveBeenCalledTimes(1);
+        expect(requireLocalSessionVisibleForRouteMock).toHaveBeenCalledTimes(1);
         expect(navigate).toHaveBeenCalledWith('child', { serverId: 'server-a' });
     });
 });

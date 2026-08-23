@@ -23,6 +23,7 @@ import { TranscriptList } from '@/components/sessions/transcript/TranscriptList'
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { serverFetch } from '@/sync/http/client';
+import type { TranscriptOlderPageLoadResult } from '@/sync/domains/messages/transcriptOlderPageLoad';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import type { AgentState } from '@/sync/domains/state/storageTypes';
 import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
@@ -81,12 +82,26 @@ type PublicShareConsentResponse = {
 
 type PublicShareMessagesResponse = {
     messages: ApiMessage[];
+    hasMore?: boolean;
+    nextBeforeSeq?: number | null;
 };
 
 type PublicShareDataset = Readonly<{
     share: PublicShareResponse;
     decryptedMetadata: Metadata | null;
+    /** Presentation-reduced rows for every page loaded so far, oldest first. */
     messages: Message[];
+    /**
+     * Every normalized row this viewer has accepted. An older page is reduced TOGETHER
+     * with the pages already on screen, so the transcript grows backwards instead of
+     * being replaced (and the reducer keeps seeing one whole conversation).
+     */
+    normalized: NormalizedMessage[];
+    agentState: AgentState;
+    /** Decrypts an older e2ee page; `null` for a plaintext share. */
+    sessionEncryption: SessionEncryption | null;
+    hasMore: boolean;
+    nextBeforeSeq: number | null;
     loadGeneration: number;
     tokenParam: string;
 }>;
@@ -156,6 +171,65 @@ async function normalizePlainPublicShareMessages(messages: ReadonlyArray<ApiMess
     return normalizePublicShareRawInputs(inputs);
 }
 
+/**
+ * Decrypts one e2ee page. A row that will not decrypt fails the whole page rather than
+ * being dropped: silently serving a hole is exactly the truncation this viewer is fixing.
+ */
+async function normalizeEncryptedPublicShareMessages(
+    sessionEncryption: SessionEncryption,
+    messages: ReadonlyArray<ApiMessage>,
+): Promise<NormalizedMessage[] | null> {
+    const decryptedMessages = await sessionEncryption.decryptMessages([...messages]);
+    const inputs: RawMessageNormalizationInput[] = [];
+    for (const m of decryptedMessages) {
+        if (!m || !m.content) return null;
+        inputs.push({
+            id: m.id,
+            localId: m.localId ?? null,
+            createdAt: m.createdAt,
+            raw: m.content,
+            seq: normalizeMessageSeq(m),
+            messageRole: m.messageRole ?? undefined,
+        });
+    }
+    return normalizePublicShareRawInputs(inputs);
+}
+
+function buildPublicShareMessagesPath(params: Readonly<{
+    token: string;
+    withConsent: boolean;
+    beforeSeq?: number | null;
+}>): string {
+    const query = new URLSearchParams();
+    if (params.withConsent) query.set('consent', 'true');
+    if (typeof params.beforeSeq === 'number' && Number.isFinite(params.beforeSeq)) {
+        query.set('beforeSeq', String(Math.trunc(params.beforeSeq)));
+    }
+    const search = query.toString();
+    return `/v1/public-share/${params.token}/messages${search ? `?${search}` : ''}`;
+}
+
+function reducePublicShareTranscript(
+    normalized: readonly NormalizedMessage[],
+    agentState: AgentState,
+): Message[] {
+    // Reduction is not incremental here: an older page lands BEFORE rows the reducer has
+    // already folded, so the whole accepted set is reduced again from a fresh state.
+    const ordered = [...normalized];
+    sortNormalizedMessagesOldestFirst(ordered);
+    return reducer(createReducer(), ordered, agentState).messages;
+}
+
+function mergePublicShareNormalizedPages(
+    existing: readonly NormalizedMessage[],
+    incoming: readonly NormalizedMessage[],
+): NormalizedMessage[] {
+    const byId = new Map<string, NormalizedMessage>();
+    for (const message of existing) byId.set(message.id, message);
+    for (const message of incoming) byId.set(message.id, message);
+    return [...byId.values()];
+}
+
 export default memo(function PublicShareViewerScreen() {
     const { token } = useLocalSearchParams<{ token: string }>();
     const { credentials } = useAuth();
@@ -171,6 +245,10 @@ export default memo(function PublicShareViewerScreen() {
     const [consentInfo, setConsentInfo] = useState<PublicShareConsentResponse | null>(null);
     const [dataset, setDataset] = useState<PublicShareDataset | null>(null);
     const loadGenerationRef = useRef(0);
+    const datasetRef = useRef<PublicShareDataset | null>(dataset);
+    datasetRef.current = dataset;
+    // Older pages must repeat the consent the viewer already gave, or the server refuses them.
+    const consentedRef = useRef(false);
 
     const authHeader = useMemo(() => {
         if (!credentials?.token) return null;
@@ -181,6 +259,7 @@ export default memo(function PublicShareViewerScreen() {
         const loadGeneration = ++loadGenerationRef.current;
         const requestedTokenParam = tokenParam;
         const isCurrentLoad = () => loadGenerationRef.current === loadGeneration;
+        consentedRef.current = withConsent;
 
         if (!requestedTokenParam) {
             setConsentInfo(null);
@@ -232,9 +311,10 @@ export default memo(function PublicShareViewerScreen() {
             const data = (await response.json()) as PublicShareResponse;
             if (!isCurrentLoad()) return;
 
-            const messagesPath = withConsent
-                ? `/v1/public-share/${requestedTokenParam}/messages?consent=true`
-                : `/v1/public-share/${requestedTokenParam}/messages`;
+            const messagesPath = buildPublicShareMessagesPath({
+                token: requestedTokenParam,
+                withConsent,
+            });
             const messagesHeaders = { ...headers };
             if (typeof data.messagesAccessToken === 'string' && data.messagesAccessToken.trim().length > 0) {
                 messagesHeaders[PUBLIC_SHARE_MESSAGES_ACCESS_TOKEN_HEADER] = data.messagesAccessToken;
@@ -267,18 +347,24 @@ export default memo(function PublicShareViewerScreen() {
                 data.session.metadataLayoutVersion,
             );
 
+            const hasMore = messagesData.hasMore === true;
+            const nextBeforeSeq = typeof messagesData.nextBeforeSeq === 'number'
+                ? messagesData.nextBeforeSeq
+                : null;
+
             if (sessionEncryptionMode === 'plain') {
                 const normalized = await normalizePlainPublicShareMessages(shareMessages);
                 if (!isCurrentLoad()) return;
-                sortNormalizedMessagesOldestFirst(normalized);
-
-                const reducerState = createReducer();
-                const reduced = reducer(reducerState, normalized, plainAgentState);
 
                 setDataset({
                     share: data,
                     decryptedMetadata: plainMetadata,
-                    messages: reduced.messages.slice(-200),
+                    messages: reducePublicShareTranscript(normalized, plainAgentState),
+                    normalized,
+                    agentState: plainAgentState,
+                    sessionEncryption: null,
+                    hasMore,
+                    nextBeforeSeq,
                     loadGeneration,
                     tokenParam: requestedTokenParam,
                 });
@@ -322,34 +408,26 @@ export default memo(function PublicShareViewerScreen() {
                     data.session.metadataLayoutVersion,
                 );
 
-                const decryptedMessages = await sessionEncryption.decryptMessages(shareMessages);
+                const normalized = await normalizeEncryptedPublicShareMessages(
+                    sessionEncryption,
+                    shareMessages,
+                );
                 if (!isCurrentLoad()) return;
-                const inputs: RawMessageNormalizationInput[] = [];
-                for (const m of decryptedMessages) {
-                    if (!m || !m.content) {
-                        setError(t('session.sharing.failedToDecrypt'));
-                        setIsLoading(false);
-                        return;
-                    }
-                    inputs.push({
-                        id: m.id,
-                        localId: m.localId ?? null,
-                        createdAt: m.createdAt,
-                        raw: m.content,
-                        seq: normalizeMessageSeq(m),
-                        messageRole: m.messageRole ?? undefined,
-                    });
+                if (!normalized) {
+                    setError(t('session.sharing.failedToDecrypt'));
+                    setIsLoading(false);
+                    return;
                 }
-
-                const normalized = normalizePublicShareRawInputs(inputs);
-
-                const reducerState = createReducer();
-                const reduced = reducer(reducerState, normalized, e2eePresentationAgentState);
 
                 setDataset({
                     share: data,
                     decryptedMetadata: e2eeMetadata,
-                    messages: reduced.messages.slice(-200),
+                    messages: reducePublicShareTranscript(normalized, e2eePresentationAgentState),
+                    normalized,
+                    agentState: e2eePresentationAgentState,
+                    sessionEncryption,
+                    hasMore,
+                    nextBeforeSeq,
                     loadGeneration,
                     tokenParam: requestedTokenParam,
                 });
@@ -369,6 +447,91 @@ export default memo(function PublicShareViewerScreen() {
             loadGenerationRef.current += 1;
         };
     }, [load]);
+
+    const loadOlder = useCallback(async (): Promise<TranscriptOlderPageLoadResult> => {
+        const current = datasetRef.current;
+        if (!current || current.tokenParam !== tokenParam) {
+            return { loaded: 0, hasMore: true, status: 'not_ready' };
+        }
+        if (!current.hasMore || current.nextBeforeSeq === null) {
+            return { loaded: 0, hasMore: false, status: 'no_more' };
+        }
+        // The page grant issued by the share read is reused for every page: paging is one
+        // authorized visit, not a new use per screenful.
+        const headers: Record<string, string> = {};
+        if (authHeader) headers['Authorization'] = authHeader;
+        const accessToken = current.share.messagesAccessToken;
+        if (typeof accessToken === 'string' && accessToken.trim().length > 0) {
+            headers[PUBLIC_SHARE_MESSAGES_ACCESS_TOKEN_HEADER] = accessToken;
+        }
+        const isCurrentDataset = () => (
+            datasetRef.current === current
+            && loadGenerationRef.current === current.loadGeneration
+        );
+        try {
+            const response = await serverFetch(
+                buildPublicShareMessagesPath({
+                    token: current.tokenParam,
+                    withConsent: consentedRef.current,
+                    beforeSeq: current.nextBeforeSeq,
+                }),
+                { method: 'GET', headers },
+                { includeAuth: false },
+            );
+            if (!isCurrentDataset()) {
+                return { loaded: 0, hasMore: true, status: 'not_ready' };
+            }
+            if (!response.ok) {
+                return { loaded: 0, hasMore: true, status: 'retryable_error' };
+            }
+            const page = (await response.json()) as PublicShareMessagesResponse;
+            if (!isCurrentDataset()) {
+                return { loaded: 0, hasMore: true, status: 'not_ready' };
+            }
+            const pageMessages = Array.isArray(page.messages) ? page.messages : null;
+            if (!pageMessages) {
+                return { loaded: 0, hasMore: true, status: 'retryable_error' };
+            }
+            const normalizedPage = current.sessionEncryption
+                ? await normalizeEncryptedPublicShareMessages(
+                    current.sessionEncryption,
+                    pageMessages,
+                )
+                : await normalizePlainPublicShareMessages(pageMessages);
+            if (!isCurrentDataset()) {
+                return { loaded: 0, hasMore: true, status: 'not_ready' };
+            }
+            if (!normalizedPage) {
+                return { loaded: 0, hasMore: true, status: 'retryable_error' };
+            }
+            const hasMore = page.hasMore === true;
+            const nextBeforeSeq = typeof page.nextBeforeSeq === 'number'
+                ? page.nextBeforeSeq
+                : null;
+            const mergedNormalized = mergePublicShareNormalizedPages(
+                current.normalized,
+                normalizedPage,
+            );
+            const loaded = mergedNormalized.length - current.normalized.length;
+            setDataset({
+                ...current,
+                messages: reducePublicShareTranscript(mergedNormalized, current.agentState),
+                normalized: mergedNormalized,
+                hasMore,
+                nextBeforeSeq,
+            });
+            return {
+                loaded,
+                hasMore,
+                status: hasMore && nextBeforeSeq !== null ? 'loaded' : 'no_more',
+            };
+        } catch {
+            if (!isCurrentDataset()) {
+                return { loaded: 0, hasMore: true, status: 'not_ready' };
+            }
+            return { loaded: 0, hasMore: true, status: 'retryable_error' };
+        }
+    }, [authHeader, tokenParam]);
 
     const hasCurrentPublishedDataset = dataset?.tokenParam === tokenParam;
     const publicDatasetKey = dataset && hasCurrentPublishedDataset
@@ -468,6 +631,7 @@ export default memo(function PublicShareViewerScreen() {
                             body: t('session.sharing.publicReadOnlyBody'),
                         }}
                         isLoaded={!isLoading}
+                        loadOlder={loadOlder}
                     />
                 </View>
             </View>

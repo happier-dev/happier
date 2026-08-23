@@ -1,7 +1,9 @@
 import {
   DaemonVoiceClientMediatedCredentialMaterializeRequestV1Schema,
   DaemonVoiceClientMediatedCredentialMaterializeResponseV1Schema,
+  type DaemonVoiceClientMediatedCredentialDeclarationAuthorityV1,
   type PluginContributionIdentityV1,
+  type QualifiedConnectedAccountPurposeBindingTargetV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -32,12 +34,22 @@ export function createVoiceClientMediatedCredentialHeadersMaterializer(input: Re
   contribution: PluginContributionIdentityV1;
   platform: 'web' | 'ios' | 'android';
   phase: 'settings' | 'prepare' | 'connection';
+  /** The exact contribution declaration this client runtime was activated from. */
+  declarationAuthority: DaemonVoiceClientMediatedCredentialDeclarationAuthorityV1;
+  /** Exact daemon target captured with the credential-source authority. */
+  machineId: string | null;
   isCurrent(): boolean;
+  /** Captured machine/source authority for this exact host invocation. */
+  isInvocationCurrent(): boolean;
   client?: SelectedVoiceMachineClient;
 }>) {
-  const client = input.client ?? createSelectedVoiceMachineClient();
+  const machineId = input.machineId;
+  const client = input.client
+    ?? createSelectedVoiceMachineClient({ resolveMachineId: () => machineId });
   return async (request: Readonly<{
     operationId: string;
+    /** The Connected Account selection this operation was authorized under. */
+    selection: QualifiedConnectedAccountPurposeBindingTargetV1;
     signal: AbortSignal;
   }>): Promise<Readonly<Record<string, string>>> => {
     /**
@@ -64,11 +76,15 @@ export function createVoiceClientMediatedCredentialHeadersMaterializer(input: Re
       platform: input.platform,
       phase: input.phase,
       operationId: request.operationId,
+      declarationAuthority: input.declarationAuthority,
+      expectedSelection: request.selection,
     });
     if (!parsedRequest.success) {
       throw failure('request', 'voice_account_operation_unauthorized', 'request_invalid');
     }
-    if (!input.isCurrent()) throw operationError('voice_account_operation_cancelled');
+    if (!input.isCurrent() || !input.isInvocationCurrent()) {
+      throw operationError('voice_account_operation_cancelled');
+    }
     throwIfAborted(request.signal);
     let raw: unknown;
     try {
@@ -82,7 +98,9 @@ export function createVoiceClientMediatedCredentialHeadersMaterializer(input: Re
       throw failure('machine_rpc', 'credential_unavailable', readSafeCause(error));
     }
     throwIfAborted(request.signal);
-    if (!input.isCurrent()) throw operationError('voice_account_operation_cancelled');
+    if (!input.isCurrent() || !input.isInvocationCurrent()) {
+      throw operationError('voice_account_operation_cancelled');
+    }
     const response = DaemonVoiceClientMediatedCredentialMaterializeResponseV1Schema.safeParse(raw);
     if (!response.success) {
       throw failure('response', 'provider_response_invalid', 'response_malformed');

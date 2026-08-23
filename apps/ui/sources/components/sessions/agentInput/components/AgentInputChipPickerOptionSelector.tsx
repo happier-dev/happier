@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Typography } from "@/constants/Typography";
 import { Text } from "@/components/ui/text/Text";
 import { normalizeNodeForView } from "@/components/ui/rendering/normalizeNodeForView";
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { AgentInputChipPickerTopSelector } from "./AgentInputChipPickerTopSelector";
 import {
   AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
@@ -22,6 +23,7 @@ import type {
 } from "./AgentInputChipPickerTypes";
 
 const RAIL_ACTION_SIZE = 20;
+const PICKER_OPTION_TOUCH_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 
 type WebHoverablePressableState = Readonly<{
   pressed: boolean;
@@ -86,7 +88,7 @@ export function AgentInputChipPickerOptionSelector(
   const transientStyles = React.useMemo(() => ({
     ...createAgentInputChipPickerOptionTransientStyles(theme),
     optionRowCompact: {
-      minHeight: 44,
+      minHeight: PICKER_OPTION_TOUCH_TARGET_SIZE,
       paddingVertical: 6,
     },
   }), [theme]);
@@ -351,7 +353,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     gap: 6,
   },
   optionRow: {
-    minHeight: 36,
+    minHeight: PICKER_OPTION_TOUCH_TARGET_SIZE,
     borderRadius: AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
     borderWidth: 0,
     paddingHorizontal: 8,

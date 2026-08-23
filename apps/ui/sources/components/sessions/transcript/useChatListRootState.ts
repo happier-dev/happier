@@ -211,6 +211,14 @@ export function useChatListRootState(props: ChatListProps) {
             serverId: sessionServerId,
             sessionId: props.session.id,
         });
+    // Offered ONLY while the exact owner's own status read failed: `not_owner`/`offline`
+    // readers are not recovering anything by re-reading, and `loading`/`ready` have no
+    // failure to recover from. Gating here keeps the row a pure presentation of the
+    // hydration owner's status rather than a second decision-maker.
+    const externalSessionOperationOwnerCheckAgain =
+        externalSessionOperationOwnerHydration.status === 'unavailable'
+            ? externalSessionOperationOwnerHydration.checkAgain
+            : null;
     const {
         dismissal: externalSessionOperationDismissal,
         onDismiss: onDismissExternalSessionOperation,
@@ -449,6 +457,8 @@ export function useChatListRootState(props: ChatListProps) {
             onOpenPluginTranscriptActivityAction,
             onExternalSessionOperationActionResult:
                 externalSessionOperationOwnerHydration.onActionResult,
+            onCheckAgainExternalSessionOperation:
+                externalSessionOperationOwnerCheckAgain,
             externalSessionOperationOwnerTarget,
             isWarmKeepAliveInstance: props.isWarmKeepAliveInstance === true,
             routeHydrationPending: props.routeHydrationPending === true,

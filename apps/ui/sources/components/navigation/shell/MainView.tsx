@@ -37,6 +37,7 @@ import {
 } from '@/components/sessions/shell/surface/sessionListSurfaceOwnership';
 import { useMainAppTabState } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
 import { Icon } from '@/components/ui/icons/Icon';
+import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
 
 
 interface MainViewProps {
@@ -149,6 +150,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
     if (activeTab === 'sessions') {
         return (
             <View style={styles.headerButtonsRow}>
+                <ActionOperationActivityButton testID="main-header-action-operations" />
                 {showAutomations ? (
                     <Pressable
                         onPress={() => router.push('/automations')}
@@ -172,43 +174,60 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
 
     if (activeTab === 'friends') {
         return (
-            <Pressable
-                onPress={() => {
-                    trackFriendsSearch();
-                    router.push('/friends/search');
-                }}
-                hitSlop={15}
-                style={[styles.headerButton, { opacity: friendsIdentityReady ? 1 : 0.5 }]}
-                disabled={!friendsIdentityReady}
-                accessibilityState={{ disabled: !friendsIdentityReady }}
-            >
-                <Icon name="user-plus" size={24} color={theme.colors.chrome.header.foreground} />
-            </Pressable>
+            <View style={styles.headerButtonsRow}>
+                <ActionOperationActivityButton testID="main-header-action-operations" />
+                <Pressable
+                    onPress={() => {
+                        trackFriendsSearch();
+                        router.push('/friends/search');
+                    }}
+                    hitSlop={15}
+                    style={[styles.headerButton, { opacity: friendsIdentityReady ? 1 : 0.5 }]}
+                    disabled={!friendsIdentityReady}
+                    accessibilityState={{ disabled: !friendsIdentityReady }}
+                >
+                    <Icon name="user-plus" size={24} color={theme.colors.chrome.header.foreground} />
+                </Pressable>
+            </View>
         );
     }
 
     if (activeTab === 'inbox') {
-        return <View style={styles.headerButton} />;
+        return (
+            <View style={styles.headerButton}>
+                <ActionOperationActivityButton testID="main-header-action-operations" />
+            </View>
+        );
     }
 
     if (activeTab === 'projects') {
-        // Empty view to maintain header centering (project add flow lands in Phase 4.2).
-        return <View style={styles.headerButton} />;
+        return (
+            <View style={styles.headerButton}>
+                <ActionOperationActivityButton testID="main-header-action-operations" />
+            </View>
+        );
     }
 
     if (activeTab === 'settings') {
         if (!isCustomServer) {
             // Empty view to maintain header centering
-            return <View style={styles.headerButton} />;
+            return (
+                <View style={styles.headerButton}>
+                    <ActionOperationActivityButton testID="main-header-action-operations" />
+                </View>
+            );
         }
         return (
-            <Pressable
-                onPress={() => router.push('/settings/server')}
-                hitSlop={15}
-                style={styles.headerButton}
-            >
-                <Icon name="hard-drives" size={24} color={theme.colors.chrome.header.foreground} />
-            </Pressable>
+            <View style={styles.headerButtonsRow}>
+                <ActionOperationActivityButton testID="main-header-action-operations" />
+                <Pressable
+                    onPress={() => router.push('/settings/server')}
+                    hitSlop={15}
+                    style={styles.headerButton}
+                >
+                    <Icon name="hard-drives" size={24} color={theme.colors.chrome.header.foreground} />
+                </Pressable>
+            </View>
         );
     }
 

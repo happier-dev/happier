@@ -335,6 +335,96 @@ describe('useComposerScopePluginPresentation', () => {
         await hook.unmount();
     });
 
+    // A Composer surface is a mounted plugin surface like any other. The scope
+    // already resolves the ONE qualified-destination owner for the target it is
+    // mounted in and hands it to its declarative control host; a physical
+    // Composer surface that never receives it installs no `openSurface`, so an
+    // enabled control (Triage's **View details**) refuses every press. This
+    // asserts the binding reaches the physical mount, not merely that the
+    // scope resolved one.
+    it('hands the enclosing scope navigation binding to every physical Composer surface', async () => {
+        pluginSurfaceHostSpy.mockClear();
+        const { useComposerScopePluginPresentation } = await import('./useComposerScopePluginPresentation');
+        const {
+            PluginSurfaceDestinationNavigationBindingProvider,
+        } = await import('@/components/plugins/surfaces/pluginSurfaceDestinationNavigation');
+        const openSurface = vi.fn(async () => ({ ok: true as const }));
+        const binding = Object.freeze({
+            targetKind: 'session' as const,
+            openSurface,
+            registerOwner: () => () => {},
+        });
+        const projection = createProjection();
+        const hook = await renderHook(() => useComposerScopePluginPresentation({
+            composer: { kind: 'session', sessionId: 'session-1' },
+            physicalTarget: { kind: 'session', sessionId: 'session-1' },
+            resourceContext: { kind: 'session', sessionId: 'session-1' },
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            projectionPhase: 'ready',
+            projectionInputs: {
+                pluginProjectionById: {},
+                pluginProjectionV2: projection,
+                composerSurfaceCatalog: [createCatalogEntry()],
+            },
+            accountLifetime: null,
+            isScopeCurrent: () => true,
+            attachmentsEnabled: true,
+            includeSessionActions: false,
+        }), {
+            wrapper: ({ children }) => (
+                <PluginSurfaceDestinationNavigationBindingProvider binding={binding}>
+                    {children}
+                </PluginSurfaceDestinationNavigationBindingProvider>
+            ),
+        });
+
+        await renderScreen(<>{hook.getCurrent().beforeComposer}</>);
+
+        const hostProps = pluginSurfaceHostSpy.mock.calls.at(-1)?.[0] as Readonly<{
+            composerMount?: Readonly<{ binding?: Readonly<{ openSurface?: unknown }> }>;
+        }>;
+        expect(hostProps.composerMount?.binding?.openSurface).toBe(openSurface);
+
+        await hook.unmount();
+    });
+
+    // Factual absence is preserved: a Composer scope with no enclosing
+    // destination binding must not advertise a navigation handler the host
+    // cannot honour.
+    it('installs no openSurface binding when the scope has no enclosing destination owner', async () => {
+        pluginSurfaceHostSpy.mockClear();
+        const { useComposerScopePluginPresentation } = await import('./useComposerScopePluginPresentation');
+        const projection = createProjection();
+        const hook = await renderHook(() => useComposerScopePluginPresentation({
+            composer: { kind: 'session', sessionId: 'session-1' },
+            physicalTarget: { kind: 'session', sessionId: 'session-1' },
+            resourceContext: { kind: 'session', sessionId: 'session-1' },
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            projectionPhase: 'ready',
+            projectionInputs: {
+                pluginProjectionById: {},
+                pluginProjectionV2: projection,
+                composerSurfaceCatalog: [createCatalogEntry()],
+            },
+            accountLifetime: null,
+            isScopeCurrent: () => true,
+            attachmentsEnabled: true,
+            includeSessionActions: false,
+        }));
+
+        await renderScreen(<>{hook.getCurrent().beforeComposer}</>);
+
+        const hostProps = pluginSurfaceHostSpy.mock.calls.at(-1)?.[0] as Readonly<{
+            composerMount?: Readonly<{ binding?: Readonly<{ openSurface?: unknown }> }>;
+        }>;
+        expect(hostProps.composerMount?.binding).toBeDefined();
+        expect(hostProps.composerMount?.binding?.openSurface).toBeUndefined();
+
+        await hook.unmount();
+    });
+
     it('withdraws existing-Session controls and regions when its owner retires the scope', async () => {
         const { useComposerScopePluginPresentation } = await import('./useComposerScopePluginPresentation');
         const projection = createProjection();

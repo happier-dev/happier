@@ -75,7 +75,24 @@ function composerAttachmentOnlyMeta(): Record<string, unknown> {
         key: 'review-42',
         value: { reviewId: '42' },
         presentation: { label: 'Review #42', typeLabel: 'Review comment' },
-        content: [{ mediaId: 'media-42' }],
+        // The real Composer shape: a draft whose media is still the
+        // transfer-owned staged claim. Only the daemon's SessionMedia
+        // finalizer may replace it, so the admitted-only projection cannot
+        // hold this record and must not decide whether the turn is empty.
+        content: {
+          kind: 'stagedMedia',
+          handle: {
+            v: 1,
+            id: 'staged-content-42',
+            executionTarget: { serverId: 'server-1', machineId: 'm1' },
+            owner: { pluginId: 'com.acme.review', localId: 'review' },
+            mediaKind: 'image',
+            mimeType: 'image/png',
+            name: 'review-42.png',
+            sizeBytes: 2048,
+            sha256: 'a'.repeat(64),
+          },
+        },
       }],
     },
   };

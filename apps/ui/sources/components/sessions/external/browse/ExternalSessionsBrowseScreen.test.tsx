@@ -742,6 +742,37 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(text).not.toContain('sensitive daemon implementation detail');
     });
 
+    it('makes retained rows inert while the visible query is ahead of the published one', async () => {
+        vi.useFakeTimers();
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+
+        await flushHookEffects();
+
+        const rowIsDisabled = () => screen
+            .findByTestId('direct-session-candidate:codex-session-1')?.props.disabled === true;
+        expect(rowIsDisabled()).toBe(false);
+
+        const searchInput = screen.findByTestId('direct-session-candidates-search-input');
+        await act(async () => {
+            searchInput!.props.onChangeText('refactor');
+        });
+        await flushHookEffects();
+
+        // The 250 ms debounce has not fired, so the listing on screen still answers
+        // the previous query. It must not stay actionable under a query it never ran.
+        expect(candidatesListSpy).toHaveBeenCalledTimes(1);
+        expect(rowIsDisabled()).toBe(true);
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(250);
+        });
+        await flushHookEffects();
+
+        expect(candidatesListSpy).toHaveBeenCalledTimes(2);
+        expect(rowIsDisabled()).toBe(false);
+    });
+
     it('searches provider candidates through the daemon with the search field', async () => {
         vi.useFakeTimers();
         candidatesListSpy.mockResolvedValueOnce({
@@ -861,6 +892,71 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(screen.findByTestId('direct-session-candidate:codex-fast-only-session-8')).toBeTruthy();
         expect(screen.findByTestId('direct-session-candidate:codex-augmented-only-session-7')).toBeTruthy();
         expect(screen.findByTestId('direct-session-candidates-search-incomplete')).toBeNull();
+    });
+
+    it('makes retained rows offline-aware instead of leaving them falsely actionable', async () => {
+        candidatesListSpy.mockResolvedValue({
+            ok: true,
+            candidates: [
+                {
+                    remoteSessionId: 'codex-session-1',
+                    title: 'Existing Codex Session',
+                    updatedAtMs: 1_700_000_000_000,
+                    activity: 'running',
+                    details: {
+                        path: '/tmp/worktree',
+                        codexBackendMode: 'appServer',
+                        source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
+                    },
+                },
+                {
+                    remoteSessionId: 'codex-session-linked',
+                    title: 'Already Linked Session',
+                    updatedAtMs: 1_700_000_000_001,
+                    activity: 'idle',
+                    linkedSessionId: 'happy-session-linked',
+                    details: {
+                        path: '/tmp/worktree',
+                        codexBackendMode: 'appServer',
+                        source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
+                    },
+                },
+            ] as unknown as ExternalSessionCandidateV1[],
+            nextCursor: null,
+        });
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+
+        expect(screen.findByTestId('direct-session-candidate:codex-session-1')?.props.disabled).toBe(false);
+
+        // The machine goes away while its rows stay on screen.
+        machinesState = [
+            { id: 'machine-1', active: false, metadata: { displayName: 'MacBook Pro', host: 'mbp.local' } },
+            { id: 'machine-2', active: false, metadata: { displayName: 'Linux Box', host: 'linux.local' } },
+        ];
+        await act(async () => {
+            screen.tree.update(<ExternalSessionsBrowseScreen key="offline" />);
+        });
+        await flushHookEffects();
+
+        // Linking needs the machine, so that row is inert rather than starting a round
+        // trip that cannot succeed.
+        expect(screen.findByTestId('direct-session-candidate:codex-session-1')?.props.disabled).toBe(true);
+        linkEnsureSpy.mockClear();
+        await screen.pressByTestIdAsync('direct-session-candidate:codex-session-1');
+        expect(linkEnsureSpy).not.toHaveBeenCalled();
+
+        // Opening a session that is already linked is local navigation and stays usable.
+        expect(screen.findByTestId('direct-session-candidate:codex-session-linked')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('direct-session-candidate:codex-session-linked');
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/happy-session-linked');
+
+        // And the footer must not claim the stale listing is complete.
+        const paginated = screen
+            .findAllByProps({ testID: 'direct-session-candidates' })
+            .find((node) => node.props?.pagination !== undefined);
+        expect(paginated?.props.pagination.error).toBe('newSession.machineOfflineInlineBody');
     });
 
     it('links the selected provider session and navigates to the Happier session', async () => {
