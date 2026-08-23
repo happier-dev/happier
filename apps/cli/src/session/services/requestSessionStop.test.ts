@@ -110,6 +110,25 @@ describe('requestSessionStop marker fallback', () => {
     vi.spyOn(process, 'kill').mockImplementation(() => true as never);
   });
 
+  it('returns an identity-resolution failure before attempting any physical stop', async () => {
+    mocks.resolveSessionIdOrPrefix.mockResolvedValue({
+      ok: false,
+      code: 'session_id_ambiguous',
+      candidates: ['sess-a', 'sess-b'],
+    });
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+    await expect(requestSessionStop({ credentials, idOrPrefix: 'sess' })).resolves.toEqual({
+      ok: false,
+      code: 'session_id_ambiguous',
+      candidates: ['sess-a', 'sess-b'],
+    });
+
+    expect(mocks.callMachineRpc).not.toHaveBeenCalled();
+    expect(mocks.stopDaemonSession).not.toHaveBeenCalled();
+    expect(mocks.listSessionMarkers).not.toHaveBeenCalled();
+  });
+
   it('routes a stop only to the exact machine recorded by the session', async () => {
     mocks.resolveSessionIdOrPrefix.mockResolvedValue({
       ok: true,
