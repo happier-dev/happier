@@ -38,7 +38,9 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
     });
     const [checkoutSelectionExplicitState, setCheckoutSelectionExplicit] = React.useState(initialCheckoutSelection.explicit);
     const checkoutSelectionExplicit = initialCheckoutSelection.explicit || checkoutSelectionExplicitState;
+    const hasUserTouchedCheckoutSelectionRef = React.useRef(false);
     const setExplicitCheckoutCreationDraft = React.useCallback<React.Dispatch<React.SetStateAction<NewSessionCheckoutCreationDraft | null>>>((next) => {
+        hasUserTouchedCheckoutSelectionRef.current = true;
         setCheckoutSelectionExplicit(true);
         setCheckoutCreationDraft(next);
     }, []);
@@ -54,6 +56,9 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
     React.useEffect(() => {
         if (!hasAppliedCheckoutDraftEffectRef.current) {
             hasAppliedCheckoutDraftEffectRef.current = true;
+            return;
+        }
+        if (hasUserTouchedCheckoutSelectionRef.current) {
             return;
         }
         shouldReconcileInitialHydratedCheckoutCreationDraftRef.current = false;
