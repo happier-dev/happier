@@ -19,6 +19,7 @@ import {
     TriageSourceEntrySnapshotV1Schema,
     TriageSourceFailureV1Schema,
     TriageSourceInstanceIdV1Schema,
+    TriageScanContinuationV1Schema,
     TriageSourceScanEvidenceV1Schema,
     TriageSourceViewerFactsV1Schema,
 } from '@happier-dev/triage-protocol/v1';
@@ -168,11 +169,32 @@ export const TriageListEntriesInputV1Schema = defineProtocolObject({
      */
     smartPolicy: TriageSmartPolicyV1Schema.optional(),
     /**
-     * The settled search text. There is deliberately no window cursor: a scan
-     * continuation is invocation-local, and a cursor that outlived the pass
-     * would be exactly the durable checkpoint `INV-03` forbids. A deeper window
-     * is a larger `limit`, bounded by the published row maximum.
+     * Resume ONE connection's walk where a previous bounded invocation stopped.
+     *
+     * It is the source's own `TriageScanContinuationV1` and nothing else: no
+     * second cursor type is minted here, no epoch or delivered-id set rides
+     * along, and nothing durable is created. `INV-03` is about *persistence and
+     * custody* — a continuation may not outlive the process or be checkpointed —
+     * and this member does not create either: the caller that sends one is a
+     * mounted surface holding it in memory for the length of one mount, and a
+     * lost process simply starts at the first page again.
+     *
+     * It names no connection because it cannot address more than one. A
+     * continuation belongs to a single source's walk, so this member is admitted
+     * only for a request that selects exactly one source instance; a request
+     * that carries one alongside a wider selection is refused rather than
+     * silently applied to whichever lane happened to sort first. That is also
+     * what keeps this Action's result inside the host byte gate: one
+     * continuation costs about eight kilobytes encoded, and one per configured
+     * connection would put a maximal result a quarter of a megabyte OVER the
+     * 1 MiB ceiling that rejects it whole.
+     *
+     * The row bound is unchanged and deliberately not the paging mechanism: a
+     * deeper window is successive bounded invocations appended by the caller,
+     * never a larger `limit`.
      */
+    resume: TriageScanContinuationV1Schema.optional(),
+    /** The settled search text. */
     query: triageText.optional(),
     filters: TriageListFilterSelectionV1Schema.optional(),
 }, { policy: 'closed' });
@@ -397,6 +419,26 @@ export const TriageListEntriesResultV1Schema = defineProtocolObject({
             defineProtocolLiteral('complete'),
             defineProtocolLiteral('partial'),
         ]),
+        /**
+         * Where the selected connection's walk stopped, when it stopped with
+         * more to give and nothing wrong.
+         *
+         * Present exactly when the request selected one source instance, that
+         * lane's own row bound ended its rotation, and the lane neither
+         * exhausted nor failed. A failed or deadline-stopped lane offers none:
+         * resuming a walk that broke is not paging, and the next cycle asks it
+         * again from the first page.
+         *
+         * It is a single member rather than one per lane, and the reason is
+         * measurable rather than stylistic. A maximal continuation encodes to
+         * about 8,210 bytes; one per configured connection is about 263 KB,
+         * which puts the maximal result of this Action roughly 88 KB OVER the
+         * 1 MiB gate that rejects it whole — so a user with many connections
+         * would get no list at all. One continuation costs the gate about eight
+         * kilobytes and leaves the headroom
+         * `actions/maximumEncodedActionValue.test.ts` pins intact.
+         */
+        continuation: TriageScanContinuationV1Schema.optional(),
         assembledAtMs: defineProtocolNumber({ integer: true, minimum: 0 }),
     }, { policy: 'closed' }),
 }, { policy: 'closed' });

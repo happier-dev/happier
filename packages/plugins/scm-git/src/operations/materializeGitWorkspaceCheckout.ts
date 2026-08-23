@@ -3,8 +3,7 @@ import { dirname, join } from 'node:path';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
-import { normalizeCommitRef, runScmCommand } from '../runtime.js';
-import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
+import { normalizeCommitRef } from '../runtime.js';
 import { inspectGitCheckoutIdentity, isGitLinkedWorktreeIdentity } from '../checkoutIdentity.js';
 import { repairGitWorktreeAdminReference } from './repairGitWorktreeAdminReference.js';
 import {
@@ -12,6 +11,12 @@ import {
     hasForbiddenGitRefName,
     normalizeWorktreeDisplayName,
 } from './worktreeName.js';
+import {
+    GIT_WORKTREE_NAME_ATTEMPT_LIMIT,
+    gitWorktreeNameForAttempt,
+    isGitWorktreeAlreadyExistsFailure,
+    runGitWorktreeAdd as runCanonicalGitWorktreeAdd,
+} from './gitWorktreeAdd.js';
 
 type GitWorkspaceCheckoutCreationInput = Readonly<{
     repoRoot: string;
@@ -45,7 +50,13 @@ function resolveWorktreeBranchName(displayName: string): string {
     return branchName;
 }
 
-async function runGitWorktreeAdd(input: Readonly<{
+/**
+ * Adds the worktree through the package's one `git worktree add` owner and
+ * turns its failure into the throw this materializer's callers already handle.
+ * The parent directory is prepared here because only this caller materializes
+ * into an explicitly chosen absolute path.
+ */
+async function addGitWorktree(input: Readonly<{
     repoRoot: string;
     targetPath: string;
     branchName: string;
@@ -53,20 +64,12 @@ async function runGitWorktreeAdd(input: Readonly<{
 }>): Promise<void> {
     await mkdir(dirname(input.targetPath), { recursive: true });
 
-    const result = await runScmCommand({
-        bin: 'git',
-        cwd: input.repoRoot,
-        args: [
-            'worktree',
-            'add',
-            '-b',
-            input.branchName,
-            '--',
-            input.targetPath,
-            ...(input.baseRef ? [input.baseRef] : []),
-        ],
-        timeoutMs: 60_000,
-        env: buildScmNonInteractiveEnv(),
+    const result = await runCanonicalGitWorktreeAdd({
+        repoRoot: input.repoRoot,
+        worktreePath: input.targetPath,
+        branchName: input.branchName,
+        branchMode: 'new',
+        baseRef: input.baseRef,
     });
     if (result.success) {
         return;
@@ -101,7 +104,7 @@ async function materializeGitWorktreeIntoExistingDirectory(input: Readonly<{
     const temporaryTargetPath = `${input.targetPath}.happier-materialize-tmp`;
     await rm(temporaryTargetPath, { recursive: true, force: true });
 
-    await runGitWorktreeAdd({
+    await addGitWorktree({
         repoRoot: input.repoRoot,
         targetPath: temporaryTargetPath,
         branchName: input.branchName,
@@ -160,11 +163,6 @@ async function tryReuseExistingGitWorktree(input: Readonly<{
     return await resolveGitMaterializedWorktreeTargetPath({ targetPath: input.targetPath });
 }
 
-function isAlreadyExistsFailure(error: unknown): boolean {
-    const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-    return message.includes('already exists');
-}
-
 export async function materializeGitWorkspaceCheckoutAtPath(input: Readonly<{
     repoRoot: string;
     targetPath: string;
@@ -198,7 +196,7 @@ export async function materializeGitWorkspaceCheckoutAtPath(input: Readonly<{
         };
     }
 
-    await runGitWorktreeAdd({
+    await addGitWorktree({
         repoRoot: input.repoRoot,
         targetPath: input.targetPath,
         branchName,
@@ -219,8 +217,8 @@ export async function createGitWorkspaceCheckoutAtDefaultPath(
 
     const normalizedBaseRef = resolveNormalizedBaseRef(input.baseRef);
 
-    for (let suffix = 1; suffix <= 4; suffix += 1) {
-        const candidateBranchName = suffix === 1 ? branchName : `${branchName}-${suffix}`;
+    for (let attempt = 1; attempt <= GIT_WORKTREE_NAME_ATTEMPT_LIMIT; attempt += 1) {
+        const candidateBranchName = gitWorktreeNameForAttempt(branchName, attempt);
         const candidateTargetPath = buildWorktreeTargetPath(input.repoRoot, candidateBranchName);
         try {
             const materialized = await materializeGitWorkspaceCheckoutAtPath({
@@ -233,7 +231,7 @@ export async function createGitWorkspaceCheckoutAtDefaultPath(
                 targetPath: materialized.targetPath,
             };
         } catch (error) {
-            if (suffix < 4 && isAlreadyExistsFailure(error)) {
+            if (attempt < GIT_WORKTREE_NAME_ATTEMPT_LIMIT && isGitWorktreeAlreadyExistsFailure(error)) {
                 continue;
             }
             throw error;

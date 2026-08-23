@@ -23,20 +23,25 @@ describe('selectGitlabNextPageUrl', () => {
     expect(selectGitlabNextPageUrl(
       createGitlabResponseHeaders({ Link: OFFSET_LINK }),
       'https://gitlab.com',
-    )).toBe('https://gitlab.com/api/v4/merge_requests?page=3&per_page=100&scope=created_by_me');
+    )).toEqual({
+      kind: 'next',
+      url: 'https://gitlab.com/api/v4/merge_requests?page=3&per_page=100&scope=created_by_me',
+    });
   });
 
   it('accepts an unquoted rel and ignores a rel that is not the next page', () => {
     expect(selectGitlabNextPageUrl(
       createGitlabResponseHeaders({ Link: '<https://gitlab.com/api/v4/issues?page=2>; rel=next' }),
       'https://gitlab.com',
-    )).toBe('https://gitlab.com/api/v4/issues?page=2');
+    )).toEqual({ kind: 'next', url: 'https://gitlab.com/api/v4/issues?page=2' });
+    // A header that names no `next` at all is the lane's own END, and it must not be
+    // confused with a `next` that was refused.
     expect(selectGitlabNextPageUrl(
       createGitlabResponseHeaders({
         Link: '<https://gitlab.com/api/v4/issues?page=2>; rel="preload"',
       }),
       'https://gitlab.com',
-    )).toBeNull();
+    )).toEqual({ kind: 'end' });
   });
 
   it('returns the keyset URL byte-for-byte, without rebuilding or reordering it', () => {
@@ -44,9 +49,10 @@ describe('selectGitlabNextPageUrl', () => {
       createGitlabResponseHeaders({ Link: KEYSET_LINK }),
       'https://gitlab.com',
     );
-    expect(selected).toBe(
-      'https://gitlab.com/api/v4/projects?pagination=keyset&per_page=100&order_by=id&sort=desc&id_before=42',
-    );
+    expect(selected).toEqual({
+      kind: 'next',
+      url: 'https://gitlab.com/api/v4/projects?pagination=keyset&per_page=100&order_by=id&sort=desc&id_before=42',
+    });
   });
 
   it('drops a next link that leaves the exact invoked origin', () => {
@@ -56,10 +62,12 @@ describe('selectGitlabNextPageUrl', () => {
       '<https://attacker.example/api/v4/merge_requests?page=2>; rel="next"',
       '</api/v4/merge_requests?page=2>; rel="next"',
     ]) {
+      // `refused`, never `end`: GitLab named a further page, and this walk cannot read
+      // it. Reporting absence here is what settles a cut-off lane as a finished one.
       expect(
         selectGitlabNextPageUrl(createGitlabResponseHeaders({ Link: hostile }), 'https://gitlab.com'),
         hostile,
-      ).toBeNull();
+      ).toEqual({ kind: 'refused' });
     }
   });
 
@@ -70,19 +78,19 @@ describe('selectGitlabNextPageUrl', () => {
         Link: '<https://forge.example/Corp/GitLab/api/v4/issues?page=2>; rel="next"',
       }),
       prefixed,
-    )).toBe('https://forge.example/Corp/GitLab/api/v4/issues?page=2');
+    )).toEqual({ kind: 'next', url: 'https://forge.example/Corp/GitLab/api/v4/issues?page=2' });
     expect(selectGitlabNextPageUrl(
       createGitlabResponseHeaders({
         Link: '<https://forge.example/other/api/v4/issues?page=2>; rel="next"',
       }),
       prefixed,
-    )).toBeNull();
+    )).toEqual({ kind: 'refused' });
   });
 
-  it('returns null when the response carries only advisory totals and no next link', () => {
+  it('reports END when the response carries only advisory totals and no next link', () => {
     expect(selectGitlabNextPageUrl(
       createGitlabResponseHeaders({ 'X-Total': '20000', 'X-Total-Pages': '200' }),
       'https://gitlab.com',
-    )).toBeNull();
+    )).toEqual({ kind: 'end' });
   });
 });

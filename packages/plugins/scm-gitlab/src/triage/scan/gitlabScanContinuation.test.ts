@@ -1,4 +1,7 @@
-import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
+import {
+  MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
+  MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
+} from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import { buildGitlabScanLanes, type GitlabLaneRequest } from '../mapping/gitlabInvolvement.js';
@@ -70,6 +73,37 @@ describe('the GitLab scan continuation codec', () => {
       origin: GITLAB_COM,
       lanes: lanes(),
     })).toBeNull();
+  });
+
+  it('refuses a token whose geometry this source would never have chosen', () => {
+    const frontier = frontierOf();
+    const encoded = encodeGitlabScanContinuation(frontier);
+    if (encoded === null) throw new Error('expected an encodable frontier');
+    const decodeTampered = (
+      mutate: (record: { scanLimit: number; nativePageSize: number }) => void,
+    ) => {
+      const record = JSON.parse(encoded.token) as { scanLimit: number; nativePageSize: number };
+      mutate(record);
+      return decodeGitlabScanContinuation({
+        continuation: { v: 1, token: JSON.stringify(record) },
+        origin: GITLAB_COM,
+        lanes: lanes(),
+      });
+    };
+
+    // A budget above the ceiling the protocol admits on the initial arm. Adopted, it
+    // bought one call a hundred provider pages for a result that can carry 64 rows.
+    expect(decodeTampered((record) => {
+      record.scanLimit = MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1 + 1;
+      record.nativePageSize = MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1 + 1;
+    })).toBeNull();
+    // A page size that is admissible on its own but is not the one this source derives
+    // for that budget: the walk's geometry is not a property of the token's bytes.
+    expect(decodeTampered((record) => { record.nativePageSize = 1; })).toBeNull();
+    // The untampered token still round-trips, so the two checks above refuse forged
+    // geometry rather than all geometry.
+    expect(decodeGitlabScanContinuation({ continuation: encoded, origin: GITLAB_COM, lanes: lanes() }))
+      .not.toBeNull();
   });
 
   it('reports a frontier it cannot fit inside the published token bound', () => {

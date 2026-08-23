@@ -7,6 +7,7 @@ import type {
 
 import { resolveAzureConfiguredOrigin } from './configuration.js';
 import { createAzureSourceFailure, projectAzureSourceFailure } from './failureProjection.js';
+import { foldAzureIdentityId } from './identity.js';
 import { parseAzureEntryLocalRef, type AzureEntryAddress } from './localRef.js';
 import {
   abandonAzurePullRequest,
@@ -28,7 +29,12 @@ import {
 } from './mutations/contracts.js';
 import { boundAzureInvocation, toAzureTransport } from './invocation.js';
 import { observeAzureEntry, openClient, type AzureEntryObservation } from './operations.js';
-import type { AzureDevOpsApiClient, AzureDevOpsOrigin, AzurePullRequestRow } from './types.js';
+import type {
+  AzureDevOpsApiClient,
+  AzureDevOpsFailure,
+  AzureDevOpsOrigin,
+  AzurePullRequestRow,
+} from './types.js';
 
 /**
  * The five enabled Azure DevOps pull-request mutation Actions.
@@ -265,6 +271,7 @@ export async function completeAzureDevOpsPullRequest(
     deleteSourceBranch: request.deleteSourceBranch,
     transitionWorkItems: false as const,
     bypassPolicy: false as const,
+    bypassReason: '' as const,
   };
   const write = await completeAzurePullRequest({
     client: mutation.client,
@@ -310,7 +317,11 @@ export async function completeAzureDevOpsPullRequest(
   const optionsHeld = applied !== null
     && applied.deleteSourceBranch === sent.deleteSourceBranch
     && applied.transitionWorkItems === sent.transitionWorkItems
-    && applied.bypassPolicy === sent.bypassPolicy;
+    && applied.bypassPolicy === sent.bypassPolicy
+    // Azure omits a completion option it holds no value for, so an accepted empty
+    // `bypassReason` comes back either as `''` or not at all. Both prove the stored
+    // justification is gone; only a surviving non-empty one proves the write was ignored.
+    && (applied.bypassReason === null || applied.bypassReason === sent.bypassReason);
 
   if (isCompletionTerminal(row)) {
     return optionsHeld
@@ -512,8 +523,12 @@ export async function requestAzureDevOpsPullRequestReview(
       observation: current.observation,
     });
   }
-  const existing = new Set(current.row.reviewers.map((reviewer) => reviewer.id));
-  if (reviewers.some((reviewer) => existing.has(reviewer.id))) {
+  // Folded, because Azure hands the same identity GUID back in whatever case the producing
+  // service wrote it. A case-sensitive membership test answers *not a reviewer* about somebody
+  // who is one, and the additive route then carries a vote for a reviewer Azure already knows —
+  // which is how a button labelled *request review* resets an approval.
+  const existing = new Set(current.row.reviewers.map((reviewer) => foldAzureIdentityId(reviewer.id)));
+  if (reviewers.some((reviewer) => existing.has(foldAzureIdentityId(reviewer.id)))) {
     return Object.freeze({
       kind: 'refused' as const,
       reason: 'reviewer-already-present' as const,
@@ -527,21 +542,48 @@ export async function requestAzureDevOpsPullRequestReview(
     reviewers,
     signal: mutation.signal,
   });
-  if (!write.ok) return unavailable(projectAzureSourceFailure(write.failure));
+  // A write whose outcome is UNKNOWN is not a write that failed. A timed-out or aborted `POST`
+  // may already have added every reviewer, so answering `unavailable` here tells the user nothing
+  // happened about an effect nobody observed — and the natural response to that is to press the
+  // button again, which is exactly the blind repeat `sources/SCM.md` §6.7 forbids. Only outcomes
+  // the provider itself decided (`4xx`, a refused contract, a rate limit) end the Action here;
+  // everything ambiguous falls through to the one authoritative list read below, which is the
+  // only thing that can say what actually landed.
+  if (!write.ok && !isAzureAmbiguousWriteFailure(write.failure)) {
+    return unavailable(projectAzureSourceFailure(write.failure));
+  }
 
   // The authoritative reviewer list, read back from the pull request itself rather than trusted
-  // from the write's own response body. A timed-out POST reaches this same read: confirmation is
-  // all this Action ever does after a write, and it never repeats an effect whose outcome is
-  // unknown.
+  // from the write's own response body. Confirmation is all this Action ever does after a write,
+  // and it never repeats an effect whose outcome is unknown.
   const settled = await observe(mutation);
   const settledReviewers = settled.row === null
     ? null
-    : new Set(settled.row.reviewers.map((reviewer) => reviewer.id));
+    : new Set(settled.row.reviewers.map((reviewer) => foldAzureIdentityId(reviewer.id)));
   const confirmed = settledReviewers !== null
-    && reviewers.every((reviewer) => settledReviewers.has(reviewer.id));
-  return confirmed
-    ? Object.freeze({ kind: 'applied' as const, observation: settled.observation })
-    : Object.freeze({ kind: 'pending' as const, observation: settled.observation });
+    && reviewers.every((reviewer) => settledReviewers.has(foldAzureIdentityId(reviewer.id)));
+  if (confirmed) {
+    return Object.freeze({ kind: 'applied' as const, observation: settled.observation });
+  }
+  // Reconciliation could not confirm the addition. When the write itself was ambiguous the honest
+  // answer is still `pending`: the reconciling read may have raced the provider, and reporting the
+  // write's own transport failure would claim a negative this Action never observed.
+  return Object.freeze({ kind: 'pending' as const, observation: settled.observation });
+}
+
+/**
+ * A write outcome that says nothing about what the provider did.
+ *
+ * These are the classes that leave an effect UNKNOWN rather than decided: the request may have
+ * reached Azure and been applied after our client stopped listening. Every other class — an
+ * argument Azure rejected, a permission it refused, a rate limit it stated — is a decision, and a
+ * decision needs no reconciliation.
+ */
+function isAzureAmbiguousWriteFailure(failure: AzureDevOpsFailure): boolean {
+  return failure.class === 'timedOut'
+    || failure.class === 'cancelled'
+    || failure.class === 'transport'
+    || failure.class === 'server';
 }
 
 /* ------------------------------------------------------------- thread status */

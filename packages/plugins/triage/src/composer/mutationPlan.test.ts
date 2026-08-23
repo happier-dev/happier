@@ -130,6 +130,29 @@ describe('planTriageEntryAttachmentMutation — attach', () => {
         expect(Object.keys(operation.value.value as object).sort()).toEqual(['entryRef', 'sourceInstance', 'v']);
     });
 
+    it('persists the observed routing hint beside the identity when one is supplied', () => {
+        // The hint is what lets an account-wide connection be routed back to the
+        // one provider scope this entry lives in. It is stored beside identity,
+        // never inside it, so a route that moves does not mint a second
+        // attachment for the same entry.
+        const plan = planTriageEntryAttachmentMutation({
+            intent: 'attach',
+            snapshot: snapshot(),
+            entryRef: entryRef('42'),
+            sourceInstance: SOURCE_INSTANCE,
+            presentation: PRESENTATION,
+            lastKnownLocator: { v: 1, routingToken: 'acme/web' },
+        });
+
+        if (plan.status !== 'transaction') throw new Error('expected a transaction');
+        const [operation] = plan.transaction.operations;
+        if (operation?.kind !== 'attachment.add') throw new Error('expected an attachment.add');
+        expect(operation.value.value).toMatchObject({
+            lastKnownLocator: { v: 1, routingToken: 'acme/web' },
+        });
+        expect(operation.value.key).toBe(deriveTriageComposerEntryAttachmentKey(entryRef('42')));
+    });
+
     it('refuses an instance that belongs to another source instead of substituting one', () => {
         const plan = planTriageEntryAttachmentMutation({
             intent: 'attach',

@@ -25,6 +25,7 @@ import {
     parseCorpusSmartPolicy,
 } from '../corpus/query/smartPolicy.js';
 import {
+    MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     TRIAGE_LIST_NO_FILTERS_V1,
     foldTriageListWindow,
     triageListCoverageLanes,
@@ -110,7 +111,12 @@ function lensFrom(input: TriageListEntriesInputV1): TriageListLensV1 {
         smartPolicy: parseCorpusSmartPolicy(input.smartPolicy) ?? CORPUS_DEFAULT_SMART_POLICY_V1,
         query: input.query ?? '',
         filters: input.filters ?? TRIAGE_LIST_NO_FILTERS_V1,
-        limit: input.limit,
+        // The row bound of one RESULT, applied by the owner that pays for it.
+        // The projection bounds by the lens it is given — a mounted store folds
+        // its whole accumulated page through the same owner and crosses no wire
+        // — so the transport ceiling is enforced here, beside the array whose
+        // `maxItems` would otherwise be the only thing that noticed.
+        limit: Math.max(0, Math.min(input.limit, MAX_TRIAGE_LIST_WINDOW_ROWS_V1)),
     };
 }
 
@@ -199,12 +205,23 @@ export async function listTriageEntries(
             source,
             declaredKindIds,
             configured: row.configured,
+            ...(input.resume === undefined ? {} : { resume: input.resume }),
             scan: (scanInput, scanOptions) => deps.executeScan(
                 contribution.operations.scan,
                 scanInput,
                 scanOptions,
             ),
         });
+    }
+
+    // A continuation belongs to one source's walk, so it can only be sent into a
+    // request that names one. Refusing is what keeps it from being applied to
+    // whichever lane happened to sort first, which would silently hand one
+    // source's paging token to another.
+    if (input.resume !== undefined && lanes.length !== 1) {
+        throw new Error(
+            'A Triage list continuation may only be resumed for a request that selects exactly one invocable source instance.',
+        );
     }
 
     const lens = lensFrom(input);
@@ -229,6 +246,12 @@ export async function listTriageEntries(
         assembledAtMs: deps.nowMs(),
     });
 
+    // One lane's stop, and only when this request named one lane. A wider
+    // request cannot carry a continuation back — the result has room for one,
+    // and a continuation that did not say whose it is would be unusable anyway
+    // — so a multi-connection caller keeps today's single bounded answer.
+    const continuation = lanes.length === 1 ? pass.stopped[0]?.continuation : undefined;
+
     return {
         v: 1,
         configuredSources,
@@ -238,6 +261,7 @@ export async function listTriageEntries(
             rows: toTriageListWireRows(window),
             lanes: window.lanes,
             coverage: window.coverage,
+            ...(continuation === undefined ? {} : { continuation }),
             assembledAtMs: window.assembledAtMs,
         },
     };

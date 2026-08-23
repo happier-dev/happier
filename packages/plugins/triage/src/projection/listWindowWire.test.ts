@@ -169,6 +169,49 @@ describe('the list window on the wire', () => {
         expect(rows[0]?.otherObservations).toEqual([]);
     });
 
+    /**
+     * A source may report one entry several times in one walk, and a first-party
+     * one is designed to: GitHub asks five involvement queries and emits every
+     * native encounter separately, each carrying only that lane's fact, because
+     * "the aggregate unions the involvement facts idempotently".
+     *
+     * The wire is where that promise was silently broken. It carries one
+     * observation per connection, so whichever encounter happened to be newest
+     * became the row's whole viewer record — and the mounted store, which
+     * rebuilds its window from exactly what it read back, then derived
+     * `suggested` for a pull request the user's review is blocking. The
+     * falsifier this test exists for is any repair that re-infers the lost facts
+     * from the rendered attention level instead of unioning them before the
+     * wire: that would mint involvement no source ever reported.
+     */
+    it('unions one connection\'s involvement answers before the wire, so a rebuild cannot demote them', () => {
+        const window = fold([
+            observation({
+                sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
+                observedAtMs: 1_000,
+                involvement: ['reviewRequested'],
+            }),
+            observation({
+                sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
+                observedAtMs: 1_500,
+                involvement: ['participating'],
+            }),
+        ]);
+
+        expect(window.rows[0]?.attention?.level).toBe('required');
+        expect(toTriageListWireRows(window)[0]?.observedByCount).toBe(1);
+
+        const rehydrated = laneObservationsFromWire(resultFor(window), TESTKIT_SOURCE_INSTANCE_ID);
+        expect(rehydrated).toHaveLength(1);
+        const outcome = rehydrated[0]?.outcome;
+        expect(outcome?.kind === 'present' && [...outcome.viewer.involvement])
+            // The protocol's declared order, not the order the lanes answered in.
+            .toEqual(['reviewRequested', 'participating']);
+
+        // The mounted store rebuilds from exactly this, so the level has to survive.
+        expect(fold(rehydrated).rows[0]?.attention?.level).toBe('required');
+    });
+
     it('rehydrates the driving connection\'s own answer, ref and all', () => {
         const window = fold([observation({ sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID })]);
 

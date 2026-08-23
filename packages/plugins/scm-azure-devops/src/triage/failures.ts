@@ -1,5 +1,6 @@
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
+import { AZURE_DEVOPS_REST_FLOOR } from './apiVersions.js';
 import { truncateUtf8 } from './decode.js';
 import {
   readAzureDevOpsRateLimitEvidence,
@@ -69,6 +70,19 @@ export function classifyAzureDevOpsResponse(input: Readonly<{
   const serviceError = readServiceErrorHeader(headers);
   const detail = body.message ?? serviceError ?? `Azure DevOps returned HTTP ${status}.`;
 
+  if (isRestVersionRefusal(body.typeKey)) {
+    return failure({
+      failureClass: 'restVersionUnsupported',
+      status,
+      // Azure's own message names the highest version this deployment serves, which is the one
+      // fact an operator needs; the pinned floor is stated alongside it rather than instead of it.
+      detail: `${detail} This build is pinned to Azure DevOps REST ${AZURE_DEVOPS_REST_FLOOR}.`,
+      typeKey: body.typeKey,
+      retryNotBeforeMs,
+      rateLimit,
+    });
+  }
+
   return failure({
     failureClass: classifyStatus(status),
     status,
@@ -137,6 +151,21 @@ export function createAzureDevOpsFailure(input: Readonly<{
     retryNotBeforeMs: null,
     rateLimit: null,
   });
+}
+
+/**
+ * Azure DevOps's own refusal of a pinned `api-version` it cannot serve.
+ *
+ * The evidence is the provider's stated exception type, not a guess from the status: an Azure
+ * DevOps Server older than the 7.1 floor answers `400` with
+ * `VssVersionNotSupportedException`, whose message names the highest version it does serve. The
+ * `api-supported-versions` response header is deliberately NOT read as a second signal — Azure
+ * emits it on successful responses too, and treating a version list that does not literally
+ * contain the pinned string as a refusal would take a working deployment offline on a formatting
+ * difference. This classifier fires only where Azure itself refused.
+ */
+function isRestVersionRefusal(typeKey: string | null): boolean {
+  return typeKey !== null && typeKey.toLowerCase().startsWith('vssversionnotsupported');
 }
 
 function classifyStatus(status: number): AzureDevOpsFailureClass {

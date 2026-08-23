@@ -6,10 +6,12 @@ import {
   GithubChangedFilesInputV1Schema,
   GithubChecksInputV1Schema,
   GithubCommentsInputV1Schema,
+  GithubReviewsInputV1Schema,
   GithubTimelineInputV1Schema,
   type GithubChangedFilesResultV1,
   type GithubChecksResultV1,
   type GithubCommentsResultV1,
+  type GithubReviewsResultV1,
   type GithubTimelineResultV1,
 } from './detail/contracts.js';
 import {
@@ -19,18 +21,20 @@ import {
 import {
   GITHUB_DETAIL_BOUNDS_V1,
   projectGithubCheckRows,
+  projectGithubReviewPeople,
 } from './detail/projection.js';
 import {
   readGithubChangedFilesPage,
   readGithubChecksSurface,
   readGithubIssueCommentsPage,
+  readGithubReviewsSurface,
   readGithubTimelinePage,
   type GithubDetailPageV1,
 } from './detail/reads.js';
 import { toTriageFailure } from './mapping/protocol.js';
 
 /**
- * The four bound source-native detail operations.
+ * The five bound source-native detail operations.
  *
  * Each is the whole vertical for one Action invocation: it validates the
  * published input, admits the configured instance through the SAME rule `scan`
@@ -266,6 +270,11 @@ export async function readGithubChecks(
     kind: 'checks' as const,
     headRevision,
     state: surface.state,
+    // The row-fact state this suite projects to, computed by `checks.ts` over
+    // EVERY observation it read. Publishing it is what lets the detail surface
+    // say what GitHub reports as wrong in the same words the list row uses,
+    // without deriving a second answer from the bounded rows below.
+    ...(surface.rowState === null ? {} : { rowState: surface.rowState }),
     rows: projected.rows,
     // A count is omitted rather than zeroed wherever a per-job breakdown is
     // unavailable: a rendered `0 failing` on a suite nobody could read is a
@@ -279,6 +288,66 @@ export async function readGithubChecks(
     ...(surface.commitStatusFailure === null
       ? {}
       : { commitStatusFailure: toTriageFailure(surface.commitStatusFailure) }),
+    omittedRowCount: projected.omittedRowCount,
+    projectionTruncated: projected.projectionTruncated,
+  });
+}
+
+/* -------------------------------------------------------------------- reviews */
+
+/**
+ * Who has reviewed one pull request, and whose review is still awaited.
+ *
+ * The two provider collections are read together because they answer one
+ * question in two halves that must not be unioned: a list built from requests
+ * loses everyone who already reviewed, and a list built from reviews hides a
+ * still-outstanding team request. One failing leaves the other's rows beside a
+ * failure that names which read could not be made.
+ *
+ * This is the AUTHORITATIVE answer for review people and the review decision.
+ * The event timeline mentions reviews too, but only as far as the reader has
+ * paged it and without GitHub's own collapse to the newest review per author, so
+ * it is a partial view of this resource and never a substitute for it.
+ */
+export async function readGithubReviews(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<GithubReviewsResultV1> {
+  const parsed = GithubReviewsInputV1Schema.safeParse(input);
+  if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
+  const request = parsed.data;
+
+  const admitted = await admitGithubEntryInvocation({
+    instance: request.instance,
+    localRef: request.localRef,
+    routingToken: request.routingToken,
+    admissibleKinds: ['pull-request'],
+  }, context);
+  if (!admitted.ok) return unavailable(admitted.failure);
+
+  const surface = await readGithubReviewsSurface({
+    route: admitted.route,
+    entryNumber: admitted.entryNumber,
+  }, { client: admitted.client, now: Date.now, signal: context.signal });
+
+  const projected = projectGithubReviewPeople({
+    historical: surface.historical,
+    outstanding: surface.outstanding,
+  }, GITHUB_DETAIL_BOUNDS_V1);
+
+  return Object.freeze({
+    kind: 'reviews' as const,
+    reviewed: projected.reviewed,
+    requested: projected.requested,
+    // Omitted rather than defaulted: REST cannot prove GitHub's `REVIEW_REQUIRED`
+    // arm, so an absent decision means the question was not answered.
+    ...(surface.reviewDecision === null ? {} : { reviewDecision: surface.reviewDecision }),
+    ...(surface.reviewsFailure === null
+      ? {}
+      : { reviewsFailure: toTriageFailure(surface.reviewsFailure) }),
+    ...(surface.requestsFailure === null
+      ? {}
+      : { requestsFailure: toTriageFailure(surface.requestsFailure) }),
     omittedRowCount: projected.omittedRowCount,
     projectionTruncated: projected.projectionTruncated,
   });

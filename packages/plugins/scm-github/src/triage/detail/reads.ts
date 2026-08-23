@@ -5,6 +5,10 @@ import {
 } from '../../observations/githubApiClient.js';
 import { readGithubPullRequestChecks, type GithubChecksSurfaceV1 } from '../checks.js';
 import {
+  readGithubPullRequestReviewers,
+  type GithubReviewersSurfaceV1,
+} from '../reviews.js';
+import {
   classifyGithubResponseFailure,
   classifyGithubTransportFailure,
   isGithubSuccessStatus,
@@ -311,4 +315,35 @@ export async function readGithubChecksSurface(
     signal: dependencies.signal,
   });
   return succeeded(Object.freeze({ headRevision, surface }));
+}
+
+/* -------------------------------------------------------------------- reviews */
+
+/**
+ * The review plane's whole read.
+ *
+ * It delegates to `reviews.ts`, which is the ONE owner of the two review
+ * resources and of the collapse between them. This module supplies only the
+ * route, because the detail planes and `get` must not acquire two answers to
+ * "who has reviewed this".
+ *
+ * Unlike the checks read it needs no head revision: a review is submitted
+ * against the pull request, not against a commit, and GitHub keeps a dismissed
+ * review in the collection rather than removing it when the head moves.
+ */
+export async function readGithubReviewsSurface(
+  input: Readonly<{
+    route: GithubRepositoryRouteV1;
+    entryNumber: string;
+  }>,
+  dependencies: GithubDetailReadDependenciesV1 & Readonly<{ signal: AbortSignal }>,
+): Promise<GithubReviewersSurfaceV1> {
+  return readGithubPullRequestReviewers({
+    route: input.route,
+    number: input.entryNumber,
+  }, {
+    client: dependencies.client,
+    now: dependencies.now,
+    signal: dependencies.signal,
+  });
 }

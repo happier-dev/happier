@@ -4,7 +4,9 @@ import {
   BackendTargetKeyV2InputSchema,
   normalizeBackendTargetKeyV2Input,
 } from '../../backends/targets/backendTargetRefV2.js';
+import { CodingPromptBehaviorOverridesV1Schema } from '../../prompts/codingPromptBehaviorV1.js';
 import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
+import { SessionExecutionTargetV1Schema } from '../../sessions/creation/sessionSpawnNewResultV1.js';
 import { SESSION_PERMISSION_MODES } from '../../sessions/metadata/sessionPermissionModes.js';
 import { EnvironmentVariableSchema, EnvVarRequirementSchema } from '../environmentVariables.js';
 
@@ -38,6 +40,36 @@ const LaunchProfileModelSelectionV1Schema = z.preprocess((value) => {
   };
 }, SessionModelSelectionV1Schema);
 
+/**
+ * Where a Session authored from this profile should run. This is a
+ * PREFERENCE, never a stored resolution: `automatic` is resolved at launch
+ * against the persisted project registry, `ask` always prefills the New
+ * Session screen, and `fixed` names one execution target. A directory is
+ * only expressible inside `fixed`, so a profile cannot carry a path that
+ * contradicts — or outlives — the machine it belongs to.
+ */
+export const LaunchProfilePlacementPreferenceV1Schema = z.union([
+  z.literal('automatic'),
+  z.literal('ask'),
+  z.object({
+    fixed: SessionExecutionTargetV1Schema,
+    directory: z.string().trim().min(1).max(10_000).optional(),
+  }).strict(),
+]);
+export type LaunchProfilePlacementPreferenceV1 = z.infer<typeof LaunchProfilePlacementPreferenceV1Schema>;
+
+/**
+ * How a Session authored from this profile should obtain its checkout.
+ * A preference, resolved against the selected project's real worktrees at
+ * launch; it stores no worktree identity or path.
+ */
+export const LaunchProfileCheckoutPreferenceV1Schema = z.enum([
+  'reuse_workspace',
+  'create_worktree',
+  'ask',
+]);
+export type LaunchProfileCheckoutPreferenceV1 = z.infer<typeof LaunchProfileCheckoutPreferenceV1Schema>;
+
 export const LaunchProfileV2Schema = z.object({
   v: z.literal(2),
   id: z.string().trim().min(1).max(256),
@@ -50,6 +82,9 @@ export const LaunchProfileV2Schema = z.object({
   compatibilityByTargetKey: z.record(BackendTargetKeyV2InputSchema, z.boolean()).default({}),
   preferredAgentTargetKey: BackendTargetKeyV2InputSchema.optional(),
   preferredModelSelection: LaunchProfileModelSelectionV1Schema.optional(),
+  placement: LaunchProfilePlacementPreferenceV1Schema.optional(),
+  checkout: LaunchProfileCheckoutPreferenceV1Schema.optional(),
+  codingPromptBehaviorOverrides: CodingPromptBehaviorOverridesV1Schema.optional(),
   createdAt: z.number().finite().nonnegative(),
   updatedAt: z.number().finite().nonnegative(),
 }).strict().superRefine((profile, ctx) => {

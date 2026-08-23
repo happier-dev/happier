@@ -218,6 +218,10 @@ function decodeCompletionOptions(raw: unknown): AzureCompletionOptionsRow | null
     deleteSourceBranch: flag(record.deleteSourceBranch),
     transitionWorkItems: flag(record.transitionWorkItems),
     bypassPolicy: flag(record.bypassPolicy),
+    // Deliberately not `readString`, which folds an empty string into `null`: Azure echoing an
+    // explicitly cleared `bypassReason` as `''` is what proves the completion path overwrote a
+    // stored justification, and reading that as *absent* would make the proof unavailable.
+    bypassReason: typeof record.bypassReason === 'string' ? record.bypassReason : null,
   };
 }
 

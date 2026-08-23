@@ -1,6 +1,6 @@
 /**
- * What the three GitLab merge-request write declarations must say to be BOTH
- * reachable by the only thing that renders them and unreachable by an agent.
+ * What every GitLab write declaration must say to be BOTH reachable by the only
+ * thing that renders them and unreachable by an agent.
  *
  * These two properties pull in opposite directions and are checked together on
  * purpose. A write declared `['ui']` alone reads like the safer choice and is in
@@ -25,11 +25,16 @@ import {
   GITLAB_TRIAGE_MUTATION_ACTION_IDS,
 } from './contribution.js';
 
-const WRITE_IDS = [
-  GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMerge,
-  GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMarkReady,
-  GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestClose,
-] as const;
+/**
+ * Every enabled write, read from the id map rather than listed here.
+ *
+ * A hand-written list is exactly how three of these writes came to be declared with
+ * no surface gate at all: `merge-request/reopen`, `issue/close` and `issue/reopen`
+ * landed, the list did not grow, and the per-write `agent`/`mcp`/`cli` cases silently
+ * stopped covering them. Deriving the set means a write cannot be added without
+ * acquiring the gate.
+ */
+const WRITE_IDS = Object.values(GITLAB_TRIAGE_MUTATION_ACTION_IDS);
 
 function declarationOf(id: string) {
   const declaration = GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS.find(
@@ -40,9 +45,14 @@ function declarationOf(id: string) {
 }
 
 describe('GitLab merge-request write declarations', () => {
-  it('declares all three writes', () => {
-    expect(GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS.map((entry) => entry.id))
-      .toEqual([...WRITE_IDS]);
+  it('declares exactly the enabled write ids, once each', () => {
+    // Two independent constants: the id map names what is enabled, the declaration
+    // array is what the manifest actually publishes. A write that exists in one and
+    // not the other is the defect this compares for, and neither side can be
+    // "fixed" by editing this file.
+    const declared = GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS.map((entry) => entry.id);
+    expect([...declared].sort()).toEqual([...WRITE_IDS].sort());
+    expect(new Set(declared).size).toBe(declared.length);
   });
 
   it.each(WRITE_IDS)('%s is reachable from the mounted plugin surface that renders it', (id) => {

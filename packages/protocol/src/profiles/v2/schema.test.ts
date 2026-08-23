@@ -93,3 +93,60 @@ describe('LaunchProfileV2Schema', () => {
     });
   });
 });
+
+describe('LaunchProfileV2 session placement and checkout preferences', () => {
+  const base = {
+    v: 2 as const,
+    id: 'placement',
+    name: 'Placement',
+    extraEnvironmentVariables: [],
+    defaultPermissionModeByTargetKey: {},
+    defaultPersistenceModeByTargetKey: {},
+    compatibilityByTargetKey: {},
+    createdAt: 1,
+    updatedAt: 1,
+  };
+
+  it('accepts the three placement preferences and binds a directory to its fixed target', () => {
+    expect(LaunchProfileV2Schema.safeParse({ ...base, placement: 'automatic' }).success).toBe(true);
+    expect(LaunchProfileV2Schema.safeParse({ ...base, placement: 'ask' }).success).toBe(true);
+    expect(LaunchProfileV2Schema.safeParse({
+      ...base,
+      placement: { fixed: { serverId: 'server-1', machineId: 'machine-1' } },
+    }).success).toBe(true);
+    expect(LaunchProfileV2Schema.safeParse({
+      ...base,
+      placement: { fixed: { serverId: 'server-1', machineId: 'machine-1' }, directory: '/work/repo' },
+    }).success).toBe(true);
+  });
+
+  it('rejects a directory that names no machine, and an unknown placement preference', () => {
+    expect(LaunchProfileV2Schema.safeParse({ ...base, placement: { directory: '/work/repo' } }).success).toBe(false);
+    expect(LaunchProfileV2Schema.safeParse({ ...base, placement: 'fixed' }).success).toBe(false);
+    expect(LaunchProfileV2Schema.safeParse({
+      ...base,
+      placement: { fixed: { machineId: 'machine-1' } },
+    }).success).toBe(false);
+  });
+
+  it('accepts only the three checkout preferences', () => {
+    for (const checkout of ['reuse_workspace', 'create_worktree', 'ask']) {
+      expect(LaunchProfileV2Schema.safeParse({ ...base, checkout }).success, checkout).toBe(true);
+    }
+    expect(LaunchProfileV2Schema.safeParse({ ...base, checkout: 'git_worktree' }).success).toBe(false);
+  });
+
+  it('stores a sparse coding-prompt override and rejects an unknown override key', () => {
+    const parsed = LaunchProfileV2Schema.safeParse({
+      ...base,
+      codingPromptBehaviorOverrides: { sessionTitleUpdates: 'disabled' },
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.codingPromptBehaviorOverrides)
+      .toEqual({ sessionTitleUpdates: 'disabled' });
+    expect(LaunchProfileV2Schema.safeParse({
+      ...base,
+      codingPromptBehaviorOverrides: { systemPrompt: 'no second owner' },
+    }).success).toBe(false);
+  });
+});

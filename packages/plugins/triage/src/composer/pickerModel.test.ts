@@ -27,6 +27,7 @@ function row(input: Readonly<{
     scopeLabel?: string;
     source?: typeof SOURCE | typeof OTHER_SOURCE;
     instanceId?: string | null;
+    routingToken?: string;
 }>): TriagePickerCorpusRowV1 {
     const source = input.source ?? SOURCE;
     const scopeLabel = input.scopeLabel ?? 'acme/web';
@@ -34,6 +35,11 @@ function row(input: Readonly<{
         entryRef: entryRef(input.entryId, source),
         title: input.title,
         scopeLabel,
+        // The locator the fold's winning observation carried, exactly as
+        // `pickerFacts` reads it; `null` when no connection reports the entry.
+        locator: input.routingToken === undefined
+            ? null
+            : { v: 1, routingToken: input.routingToken },
         // Folded by the one search owner, exactly as `pickerFacts` projects it
         // from the real observations. `projection/entrySearch.test.ts` proves the
         // full field set; these synthetic rows carry only what they display.
@@ -152,6 +158,23 @@ describe('buildTriagePickerView — selection and row actions', () => {
             sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_ID },
             presentation: { label: 'Add retry budget', description: 'acme/api' },
         });
+    });
+
+    it('carries the observed locator into Attach as the routing hint', () => {
+        // The picker is the only place that still holds the locator the fold
+        // chose for this row. If it drops it here, an account-wide connection
+        // has nothing to route with at dispatch and the attachment can never
+        // resolve.
+        const view = buildTriagePickerView({
+            facts: facts({ rows: [row({ entryId: '7', title: 'Add retry budget', routingToken: 'acme/api' })] }),
+            query: '',
+            attached: [],
+        });
+
+        const mutation = view.rows[0]?.mutation;
+        expect(mutation?.kind).toBe('attach');
+        if (mutation?.kind !== 'attach') return;
+        expect(mutation.lastKnownLocator).toEqual({ v: 1, routingToken: 'acme/api' });
     });
 
     it('keeps every row non-activating so only its two controls commit an effect', () => {

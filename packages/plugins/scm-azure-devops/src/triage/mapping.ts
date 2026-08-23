@@ -1,5 +1,5 @@
 import { truncateUtf8 } from './decode.js';
-import { buildAzureCollisionScope, buildAzureEntryId } from './identity.js';
+import { buildAzureCollisionScope, buildAzureEntryId, foldAzureIdentityId } from './identity.js';
 import { buildAzureRepositoryKey } from './origin.js';
 import type {
   AzureDevOpsOrigin,
@@ -186,6 +186,6 @@ function readViewerReviewer(
   reviewers: readonly AzureReviewerRow[],
   viewerId: string,
 ): AzureReviewerRow | undefined {
-  const wanted = viewerId.trim().toLowerCase();
-  return reviewers.find((reviewer) => reviewer.id.trim().toLowerCase() === wanted);
+  const wanted = foldAzureIdentityId(viewerId);
+  return reviewers.find((reviewer) => foldAzureIdentityId(reviewer.id) === wanted);
 }

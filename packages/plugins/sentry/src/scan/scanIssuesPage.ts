@@ -37,7 +37,9 @@ import {
 import {
   SENTRY_WALK_FINISHED,
   sentryPartialHealth,
+  sentryStickyHealth,
   type SentryScanHealthV1,
+  type SentryScanStickyReasonV1,
 } from './sentryScanHealth.js';
 import {
   SENTRY_SCAN_QUERY,
@@ -98,6 +100,12 @@ export async function executeSentryScanPage(
    * at `null` rather than at a cursor the walk never used.
    */
   let position: SentryCursorWalkV1 | null = null;
+  /**
+   * What this walk has already established about itself. It arrives in the
+   * continuation and leaves in the next one, so a caveat raised on page one is
+   * still reported by the page that settles the walk.
+   */
+  const walkHealth = new Set<SentryScanStickyReasonV1>();
 
   if (input.page.kind === 'initial') {
     scanLimit = input.page.scanLimit;
@@ -112,6 +120,7 @@ export async function executeSentryScanPage(
     }
     scanLimit = decoded.continuation.scanLimit;
     nativeLimit = decoded.continuation.nativeLimit;
+    for (const reason of decoded.continuation.walkHealth) walkHealth.add(reason);
     position = {
       cursor: decoded.continuation.cursor,
       probe: decoded.continuation.probe,
@@ -187,9 +196,12 @@ export async function executeSentryScanPage(
   }
   const observations = Object.freeze([...byEntryId.values()]);
 
+  if (omittedItemCount > 0) walkHealth.add(SENTRY_FAILURE_CODES.malformedIssueRow);
   const rowHealth = omittedItemCount > 0
     ? sentryPartialHealth(SENTRY_FAILURE_CODES.malformedIssueRow, omittedItemCount)
-    : null;
+    // A page that omitted nothing itself still has to report what the pages
+    // before it omitted; only a walk with no caveat at all may finish clean.
+    : sentryStickyHealth(walkHealth);
 
   const page = (
     health: SentryScanHealthV1 | null,
@@ -230,6 +242,7 @@ export async function executeSentryScanPage(
     nativeLimit,
     cursor: advanced.walk.cursor,
     probe: advanced.walk.probe,
+    walkHealth: [...walkHealth],
     query: SENTRY_SCAN_QUERY,
     statsPeriod: '90d',
     sort: SENTRY_SCAN_SORT,

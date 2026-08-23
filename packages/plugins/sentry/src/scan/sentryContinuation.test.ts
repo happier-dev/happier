@@ -17,6 +17,7 @@ describe('encodeSentryScanContinuation', () => {
       nativeLimit: 37,
       cursor: '1754000000000:0:0',
       probe: PROBE,
+      walkHealth: [],
       query: '',
       statsPeriod: '90d',
       sort: 'date',
@@ -38,6 +39,7 @@ describe('encodeSentryScanContinuation', () => {
       nativeLimit: 100,
       cursor: 'c',
       probe: { cursor: 'c', stepsSince: 0, interval: 2 },
+      walkHealth: [],
       query: '',
       statsPeriod: '90d',
       sort: 'date',
@@ -49,6 +51,7 @@ describe('encodeSentryScanContinuation', () => {
       nativeLimit: 100,
       cursor: 'c',
       probe: { cursor: 'c', stepsSince: 0, interval: 2 },
+      walkHealth: [],
       query: '',
       statsPeriod: '90d',
       sort: 'date',
@@ -63,6 +66,7 @@ describe('encodeSentryScanContinuation', () => {
         nativeLimit: scanLimit,
         cursor: 'c',
         probe: { cursor: 'c', stepsSince: 0, interval: 2 },
+        walkHealth: [],
         query: '',
         statsPeriod: '90d',
         sort: 'date',
@@ -77,6 +81,7 @@ describe('encodeSentryScanContinuation', () => {
       nativeLimit: 20,
       cursor: 'c',
       probe: { cursor: 'c', stepsSince: 0, interval: 2 },
+      walkHealth: [],
       query: '',
       statsPeriod: '90d',
       sort: 'date',
@@ -117,8 +122,41 @@ describe('encodeSentryScanContinuation', () => {
     expect(decodeSentryScanContinuation(
       JSON.stringify({ ...base, probe: undefined }),
     ).ok).toBe(false);
+    // A walk's established caveats are evidence, not decoration: an absent,
+    // unknown or repeated reason name is a token this source did not mint at
+    // this version, and admitting it would silently erase a caveat the walk
+    // already established.
+    expect(decodeSentryScanContinuation(
+      JSON.stringify({ ...base, walkHealth: undefined }),
+    ).ok).toBe(false);
+    expect(decodeSentryScanContinuation(
+      JSON.stringify({ ...base, walkHealth: ['sentry-something-else'] }),
+    ).ok).toBe(false);
+    expect(decodeSentryScanContinuation(JSON.stringify({
+      ...base,
+      walkHealth: ['sentry-malformed-issue-row', 'sentry-malformed-issue-row'],
+    })).ok).toBe(false);
     expect(decodeSentryScanContinuation(JSON.stringify({ ...base, v: 2 })).ok).toBe(false);
     expect(decodeSentryScanContinuation('not-json').ok).toBe(false);
+  });
+
+  it('carries the walk caveats a later page has to keep reporting', () => {
+    const token = encodeSentryScanContinuation({
+      v: 1,
+      scanLimit: 20,
+      nativeLimit: 20,
+      cursor: 'c',
+      probe: { cursor: 'c', stepsSince: 0, interval: 2 },
+      walkHealth: ['sentry-malformed-issue-row'],
+      query: '',
+      statsPeriod: '90d',
+      sort: 'date',
+    });
+
+    const decoded = decodeSentryScanContinuation(token ?? '');
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    expect(decoded.continuation.walkHealth).toEqual(['sentry-malformed-issue-row']);
   });
 
   it('refuses a frontier the protocol paging bound cannot carry, without claiming a bad cursor', () => {
@@ -128,6 +166,7 @@ describe('encodeSentryScanContinuation', () => {
       nativeLimit: 20,
       cursor: 'c'.repeat(1024),
       probe: { cursor: 'c'.repeat(1024), stepsSince: 0, interval: 2 },
+      walkHealth: [],
       query: '',
       statsPeriod: '90d',
       sort: 'date',
@@ -142,6 +181,7 @@ describe('encodeSentryScanContinuation', () => {
       nativeLimit: 20,
       cursor: 'c'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1),
       probe: { cursor: 'c', stepsSince: 0, interval: 2 },
+      walkHealth: [],
       query: '',
       statsPeriod: '90d',
       sort: 'date',
@@ -155,6 +195,7 @@ describe('encodeSentryScanContinuation', () => {
       nativeLimit: 20,
       cursor: '1754000000000:0:0',
       probe: { cursor: '1755000000000:0:0', stepsSince: 1, interval: 2 },
+      walkHealth: [],
       query: '',
       statsPeriod: '90d',
       sort: 'date',
@@ -174,6 +215,7 @@ describe('encodeSentryScanContinuation', () => {
       'sort',
       'statsPeriod',
       'v',
+      'walkHealth',
     ]);
     expect(token).not.toContain('sentry.io');
     expect(token).not.toContain('Bearer');

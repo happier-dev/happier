@@ -166,6 +166,23 @@ export const SENTRY_FAILURE_CODES = Object.freeze({
   paginationCursorNotAdvancing: 'sentry-pagination-cursor-not-advancing',
   directHitInScan: 'sentry-direct-hit-in-scan',
   malformedIssueRow: 'sentry-malformed-issue-row',
+  /**
+   * The issue Sentry returned is not the issue the detail asked for.
+   *
+   * Sentry serves a merged-away issue id by answering with the SURVIVING issue, and it
+   * resolves a short id to whatever it now points at. Both answers are `200` with a
+   * perfectly well-formed body, so nothing downstream can tell them from the requested
+   * issue — the panel would render another issue's state, counts and releases under this
+   * entry's identity, and every Action dispatched from it would carry the wrong subject.
+   */
+  issueIdentityMismatch: 'sentry-issue-identity-mismatch',
+  /**
+   * An event body that carried no readable event, including one that was not an object
+   * at all. The projector answers an empty allow-listed projection for anything it
+   * cannot read, and an empty projection returned as a SUCCESS is indistinguishable from
+   * an occurrence that genuinely has no content.
+   */
+  eventUnreadable: 'sentry-event-unreadable',
   malformedOrganizationRow: 'sentry-malformed-organization-row',
   instanceCapReached: 'sentry-instance-cap-reached',
   accountListTruncated: 'sentry-account-list-truncated',

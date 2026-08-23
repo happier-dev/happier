@@ -125,17 +125,20 @@ async function readPagedCollection<TProjection extends GitlabPageProjectionV1<un
   if (!Array.isArray(result.response.body)) return failed(RESPONSE_SHAPE_INVALID);
 
   const projected = input.project(result.response.body);
-  const nextUrl = selectGitlabNextPageUrl(
+  const selection = selectGitlabNextPageUrl(
     result.response.headers,
     dependencies.invocation.origin.normalized,
   );
   // A next page that repeats the URL just read would make a panel walk forever,
-  // so it is refused as unusable rather than followed.
-  const advances = nextUrl !== null && nextUrl !== input.url;
+  // so it is refused as unusable rather than followed. A `next` GitLab named but this
+  // invocation may not follow is the same kind of fact and gets the same arm: the
+  // collection has a further page this panel cannot read, which is never the same
+  // answer as the collection ending.
+  const advances = selection.kind === 'next' && selection.url !== input.url;
   return succeeded(Object.freeze({
     ...projected,
-    nextUrl: advances ? nextUrl : null,
-    incomplete: nextUrl !== null && !advances ? ('pagination' as const) : null,
+    nextUrl: advances ? selection.url : null,
+    incomplete: selection.kind !== 'end' && !advances ? ('pagination' as const) : null,
   }));
 }
 

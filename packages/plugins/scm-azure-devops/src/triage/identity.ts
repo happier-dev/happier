@@ -28,6 +28,24 @@ export function isAzureGuid(value: unknown): value is string {
 }
 
 /**
+ * The one comparison form for an Azure identity id.
+ *
+ * Azure returns the same identity GUID in whatever case the producing service wrote it —
+ * `connectionData` and a pull request's `reviewers[]` routinely disagree — and Azure itself
+ * resolves them as one identity. Two call sites already need the same fold: the viewer lookup
+ * that decides *did I review this*, and the additive reviewer write that refuses to re-add
+ * somebody who already reviews it. A case-sensitive comparison at either one silently answers
+ * *no* about the same person, and at the write it turns a `request review` button into a vote
+ * reset, because Azure's additive route carries a vote for a reviewer it already knows.
+ *
+ * It folds any identity id, not only a GUID: Azure also names groups and service identities by
+ * descriptor, and a descriptor compared two ways is the same defect wearing a different string.
+ */
+export function foldAzureIdentityId(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/**
  * `azure-devops:<base64url(normalized configured base)>:<repository GUID>`.
  *
  * The configured account is deliberately not a component: two configured accounts pointed at

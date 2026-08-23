@@ -41,6 +41,17 @@ export type AzureCompletionOptionsRequestV1 = Readonly<{
    * omitted `bypassPolicy` is not a stated `false`.
    */
   bypassPolicy: false;
+  /**
+   * Always `''`, and always sent, for the same reason as its neighbour.
+   *
+   * `bypassReason` is the justification Azure stores and displays next to a policy bypass, and it
+   * is a *stored* completion option like the other three: somebody who enabled auto-complete
+   * through the web UI can already have written one. A completion that sends `bypassPolicy: false`
+   * while omitting the reason leaves that stranded text attached to a merge this build performed,
+   * attributing a justification nobody here wrote. Sending the empty string states the absence
+   * rather than inheriting the presence.
+   */
+  bypassReason: '';
 }>;
 
 /**
@@ -81,6 +92,7 @@ export async function completeAzurePullRequest(
         deleteSourceBranch: input.completionOptions.deleteSourceBranch,
         transitionWorkItems: input.completionOptions.transitionWorkItems,
         bypassPolicy: input.completionOptions.bypassPolicy,
+        bypassReason: input.completionOptions.bypassReason,
       },
     },
     signal: input.signal,

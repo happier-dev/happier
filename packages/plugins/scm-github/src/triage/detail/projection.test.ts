@@ -5,6 +5,7 @@ import {
   githubIssueComment,
   githubTimelineCommitEvent,
   githubTimelineEvent,
+  githubTimelineReviewEvent,
 } from '../__fixtures__/githubResponses.js';
 
 import {
@@ -91,6 +92,26 @@ describe('GitHub detail timeline projection', () => {
     expect(row?.actor).toBe('Mona Lisa');
     expect(row?.summary).toBe('Stream terminal frames');
     expect(row?.atMs).toBe(Date.parse('2026-08-04T12:00:00Z'));
+  });
+
+  it('reads a reviewed event, which names its author on user and its instant on submitted_at', () => {
+    const projected = projectGithubTimelineRows([
+      githubTimelineReviewEvent({
+        id: 44,
+        state: 'approved',
+        submittedAt: '2026-08-07T09:30:00Z',
+        login: 'mona',
+      }),
+    ], BOUNDS);
+
+    const row = projected.rows[0];
+    // A review is the one timeline event whose author and instant decide a
+    // product question — has anybody signed off — so dropping them renders an
+    // anonymous, undated approval that also sorts to the end of the history.
+    expect(row?.kind).toBe('reviewed');
+    expect(row?.actor).toBe('mona');
+    expect(row?.atMs).toBe(Date.parse('2026-08-07T09:30:00Z'));
+    expect(row?.summary).toBe('approved');
   });
 
   it('orders by event time and then by native event id', () => {

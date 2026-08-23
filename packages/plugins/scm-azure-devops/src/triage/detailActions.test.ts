@@ -99,6 +99,28 @@ function harness(respond: (url: string) => Route | undefined) {
   const urls: string[] = [];
   const services = {
     connectedAccounts: {
+      // Every authorized read re-confirms its exact configured base against the account's
+      // own published bases, so the fixture account publishes the one these tests route by.
+      async listAccounts() {
+        return {
+          status: 'complete' as const,
+          accounts: [{
+            account: accountRef('account-1'),
+            displayName: 'Acme',
+            state: 'connected' as const,
+            connectedAccountOrigins: ['https://dev.azure.com'],
+            connectedAccountBases: [BASE_URL],
+          }],
+        };
+      },
+      async getBinding(purpose: string) {
+        return {
+          purpose,
+          service: accountRef('account-1').service,
+          account: accountRef('account-1'),
+          target: { kind: 'account' as const, displayName: 'Acme' },
+        };
+      },
       async materializeListedAccount() {
         return { kind: 'httpHeaders' as const, headers: { authorization: 'Basic <pat>' } };
       },

@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { deriveDisplayedAttention, type CorpusDisplayedAttentionV1 } from '../corpus/attention/deriveAttention.js';
+import { foldConnectionAnswers } from '../corpus/fold/connectionAnswer.js';
 import { CORPUS_LANE, laneForSnapshot, sortAtMsFor, type CorpusLaneV1 } from '../corpus/fold/lane.js';
 import { rollUpPresence, type CorpusPresenceV1 } from '../corpus/fold/presence.js';
 import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
@@ -465,7 +466,13 @@ export function foldTriageListWindow(input: Readonly<{
 
     const rows: TriageListRowV1[] = [];
     const terms = parseTriageSearchQuery(input.lens.query);
-    for (const { entryRef, observations } of grouped.values()) {
+    for (const { entryRef, observations: answers } of grouped.values()) {
+        // One connection answering for one entry several times in a pass is one
+        // connection's answer, unioned. It happens here, before anything reads
+        // the row, because every reader below — content, attention, selection,
+        // the wire — sees at most one observation per connection and would
+        // otherwise each pick a different encounter's facts.
+        const observations = foldConnectionAnswers(answers);
         const attention = deriveDisplayedAttention(observations);
         const content = contentObservation(observations);
         const row: TriageListRowV1 = {
@@ -493,7 +500,14 @@ export function foldTriageListWindow(input: Readonly<{
     // is the sole comparator for every built-in order, so `smart` cannot drift
     // from the policy a saved view persisted.
     const ordered = rankCorpusWindow(rows, input.lens.order, input.lens.smartPolicy);
-    const limit = Math.max(0, Math.min(input.lens.limit, MAX_TRIAGE_LIST_WINDOW_ROWS_V1));
+    // The lens's own bound, and nothing narrower. `MAX_TRIAGE_LIST_WINDOW_ROWS_V1`
+    // is the bound of ONE Action RESULT, so it belongs to the wire owner that
+    // pays for it (`actions/listEntriesProtocol.ts` declares it as the input's
+    // maximum and the result array's `maxItems`), not to this projection. A
+    // mounted store that has appended several successive bounded windows folds
+    // its whole accumulated page through this owner and crosses no wire doing
+    // it; clamping here made every appended window invisible past the first.
+    const limit = Math.max(0, input.lens.limit);
     const bounded = boundAcrossSourceLanes(ordered, limit);
     const everyLaneExhausted = input.lanes.every((lane) => lane.exhausted);
     const complete = input.configuredSourcesStatus === 'complete'

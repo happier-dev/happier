@@ -133,6 +133,7 @@ describe('executeSentryScanPage', () => {
           // The walk carries the earlier position its cycle probe is watching;
           // a token without that evidence is not one this source mints.
           probe: { cursor: '1754000000000:0:0', stepsSince: 0, interval: 2 },
+          walkHealth: [],
           query: '',
           statsPeriod: '90d',
           sort: 'date',
@@ -147,6 +148,69 @@ describe('executeSentryScanPage', () => {
     expect(result.continuation).toBeNull();
     expect(result.observations.map((snapshot) => snapshot.localRef.entryId))
       .toEqual(['5501001', '5501003']);
+  });
+
+  /**
+   * A walk's pages are separate invocations of this source, so a caveat one page
+   * establishes has nowhere to live but the continuation.
+   *
+   * Without that, page one omitting three undecodable rows and page two running
+   * cleanly out of pagination settled the walk as `walkFinished` — the aggregate
+   * then read a finished walk, claimed exhaustion, and told the user their list
+   * was complete over an inbox that had silently dropped issues. The falsifier
+   * this pair exists for is any later page that can erase an earlier caveat.
+   */
+  it('carries an omitting page\'s caveat into the continuation it mints', async () => {
+    const { client } = clientReturning({
+      ...issuesListMalformedRows,
+      // The same omitting body on a page that is NOT the last one, so there is a
+      // continuation for the caveat to travel in.
+      headers: issuesListPage1.headers,
+    });
+
+    const result = await initialPage(client);
+
+    expect(result.kind).toBe('page');
+    if (result.kind !== 'page') return;
+    expect(result.health).toMatchObject({ kind: 'partial', reason: 'sentry-malformed-issue-row' });
+    const decoded = decodeSentryScanContinuation(result.continuation ?? '');
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    expect(decoded.continuation.walkHealth).toEqual(['sentry-malformed-issue-row']);
+  });
+
+  it('never finishes a walk clean when an earlier page omitted rows', async () => {
+    // `issuesListPage2` is the terminal page and omits nothing of its own.
+    const { client } = clientReturning(issuesListPage2);
+
+    const result = await executeSentryScanPage({
+      client,
+      configured: CONFIGURED,
+      organizationSlug: 'example-org',
+      page: {
+        kind: 'continuation',
+        token: JSON.stringify({
+          v: 1,
+          scanLimit: 64,
+          nativeLimit: 64,
+          cursor: '1754000000000:0:0',
+          probe: { cursor: '1754000000000:0:0', stepsSince: 0, interval: 2 },
+          walkHealth: ['sentry-malformed-issue-row'],
+          query: '',
+          statsPeriod: '90d',
+          sort: 'date',
+        }),
+      },
+      nowMs: NOW_MS,
+    });
+
+    expect(result.kind).toBe('page');
+    if (result.kind !== 'page') return;
+    expect(result.continuation).toBeNull();
+    // Names only: the omitted count belongs to the call that omitted the rows.
+    expect(result.health).toEqual({ kind: 'partial', reason: 'sentry-malformed-issue-row' });
+    // The rows this page did read are still the walk's rows.
+    expect(result.observations).toHaveLength(2);
   });
 
   it('reports partial health when a page arrives with no Link header', async () => {
@@ -272,6 +336,7 @@ describe('executeSentryScanPage', () => {
           nativeLimit: 64,
           cursor: '1754000000000:0:0',
           probe: { cursor: '1754000000000:0:0', stepsSince: 0, interval: 2 },
+          walkHealth: [],
           query: '',
           statsPeriod: '90d',
           sort: 'date',
@@ -316,6 +381,7 @@ describe('executeSentryScanPage', () => {
           nativeLimit: 64,
           cursor: '1754000000000:0:0',
           probe: { cursor: '1755000000000:0:0', stepsSince: 1, interval: 2 },
+          walkHealth: [],
           query: '',
           statsPeriod: '90d',
           sort: 'date',
@@ -351,6 +417,7 @@ describe('executeSentryScanPage', () => {
           nativeLimit: 64,
           cursor: '1755000000000:0:0',
           probe: { cursor: '1755000000000:0:0', stepsSince: 0, interval: 2 },
+          walkHealth: [],
           query: '',
           statsPeriod: '90d',
           sort: 'date',

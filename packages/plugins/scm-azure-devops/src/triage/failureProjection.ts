@@ -43,6 +43,16 @@ const FAILURE_PROJECTION: Readonly<Record<AzureDevOpsFailureClass, Readonly<{
    */
   timedOut: { class: 'transient', code: 'azure-devops/timed-out' },
   unexpectedRedirect: { class: 'unsupportedContract', code: 'azure-devops/unexpected-redirect' },
+  /**
+   * `sources/SCM.md` §6.1: a configured Server that cannot prove the 7.1 floor is reported for
+   * the whole vertical rather than sent a speculative mixture of 7.1 and whatever it accepts.
+   * Its own code exists so this reads as *this deployment is too old* instead of *this request
+   * was malformed*, which is what a shared `invalid-request` said about the same response.
+   */
+  restVersionUnsupported: {
+    class: 'unsupportedContract',
+    code: 'azure-devops/rest-version-unsupported',
+  },
   malformedResponse: { class: 'unsupportedContract', code: 'azure-devops/malformed-response' },
 };
 

@@ -118,9 +118,19 @@ type Recorder = Readonly<{
   materializedOrigins: string[];
 }>;
 
+/**
+ * The bases the fixture account publishes.
+ *
+ * Both deployments the read tests exercise are listed, because every authorized read
+ * re-confirms its exact configured base against this listing before a credential is
+ * materialized: an account that no longer publishes the base is a stale configured
+ * instance, not a reader who should silently get org A's rows with org B's token.
+ */
+const PUBLISHED_BASES: readonly string[] = [BASE_URL, SERVER_BASE_URL];
+
 function createRecorder(
   respond: (request: AzureDevOpsHttpRequest) => Route,
-  options: Readonly<{ now?: number }> = {},
+  options: Readonly<{ now?: number; publishedBases?: readonly string[] }> = {},
 ): Recorder {
   const urls: string[] = [];
   const materializedAccounts: QualifiedConnectedAccountRef[] = [];
@@ -131,6 +141,26 @@ function createRecorder(
     materializedOrigins,
     services: {
       connectedAccounts: {
+        async listAccounts() {
+          return {
+            status: 'complete' as const,
+            accounts: [{
+              account: accountRef('account-1'),
+              displayName: 'Acme',
+              state: 'connected' as const,
+              connectedAccountOrigins: [SERVICES_ORIGIN, SERVER_ORIGIN],
+              connectedAccountBases: options.publishedBases ?? PUBLISHED_BASES,
+            }],
+          };
+        },
+        async getBinding(purpose) {
+          return {
+            purpose,
+            service: accountRef('account-1').service,
+            account: accountRef('account-1'),
+            target: { kind: 'account' as const, displayName: 'Acme' },
+          };
+        },
         async materializeListedAccount(request): Promise<ConnectedAccountMaterialization> {
           materializedAccounts.push(request.account);
           if (request.materialization.kind !== 'httpHeaders') {
@@ -425,6 +455,41 @@ describe('Azure DevOps Triage scan', () => {
     // §3.1/§5: only the exact configured binding account is reauthorized.
     expect(recorder.materializedAccounts).toEqual([accountRef('account-1')]);
     expect(JSON.stringify(result)).not.toContain('Basic');
+  });
+
+  /**
+   * The highest-severity currentness case this source has.
+   *
+   * A credential is minted for an ORIGIN, and every Azure DevOps Services organization shares
+   * `https://dev.azure.com`. So origin admission alone cannot tell an account configured for
+   * `…/acme` from that same account reconnected to a different organization: the configured
+   * instance keeps routing `…/acme` paths and authorizing them with the new organization's
+   * credential. Nothing after discovery looked at the path again.
+   */
+  it('refuses a configured base its account no longer publishes, before any credential or request', async () => {
+    const recorder = createRecorder(happyPath(), {
+      // The account was reconnected to another organization. Same host, same admitted origin.
+      publishedBases: ['https://dev.azure.com/other-org'],
+    });
+
+    const result = await runAzureTriageScan({
+      services: recorder.services,
+      request: {
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'initial', limit: 32 },
+      },
+      signal: new AbortController().signal,
+    });
+
+    expect(TriageScanResultV1Schema.parse(result)).toEqual(result);
+    if (result.kind !== 'failed') throw new Error('a stale configured base must not be read');
+    expect(result.failure.code).toBe('azure-devops/configured-base-stale');
+    expect(result.failure.class).toBe('unsupportedContract');
+    // Zero of both: no credential was minted for the new organization, and no path under the
+    // old one was requested.
+    expect(recorder.materializedAccounts).toHaveLength(0);
+    expect(recorder.urls).toHaveLength(0);
   });
 
   it('walks an Azure DevOps Server collection base while still authorizing by its bare origin', async () => {

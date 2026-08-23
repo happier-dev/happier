@@ -20,6 +20,7 @@
 
 import { admitForgeRequestUrl } from '@happier-dev/triage-sources/runtime';
 import {
+  MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
   decodeTriagePagingTokenV1,
   encodeTriagePagingTokenV1,
   type TriageScanContinuationV1,
@@ -32,6 +33,7 @@ import {
   type GitlabStickyWalkReason,
 } from '../mapping/gitlabInvolvement.js';
 import type { GitlabConfiguredOrigin } from '../origin.js';
+import { deriveGitlabNativePageSize } from './gitlabScanFrontier.js';
 import type { GitlabLaneFrontier, GitlabScanFrontier } from './gitlabScanFrontier.js';
 
 const CONTINUATION_VERSION = 1;
@@ -79,9 +81,18 @@ export function decodeGitlabScanContinuation(
   const record = decodeTriagePagingTokenV1(input.continuation.token);
   if (record === null || record.v !== CONTINUATION_VERSION) return null;
 
+  // The geometry is re-DERIVED, not adopted. `scanLimit` is bounded by the same
+  // ceiling the protocol admits on the initial arm, and the page size must be the one
+  // this source would itself have chosen for that limit. Accepting the token's own
+  // numbers made the walk's geometry a property of untrusted bytes: a token naming
+  // `scanLimit: 6400` bought one call a hundred provider pages against a result that
+  // can carry at most `MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1` rows.
   const scanLimit = readCount(record.scanLimit, 1);
+  if (scanLimit === null || scanLimit > MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1) return null;
   const nativePageSize = readCount(record.nativePageSize, 1);
-  if (scanLimit === null || nativePageSize === null || nativePageSize > scanLimit) return null;
+  if (nativePageSize === null || nativePageSize !== deriveGitlabNativePageSize(scanLimit)) {
+    return null;
+  }
 
   const lanes = readLanes(record.lanes, input);
   if (lanes === null) return null;

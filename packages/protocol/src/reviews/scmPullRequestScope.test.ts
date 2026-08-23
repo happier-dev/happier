@@ -4,6 +4,7 @@ import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js
 import {
   SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY,
   ScmPullRequestReviewScopeV1Schema,
+  produceScmPullRequestReviewScope,
   resolveScmPullRequestReviewScope,
 } from './scmPullRequestScope.js';
 import { REVIEW_SCM_SCOPE_INPUT_KEY } from './reviewStart.js';
@@ -144,5 +145,87 @@ describe('resolveScmPullRequestReviewScope', () => {
         [SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY]: malformed,
       })).toEqual({ status: 'scope_malformed' });
     }
+  });
+});
+
+describe('produceScmPullRequestReviewScope', () => {
+  const authoritative = {
+    account: ACCOUNT,
+    pullRequest: { number: 42 },
+    observed: OBSERVED,
+  } as const;
+
+  it('produces the scope from one authoritative read of the expected account and pair', () => {
+    expect(produceScmPullRequestReviewScope({
+      authoritative,
+      expected: { account: ACCOUNT, baseSha: OBSERVED.baseSha, headSha: OBSERVED.headSha },
+    })).toEqual({ status: 'produced', scope: SCOPE });
+  });
+
+  it('refuses when the read was authorized as a different account', () => {
+    expect(produceScmPullRequestReviewScope({
+      authoritative,
+      expected: {
+        account: { ...ACCOUNT, accountId: 'account-8' },
+        baseSha: OBSERVED.baseSha,
+        headSha: OBSERVED.headSha,
+      },
+    })).toEqual({ status: 'refused', reason: 'accountMismatch' });
+  });
+
+  it('refuses when the same account id belongs to a different contribution', () => {
+    expect(produceScmPullRequestReviewScope({
+      authoritative,
+      expected: {
+        account: { service: { pluginId: 'happier.scm-gitlab', localId: 'gitlab' }, accountId: 'account-7' },
+        baseSha: OBSERVED.baseSha,
+        headSha: OBSERVED.headSha,
+      },
+    })).toEqual({ status: 'refused', reason: 'accountMismatch' });
+  });
+
+  it('refuses a head the caller never observed rather than scoping the review to a newer one', () => {
+    expect(produceScmPullRequestReviewScope({
+      authoritative,
+      expected: {
+        account: ACCOUNT,
+        baseSha: OBSERVED.baseSha,
+        headSha: '3333333333333333333333333333333333333333',
+      },
+    })).toEqual({ status: 'refused', reason: 'observationMismatch' });
+  });
+
+  it('refuses a moved base even when the head still matches', () => {
+    expect(produceScmPullRequestReviewScope({
+      authoritative,
+      expected: {
+        account: ACCOUNT,
+        baseSha: '4444444444444444444444444444444444444444',
+        headSha: OBSERVED.headSha,
+      },
+    })).toEqual({ status: 'refused', reason: 'observationMismatch' });
+  });
+
+  it('refuses a read that is not admissible rather than repairing it', () => {
+    expect(produceScmPullRequestReviewScope({
+      authoritative: { ...authoritative, pullRequest: { number: 0 } },
+      expected: { account: ACCOUNT, baseSha: OBSERVED.baseSha, headSha: OBSERVED.headSha },
+    })).toEqual({ status: 'refused', reason: 'malformed' });
+
+    expect(produceScmPullRequestReviewScope({
+      authoritative: { ...authoritative, observed: { ...OBSERVED, nativeRevision: '' } },
+      expected: { account: ACCOUNT, baseSha: OBSERVED.baseSha, headSha: OBSERVED.headSha },
+    })).toEqual({ status: 'refused', reason: 'malformed' });
+  });
+
+  it('round-trips through the reader that admits it, under its own input key', () => {
+    const produced = produceScmPullRequestReviewScope({
+      authoritative,
+      expected: { account: ACCOUNT, baseSha: OBSERVED.baseSha, headSha: OBSERVED.headSha },
+    });
+    if (produced.status !== 'produced') throw new Error('expected a produced scope');
+    expect(resolveScmPullRequestReviewScope({
+      [SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY]: produced.scope,
+    })).toEqual({ status: 'scope_present', scope: SCOPE });
   });
 });

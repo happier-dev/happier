@@ -26,3 +26,11 @@ export {
   type ProjectKeyV1,
   type WorkspaceRefV1,
 } from './workspaceRefV1.js';
+
+export {
+  resolveProjectLaunchPlacementV1,
+  type ProjectLaunchCandidateV1,
+  type ProjectLaunchPlacementProjectV1,
+  type ProjectLaunchPlacementSnapshotV1,
+  type ProjectLaunchPlacementV1,
+} from './projectLaunchPlacementV1.js';

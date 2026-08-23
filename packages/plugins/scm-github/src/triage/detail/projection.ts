@@ -267,18 +267,33 @@ function readCommitActor(raw: JsonRecord): unknown {
   return isRecord(author) ? author['name'] : null;
 }
 
+/**
+ * A `reviewed` event IS a pull-request review resource, so it names its author on
+ * `user` rather than on `actor`. Reading only `actor` renders every review as
+ * anonymous — and a review's author is the fact the Feedback plane answers "has
+ * anybody signed off" with.
+ */
+function readReviewAuthor(raw: JsonRecord): unknown {
+  const user = raw['user'];
+  return isRecord(user) ? user['login'] : null;
+}
+
 function readTimelineActor(raw: JsonRecord, kind: GithubTimelineKindV1): unknown {
   const actor = raw['actor'];
   if (isRecord(actor)) {
     const login = actor['login'];
     if (readString(login) !== null) return login;
   }
-  return kind === 'committed' ? readCommitActor(raw) : null;
+  if (kind === 'committed') return readCommitActor(raw);
+  return readReviewAuthor(raw);
 }
 
 function readTimelineTimestamp(raw: JsonRecord): number | null {
   const created = readTimestampMs(raw['created_at']);
   if (created !== null) return created;
+  // A `reviewed` event has no `created_at` either; its instant is `submitted_at`.
+  const submitted = readTimestampMs(raw['submitted_at']);
+  if (submitted !== null) return submitted;
   // A `committed` event has no `created_at`; its instant is the commit's own.
   const committer = raw['committer'];
   if (isRecord(committer)) {
@@ -657,6 +672,109 @@ export function projectGithubCheckRows(
 
   return Object.freeze({
     rows: Object.freeze(rows),
+    omittedRowCount,
+    projectionTruncated,
+  });
+}
+
+/* ------------------------------------------------------------------- reviews */
+
+/**
+ * The reviewers one review read publishes.
+ *
+ * `reviews.ts` walks the whole reviews collection so the collapse to "newest
+ * review per author" and the derived decision are computed over every review,
+ * and this bounds only what is listed.
+ */
+export const GITHUB_MAX_REVIEWER_ROWS_V1 = 200;
+
+export type GithubProjectedReviewerRowV1 = Readonly<{
+  login: string;
+  /** GitHub's own state word, untouched; the renderer owns how it is said. */
+  state: string;
+  submittedAtMs?: number;
+  truncated?: true;
+}>;
+
+export type GithubProjectedReviewRequestRowV1 = Readonly<{
+  /** A team reviewer is a first-class reviewer, never rendered as a user. */
+  kind: 'user' | 'team';
+  subject: string;
+  truncated?: true;
+}>;
+
+/**
+ * Projects the already-decoded review people into publishable rows.
+ *
+ * Historical reviewers and outstanding requests stay two lists, exactly as
+ * `reviews.ts` read them: a list built from requests loses everybody who already
+ * reviewed, and one built from reviews hides a request nobody has answered.
+ */
+export function projectGithubReviewPeople(
+  input: Readonly<{
+    historical: readonly Readonly<{
+      login: string;
+      state: string;
+      submittedAtMs: number | null;
+    }>[];
+    outstanding: readonly (
+      | Readonly<{ kind: 'user'; login: string }>
+      | Readonly<{ kind: 'team'; slug: string; name: string }>
+    )[];
+  }>,
+  bounds: GithubDetailBoundsV1,
+): Readonly<{
+  reviewed: readonly GithubProjectedReviewerRowV1[];
+  requested: readonly GithubProjectedReviewRequestRowV1[];
+  omittedRowCount: number;
+  projectionTruncated: boolean;
+}> {
+  const reviewed: GithubProjectedReviewerRowV1[] = [];
+  const requested: GithubProjectedReviewRequestRowV1[] = [];
+  let omittedRowCount = 0;
+  let projectionTruncated = false;
+
+  for (const reviewer of input.historical) {
+    if (reviewed.length >= GITHUB_MAX_REVIEWER_ROWS_V1) {
+      omittedRowCount += 1;
+      projectionTruncated = true;
+      continue;
+    }
+    const login = bounded(reviewer.login, bounds.labelUtf8Bytes);
+    const state = bounded(reviewer.state, bounds.labelUtf8Bytes);
+    const truncated = login.truncated || state.truncated;
+    projectionTruncated = projectionTruncated || truncated;
+    reviewed.push(Object.freeze({
+      login: login.value,
+      state: state.value,
+      ...(reviewer.submittedAtMs === null ? {} : { submittedAtMs: reviewer.submittedAtMs }),
+      ...(truncated ? { truncated: true as const } : {}),
+    }));
+  }
+
+  for (const request of input.outstanding) {
+    if (requested.length >= GITHUB_MAX_REVIEWER_ROWS_V1) {
+      omittedRowCount += 1;
+      projectionTruncated = true;
+      continue;
+    }
+    // A team is named by the name GitHub shows for it; its slug is routing
+    // material, and showing one where the other belongs renames the team.
+    const subject = bounded(
+      request.kind === 'user' ? request.login : request.name,
+      bounds.labelUtf8Bytes,
+    );
+    projectionTruncated = projectionTruncated || subject.truncated;
+    requested.push(Object.freeze({
+      kind: request.kind,
+      subject: subject.value,
+      ...(subject.truncated ? { truncated: true as const } : {}),
+    }));
+  }
+
+  return Object.freeze({
+    reviewed: Object.freeze(reviewed),
+    requested: Object.freeze(requested),
     omittedRowCount,
     projectionTruncated,
   });

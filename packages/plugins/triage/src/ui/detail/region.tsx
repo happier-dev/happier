@@ -28,8 +28,19 @@ import {
   type TriageListLaneV1,
   type TriageListRowV1,
 } from '../../projection/listWindow.js';
+import { TRIAGE_DEFAULT_ENTRY_ACTIONS_V1 } from '../../settings/entryActions.js';
+import {
+  TriageEntryActionControls,
+  type TriageEntryActionRequestV1,
+} from '../header/entryActionControls.js';
+import { describeTriageEntrySessionPhaseV1 } from '../header/sessionStartOutcome.js';
+import { useTriageEntrySessionStart } from '../header/useEntrySessionStart.js';
+import type { TriageActionTargetV1 } from '../state/actionTarget.js';
 import { projectTriageDetailHeaderV1, type TriageDetailHeaderV1 } from './header.js';
-import { readTriageSourceDetailContributionV1 } from './sourceSurface.js';
+import {
+  readTriageSourceDetailContributionV1,
+  readTriageSourcePreparesReviewWorkspaceV1,
+} from './sourceSurface.js';
 import { useTriageEntryDetail } from './useTriageEntryDetail.js';
 
 /**
@@ -59,6 +70,16 @@ export type TriageDetailRegionProps = Readonly<{
   lanes: readonly TriageListLaneV1[];
   /** The configured connection's display label, when the aggregate knows one. */
   connectionLabel: string | null;
+  /**
+   * The one aggregate action target, resolved by the shell.
+   *
+   * It arrives as a prop rather than being derived from `row` because the ONE
+   * target reader reads the reducer's `selection` (`ui/state/actionTarget.ts`),
+   * and only the shell holds it: a row carries no `sectionId`, and rebuilding a
+   * target from the row here would be a second target reader that could act on a
+   * different entry than the surface's published context claims.
+   */
+  target: TriageActionTargetV1;
   /** Clears the selection; the stacked composition returns to the list. */
   onClose: () => void;
 }>;
@@ -241,9 +262,62 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     linkedSessions,
   }), [linkedSessions, props.connectionLabel, props.lanes, props.row, sourceDescriptor]);
 
+  /**
+   * The header's action controls, and the one press path they lead to.
+   *
+   * This mount is the point of the whole unit: the controls, the start
+   * controller and the orchestrator behind them all existed and nothing rendered
+   * them, so the product's headline feature had never been pressable. It lives
+   * here because this is the one component that holds both halves — the shell
+   * supplies the selection-derived target, and only this component has read the
+   * source's declared descriptor and its admitted operation roles.
+   *
+   * The section is deliberately absent until the entry's workflow subject and a
+   * present observation are both known. Offering actions before the descriptor
+   * answers would flash a control set chosen for the wrong subject, and a start
+   * needs the display facts the link freezes from that observation.
+   */
+  const controller = useTriageEntrySessionStart();
+  const preparesReviewWorkspace = readTriageSourcePreparesReviewWorkspaceV1(
+    context,
+    props.row.entryRef.source,
+  );
+  const display = React.useMemo(() => (
+    observation === null
+      ? null
+      : { locator: observation.locator, scopeLabel: observation.snapshot.scopeLabel }
+  ), [observation]);
+  const workflowSubject = header.workflowSubject;
+  const onAction = React.useCallback((request: TriageEntryActionRequestV1) => {
+    // The declared mode travels unchanged: this is the last place a press could
+    // have re-decided what it asked for, and it does not.
+    if (display === null) return;
+    controller.start({
+      workspaceMode: request.action.workspaceMode,
+      entryRef: request.entryRef,
+      display,
+    });
+  }, [controller, display]);
+  const notice = describeTriageEntrySessionPhaseV1(controller.phase);
+
   return (
     <Stack gap="small">
       <TriageDetailHeaderView header={header} onClose={props.onClose} />
+
+      {workflowSubject === null || display === null ? null : (
+        <Stack gap="small">
+          <TriageEntryActionControls
+            target={props.target}
+            actions={TRIAGE_DEFAULT_ENTRY_ACTIONS_V1}
+            workflowSubject={workflowSubject}
+            preparesReviewWorkspace={preparesReviewWorkspace}
+            onAction={onAction}
+          />
+          {notice === null ? null : (
+            <Status tone={notice.tone} labelKey={notice.labelKey} label={notice.label} />
+          )}
+        </Stack>
+      )}
 
       {detail === null ? (
         <EmptyState

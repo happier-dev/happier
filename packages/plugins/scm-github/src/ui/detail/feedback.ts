@@ -2,8 +2,14 @@ import type { TriageRowFactV1 } from '@happier-dev/triage-protocol/v1';
 
 import type {
   GithubProjectedCommentRowV1,
-  GithubProjectedTimelineRowV1,
+  GithubProjectedReviewRequestRowV1,
+  GithubProjectedReviewerRowV1,
 } from '../../triage/detail/projection.js';
+import {
+  buildGithubStateRowFactsV1,
+  type GithubChecksRowStateV1,
+  type GithubReviewDecisionV1,
+} from '../../triage/mapping/facts.js';
 
 /**
  * The GitHub `Feedback` plane's projection.
@@ -25,14 +31,20 @@ import type {
  * would present a partial conversation as the whole one. The renderer states
  * the omission; this module simply never fabricates those facts.
  *
- * Approvals are the one review fact this build CAN prove without a new read,
- * because the event walk already carries them: a review is a timeline event
- * naming its author, GitHub's own state word and its instant, and a review
- * request is a timeline event naming the user or team asked. Today both are
- * rendered as ordinary timeline lines and nothing else, so a reviewer looking
- * for "has anyone signed off" has to read the whole history to find out. This
- * module reads those same rows a second time in memory rather than reading
- * GitHub a second time over the wire.
+ * Review people and the review decision come from the AUTHORITATIVE review read
+ * (`triage/reviews.ts`, reached through the `reviews` plane) and from nowhere
+ * else. The event timeline mentions reviews too, and deriving them from it was
+ * cheaper by one request — but it is a different, weaker answer: the events are
+ * paged, so who has approved depended on how far the reader had scrolled; a
+ * review GitHub later dismissed still counted; and an outstanding request
+ * addressed to somebody who never appeared in the loaded pages was invisible.
+ * Two owners for "who has signed off" is one owner too many, so the timeline is
+ * no longer read for it here.
+ *
+ * The adverse-state findings come from the same live reads: `checks.ts` already
+ * derives the row-fact state over every observation it read, and this plane
+ * folds it in through the SHARED fact constructors the list row uses, so
+ * "Changes requested" is one sentence in this product rather than two.
  */
 
 export type GithubFeedbackToneV1 = Extract<TriageRowFactV1['value'], { kind: 'status' }>['tone'];
@@ -86,24 +98,10 @@ export type GithubFeedbackReviewSummaryV1 =
  * vocabulary here would make one word mean two things across the four forges;
  * the renderer owns how it is said to a reader.
  */
-export type GithubFeedbackReviewerV1 = Readonly<{
-  /** The event's provider identity, so a re-read keeps the row stable. */
-  id: string;
-  /** `null` when GitHub returned the review without an author. */
-  login: string | null;
-  state: string | null;
-  atMs: number | null;
-  webUrl: string | null;
-}>;
+export type GithubFeedbackReviewerV1 = GithubProjectedReviewerRowV1;
 
-/** One review GitHub recorded as asked for and that these events never answer. */
-export type GithubFeedbackReviewRequestV1 = Readonly<{
-  id: string;
-  /** The requested user login or team name, exactly as GitHub named it. */
-  subject: string;
-  atMs: number | null;
-  webUrl: string | null;
-}>;
+/** One review GitHub still records as awaited. */
+export type GithubFeedbackReviewRequestV1 = GithubProjectedReviewRequestRowV1;
 
 /**
  * The two review-people questions, kept apart.
@@ -118,6 +116,23 @@ export type GithubFeedbackReviewPeopleV1 = Readonly<{
   requested: readonly GithubFeedbackReviewRequestV1[];
 }>;
 
+/**
+ * The settled answer of the authoritative review read.
+ *
+ * `null` while that read has not settled — which is NOT an empty review list.
+ * Rendering "nobody has reviewed this" over a read still in flight is the one
+ * answer this plane must never give by accident.
+ */
+export type GithubFeedbackReviewsV1 = GithubFeedbackReviewPeopleV1 & Readonly<{
+  /** `null` means unresolved: REST cannot prove GitHub's `REVIEW_REQUIRED` arm. */
+  reviewDecision: GithubReviewDecisionV1 | null;
+}>;
+
+const NO_REVIEW_PEOPLE: GithubFeedbackReviewPeopleV1 = Object.freeze({
+  reviewed: Object.freeze([]),
+  requested: Object.freeze([]),
+});
+
 export type GithubFeedbackViewV1 = Readonly<{
   review: GithubFeedbackReviewSummaryV1;
   people: GithubFeedbackReviewPeopleV1;
@@ -125,18 +140,26 @@ export type GithubFeedbackViewV1 = Readonly<{
 }>;
 
 export type GithubFeedbackInputV1 = Readonly<{
+  /** The applied observation's own row facts. */
   facts: readonly TriageRowFactV1[];
-  /** When the applied observation was taken; the only time a state finding has. */
+  /** When the applied observation was taken; the time its state findings have. */
   observedAtMs: number;
   comments: readonly GithubProjectedCommentRowV1[];
   /**
-   * The events the timeline walk has already read, in the order it read them.
+   * The settled authoritative review read, or `null` while it has not settled.
    *
-   * Required rather than optional: an omitted timeline would silently produce
-   * "nobody has reviewed this", which is the one answer this plane must never
-   * give by accident.
+   * Required rather than optional for the same reason the timeline once was: an
+   * omitted member would silently produce "nobody has reviewed this".
    */
-  timeline: readonly GithubProjectedTimelineRowV1[];
+  reviews: GithubFeedbackReviewsV1 | null;
+  /**
+   * The check-suite row state the checks plane read, or `null` when that plane
+   * has not settled or could not answer.
+   *
+   * It is the state `checks.ts` derived over EVERY observation it read, not a
+   * rollup recomputed from the bounded rows a panel lists.
+   */
+  checks: GithubChecksRowStateV1 | null;
 }>;
 
 /** The fact ids whose adverse value is a finding, and the arm each becomes. */

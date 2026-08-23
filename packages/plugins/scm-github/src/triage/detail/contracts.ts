@@ -19,12 +19,13 @@ import {
   GITHUB_MAX_CHANGED_FILE_ROWS_V1,
   GITHUB_MAX_CHECK_ROWS_V1,
   GITHUB_MAX_COMMENT_ROWS_V1,
+  GITHUB_MAX_REVIEWER_ROWS_V1,
   GITHUB_MAX_TIMELINE_ROWS_V1,
 } from './projection.js';
 import { GITHUB_MAX_DETAIL_PAGE_SIZE_V1 } from './routes.js';
 
 /**
- * The four source-native detail Action contracts.
+ * The five source-native detail Action contracts.
  *
  * The detail body runs in a UI artifact that holds no credential and speaks no
  * HTTP, while `observations/githubApiClient.ts` is this source's sole credential
@@ -314,9 +315,35 @@ const ChecksStateSchema = defineProtocolUnion([
   defineProtocolLiteral('resolved'),
 ]);
 
+/**
+ * The row-fact state this suite projects to, published rather than recomputed.
+ *
+ * `checks.ts` already derives it from every observation it read, and the detail
+ * surface needs exactly that answer to say what GitHub reports as wrong. Deriving
+ * it a second time from the listed rows would answer over a bounded list while
+ * the counts were computed over the whole suite.
+ */
+const ChecksRowStateSchema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('allPassing'),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('running'),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('failing'),
+    failingCount: CountSchema,
+  }, { policy: 'closed' }),
+]);
+
 export const GithubChecksResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('checks'),
+    /**
+     * Omitted when this surface cannot answer: no checks at all, or a read that
+     * failed. An omitted state is never rendered as a passing one.
+     */
+    rowState: ChecksRowStateSchema.optional(),
     /** The commit the two reads were issued against, with no synthesis. */
     headRevision: IdentifierSchema,
     state: ChecksStateSchema,
@@ -340,3 +367,70 @@ export const GithubChecksResultV1Schema = defineProtocolUnion([
   GithubDetailUnavailableSchema,
 ]);
 export type GithubChecksResultV1 = ReturnType<typeof GithubChecksResultV1Schema.parse>;
+
+/* -------------------------------------------------------------------- reviews */
+
+/**
+ * The review read carries no paging position of its own for the same reason the
+ * checks read does not: `reviews.ts` walks both provider collections inside one
+ * invocation, because "who has signed off" computed over half the reviews is a
+ * wrong answer rather than a partial one.
+ */
+export const GithubReviewsInputV1Schema = defineProtocolObject({
+  v: defineProtocolLiteral(1),
+  instance: TriageConfiguredSourceInstanceV1Schema,
+  localRef: TriageSourceEntryLocalRefV1Schema,
+  routingToken: RoutingTokenSchema,
+}, { policy: 'closed' });
+export type GithubReviewsInputV1 = ReturnType<typeof GithubReviewsInputV1Schema.parse>;
+
+export const GithubProjectedReviewerRowV1Schema = defineProtocolObject({
+  login: LabelSchema,
+  /** GitHub's own state word, kept as the provider fact it is. */
+  state: LabelSchema,
+  submittedAtMs: TimestampSchema.optional(),
+  truncated: defineProtocolLiteral(true).optional(),
+}, { policy: 'closed' });
+
+export const GithubProjectedReviewRequestRowV1Schema = defineProtocolObject({
+  kind: defineProtocolUnion([
+    defineProtocolLiteral('user'),
+    defineProtocolLiteral('team'),
+  ]),
+  subject: LabelSchema,
+  truncated: defineProtocolLiteral(true).optional(),
+}, { policy: 'closed' });
+
+/**
+ * GitHub's authoritative review decision includes a `REVIEW_REQUIRED` arm that
+ * depends on branch-protection rules these REST reads never see, so the member is
+ * OPTIONAL and an absent decision means unresolved — never "not approved".
+ */
+const ReviewDecisionSchema = defineProtocolUnion([
+  defineProtocolLiteral('approved'),
+  defineProtocolLiteral('changes-requested'),
+  defineProtocolLiteral('review-required'),
+]);
+
+export const GithubReviewsResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('reviews'),
+    /** Distinct authors at their newest review; never unioned with `requested`. */
+    reviewed: defineProtocolArray(GithubProjectedReviewerRowV1Schema, {
+      maxItems: GITHUB_MAX_REVIEWER_ROWS_V1,
+    }),
+    /** Users AND teams whose review is still awaited. */
+    requested: defineProtocolArray(GithubProjectedReviewRequestRowV1Schema, {
+      maxItems: GITHUB_MAX_REVIEWER_ROWS_V1,
+    }),
+    reviewDecision: ReviewDecisionSchema.optional(),
+    /** Present when the reviews walk failed; the requests still render. */
+    reviewsFailure: TriageSourceFailureV1Schema.optional(),
+    /** Present when the requested-reviewers walk failed; the reviews still render. */
+    requestsFailure: TriageSourceFailureV1Schema.optional(),
+    omittedRowCount: CountSchema,
+    projectionTruncated: GithubBooleanSchema,
+  }, { policy: 'closed' }),
+  GithubDetailUnavailableSchema,
+]);
+export type GithubReviewsResultV1 = ReturnType<typeof GithubReviewsResultV1Schema.parse>;

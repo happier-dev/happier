@@ -66,6 +66,7 @@ import {
   triageUpdateSavedViewInputV1,
 } from '../views/savedViewsCommand.js';
 import { useTriageSavedViews } from '../views/useTriageSavedViews.js';
+import { resolveTriageActionTargetV1 } from '../state/actionTarget.js';
 import { readTriageLensNarrowingV1 } from '../state/narrowing.js';
 import {
   TRIAGE_SURFACE_INITIAL_STATE_V1,
@@ -596,6 +597,18 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     [surface.filters, text, window.snapshot.configuredSources],
   );
 
+  /**
+   * The one aggregate action target, read once for this render.
+   *
+   * The published surface context already reads it through the same owner
+   * (`ui/currentContext.ts`), so resolving it here keeps what an agent is told
+   * about the selection and what a press acts on as one answer.
+   */
+  const actionTarget = React.useMemo(
+    () => resolveTriageActionTargetV1(surface),
+    [surface],
+  );
+
   const selectedKey = React.useMemo(() => {
     const selection = surface.selection;
     if (selection === null) return null;
@@ -925,6 +938,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         row={selectedRow}
         lanes={listWindow?.window.lanes ?? []}
         connectionLabel={selectedConnectionLabel}
+        // The ONE aggregate action target (`ui/state/actionTarget.ts`), resolved
+        // where the reducer state lives and passed down. The detail region holds
+        // the source descriptor a control set needs but no `sectionId`, so
+        // resolving it there would be a second target reader for one concept.
+        target={actionTarget}
         onClose={dismissDetail}
       />
     ) : lastKnownHeader !== null ? (

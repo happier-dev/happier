@@ -8,6 +8,8 @@
  * by construction.
  */
 
+import { SENTRY_FAILURE_CODES } from '../sentryContracts.js';
+
 export type SentryScanHealthV1 =
   | Readonly<{ kind: 'walkFinished' }>
   | Readonly<{ kind: 'partial'; reason: string; omittedItemCount?: number }>
@@ -22,4 +24,42 @@ export function sentryPartialHealth(
   return omittedItemCount === undefined
     ? Object.freeze({ kind: 'partial' as const, reason })
     : Object.freeze({ kind: 'partial' as const, reason, omittedItemCount });
+}
+
+/**
+ * The health facts of ONE page that stay true of the whole walk.
+ *
+ * A walk's pages are separate invocations of this source, and each one used to
+ * report only what it saw. Page one omitting three undecodable rows and page two
+ * running clean out of pagination therefore settled the walk as `walkFinished`,
+ * and the caveat the user needed — some of your issues are not in this list —
+ * was erased by the page that happened to be last.
+ *
+ * Names only, never counts: `omittedItemCount` belongs to the call that omitted
+ * the rows, and a walk-level total would double-count against the aggregate's
+ * `observations + omittedItemCount <= limit` check for this page.
+ */
+export const SENTRY_SCAN_STICKY_REASONS_V1 = Object.freeze([
+  SENTRY_FAILURE_CODES.malformedIssueRow,
+] as const);
+
+export type SentryScanStickyReasonV1 = (typeof SENTRY_SCAN_STICKY_REASONS_V1)[number];
+
+export function readSentryScanStickyReason(value: unknown): SentryScanStickyReasonV1 | null {
+  return SENTRY_SCAN_STICKY_REASONS_V1.find((reason) => reason === value) ?? null;
+}
+
+/**
+ * The walk-level caveat a settling page must still report.
+ *
+ * `null` when the walk carries none, which is the only case a finished walk may
+ * claim `walkFinished`.
+ */
+export function sentryStickyHealth(
+  sticky: ReadonlySet<SentryScanStickyReasonV1>,
+): SentryScanHealthV1 | null {
+  for (const reason of SENTRY_SCAN_STICKY_REASONS_V1) {
+    if (sticky.has(reason)) return sentryPartialHealth(reason);
+  }
+  return null;
 }

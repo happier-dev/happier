@@ -39,6 +39,19 @@ import type { GitlabFailure, GitlabMappedEntry } from '../types.js';
 /** GitLab caps REST `per_page` at 100. */
 export const GITLAB_MAX_NATIVE_PAGE_SIZE = 100;
 
+/**
+ * The one derivation of this walk's fixed provider page size.
+ *
+ * It is a function of the caller's limit and nothing else, and it is exported because
+ * the continuation decoder has to answer the SAME question about a token it is handed.
+ * A decoder that accepted whatever geometry a token named would let a resumed walk run
+ * at a page size and a budget this source would never have chosen — which is a second
+ * owner of the walk's geometry, reached through untrusted bytes.
+ */
+export function deriveGitlabNativePageSize(scanLimit: number): number {
+  return Math.max(1, Math.min(scanLimit, GITLAB_MAX_NATIVE_PAGE_SIZE));
+}
+
 export type GitlabLaneFrontier = {
   readonly request: GitlabLaneRequest;
   nextUrl: string;
@@ -64,7 +77,7 @@ export function createGitlabScanFrontier(input: Readonly<{
   lanes: readonly GitlabLaneRequest[];
   walkHealth?: ReadonlySet<GitlabStickyWalkReason>;
 }>): GitlabScanFrontier {
-  const nativePageSize = Math.max(1, Math.min(input.scanLimit, GITLAB_MAX_NATIVE_PAGE_SIZE));
+  const nativePageSize = deriveGitlabNativePageSize(input.scanLimit);
   return {
     scanLimit: input.scanLimit,
     nativePageSize,
@@ -205,14 +218,20 @@ export async function runGitlabScan(input: GitlabScanInput): Promise<GitlabScanR
     // Position advances by what GitLab returned, not by what decoded cleanly.
     consumedItemCount += decoded.rawItemCount;
 
-    const nextUrl = selectGitlabNextPageUrl(
+    const selection = selectGitlabNextPageUrl(
       result.response.headers,
       input.invocation.origin.normalized,
     );
-    if (nextUrl === null) {
-      lane.ended = true;
+    if (selection.kind === 'next') {
+      lane.nextUrl = selection.url;
     } else {
-      lane.nextUrl = nextUrl;
+      lane.ended = true;
+      // GitLab named a next page this invocation may not follow — a cross-origin or
+      // otherwise inadmissible `Link`. The lane stops either way, but it stopped
+      // UNFINISHED, and a lane that stopped unfinished is not a lane that ran out.
+      // Without this the walk settles `complete`/`walkFinished` and tells the reader
+      // their inbox is whole over a lane that was cut off.
+      if (selection.kind === 'refused') frontier.walkHealth.add('lane-unresolved');
     }
   }
 

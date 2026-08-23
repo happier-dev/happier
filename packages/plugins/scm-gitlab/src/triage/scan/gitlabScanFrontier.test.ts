@@ -273,7 +273,7 @@ describe('runGitlabScan', () => {
     expect(result.health).toEqual({ kind: 'partial', reason: 'undecodable-items' });
   });
 
-  it('never follows a cross-origin next link and ends that lane instead', async () => {
+  it('settles a refused next link as an unresolved lane, never as a finished walk', async () => {
     const frontier = createGitlabScanFrontier({
       scanLimit: 100,
       origin: GITLAB_COM,
@@ -304,7 +304,77 @@ describe('runGitlabScan', () => {
     });
 
     expect(fetcher).toHaveBeenCalledTimes(1);
+    // The lane stops — the credential never leaves the invoked origin — but it stopped
+    // UNFINISHED. `walkFinished` here would tell the reader this lane ran out, which is
+    // the one claim a refused continuation cannot support.
+    expect(result).toMatchObject({
+      kind: 'settled',
+      health: { kind: 'partial', reason: 'lane-unresolved' },
+    });
+    expect(hasOpenGitlabLane(frontier)).toBe(false);
+  });
+
+  it('keeps a walk whose only lane ran out reporting a finished walk', async () => {
+    // The discriminating half of the pair above: absence of a `Link` is the lane's own
+    // end and must NOT acquire the refused caveat, or every clean walk reports partial.
+    const frontier = createGitlabScanFrontier({
+      scanLimit: 100,
+      origin: GITLAB_COM,
+      lanes: [{
+        laneId: 'authored',
+        kindId: 'merge-request',
+        path: '/merge_requests',
+        query: [['scope', 'created_by_me']],
+        involvement: 'author',
+      }],
+    });
+    const [authored] = frontier.lanes.map((lane) => lane.nextUrl);
+    if (!authored) throw new Error('expected one lane');
+
+    const result = await runGitlabScan({
+      invocation: AUTHORIZED,
+      frontier,
+      unavailableLanes: [],
+      fetcher: scriptedFetcher({ [authored]: { rows: [mergeRequestRow(1)] } }),
+      signal: new AbortController().signal,
+      nowMs: NOW_MS,
+    });
     expect(result).toMatchObject({ kind: 'settled', health: { kind: 'walkFinished' } });
+  });
+
+  it('carries a refused next link into the page that settles the walk', async () => {
+    // Stickiness is the whole point: the lane that was cut off may end on page one while
+    // a sibling lane settles the walk two pages later, and the settling page is the one
+    // the reader sees.
+    const { requests, unavailable } = mergeRequestLanes();
+    const frontier = createGitlabScanFrontier({ scanLimit: 2, origin: GITLAB_COM, lanes: requests });
+    const [authored, assigned] = frontier.lanes.map((lane) => lane.nextUrl);
+    if (!authored || !assigned) throw new Error('expected lanes');
+
+    const fetcher = scriptedFetcher({
+      [authored]: {
+        rows: [mergeRequestRow(1)],
+        nextUrl: 'https://attacker.example/api/v4/merge_requests?page=2',
+      },
+      [assigned]: { rows: [mergeRequestRow(2)] },
+    });
+    const call = async () => runGitlabScan({
+      invocation: AUTHORIZED,
+      frontier,
+      unavailableLanes: unavailable,
+      fetcher,
+      signal: new AbortController().signal,
+      nowMs: NOW_MS,
+    });
+
+    await call();
+    const second = await call();
+    // `lane-unresolved` outranks `lane-unavailable` in the declared precedence: a lane
+    // that was cut off mid-walk is a stronger caveat than one that never had a query.
+    expect(second).toMatchObject({
+      kind: 'settled',
+      health: { kind: 'partial', reason: 'lane-unresolved' },
+    });
   });
 
   it('settles a rate limit as one failed result and discards the frontier', async () => {

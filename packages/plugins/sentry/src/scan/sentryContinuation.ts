@@ -33,6 +33,11 @@ import {
   SENTRY_SCAN_STATS_PERIOD,
 } from '../sentryContracts.js';
 
+import {
+  readSentryScanStickyReason,
+  type SentryScanStickyReasonV1,
+} from './sentryScanHealth.js';
+
 import { SENTRY_SCAN_QUERY, SENTRY_SCAN_SORT } from './sentryScanQuery.js';
 
 export type SentryScanContinuationV1 = Readonly<{
@@ -65,6 +70,17 @@ export type SentryScanContinuationV1 = Readonly<{
    * the ordinary end of a long walk, at the 199th page.
    */
   probe: SentryCursorProbeV1;
+  /**
+   * The caveats this walk has already established, carried forward across every
+   * page of the same pass.
+   *
+   * A walk's pages are separate invocations, so without this the health went
+   * with them: page one omitting undecodable rows and page two running cleanly
+   * out of pagination reported a walk that skipped issues as a finished one.
+   * Names only — the per-call `omittedItemCount` stays per call, so the
+   * aggregate's `observations + omittedItemCount <= limit` check stays exact.
+   */
+  walkHealth: readonly SentryScanStickyReasonV1[];
   query: string;
   statsPeriod: '90d';
   sort: 'date';
@@ -116,6 +132,7 @@ export function encodeSentryScanContinuation(
   if (!isValidGeometry(continuation.scanLimit, continuation.nativeLimit)) return null;
   if (continuation.cursor === '') return null;
   if (readSentryCursorProbe(continuation.probe) === null) return null;
+  if (readSentryWalkHealth(continuation.walkHealth) === null) return null;
   if (
     continuation.query !== SENTRY_SCAN_QUERY
     || continuation.statsPeriod !== SENTRY_SCAN_STATS_PERIOD
@@ -129,6 +146,7 @@ export function encodeSentryScanContinuation(
     nativeLimit: continuation.nativeLimit,
     cursor: continuation.cursor,
     probe: { ...continuation.probe },
+    walkHealth: [...continuation.walkHealth],
     query: continuation.query,
     statsPeriod: continuation.statsPeriod,
     sort: continuation.sort,
@@ -143,6 +161,8 @@ export function decodeSentryScanContinuation(token: string): SentryScanContinuat
   if (typeof cursor !== 'string' || cursor === '') return REJECTED;
   const probe = readSentryCursorProbe(record['probe']);
   if (probe === null) return REJECTED;
+  const walkHealth = readSentryWalkHealth(record['walkHealth']);
+  if (walkHealth === null) return REJECTED;
   if (query !== SENTRY_SCAN_QUERY) return REJECTED;
   if (statsPeriod !== SENTRY_SCAN_STATS_PERIOD) return REJECTED;
   if (sort !== SENTRY_SCAN_SORT) return REJECTED;
@@ -154,9 +174,26 @@ export function decodeSentryScanContinuation(token: string): SentryScanContinuat
       nativeLimit: nativeLimit as number,
       cursor,
       probe,
+      walkHealth,
       query: SENTRY_SCAN_QUERY,
       statsPeriod: SENTRY_SCAN_STATS_PERIOD,
       sort: SENTRY_SCAN_SORT,
     }),
   });
+}
+
+/**
+ * An unrecognized or repeated reason name is a token this source did not mint at
+ * this version. Dropping it silently would erase a caveat the walk already
+ * established, which is the exact failure this field exists to prevent.
+ */
+function readSentryWalkHealth(raw: unknown): readonly SentryScanStickyReasonV1[] | null {
+  if (!Array.isArray(raw)) return null;
+  const reasons: SentryScanStickyReasonV1[] = [];
+  for (const entry of raw) {
+    const reason = readSentryScanStickyReason(entry);
+    if (reason === null || reasons.includes(reason)) return null;
+    reasons.push(reason);
+  }
+  return Object.freeze(reasons);
 }

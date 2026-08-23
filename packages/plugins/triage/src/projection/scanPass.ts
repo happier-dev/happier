@@ -63,12 +63,38 @@ export type TriageScanLaneV1 = Readonly<{
     declaredKindIds: readonly string[];
     /** The exact configured value, passed unchanged to every invocation. */
     configured: TriageConfiguredSourceInstanceV1;
+    /**
+     * Where this lane's walk starts. Omitted starts at the first page; a
+     * continuation a previous bounded invocation reported resumes there.
+     *
+     * It changes nothing about this owner's own custody rule: the value is
+     * carried in from the invocation that is about to use it, is never written
+     * anywhere, and is gone when the pass returns.
+     */
+    resume?: TriageScanContinuationV1;
     scan: (input: TriageScanInputV1, options?: PluginCancellationOptions) => Promise<TriageScanResultV1>;
+}>;
+
+/** Where one lane's walk stopped, when it stopped with more to give. */
+export type TriageScanPassStopV1 = Readonly<{
+    sourceInstanceId: string;
+    continuation: TriageScanContinuationV1;
 }>;
 
 export type TriageScanPassResultV1 = Readonly<{
     observations: readonly CorpusQualifiedObservationV1[];
     lanes: readonly TriageListLaneV1[];
+    /**
+     * The lanes the observation budget stopped mid-walk, and the page each one
+     * would continue from.
+     *
+     * Only a HEALTHY unfinished lane appears: a lane that exhausted has nothing
+     * to continue, and a lane that failed, timed out or violated the page
+     * contract has nothing worth continuing — its next read starts over, which
+     * is what the failure classes already drive. Reporting it is what lets a
+     * caller append the next bounded window instead of re-walking from page one.
+     */
+    stopped: readonly TriageScanPassStopV1[];
 }>;
 
 type LaneState = {
@@ -118,8 +144,14 @@ const TRIAGE_SCAN_PAGE_DEADLINE_MS = 10_000;
 /**
  * Every way one returned page can fail the V1 page contract: the per-observation
  * qualification reasons, plus the page-level bound only this caller knows.
+ *
+ * A walk this owner stopped because it was not converging is deliberately NOT
+ * here. Nothing in the published page contract obliges a source to converge
+ * within this aggregate's private budget, so a page that stays inside every
+ * published bound and merely asks to be called again has broken no invariant —
+ * see `nonConvergingFailure`.
  */
-type TriageScanPageViolationV1 = CorpusQualificationRejectionV1 | 'pageLimitExceeded' | 'nonProgressingWalk';
+type TriageScanPageViolationV1 = CorpusQualificationRejectionV1 | 'pageLimitExceeded';
 
 /**
  * The lane health a contract violation produces.
@@ -158,6 +190,32 @@ const SCAN_PAGE_DEADLINE_FAILURE_V1: TriageListLaneHealthV1 = Object.freeze({
 });
 
 /**
+ * The lane health this owner's own non-convergence bound produces.
+ *
+ * It is the same shape as the per-page deadline above, and for the same reason:
+ * both are bounds this aggregate owns rather than invariants the source broke.
+ * A page that stays inside every published bound and asks to be called again is
+ * a legal page — an omission-only continuation page, which the contract admits
+ * precisely so a source can decode tolerantly, is the ordinary shape of it — so
+ * classifying it `unsupportedContract` accused a conforming plugin and, worse,
+ * discarded every valid page the same lane had already given.
+ *
+ * `transient` is what the shared pacing policy reads as "ask again later", which
+ * is exactly right: the walk is unfinished, not broken. The lane keeps its pages
+ * and keeps `exhausted: false`, so the window reports a truthful partial.
+ */
+function nonConvergingFailure(reason: 'stalledWalk' | 'nonProgressingWalk'): TriageListLaneHealthV1 {
+    return {
+        kind: 'failed',
+        failure: {
+            class: 'transient',
+            code: `triage/${reason}`,
+            detail: 'The source did not converge within the bound this pass allows one walk.',
+        },
+    };
+}
+
+/**
  * How much of the submitted limit one returned page spent.
  *
  * A provider row the source omitted while decoding still consumed provider
@@ -192,7 +250,7 @@ export async function runTriageScanPass(input: Readonly<{
     const pageDeadlineMs = input.pageDeadlineMs ?? TRIAGE_SCAN_PAGE_DEADLINE_MS;
     const states: LaneState[] = input.lanes.map((lane) => ({
         lane,
-        continuation: null,
+        continuation: lane.resume ?? null,
         // A lane that never ran is not evidence that the walk finished.
         health: { kind: 'unavailable' },
         exhausted: false,
@@ -313,7 +371,23 @@ export async function runTriageScanPass(input: Readonly<{
             observations.push(...page);
             state.health = result.evidence;
             if (result.kind === 'complete') {
-                state.exhausted = true;
+                /*
+                 * `complete` says the source stopped paging. It does NOT say the
+                 * walk enumerated the lane's whole set, and the evidence on the
+                 * same page is what distinguishes the two: `walkFinished` is the
+                 * source's one statement that pagination ran out cleanly, while
+                 * `partial` and `moving` are the arms that say it did not — rows
+                 * omitted, a ceiling hit, a continuation that could not be
+                 * minted, a set mutating underneath the order.
+                 *
+                 * Claiming exhaustion on any settled arm let those two evidence
+                 * arms through as a finished walk, and `listWindow.ts` derives
+                 * `coverage` from exactly this member — so an inbox truncated at
+                 * a provider's result ceiling was published as `complete`, and
+                 * the mounted store's exhausted-replaces branch then deleted
+                 * every retained row the truncated page did not name.
+                 */
+                state.exhausted = result.evidence.kind === 'walkFinished';
                 state.active = false;
                 continue;
             }
@@ -335,18 +409,24 @@ export async function runTriageScanPass(input: Readonly<{
              *    source cannot require more rows than the observation budget it
              *    is filling plus one final page. Past that it is not converging.
              *
-             * Both are source-contract defects, so they take the same failure
-             * builder as the other contract violations and drop the lane's
-             * partial pages with them, rather than publishing a healthy-looking
-             * lane. This is conformance, not defence: an admitted source is
-             * trusted code, and a defect in it must be visible rather than
-             * silently salvaged (see the rationale above).
+             * Neither is a broken published invariant, so neither is a contract
+             * failure: every such page stayed inside the limit it was submitted,
+             * carried a valid continuation, and said honestly what it omitted.
+             * The bound is ours, so the settlement is ours too — a classified
+             * `transient` failure that keeps every page the lane already gave
+             * and leaves `exhausted: false`, exactly as the per-page deadline
+             * does. Discarding the lane's valid pages here punished a conforming
+             * source for a budget it was never told about.
              */
             state.charged += charged;
-            const consumedNothing = page.length === 0 && charged === 0;
-            if (consumedNothing || state.charged > input.observationBudget + pageLimit) {
-                contractFailed.add(state.lane.sourceInstanceId);
-                state.health = contractFailure('nonProgressingWalk');
+            if (page.length === 0 && charged === 0) {
+                state.health = nonConvergingFailure('stalledWalk');
+                state.exhausted = false;
+                state.active = false;
+                continue;
+            }
+            if (state.charged > input.observationBudget + pageLimit) {
+                state.health = nonConvergingFailure('nonProgressingWalk');
                 state.exhausted = false;
                 state.active = false;
                 continue;
@@ -365,5 +445,21 @@ export async function runTriageScanPass(input: Readonly<{
             health: state.health,
             exhausted: state.exhausted,
         }))),
+        // A stop is offered only for a lane that is healthy, unfinished and
+        // holding the page it would ask for next. Every other lane is either
+        // finished, broken, or was never asked — and none of those is a page to
+        // continue from.
+        stopped: Object.freeze(states.flatMap((state) => (
+            state.continuation !== null
+                && !state.exhausted
+                && state.health.kind !== 'failed'
+                && state.health.kind !== 'unavailable'
+                && !contractFailed.has(state.lane.sourceInstanceId)
+                ? [Object.freeze({
+                    sourceInstanceId: state.lane.sourceInstanceId,
+                    continuation: state.continuation,
+                })]
+                : []
+        ))),
     });
 }

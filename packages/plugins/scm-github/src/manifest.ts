@@ -84,6 +84,8 @@ import {
   GithubChecksResultV1Schema,
   GithubCommentsInputV1Schema,
   GithubCommentsResultV1Schema,
+  GithubReviewsInputV1Schema,
+  GithubReviewsResultV1Schema,
   GithubTimelineInputV1Schema,
   GithubTimelineResultV1Schema,
 } from './triage/detail/contracts.js';
@@ -92,6 +94,7 @@ import {
   listGithubComments,
   listGithubTimeline,
   readGithubChecks,
+  readGithubReviews,
 } from './triage/detailOperations.js';
 import {
   GithubIssueAssigneeAddInputV1Schema,
@@ -608,7 +611,7 @@ function createGithubPlugin() {
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: getGithubTriageEntry,
     },
-    // The four source-native detail planes. The published Triage roles declare
+    // The five source-native detail planes. The published Triage roles declare
     // the `plugin` surface; these reads are invoked the same way, by this
     // source's own mounted detail body and by nothing else.
     [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline]: {
@@ -665,6 +668,20 @@ function createGithubPlugin() {
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: readGithubChecks,
+    },
+    [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readReviews]: {
+      title: 'Read the GitHub reviews of a pull request',
+      description: 'Reads who has reviewed one pull request and whose review is still awaited,'
+        + ' from the two review resources GitHub publishes them on.',
+      scopes: ['global'],
+      surfaces: ['plugin'],
+      dangerLevel: 'safe',
+      execution: { target: 'daemon' },
+      inputSchema: GithubReviewsInputV1Schema.jsonSchema,
+      resultSchema: GithubReviewsResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: readGithubReviews,
     },
     // The pull-request mutations. Omitting `agent` and `mcp` is the human
     // gate: it makes them unreachable from an agent at all, which is a stronger

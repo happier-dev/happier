@@ -97,6 +97,29 @@ function checksFact(state: GithubChecksRowStateV1): GithubTriageRowFactV1 {
   });
 }
 
+/**
+ * The two pull-request state facts a live detail read can prove, built by the
+ * SAME constructors the scan/get row table uses.
+ *
+ * They exist as their own entry point because the row table and the detail
+ * surface learn them at different times and from different reads: a scan row
+ * carries whatever its search item proved, while the detail planes read the
+ * check surface and the review collection directly. Re-spelling the label and
+ * tone at the second site is how one product acquires two vocabularies for
+ * "Changes requested" — so the second site calls this instead.
+ *
+ * A `null` input emits nothing: absence is never a fact, and never a zero.
+ */
+export function buildGithubStateRowFactsV1(input: Readonly<{
+  reviewDecision: GithubReviewDecisionV1 | null;
+  checks: GithubChecksRowStateV1 | null;
+}>): readonly GithubTriageRowFactV1[] {
+  const facts: GithubTriageRowFactV1[] = [];
+  if (input.reviewDecision !== null) facts.push(reviewDecisionFact(input.reviewDecision));
+  if (input.checks !== null) facts.push(checksFact(input.checks));
+  return Object.freeze(facts);
+}
+
 function mergeabilityFact(
   mergeability: NonNullable<GithubRowFactsInputV1['mergeability']>,
 ): GithubTriageRowFactV1 {
@@ -175,8 +198,12 @@ export function buildGithubRowFacts(input: GithubRowFactsInputV1): GithubRowFact
     });
   }
   if (input.kindId === 'pull-request') {
-    if (input.reviewDecision !== null) push(reviewDecisionFact(input.reviewDecision));
-    if (input.checks !== null) push(checksFact(input.checks));
+    for (const fact of buildGithubStateRowFactsV1({
+      reviewDecision: input.reviewDecision,
+      checks: input.checks,
+    })) {
+      push(fact);
+    }
     if (input.mergeability !== null) push(mergeabilityFact(input.mergeability));
     if (input.additionsDeletions === 'detailOnly') {
       push({

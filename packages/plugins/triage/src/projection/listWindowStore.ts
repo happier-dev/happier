@@ -14,6 +14,8 @@ import {
     type TriageRefreshPacingBlockV1,
     type TriageRefreshTriggerV1,
 } from '../refresh/refreshEligibility.js';
+import type { TriageScanContinuationV1 } from '@happier-dev/triage-protocol/v1';
+
 import type {
     TriageListEntriesInputV1,
     TriageListEntriesResultV1,
@@ -101,9 +103,45 @@ export type TriageListWindowSnapshotV1 = Readonly<{
      * Refresh the coordinator was already refusing.
      */
     refreshBlocked?: TriageRefreshPacingBlockV1;
+    /**
+     * What pressing the section's continuation row would do right now.
+     *
+     * It is published rather than inferred at the surface because only this
+     * store knows the three facts that decide it: whether an append is already
+     * running, whether the last one failed, and whether this mount has reached
+     * the depth ceiling. A surface that guessed would offer a control that does
+     * nothing, which is the failure `core/CORPUS.md` §4.2 names for **Refresh**
+     * and which a continuation row has been committing since it was written —
+     * it has never been pressable at all.
+     *
+     * Absent until a surface has acquired the window: load-more is a property of
+     * a mounted window, and every arm below would be a claim this store cannot
+     * make before one exists — `exhausted` most of all, which would assert every
+     * connection finished a walk that never started.
+     */
+    loadMore?: TriageListLoadMoreV1;
     /** Every configured source instance, including ones with no admitted contribution. */
     configuredSources: TriageListEntriesResultV1['configuredSources'];
 }>;
+
+/**
+ * Whether this mount can append another bounded window, and what is in the way.
+ *
+ * `failed` is deliberately its own arm rather than a message: the rows already
+ * on screen are untouched by a failed append — the merge keeps every one of them
+ * — so the honest presentation is the same list plus an offer to try again, not
+ * an error over an empty surface. The named connections that failed are already
+ * published through `unreadableSources` and the window's own lane health, so
+ * this arm carries no second copy of them.
+ */
+export type TriageListLoadMoreV1 =
+    | Readonly<{ kind: 'available' }>
+    | Readonly<{ kind: 'loading' }>
+    | Readonly<{ kind: 'failed' }>
+    /** Every configured connection finished its walk; there is nothing to append. */
+    | Readonly<{ kind: 'exhausted' }>
+    /** This mount holds as many windows as it may. */
+    | Readonly<{ kind: 'atCeiling' }>;
 
 export type TriageListWindowStoreV1 = Readonly<{
     getSnapshot(): TriageListWindowSnapshotV1;
@@ -122,6 +160,22 @@ export type TriageListWindowStoreV1 = Readonly<{
      * applied.
      */
     setLens(lens: TriageListLensV1): void;
+    /**
+     * Append one more bounded window to this mount, or retry the append that
+     * failed.
+     *
+     * It is the same cycle `refresh` drives, at one greater depth, and not a
+     * second acquisition path: the coordinator still paces it, the same merge
+     * still keeps what is already retained, and a failure still leaves every
+     * row on screen. It reads as explicit user demand — the reader pressed a
+     * row — so the shared minimum interval does not refuse it, exactly as it
+     * does not refuse **Refresh**.
+     *
+     * Nothing durable is created. The depth is one integer held for the length
+     * of this mount, the provider's own continuation lives only inside the
+     * invocation that uses it, and a lost process starts at the first window.
+     */
+    loadMore(): Promise<void>;
     dispose(): void;
 }>;
 
@@ -166,18 +220,22 @@ const UNREADABLE_IN_THIS_PASS_V1: TriageListWindowErrorV1 = Object.freeze({
 });
 
 /**
- * The most one mount retains for a single connection.
+ * The most bounded windows one mount may append.
  *
- * Deliberately larger than anything ONE pass can put here. The number that
- * matters is the WIRE bound, not the pass's qualification ceiling: a pass may
- * qualify up to `limit - 1 + pageLimit` observations (111 at today's 56), but
- * `foldTriageListWindow` cuts to `limit` before the wire and
- * `laneObservationsFromWire` reads only `result.window.rows`, so at most 56
- * reach this map in one pass. Twice the window bound therefore leaves eviction
- * unable to cut a pass's own answers and reintroduce the deletion the merge
- * exists to prevent.
+ * It is the depth of the reference workload the surface is designed against —
+ * `core/SURFACE.md` §9 measures "2,000 mixed entries paged into one mount's
+ * projection window", and 36 windows of 56 rows is 2,016 — rather than a number
+ * chosen to feel safe. Past it the reader is told the mount is full instead of
+ * being offered a control that would keep growing a process-local page without
+ * end; nothing about it is durable, and a fresh mount starts at one window.
+ *
+ * It also bounds what one refresh costs. A cycle re-reads every window this
+ * mount holds, so the ceiling is what stops that from being unbounded: at the
+ * ceiling a refresh is 36 bounded invocations per connection, each walking one
+ * provider page — the same total work as fetching those 2,016 rows once, and
+ * linear in the depth the reader themselves asked for.
  */
-const MAX_RETAINED_OBSERVATIONS_PER_LANE_V1 = MAX_TRIAGE_LIST_WINDOW_ROWS_V1 * 2;
+export const MAX_TRIAGE_MOUNTED_WINDOWS_V1 = 36;
 
 export function createTriageListWindowStore(deps: Readonly<{
     readEntries: TriageListWindowReaderV1;
@@ -196,13 +254,59 @@ export function createTriageListWindowStore(deps: Readonly<{
     let pending: TriageListWindowSnapshotV1['pending'] = 'idle';
     let lastCycleCompletedAtMs: number | null = null;
     let pendingTrigger: TriageRefreshTriggerV1 = 'view';
+    /**
+     * How many bounded windows this mount holds, and therefore how many bounded
+     * invocations each connection's pass makes.
+     *
+     * It is one integer, it lives exactly as long as this store, and it is the
+     * whole of the mount's paging state: no provider cursor outlives an
+     * invocation, no page is checkpointed, and no delivered-entry set is kept.
+     * A mount that is disposed and remade starts at one window with nothing to
+     * resume, which is `INV-03` holding rather than being worked around.
+     */
+    let windowsRequested = 1;
+    /** Whether the running cycle was started by an append rather than a refresh. */
+    let appending = false;
+    /** Whether the last append ended with a connection this mount could not read. */
+    let appendFailed = false;
     let disposed = false;
     let retirement: Disposable | null = null;
     let snapshot: TriageListWindowSnapshotV1 = Object.freeze({
         freshness: 'unknown',
         pending: 'idle',
+        loadMore: Object.freeze({ kind: 'available' as const }),
         configuredSources: Object.freeze([]),
     });
+
+    /**
+     * How large this mount's own page may be, in rows.
+     *
+     * It is the accumulated depth, not the transport bound: the wire carries one
+     * bounded window per invocation and this mount appends them, so the page it
+     * folds is as deep as the reader asked for. The fold bounds by the lens it
+     * is given (`projection/listWindow.ts`), which is what makes appending
+     * visible at all.
+     */
+    function foldLimit(): number {
+        return MAX_TRIAGE_LIST_WINDOW_ROWS_V1 * windowsRequested;
+    }
+
+    /**
+     * The most one mount retains for a single connection.
+     *
+     * Deliberately larger than the page it shows, by exactly the most ONE
+     * invocation can add. The number that matters is the WIRE bound, not the
+     * pass's qualification ceiling: a pass may qualify up to `limit - 1 +
+     * pageLimit` observations, but the Action cuts to the row bound before the
+     * wire and `laneObservationsFromWire` reads only `result.window.rows`, so at
+     * most one window's worth reaches this map per invocation. Keeping a whole
+     * extra window of room therefore leaves eviction unable to cut an
+     * invocation's own answers and reintroduce the deletion the merge exists to
+     * prevent.
+     */
+    function retainedObservationCapacity(): number {
+        return foldLimit() + MAX_TRIAGE_LIST_WINDOW_ROWS_V1;
+    }
 
     function isCurrent(): boolean {
         return !disposed && (deps.lifetime?.isCurrent() ?? true);
@@ -273,6 +377,26 @@ export function createTriageListWindowStore(deps: Readonly<{
         return latest;
     }
 
+    /**
+     * What pressing the continuation row would do, in the order the answers
+     * override each other.
+     *
+     * A running append outranks everything, because the reader is looking at
+     * the thing they just asked for. A failed one outranks the ceiling and the
+     * exhaustion claim, because retrying is the offer that failure earns and
+     * neither of those two facts is established by a read that did not finish.
+     * Exhaustion is read from the window's own coverage claim rather than
+     * re-derived from lanes, so this answer and the row's own existence cannot
+     * disagree about whether the walk is finished.
+     */
+    function loadMore(): TriageListLoadMoreV1 {
+        if (appending && pending !== 'idle') return Object.freeze({ kind: 'loading' });
+        if (appendFailed) return Object.freeze({ kind: 'failed' });
+        if (window !== null && window.coverage === 'complete') return Object.freeze({ kind: 'exhausted' });
+        if (windowsRequested >= MAX_TRIAGE_MOUNTED_WINDOWS_V1) return Object.freeze({ kind: 'atCeiling' });
+        return Object.freeze({ kind: 'available' });
+    }
+
     function publish(): void {
         const unreadable = unreadableSources();
         const blocked = refreshBlock();
@@ -280,6 +404,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             ...(window === null ? {} : { window }),
             freshness: freshness(),
             pending,
+            loadMore: loadMore(),
             // The one gate on the store-wide slot, and the reason it is here
             // rather than at each writer: "the list could not be read" is only
             // true while there is no list. A writer that forgets this puts that
@@ -334,7 +459,12 @@ export function createTriageListWindowStore(deps: Readonly<{
             activeSourceInstanceIds: configuredSources
                 .filter((summary) => summary.available)
                 .map((summary) => summary.sourceInstanceId),
-            lens,
+            // The reader's lens, at this mount's own accumulated depth. The
+            // lens's `limit` is the shell's copy of the TRANSPORT bound, which
+            // is the right size for one invocation and the wrong size for a
+            // mount that has appended several; taking it here would make every
+            // appended window invisible while still paying for it.
+            lens: { ...lens, limit: foldLimit() },
             assembledAtMs: deps.nowMs(),
         });
     }
@@ -390,10 +520,26 @@ export function createTriageListWindowStore(deps: Readonly<{
      * untouched, and a stateless caller that genuinely wants one filtered
      * answer still asks for one.
      */
-    function scanInputFor(sourceInstanceIds: readonly string[]): TriageListEntriesInputV1 {
+    function scanInputFor(
+        sourceInstanceIds: readonly string[],
+        resume?: TriageScanContinuationV1,
+    ): TriageListEntriesInputV1 {
         return {
             v: 1,
             sources: { kind: 'selected', sourceInstanceIds },
+            /*
+             * Where the previous bounded invocation of THIS cycle stopped, when
+             * there was one.
+             *
+             * It is never held across cycles, and that is the whole custody
+             * rule: a continuation is a page of a walk that is happening now, so
+             * carrying one into a later cycle would resume a walk minutes old
+             * against a provider that has moved. Each cycle re-reads this
+             * mount's windows from the first page, which is also what keeps the
+             * rows the reader is looking at current instead of freezing the
+             * first window at whatever it said when they first arrived.
+             */
+            ...(resume === undefined ? {} : { resume }),
             limit: TRIAGE_LIST_DEFAULT_LENS_V1.limit,
             /*
              * `order` IS sent, while `query` and the facets are not, and the
@@ -431,50 +577,81 @@ export function createTriageListWindowStore(deps: Readonly<{
         }
     }
 
+    /**
+     * One connection's whole pass: this mount's windows, in order, appended.
+     *
+     * A pass is `windowsRequested` bounded invocations rather than one, and the
+     * loop is the only place a provider continuation ever exists on this side of
+     * the wire — it is read from the invocation that produced it and handed to
+     * the next one, and it is gone when this function returns. That is what
+     * makes a deeper mount a sequence of transport-sized answers instead of a
+     * larger one the host would reject whole.
+     *
+     * Every invocation's rows are accumulated before the retained set is
+     * decided, and that ordering is load-bearing: the replacement rule below
+     * asks whether the WALK finished, and the walk is all of these invocations
+     * together. Deciding per invocation would let the last one's settled end
+     * authorize replacing the lane with only its own final page — deleting every
+     * row the earlier invocations of the same walk had just delivered.
+     */
     async function runPass(input: Readonly<{
         sourceInstanceId: string;
         signal: AbortSignal;
     }>): Promise<TriageRefreshPassOutcomeV1> {
-        let result: TriageListEntriesResultV1;
-        try {
-            result = await deps.readEntries(
-                scanInputFor([input.sourceInstanceId]),
-                { signal: input.signal },
+        const admitted: CorpusQualifiedObservationV1[] = [];
+        let resume: TriageScanContinuationV1 | undefined;
+        let settled: TriageListLaneV1 | null = null;
+
+        for (let index = 0; index < windowsRequested; index += 1) {
+            let result: TriageListEntriesResultV1;
+            try {
+                result = await deps.readEntries(
+                    scanInputFor([input.sourceInstanceId], resume),
+                    { signal: input.signal },
+                );
+            } catch (cause) {
+                if (input.signal.aborted) return { kind: 'interrupted' };
+                recordLaneError(input.sourceInstanceId, errorFrom(cause), admitted);
+                return { kind: 'interrupted' };
+            }
+            if (!isCurrent()) return { kind: 'interrupted' };
+
+            syncConfiguredSources(result);
+            const lane = result.window.lanes.find(
+                (candidate) => candidate.sourceInstanceId === input.sourceInstanceId,
             );
-        } catch (cause) {
-            if (input.signal.aborted) return { kind: 'interrupted' };
-            recordLaneError(input.sourceInstanceId, errorFrom(cause));
-            return { kind: 'interrupted' };
-        }
-        if (!isCurrent()) return { kind: 'interrupted' };
+            if (lane === undefined) {
+                // The instance was not invocable in this pass. Its retained window
+                // stays exactly as it was.
+                return { kind: 'interrupted' };
+            }
 
-        syncConfiguredSources(result);
-        const lane = result.window.lanes.find(
-            (candidate) => candidate.sourceInstanceId === input.sourceInstanceId,
-        );
-        if (lane === undefined) {
-            // The instance was not invocable in this pass. Its retained window
-            // stays exactly as it was.
-            return { kind: 'interrupted' };
-        }
+            // Whatever this lane's health turned out to be, these are the answers it
+            // did give in this invocation. They are kept even when the NEXT one
+            // fails: an unanswered window says nothing about the ones that answered.
+            admitted.push(...laneObservationsFromWire(result, input.sourceInstanceId));
 
-        // Whatever this lane's health turned out to be, these are the answers it
-        // did give in this pass.
-        const admitted = laneObservationsFromWire(result, input.sourceInstanceId);
+            if (lane.health.kind === 'failed') {
+                recordLaneFailure(input.sourceInstanceId, lane, {
+                    code: lane.health.failure.code,
+                    message: lane.health.failure.detail ?? lane.health.failure.class,
+                }, admitted);
+                return { kind: 'failed', failure: lane.health.failure };
+            }
+            if (lane.health.kind === 'unavailable') {
+                recordLaneFailure(input.sourceInstanceId, lane, UNREADABLE_IN_THIS_PASS_V1, admitted);
+                return { kind: 'interrupted' };
+            }
 
-        if (lane.health.kind === 'failed') {
-            recordLaneFailure(input.sourceInstanceId, lane, {
-                code: lane.health.failure.code,
-                message: lane.health.failure.detail ?? lane.health.failure.class,
-            }, admitted);
-            return { kind: 'failed', failure: lane.health.failure };
-        }
-        if (lane.health.kind === 'unavailable') {
-            recordLaneFailure(input.sourceInstanceId, lane, UNREADABLE_IN_THIS_PASS_V1, admitted);
-            return { kind: 'interrupted' };
+            settled = retainedLane(lane, result);
+            resume = result.window.continuation;
+            // No continuation means this connection has nothing further to give,
+            // so the remaining windows of this mount are not its to fill.
+            if (resume === undefined) break;
         }
 
-        const settled = retainedLane(lane, result);
+        if (settled === null) return { kind: 'interrupted' };
+
         lanes.set(input.sourceInstanceId, {
             lane: settled,
             // Whether this pass may REPLACE what the lane retained turns on one
@@ -601,10 +778,9 @@ export function createTriageListWindowStore(deps: Readonly<{
             merged.set(key, observation);
         }
         const values = [...merged.values()];
+        const capacity = retainedObservationCapacity();
         return Object.freeze(
-            values.length <= MAX_RETAINED_OBSERVATIONS_PER_LANE_V1
-                ? values
-                : values.slice(values.length - MAX_RETAINED_OBSERVATIONS_PER_LANE_V1),
+            values.length <= capacity ? values : values.slice(values.length - capacity),
         );
     }
 
@@ -630,10 +806,25 @@ export function createTriageListWindowStore(deps: Readonly<{
      * store-wide `error`. Those are two different failures: this one names a
      * connection, that one is the aggregate read itself failing.
      */
-    function recordLaneError(sourceInstanceId: string, laneError: TriageListWindowErrorV1): void {
+    function recordLaneError(
+        sourceInstanceId: string,
+        laneError: TriageListWindowErrorV1,
+        /**
+         * What this cycle's earlier bounded invocations already delivered for
+         * this connection, when the rejected one was not the first. They are
+         * kept for the same reason a failed lane keeps its own answered pages:
+         * an invocation the dispatcher refused says nothing about the ones it
+         * carried.
+         */
+        admitted: readonly CorpusQualifiedObservationV1[] = [],
+    ): void {
         const previous = lanes.get(sourceInstanceId);
         if (previous !== undefined) {
-            lanes.set(sourceInstanceId, { ...previous, error: laneError });
+            lanes.set(sourceInstanceId, {
+                ...previous,
+                observations: retainObservations(previous.observations, admitted),
+                error: laneError,
+            });
         } else {
             const summary = configuredSources.find(
                 (candidate) => candidate.sourceInstanceId === sourceInstanceId,
@@ -646,7 +837,7 @@ export function createTriageListWindowStore(deps: Readonly<{
                         health: Object.freeze({ kind: 'unavailable' as const }),
                         exhausted: false,
                     }),
-                    observations: [],
+                    observations: retainObservations([], admitted),
                     error: laneError,
                     completedAtMs: null,
                 });
@@ -722,6 +913,17 @@ export function createTriageListWindowStore(deps: Readonly<{
         // Refresh they pressed happened.
         const askedNobody = refusals.length > 0 && refusals.every((refusal) => refusal !== null);
         if (!askedNobody) lastCycleCompletedAtMs = deps.nowMs();
+        // An append that could not read every connection it asked did not
+        // deliver the window the reader pressed for, so the offer becomes a
+        // retry AT THE SAME DEPTH rather than a second increment. Retrying is
+        // the honest response to a read that failed; deepening again would ask
+        // for a window past one this mount never received. A refused cycle
+        // counts as failed for the same reason: nothing was appended.
+        if (appending) {
+            appendFailed = askedNobody
+                || [...lanes.values()].some((state) => state.error !== null);
+            appending = false;
+        }
         pending = 'idle';
         rebuild();
         publish();
@@ -758,6 +960,30 @@ export function createTriageListWindowStore(deps: Readonly<{
             // Manual Refresh is the strongest intent in a coalesced cycle, so it
             // never loses to a view trigger that arrived first.
             if (trigger === 'manual' || pendingTrigger !== 'manual') pendingTrigger = trigger;
+            return scheduler.flush();
+        },
+        loadMore() {
+            if (!isCurrent()) return Promise.resolve();
+            // Nothing to append to. A mount with no window has not read a
+            // connection yet, and the first read is `refresh`'s to make.
+            if (window === null) return Promise.resolve();
+            if (appending && pending !== 'idle') return Promise.resolve();
+            if (appendFailed) {
+                // Retry the depth already asked for. Deepening here would step
+                // past a window this mount never received.
+                appendFailed = false;
+            } else {
+                if (window.coverage === 'complete') return Promise.resolve();
+                if (windowsRequested >= MAX_TRIAGE_MOUNTED_WINDOWS_V1) return Promise.resolve();
+                windowsRequested += 1;
+            }
+            appending = true;
+            // The reader pressed a row, so this is explicit demand and the shared
+            // minimum interval must not refuse it — the same reason **Refresh**
+            // sends `manual`. The source's own retry deadline and the failure
+            // backoff still apply, and still publish through `refreshBlocked`.
+            pendingTrigger = 'manual';
+            publish();
             return scheduler.flush();
         },
         setLens(next) {

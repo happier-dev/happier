@@ -157,7 +157,21 @@ export async function markGitlabMergeRequestReady(
 
   const confirmed = await confirmGitlabItemMutation(preflight);
   if (!confirmed.ok) return { kind: 'unconfirmed', failure: confirmed.failure };
-  return confirmed.row.draft
-    ? { kind: 'unconfirmed', observed: confirmed.row }
-    : { kind: 'ready', item: confirmed.row };
+  if (confirmed.row.draft) return { kind: 'unconfirmed', observed: confirmed.row };
+
+  // The outcome this Action owes is not "draft is false". It is "the reviewers were
+  // summoned to the commit set the user acted on", and GraphQL `mergeRequestSetDraft`
+  // takes no head precondition — so the preflight's compare closes nothing after it
+  // returns. A head that moved between that compare and this read means the fan-out
+  // described a different commit set, or that somebody else cleared the draft; either
+  // way the pinned outcome is UNPROVEN and `ready` would assert it.
+  //
+  // The pin is read through the subject descriptor rather than off the row, so the
+  // fact compared here is the same fact the preflight compared. A head this read
+  // cannot see does not compare equal to a pin, exactly as in the preflight.
+  const observedPin = GITLAB_MERGE_REQUEST_MUTATION_SUBJECT_V1.observedPin(confirmed.row);
+  if (observedPin !== request.observedHeadSha) {
+    return { kind: 'unconfirmed', observed: confirmed.row };
+  }
+  return { kind: 'ready', item: confirmed.row };
 }

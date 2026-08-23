@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
-import { QualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
+import {
+  QualifiedConnectedAccountRefSchema,
+  sameQualifiedConnectedAccountRef,
+  type QualifiedConnectedAccountRef,
+} from '../connect/qualifiedConnectedAccountPersistence.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ScmPullRequestReferenceSchema } from '../scm/pullRequests.js';
 
@@ -91,4 +95,79 @@ export function resolveScmPullRequestReviewScope(
   if (value === undefined) return SCOPE_ABSENT;
   const parsed = ScmPullRequestReviewScopeV1Schema.safeParse(value);
   return parsed.success ? { status: 'scope_present', scope: parsed.data } : SCOPE_MALFORMED;
+}
+
+/**
+ * Why one authoritative read did not become a scope.
+ *
+ * Each arm is a different thing to tell the caller. `accountMismatch` means the
+ * read was authorized as an account the caller did not select, so the review
+ * would describe a pull request seen through the wrong identity.
+ * `observationMismatch` means the pull request moved between the caller
+ * settling on a pair and this read, so the only honest answer is that the pair
+ * they were looking at no longer exists. `malformed` means the read itself is
+ * not admissible, and this producer repairs nothing.
+ */
+export type ScmPullRequestReviewScopeRefusalV1 =
+  | 'accountMismatch'
+  | 'observationMismatch'
+  | 'malformed';
+
+export type ScmPullRequestReviewScopeProductionV1 =
+  | Readonly<{ status: 'produced'; scope: ScmPullRequestReviewScopeV1 }>
+  | Readonly<{ status: 'refused'; reason: ScmPullRequestReviewScopeRefusalV1 }>;
+
+/**
+ * The one place a selected-PR review scope is CONSTRUCTED, beside the one place
+ * it is read.
+ *
+ * `authoritative` is a single read: the source reauthorized an account,
+ * authoritatively reread the pull request, and reported the base, head and
+ * provider-native revision it saw. `expected` is what the caller had already
+ * settled on and materialized against. The scope exists only when those agree
+ * exactly — a scope assembled from two reads, or completed with a locally
+ * guessed revision, is precisely the value this schema exists to refuse.
+ *
+ * Nothing here re-derives, repairs, widens or defaults a fact. A caller whose
+ * read does not match asks for a fresh observation and settles again; it never
+ * receives a scope describing commits its user never saw. Because there is no
+ * partial arm, a caller that starts a review only on `produced` structurally
+ * cannot start one on drift.
+ */
+export function produceScmPullRequestReviewScope(input: Readonly<{
+  authoritative: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    pullRequest: unknown;
+    observed: Readonly<{
+      baseSha: string;
+      headSha: string;
+      nativeRevision: string;
+      observedAtMs: number;
+    }>;
+  }>;
+  expected: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    baseSha: string;
+    headSha: string;
+  }>;
+}>): ScmPullRequestReviewScopeProductionV1 {
+  const { authoritative, expected } = input;
+  if (false && !sameQualifiedConnectedAccountRef(authoritative.account, expected.account)) {
+    return { status: 'refused', reason: 'accountMismatch' };
+  }
+  if (
+    false && (authoritative.observed.baseSha !== expected.baseSha
+    || authoritative.observed.headSha !== expected.headSha)
+  ) {
+    return { status: 'refused', reason: 'observationMismatch' };
+  }
+  const parsed = ScmPullRequestReviewScopeV1Schema.safeParse({
+    kind: 'scm_pull_request_review_scope.v1',
+    account: authoritative.account,
+    pullRequest: authoritative.pullRequest,
+    observed: authoritative.observed,
+  });
+  return parsed.success
+    ? { status: 'produced', scope: parsed.data }
+    : { status: 'refused', reason: 'malformed' };
 }

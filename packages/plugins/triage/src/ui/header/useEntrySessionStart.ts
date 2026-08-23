@@ -1,19 +1,16 @@
 import * as React from 'react';
 import { usePluginHostApi } from '@happier-dev/plugin-ui';
-import type {
-    TriageEntryRefV1,
-    TriageSourceWorkflowSubjectV1,
-} from '@happier-dev/triage-protocol/v1';
+import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
 import type {
     TriageStartEntrySessionInputV1,
     TriageStartEntrySessionResultV1,
 } from '../../actions/entrySessionProtocol.js';
-import type { TriageEntrySessionIntentV1 } from '../../sessions/entrySessionOrchestrator.js';
+import type { TriageWorkspaceModeV1 } from '../../sessions/entrySessionWorkspace.js';
 import {
-    planTriageNewSessionMaterializationV1,
     projectTriageNewSessionDestinationV1,
     triageNewSessionDraftSeedV1,
+    triageNewSessionWireMaterializationV1,
     type TriageNewSessionPreferenceV1,
 } from './newSessionDestination.js';
 import {
@@ -32,7 +29,7 @@ import {
  * Session surface, where they pick the Agent and the working directory exactly
  * as they do for any other Session; what they settle there is then carried,
  * unchanged, into this plugin's one start Action, which owns the
- * intent-and-subject gate, the creation, the link and the open. Triage names no
+ * workspace-mode gate, the creation, the link and the open. Triage names no
  * Agent on either hop.
  *
  * It is deliberately the only state in the whole start path, and it is
@@ -43,18 +40,18 @@ import {
  * a second start owner for one entry.
  *
  * A press that arrives while one is in flight is ignored rather than queued: two
- * presses of **Ask** are one intent, and admitting the second would open a
+ * presses of one action are one request, and admitting the second would open a
  * second New Session surface and mint a second creation key for the Session the
  * first is already creating.
  */
 
 export type TriageEntrySessionStartRequestV1 = Readonly<{
-    intent: TriageEntrySessionIntentV1;
+    /** The pressed action's declared mode; the gate reads exactly this. */
+    workspaceMode: TriageWorkspaceModeV1;
     entryRef: TriageEntryRefV1;
-    workflowSubject: TriageSourceWorkflowSubjectV1;
     display: TriageStartEntrySessionInputV1['display'];
     /**
-     * What Triage settings pin for Ask and Fix, when the reader set anything.
+     * What Triage settings pin for this action, when the reader set anything.
      * Absent is the default path: the host's New Session surface opens on its
      * own defaults.
      */
@@ -88,7 +85,7 @@ export type TriageEntrySessionStartUnavailableReasonV1 =
     /** It could not be opened, or settled something no start can be built from. */
     | 'newSessionUnavailable'
     /** The reachable wire cannot request a prepared review workspace. */
-    | 'pullRequestFixUnsupported'
+    | 'preparedWorkspaceUnsupported'
     /** The Action dispatch did not happen or did not answer in this contract's shape. */
     | 'dispatch';
 
@@ -152,8 +149,8 @@ export function useTriageEntrySessionStart(
         // Refused before anything opens. Asking the reader to pick an Agent and
         // a directory for a start this wire cannot carry spends their choice on
         // a refusal they could have been told about first.
-        if (planTriageNewSessionMaterializationV1(request.intent, request.workflowSubject) === null) {
-            setPhase(unavailable('pullRequestFixUnsupported'));
+        if (triageNewSessionWireMaterializationV1(request.workspaceMode) === null) {
+            setPhase(unavailable('preparedWorkspaceUnsupported'));
             return;
         }
         inFlight.current = true;
@@ -176,22 +173,20 @@ export function useTriageEntrySessionStart(
                     return;
                 }
                 const destination = projectTriageNewSessionDestinationV1({
-                    intent: request.intent,
-                    workflowSubject: request.workflowSubject,
+                    workspaceMode: request.workspaceMode,
                     creationKey: mintCreationKey(),
                     settlement: draft.settlement,
                 });
                 if (destination.status === 'refused') {
-                    setPhase(unavailable(destination.reason === 'pullRequestFixUnsupported'
-                        ? 'pullRequestFixUnsupported'
+                    setPhase(unavailable(destination.reason === 'preparedWorkspaceUnsupported'
+                        ? 'preparedWorkspaceUnsupported'
                         : 'newSessionUnavailable'));
                     return;
                 }
                 setPhase(STARTING);
                 const result = await submitTriageEntrySessionStart(host, {
                     v: 1,
-                    intent: request.intent,
-                    workflowSubject: request.workflowSubject,
+                    workspaceMode: request.workspaceMode,
                     entryRef: request.entryRef,
                     display: request.display,
                     destination: destination.destination,

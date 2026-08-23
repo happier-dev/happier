@@ -324,6 +324,79 @@ describe('resolving an attached Triage entry for dispatch', () => {
         expect(result.attachments[0]).toMatchObject({ status: 'invalid', retryable: false });
     });
 
+    it('carries the attached routing hint into the source read, unchanged', async () => {
+        // An account-wide connection names no repository at all, so the entry's
+        // own last-known locator is the ONLY evidence that can route this read.
+        // Without it a valid attachment resolves to `unresolved` on every
+        // dispatch, forever, for a pull request the user can see in the list.
+        const harness = createHarness();
+
+        await resolveTriageEntryForDispatch(
+            {
+                attachments: [attachment({
+                    value: {
+                        v: 1,
+                        entryRef: ENTRY_REF,
+                        sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_A },
+                        lastKnownLocator: { v: 1, routingToken: 'example/repository' },
+                    },
+                })],
+            },
+            harness.deps as never,
+        );
+
+        // Copied back verbatim: this resolver is not the parser of a source's
+        // own opaque token and never rewrites, shortens or re-derives one.
+        expect(harness.calls[0]?.lastKnownLocator).toEqual({ v: 1, routingToken: 'example/repository' });
+    });
+
+    it('omits the routing hint entirely when the attachment carries none', async () => {
+        // A repository-scoped connection already binds the scope, and an absent
+        // hint must stay absent rather than becoming an empty locator the
+        // source would have to interpret.
+        const harness = createHarness();
+
+        await resolveTriageEntryForDispatch({ attachments: [attachment()] }, harness.deps as never);
+
+        expect(harness.calls[0] && 'lastKnownLocator' in harness.calls[0]).toBe(false);
+    });
+
+    it('refuses when a stale hint routes the source to another repository', async () => {
+        // This is the whole risk a routing hint introduces: the number `42`
+        // exists in more than one repository. The source answers about the
+        // occupant of the stale route, and the immutable scope is what catches
+        // it — acting here would run the user's prompt against the WRONG pull
+        // request.
+        const harness = createHarness({
+            get: async () => ({
+                kind: 'present',
+                localRef: { ...LOCAL_REF, collisionScope: 'other/repository' },
+                locator: testkitLocator(),
+                snapshot: testkitSnapshot({ title: 'A different repository entirely' }),
+                viewer: testkitViewer(),
+            }),
+        });
+
+        const result = await resolveTriageEntryForDispatch(
+            {
+                attachments: [attachment({
+                    value: {
+                        v: 1,
+                        entryRef: ENTRY_REF,
+                        sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_A },
+                        lastKnownLocator: { v: 1, routingToken: 'stale/route' },
+                    },
+                })],
+            },
+            harness.deps as never,
+        );
+
+        expect(result.attachments[0]).toMatchObject({ status: 'invalid', retryable: false });
+        const outcome = result.attachments[0];
+        const message = outcome && outcome.status !== 'ready' ? outcome.message ?? '' : '';
+        expect(message).not.toContain('A different repository entirely');
+    });
+
     it('refuses a value whose instance belongs to another source', async () => {
         const harness = createHarness();
 

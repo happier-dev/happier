@@ -174,6 +174,13 @@ export type AzureDevOpsFailureClass =
   /** The owner's own deadline elapsed before the provider answered or failed. */
   | 'timedOut'
   | 'unexpectedRedirect'
+  /**
+   * This deployment cannot serve the pinned REST version the whole vertical is built on.
+   * Azure states it rather than implying it, and it is kept apart from `invalidRequest` because
+   * the two send a user to different places: one is a request this build got wrong, the other is
+   * an Azure DevOps Server older than the declared 7.1 floor.
+   */
+  | 'restVersionUnsupported'
   | 'malformedResponse';
 
 export type AzureDevOpsFailure = Readonly<{
@@ -329,6 +336,12 @@ export type AzureCompletionOptionsRow = Readonly<{
   deleteSourceBranch: boolean | null;
   transitionWorkItems: boolean | null;
   bypassPolicy: boolean | null;
+  /**
+   * The stored justification that travels with `bypassPolicy`. `null` is *Azure held no value*,
+   * `''` is *a value was explicitly cleared*, and the two are different facts to a completion
+   * path that must overwrite rather than inherit whatever the web UI last wrote.
+   */
+  bypassReason: string | null;
 }>;
 
 export type AzurePullRequestRow = Readonly<{

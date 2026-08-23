@@ -1,6 +1,7 @@
 import type {
   TriageLinkedSessionProjectionV1,
   TriageSourceDescriptorV1,
+  TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import type { ProjectedObservationV1 } from '../../corpus/fold/projectedObservation.js';
@@ -43,6 +44,18 @@ export type TriageDetailHeaderV1 = Readonly<{
    * present an internal identifier as the source's own word for the thing.
    */
   kindLabel: string | null;
+  /**
+   * The source-neutral workflow subject of this entry's declared kind.
+   *
+   * It comes from the SAME declared-kind lookup `kindLabel` does, because they
+   * are two readings of one descriptor entry and a second lookup is how a header
+   * ends up calling something a pull request while the controls beside it offer
+   * an issue's actions. `null` covers both "no admitted contribution to ask" and
+   * "admitted, and its declared vocabulary does not contain this kind": the
+   * header can still name the entry, but nothing may be offered on a subject
+   * nobody has declared.
+   */
+  workflowSubject: TriageSourceWorkflowSubjectV1 | null;
   scopeLabel: string | null;
   /** The provider's own state word when it sent one. */
   stateLabel: string | null;
@@ -121,6 +134,7 @@ export function projectTriageDetailHeaderV1(
     title: present?.snapshot.title ?? row.entryRef.entryId,
     sourceLabel: descriptor?.displayName ?? null,
     kindLabel: kind?.displayName ?? null,
+    workflowSubject: kind?.workflowSubject ?? null,
     scopeLabel: present?.snapshot.scopeLabel ?? null,
     stateLabel: present?.snapshot.state.nativeLabel ?? null,
     connectionLabel: input.connectionLabel,

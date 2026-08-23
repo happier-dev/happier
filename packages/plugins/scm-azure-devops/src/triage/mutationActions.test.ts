@@ -140,6 +140,28 @@ function harness(input: Readonly<{
   let read = 0;
   const services = {
     connectedAccounts: {
+      // Every authorized read re-confirms its exact configured base against the account's
+      // own published bases, so the fixture account publishes the one these tests route by.
+      async listAccounts() {
+        return {
+          status: 'complete' as const,
+          accounts: [{
+            account: accountRef('account-1'),
+            displayName: 'Acme',
+            state: 'connected' as const,
+            connectedAccountOrigins: ['https://dev.azure.com'],
+            connectedAccountBases: [BASE_URL],
+          }],
+        };
+      },
+      async getBinding(purpose: string) {
+        return {
+          purpose,
+          service: accountRef('account-1').service,
+          account: accountRef('account-1'),
+          target: { kind: 'account' as const, displayName: 'Acme' },
+        };
+      },
       async materializeListedAccount() {
         return { kind: 'httpHeaders' as const, headers: { authorization: 'Basic <pat>' } };
       },
@@ -236,6 +258,11 @@ describe('Azure DevOps pull-request completion', () => {
         deleteSourceBranch: true,
         transitionWorkItems: false,
         bypassPolicy: false,
+        // `bypassReason` is a STORED completion option like its three neighbours: somebody who
+        // enabled auto-complete through the web UI can already have written one. Omitting it
+        // while sending `bypassPolicy: false` would leave that stranded justification attached
+        // to a merge this build performed, attributing a reason nobody here wrote.
+        bypassReason: '',
       },
     });
     // Every URL this Action built carries its pinned api-version rather than a server default.
@@ -305,6 +332,58 @@ describe('Azure DevOps pull-request completion', () => {
 
     if (settled.kind !== 'rejected') throw new Error('an ignored field is not a success');
     expect(settled.reason).toBe('fields-ignored');
+  });
+});
+
+/**
+ * The stored justification, overwritten rather than inherited.
+ *
+ * Azure documents no default for `completionOptions` and does not say what an omitted object
+ * does to the stored one. A completion that sent `bypassPolicy: false` while leaving a stored
+ * `bypassReason` in place would attach somebody else's justification to this merge, and the
+ * status alone would still read `completed`.
+ */
+describe('Azure DevOps completion bypass reason', () => {
+  it('reports a surviving stored bypassReason as a silently ignored write rather than applied', async () => {
+    const { context } = harness({
+      reads: [
+        pullRequest(),
+        completed({
+          deleteSourceBranch: false,
+          transitionWorkItems: false,
+          bypassPolicy: false,
+          // Azure acknowledged the status and kept the stored reason.
+          bypassReason: 'approved out of band by the release manager',
+        }),
+      ],
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await completeAzureDevOpsPullRequest(completeInput(), context),
+    );
+
+    if (settled.kind !== 'rejected') throw new Error('an ignored completion option must reject');
+    expect(settled.reason).toBe('fields-ignored');
+  });
+
+  it('accepts a completion whose bypassReason came back as the empty value it sent', async () => {
+    const { context } = harness({
+      reads: [
+        pullRequest(),
+        completed({
+          deleteSourceBranch: false,
+          transitionWorkItems: false,
+          bypassPolicy: false,
+          bypassReason: '',
+        }),
+      ],
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await completeAzureDevOpsPullRequest(completeInput(), context),
+    );
+
+    expect(settled.kind).toBe('applied');
   });
 });
 
@@ -491,6 +570,80 @@ describe('Azure DevOps request review', () => {
     if (settled.kind !== 'unavailable') throw new Error('reviewer metadata is not a valid input');
     expect(settled.failure.code).toContain('mutation-input-invalid');
     expect(nonReadRequests(requests)).toHaveLength(0);
+  });
+
+  /**
+   * Azure hands the same identity GUID back in whatever case the producing service wrote it.
+   * A case-sensitive membership test answers *not a reviewer* about somebody who is one, and
+   * the additive bulk route then carries a vote for a reviewer Azure already knows — so a
+   * button labelled *request review* resets that person's approval.
+   */
+  it('refuses a reviewer already present under a different GUID case, with zero writes', async () => {
+    const { context, requests } = harness({
+      reads: [pullRequest({ reviewers: [reviewer(REVIEWER_A.toUpperCase(), 10)] })],
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await requestAzureDevOpsPullRequestReview(
+        requestReviewInput({ reviewerIds: [REVIEWER_A] }),
+        context,
+      ),
+    );
+
+    if (settled.kind !== 'refused') throw new Error('an existing reviewer must not be re-added');
+    expect(settled.reason).toBe('reviewer-already-present');
+    expect(nonReadRequests(requests)).toHaveLength(0);
+  });
+
+  /**
+   * A `502` on the additive `POST` says nothing about what Azure did: the request may have
+   * reached it and been applied after our client stopped listening. Reporting that as
+   * `unavailable` tells the reader nothing happened about an effect nobody observed, and the
+   * natural response is to press the button again — the blind repeat this Action must never
+   * make. Reconciliation through the authoritative list is the only thing that can answer.
+   */
+  it('reconciles an ambiguous reviewer POST through the authoritative list instead of reporting it unavailable', async () => {
+    const { context } = harness({
+      reads: [
+        pullRequest({ reviewers: [] }),
+        pullRequest({ reviewers: [reviewer(REVIEWER_NEW, 0)] }),
+      ],
+      respond: ({ url, method }) => (
+        method === 'POST' && url.includes(REVIEWERS_URL_FRAGMENT)
+          ? { status: 502, body: { message: 'gateway' } }
+          : undefined
+      ),
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await requestAzureDevOpsPullRequestReview(requestReviewInput(), context),
+    );
+
+    // The list proves the addition landed despite the ambiguous response.
+    expect(settled.kind).toBe('applied');
+  });
+
+  it('still reports a reviewer POST Azure itself refused as unavailable, with no reconciliation claim', async () => {
+    const { context } = harness({
+      reads: [
+        pullRequest({ reviewers: [] }),
+        pullRequest({ reviewers: [reviewer(REVIEWER_NEW, 0)] }),
+      ],
+      respond: ({ url, method }) => (
+        method === 'POST' && url.includes(REVIEWERS_URL_FRAGMENT)
+          ? { status: 403, body: { message: 'forbidden' } }
+          : undefined
+      ),
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await requestAzureDevOpsPullRequestReview(requestReviewInput(), context),
+    );
+
+    // A decision is not an ambiguity. Reconciling a refusal would let a stale list row report
+    // an addition Azure explicitly declined to make.
+    if (settled.kind !== 'unavailable') throw new Error('a refused write must stay unavailable');
+    expect(settled.failure.code).toBe('azure-devops/forbidden');
   });
 
   it('reports an unconfirmed reviewer addition as pending rather than applied', async () => {

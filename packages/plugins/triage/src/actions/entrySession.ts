@@ -22,7 +22,7 @@ import type {
  * The registered Session-start and unlink transport.
  *
  * This is not a second orchestrator. `startEntrySession` still owns the
- * intent-and-subject gate, the materialization decision, the one creation key it
+ * workspace-mode gate, the materialization decision, the one creation key it
  * is handed, the create-versus-rejoin consumption, the idempotent link and the
  * canonical open; `unlinkEntryFromSession` still owns the removal. This module
  * carries a mounted surface's settled choice to them and projects their own
@@ -119,8 +119,7 @@ export async function startTriageEntrySession(
         // second row for one relationship.
         entryRef: input.entryRef,
         display: input.display,
-        workflowSubject: input.workflowSubject,
-        intent: input.intent,
+        workspaceMode: input.workspaceMode,
         destination: destinationFrom(input.destination),
     });
     return projectStartResult(result);

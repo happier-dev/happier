@@ -154,19 +154,37 @@ describe('one materialization pass', () => {
             lanes: [lane({
                 sourceInstanceId: INSTANCE_ID,
                 declaredKindIds: ['pull-request'],
-                pages: Array.from({ length: 200 }, (_unused, index) => ({
-                    kind: 'page',
-                    evidence: { kind: 'partial', reason: 'undecodable-items', omittedItemCount: 0 },
-                    observations: [],
-                    continuation: { v: 1, token: `next-${String(index)}` },
-                } as unknown as TriageScanResultV1)),
+                pages: [
+                    {
+                        kind: 'page',
+                        evidence: { kind: 'moving', reason: 'live-order' },
+                        observations: [presentObservation('pull-request', '17')],
+                        continuation: { v: 1, token: 'next' },
+                    } as unknown as TriageScanResultV1,
+                    ...Array.from({ length: 200 }, (_unused, index) => ({
+                        kind: 'page',
+                        evidence: { kind: 'partial', reason: 'undecodable-items', omittedItemCount: 0 },
+                        observations: [],
+                        continuation: { v: 1, token: `next-${String(index)}` },
+                    } as unknown as TriageScanResultV1),
+                ],
             })],
             pageLimit: 16,
             observationBudget: 64,
             nowMs: () => 1_000,
         });
 
-        expect(pass.lanes[0]?.health.kind).toBe('failed');
+        // The bound is THIS owner's, not a published invariant the source broke:
+        // every page here stayed inside its submitted limit, carried a valid
+        // continuation and reported honestly. So the lane settles the way the
+        // per-page deadline settles — a classified `transient` failure that
+        // keeps the page it already gave — instead of `unsupportedContract`,
+        // which accused a conforming plugin and threw its real rows away.
+        expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['17']);
+        expect(pass.lanes[0]?.health).toMatchObject({
+            kind: 'failed',
+            failure: { class: 'transient', code: 'triage/stalledWalk' },
+        });
         expect(pass.lanes[0]?.exhausted).toBe(false);
     });
 
@@ -183,19 +201,39 @@ describe('one materialization pass', () => {
             lanes: [lane({
                 sourceInstanceId: INSTANCE_ID,
                 declaredKindIds: ['pull-request'],
-                pages: Array.from({ length: 200 }, (_unused, index) => ({
-                    kind: 'page',
-                    evidence: { kind: 'partial', reason: 'undecodable-items', omittedItemCount: 4 },
-                    observations: [],
-                    continuation: { v: 1, token: `next-${String(index)}` },
-                } as unknown as TriageScanResultV1)),
+                pages: [
+                    {
+                        kind: 'page',
+                        evidence: { kind: 'partial', reason: 'undecodable-items', omittedItemCount: 0 },
+                        observations: [presentObservation('pull-request', '17')],
+                        continuation: { v: 1, token: 'next' },
+                    } as unknown as TriageScanResultV1,
+                    ...Array.from({ length: 200 }, (_unused, index) => ({
+                        kind: 'page',
+                        evidence: { kind: 'partial', reason: 'undecodable-items', omittedItemCount: 4 },
+                        observations: [],
+                        continuation: { v: 1, token: `next-${String(index)}` },
+                    } as unknown as TriageScanResultV1),
+                ],
             })],
             pageLimit: 16,
             observationBudget: 64,
             nowMs: () => 1_000,
         });
 
-        expect(pass.lanes[0]?.health.kind).toBe('failed');
+        // Same settlement, same reason: an omission-only continuation page is a
+        // LEGAL page — the contract admits it precisely so a source can decode
+        // tolerantly — so the walk that would not converge keeps the rows it
+        // did give and says, truthfully, that it is unfinished.
+        expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['17']);
+        expect(pass.lanes[0]?.health).toEqual({
+            kind: 'failed',
+            failure: {
+                class: 'transient',
+                code: 'triage/nonProgressingWalk',
+                detail: 'The source did not converge within the bound this pass allows one walk.',
+            },
+        });
         expect(pass.lanes[0]?.exhausted).toBe(false);
     });
 
@@ -600,6 +638,78 @@ describe('one materialization pass', () => {
             reason: 'undecodable-items',
             omittedItemCount: 1,
         });
+        // Adopted, and still not a finished walk: the page omitted a row, which
+        // is what its own evidence says. See the exhaustion contract below.
+        expect(pass.lanes[0]?.exhausted).toBe(false);
+    });
+
+    /**
+     * Exhaustion is the one member `projection/listWindow.ts` derives
+     * `coverage` from, so it has to mean what it says: this lane's walk ran out
+     * of pages AND enumerated its set.
+     *
+     * The falsifier these three exist for is a pass that reads only
+     * `result.kind`. `complete` says the source stopped paging; the evidence on
+     * the same page says whether it finished. Conflating them published a
+     * provider-truncated inbox as `coverage: 'complete'`, and the mounted
+     * store's exhausted-replaces branch — correct once exhaustion is truthful —
+     * then deleted every retained row that truncated page did not name.
+     */
+    it('claims exhaustion only for a settled walk whose own evidence finished it', async () => {
+        const pass = await runTriageScanPass({
+            lanes: [lane({
+                sourceInstanceId: INSTANCE_ID,
+                declaredKindIds: ['pull-request'],
+                pages: [completedPage('17')],
+            })],
+            pageLimit: 16,
+            observationBudget: 64,
+            nowMs: () => 1_000,
+        });
+
         expect(pass.lanes[0]?.exhausted).toBe(true);
+    });
+
+    it('never claims exhaustion for a settled walk whose evidence is partial', async () => {
+        const pass = await runTriageScanPass({
+            lanes: [lane({
+                sourceInstanceId: INSTANCE_ID,
+                declaredKindIds: ['pull-request'],
+                pages: [{
+                    kind: 'complete',
+                    evidence: { kind: 'partial', reason: 'result-ceiling' },
+                    observations: [presentObservation('pull-request', '17')],
+                } as unknown as TriageScanResultV1],
+            })],
+            pageLimit: 16,
+            observationBudget: 64,
+            nowMs: () => 1_000,
+        });
+
+        // The rows are adopted — a truncated walk still answered for what it
+        // reached — but the lane may not claim it enumerated its set.
+        expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['17']);
+        expect(pass.lanes[0]?.health).toEqual({ kind: 'partial', reason: 'result-ceiling' });
+        expect(pass.lanes[0]?.exhausted).toBe(false);
+    });
+
+    it('never claims exhaustion for a settled walk whose set was moving underneath it', async () => {
+        const pass = await runTriageScanPass({
+            lanes: [lane({
+                sourceInstanceId: INSTANCE_ID,
+                declaredKindIds: ['pull-request'],
+                pages: [{
+                    kind: 'complete',
+                    evidence: { kind: 'moving', reason: 'sentry-mutating-order' },
+                    observations: [presentObservation('pull-request', '17')],
+                } as unknown as TriageScanResultV1],
+            })],
+            pageLimit: 16,
+            observationBudget: 64,
+            nowMs: () => 1_000,
+        });
+
+        expect(pass.observations).toHaveLength(1);
+        expect(pass.lanes[0]?.exhausted).toBe(false);
     });
 });

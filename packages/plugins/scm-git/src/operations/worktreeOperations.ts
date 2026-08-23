@@ -23,6 +23,12 @@ import {
     hasForbiddenGitRefName,
     normalizeWorktreeDisplayName,
 } from './worktreeName.js';
+import {
+    GIT_WORKTREE_NAME_ATTEMPT_LIMIT,
+    gitWorktreeNameForAttempt,
+    isGitWorktreeAlreadyExistsFailure,
+    runGitWorktreeAdd,
+} from './gitWorktreeAdd.js';
 
 function normalizeBaseRef(value: string | null | undefined): string | null {
     const trimmed = String(value ?? '').trim();
@@ -105,26 +111,6 @@ async function resolveImplicitBaseRef(context: ScmBackendContext): Promise<strin
     });
 
     return headResult.success ? normalizeBaseRef(headResult.stdout) : null;
-}
-
-function buildGitWorktreeAddArgs(params: Readonly<{
-    branchName: string;
-    worktreePath: string;
-    branchMode: 'new' | 'existing';
-    baseRef?: string | null;
-}>): string[] {
-    if (params.branchMode === 'existing') {
-        return ['worktree', 'add', '--', params.worktreePath, params.branchName];
-    }
-
-    const args = ['worktree', 'add', '-b', params.branchName, '--', params.worktreePath];
-
-    const baseRef = normalizeBaseRef(params.baseRef);
-    if (baseRef) {
-        args.push(baseRef);
-    }
-
-    return args;
 }
 
 function validateWorktreePath(value: string): { ok: true; value: string } | { ok: false; error: string } {
@@ -215,17 +201,12 @@ export async function gitWorktreeCreate(input: {
 
     const tryCreate = async (branchName: string): Promise<ScmWorktreeCreateResponse> => {
         const relativeWorktreePath = buildWorktreeRelativePath(branchName);
-        const result = await runScmCommand({
-            bin: 'git',
-            cwd: resolvedPaths.repositoryRootPath,
-            args: buildGitWorktreeAddArgs({
-                branchName,
-                worktreePath: relativeWorktreePath,
-                branchMode,
-                baseRef: resolvedBaseRef,
-            }),
-            timeoutMs: 60_000,
-            env: buildScmNonInteractiveEnv(),
+        const result = await runGitWorktreeAdd({
+            repoRoot: resolvedPaths.repositoryRootPath,
+            worktreePath: relativeWorktreePath,
+            branchName,
+            branchMode,
+            baseRef: resolvedBaseRef,
         });
 
         if (!result.success) {
@@ -248,16 +229,13 @@ export async function gitWorktreeCreate(input: {
     };
 
     const initialAttempt = await tryCreate(displayName);
-    if (initialAttempt.success || !(initialAttempt.error ?? '').includes('already exists')) {
+    if (initialAttempt.success || !isGitWorktreeAlreadyExistsFailure(initialAttempt.error)) {
         return initialAttempt;
     }
 
-    for (let index = 2; index <= 4; index += 1) {
-        const retry = await tryCreate(`${displayName}-${index}`);
-        if (retry.success) {
-            return retry;
-        }
-        if (!(retry.error ?? '').includes('already exists')) {
+    for (let attempt = 2; attempt <= GIT_WORKTREE_NAME_ATTEMPT_LIMIT; attempt += 1) {
+        const retry = await tryCreate(gitWorktreeNameForAttempt(displayName, attempt));
+        if (retry.success || !isGitWorktreeAlreadyExistsFailure(retry.error)) {
             return retry;
         }
     }

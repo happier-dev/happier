@@ -86,6 +86,34 @@ export type TriageReviewStartEligibilityV1 =
         observedHeadSha: string;
     }>;
 
+/**
+ * What a Triage action declares it needs on disk (`PLAN.md` §0a A3).
+ *
+ * It replaces the retired `ask | fix` intent union at the one gate that used it
+ * to choose a materialization. An intent was a label that a gate then had to
+ * re-read together with the entry's workflow subject to work out what the
+ * caller meant; a mode says it. The three approved pairings are unchanged —
+ * they are simply declared by the action instead of derived from its name.
+ */
+export type TriageWorkspaceModeV1 = 'reference_only' | 'repository' | 'pull_request';
+
+/**
+ * The ONE mode-to-materialization pairing.
+ *
+ * Both ends of one start read this table: the surface BUILDS the materialization
+ * it sends from it, and `entrySessionOrchestrator.ts#rejectionFor` VALIDATES the
+ * materialization it received against it. Before the mode existed those two ends
+ * each restated the pairings in their own vocabulary with nothing binding the
+ * copies, which is exactly the unbound duplicate the Ask/Fix verifier filed as
+ * F1: a change to one was invisible to the other until a start was refused in
+ * front of a reader.
+ */
+export const TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1 = Object.freeze({
+    reference_only: 'referenceOnly',
+    repository: 'selectedProject',
+    pull_request: 'reviewWorkspace',
+}) satisfies Readonly<Record<TriageWorkspaceModeV1, TriageWorkspaceMaterializationV1['kind']>>;
+
 export type TriageEntrySessionWorkspaceFactsV1 =
     | Readonly<{ kind: 'referenceOnly' }>
     | Readonly<{ kind: 'selectedProject'; directory: string }>

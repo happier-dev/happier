@@ -671,3 +671,9 @@ export function mapGitScmErrorCode(stderr: string): ScmOperationErrorCode {
   }
   return SCM_OPERATION_ERROR_CODES.COMMAND_FAILED;
 }
+
+export {
+  readScmHostingRepositoryIdentity,
+  sameScmHostingRepositoryIdentity,
+  type ScmHostingRepositoryIdentityV1,
+} from './hostingRepositoryIdentity.js';

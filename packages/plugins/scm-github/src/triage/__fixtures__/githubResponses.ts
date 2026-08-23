@@ -415,6 +415,36 @@ export function githubTimelineEvent(input: Readonly<{
 }
 
 /**
+ * A `reviewed` timeline event.
+ *
+ * It is the second shape that breaks a naive decoder, and it breaks it
+ * differently from `committed`: the event IS a pull-request review resource, so
+ * it names its author on `user` rather than `actor` and its instant on
+ * `submitted_at` rather than `created_at`. A projector that reads only the
+ * ordinary event members produces an anonymous, undated review.
+ */
+export function githubTimelineReviewEvent(input: Readonly<{
+  id: number;
+  state: string;
+  submittedAt: string;
+  login?: string;
+}>): JsonRecord {
+  return Object.freeze({
+    id: input.id,
+    node_id: `PRR_kwDOsynthetic${input.id}`,
+    event: 'reviewed',
+    user: simpleUser(input.login ?? 'octocat', 583_231),
+    body: '',
+    state: input.state,
+    submitted_at: input.submittedAt,
+    commit_id: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+    author_association: 'COLLABORATOR',
+    html_url: `https://github.com/${OWNER}/${REPOSITORY}/pull/1284#pullrequestreview-${input.id}`,
+    pull_request_url: `https://api.github.com/repos/${OWNER}/${REPOSITORY}/pulls/1284`,
+  });
+}
+
+/**
  * A `committed` timeline event.
  *
  * It is the shape that breaks a naive decoder: it carries no `id` and no

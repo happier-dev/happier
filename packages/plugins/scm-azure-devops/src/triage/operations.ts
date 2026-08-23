@@ -87,7 +87,12 @@ export type AzureTriageAccountService = Readonly<{
 }>;
 
 export type AzureTriageReadServices = Readonly<{
-  connectedAccounts: Pick<AzureTriageAccountService, 'materializeListedAccount'>;
+  /**
+   * The listing half is not optional bookkeeping: `authorizeClient` re-confirms the exact
+   * configured base against the account's own published bases before any request is authorized.
+   * See `confirmAzureConfiguredBaseIsCurrent`.
+   */
+  connectedAccounts: AzureTriageAccountService;
   transport: AzureDevOpsHttpTransport;
   /** Injected clock. A provider retry deadline is the only absolute time this source produces. */
   now: () => number;
@@ -799,6 +804,69 @@ export type AuthorizedClient =
   | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>;
 
 /**
+ * The exact configured base, re-confirmed against the account that publishes it.
+ *
+ * A credential is minted for an **origin**, because that is the only thing HostAccess admits and
+ * the only shape the materialization request carries. Every Azure DevOps Services organization
+ * shares the single origin `https://dev.azure.com`, so origin admission alone cannot tell an
+ * account configured for `…/orgA` from that same account reconnected to `…/orgB`. Without this
+ * gate a configured instance minted before such a move keeps routing org-A paths and authorizing
+ * them with org-B's credential — the account was never asked whether org A is still its
+ * deployment, because nothing after discovery ever looked at the path again.
+ *
+ * So the configured base — the whole base, path included, exactly as `listInstances` recorded it —
+ * is compared against the account's own currently published `connectedAccountBases` before any
+ * request is authorized. The comparison is byte-for-byte because both sides come from the same
+ * host normalizer, and a collection path is case-significant.
+ *
+ * The three outcomes are deliberately distinct: a listing that could not be read is `transient`
+ * and says nothing about the configuration; an account that is gone is `authentication` and asks
+ * the user to reconnect; a base the account no longer publishes is `unsupportedContract` and asks
+ * them to reconfigure the instance. Reporting any of these as another would send somebody to the
+ * wrong screen.
+ */
+async function confirmAzureConfiguredBaseIsCurrent(input: Readonly<{
+  connectedAccounts: Pick<AzureTriageAccountService, 'listAccounts' | 'getBinding'>;
+  binding: TriageSourceAccountBindingV1;
+  origin: AzureDevOpsOrigin;
+  signal: AbortSignal;
+}>): Promise<TriageSourceFailureV1 | null> {
+  const outcome = await readTriageSourceAccountListingV1({
+    connectedAccounts: input.connectedAccounts,
+    purpose: input.binding.purpose,
+    signal: input.signal,
+  });
+  if (outcome.kind === 'failed') {
+    return createAzureSourceFailure({
+      class: 'transient',
+      code: 'azure-devops/account-listing-failed',
+      detail: 'The Connected Accounts listing for Azure DevOps could not be read.',
+    });
+  }
+  const accounts = outcome.kind === 'unbound' ? [] : outcome.listing.accounts;
+  const listed = accounts.find((candidate) => (
+    candidate.account.accountId === input.binding.account.accountId
+    && candidate.account.service.pluginId === input.binding.account.service.pluginId
+    && candidate.account.service.localId === input.binding.account.service.localId
+  ));
+  if (listed === undefined) {
+    return createAzureSourceFailure({
+      class: 'authentication',
+      code: 'azure-devops/configured-account-unavailable',
+      detail: 'The Azure DevOps account this configured instance is bound to is no longer connected.',
+    });
+  }
+  if (!listed.connectedAccountBases.includes(input.origin.baseUrl)) {
+    return createAzureSourceFailure({
+      class: 'unsupportedContract',
+      code: 'azure-devops/configured-base-stale',
+      detail: 'This Azure DevOps account no longer publishes the organization or collection this configured instance reads.',
+    });
+  }
+  return null;
+}
+
+/**
  * Reauthorize the exact configured account and build one invocation's client.
  *
  * This is the one authorization owner. `openClient` adds the viewer read on top
@@ -812,6 +880,14 @@ export async function authorizeClient(input: Readonly<{
   origin: AzureDevOpsOrigin;
   signal: AbortSignal;
 }>): Promise<AuthorizedClient> {
+  const stale = await confirmAzureConfiguredBaseIsCurrent({
+    connectedAccounts: input.services.connectedAccounts,
+    binding: input.instance.binding,
+    origin: input.origin,
+    signal: input.signal,
+  });
+  if (stale !== null) return { ok: false, failure: stale };
+
   const authorization = await materializeAzureDevOpsListedAuthorization({
     connectedAccounts: input.services.connectedAccounts,
     purpose: input.instance.binding.purpose,

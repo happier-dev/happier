@@ -11,18 +11,18 @@ import {
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
     TriageEntryLocatorV1Schema,
     TriageEntryRefV1Schema,
-    TriageSourceWorkflowSubjectV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
 /**
  * The strict contract of the two Session Actions the common header presses.
  *
- * `sessions/start-entry-v1` is the ONE transport between a reader pressing
- * **Ask** or **Fix** and `sessions/entrySessionOrchestrator.ts#startEntrySession`.
+ * `sessions/start-entry-v1` is the ONE transport between a reader pressing a
+ * configured Triage action and
+ * `sessions/entrySessionOrchestrator.ts#startEntrySession`.
  * A mounted surface holds Actions, not Account storage and not the canonical
  * creator's typed result, so without this Action the whole orchestration — the
- * intent gate, the generic spawn, the idempotent link and the canonical open —
- * is unreachable from the product. It adds no second orchestration path: the
+ * workspace-mode gate, the generic spawn, the idempotent link and the canonical
+ * open — is unreachable from the product. It adds no second orchestration path: the
  * handler beneath it carries the caller's settled choice to the existing owner
  * and projects that owner's own verdict back.
  *
@@ -181,13 +181,28 @@ const TriageStartEntrySessionDestinationV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
 ]);
 
+/**
+ * What the pressed action declared it needs on disk (`PLAN.md` §0a A3).
+ *
+ * It carries the whole mode vocabulary, including `pull_request`, even though
+ * the materialization union above deliberately cannot carry a prepared review
+ * workspace: the mode says what the caller asked for, and the gate answers with
+ * the exact refusal rather than the wire silently narrowing the question. The
+ * retired `intent` member said `ask` or `fix` and left the gate to re-derive the
+ * same three pairings from it plus the entry's workflow subject — which is why
+ * `workflowSubject` is gone from this input too. Nothing else read it: the only
+ * surviving reader is the source-owned preparation request, which carries its
+ * own.
+ */
+const TriageStartEntrySessionWorkspaceModeV1Schema = defineProtocolUnion([
+    defineProtocolLiteral('reference_only'),
+    defineProtocolLiteral('repository'),
+    defineProtocolLiteral('pull_request'),
+]);
+
 export const TriageStartEntrySessionInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
-    intent: defineProtocolUnion([
-        defineProtocolLiteral('ask'),
-        defineProtocolLiteral('fix'),
-    ]),
-    workflowSubject: TriageSourceWorkflowSubjectV1Schema,
+    workspaceMode: TriageStartEntrySessionWorkspaceModeV1Schema,
     entryRef: TriageEntryRefV1Schema,
     display: TriageEntrySessionLinkDisplayV1Schema,
     destination: TriageStartEntrySessionDestinationV1Schema,
@@ -264,13 +279,13 @@ export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
-        /** The intent-and-subject gate refused before any provider, creator, link or open call. */
+        /** The workspace-mode gate refused before any provider, creator, link or open call. */
         type: defineProtocolLiteral('rejected'),
         reason: defineProtocolUnion([
-            defineProtocolLiteral('existingSessionNotOfferedForFix'),
-            defineProtocolLiteral('askUsesReferenceOnly'),
-            defineProtocolLiteral('pullRequestFixRequiresPreparedWorkspace'),
-            defineProtocolLiteral('nonPullRequestFixRequiresSelectedProject'),
+            defineProtocolLiteral('existingSessionRequiresReferenceOnlyMode'),
+            defineProtocolLiteral('referenceOnlyModeRequiresReferenceOnlyWorkspace'),
+            defineProtocolLiteral('pullRequestModeRequiresPreparedWorkspace'),
+            defineProtocolLiteral('repositoryModeRequiresSelectedProject'),
         ]),
     }, { policy: 'closed' }),
 ]);

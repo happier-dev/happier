@@ -1,9 +1,6 @@
 import type { PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
 import type { SessionId } from '@happier-dev/plugin-sdk/sessions';
-import type {
-    TriageEntryRefV1,
-    TriageSourceWorkflowSubjectV1,
-} from '@happier-dev/triage-protocol/v1';
+import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
 import {
@@ -16,11 +13,13 @@ import {
     materializationDirectory,
     materializationWorkspaceFacts,
     resolveEntrySessionWorkspace,
+    TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1,
     TRIAGE_WORKSPACE_PREPARATION_REFUSED_V1,
     type TriageEntrySessionWorkspaceFactsV1,
     type TriageResolvedMaterializationV1,
     type TriageReviewWorkspacePreparationDepsV1,
     type TriageWorkspaceMaterializationV1,
+    type TriageWorkspaceModeV1,
     type TriageWorkspacePreparationFailureV1,
 } from './entrySessionWorkspace.js';
 
@@ -29,6 +28,7 @@ export type {
     TriageResolvedMaterializationV1,
     TriageReviewWorkspacePreparationRequestV1,
     TriageWorkspaceMaterializationV1,
+    TriageWorkspaceModeV1,
     TriageWorkspacePreparationFailureV1,
 } from './entrySessionWorkspace.js';
 export type { TriageEntrySessionLinkDisplayV1 } from './entrySessionLinks.js';
@@ -39,14 +39,22 @@ type SessionSpawnInput = PluginActionInputById['session.spawn_new'];
  * The generic spawn members a Triage start may choose, and no others.
  *
  * `creationKey` and `directory` are owned here so one start has exactly one
- * identity and one working directory. The rest are structurally absent because
- * a Triage start is routing, not model context: the selected entry's title,
- * body, facts and provider prose never reach a Session record, an initial
- * input or a prompt, and the workspace decision belongs to the source-owned
- * preparation rather than a second checkout draft on the creation call.
+ * identity and one working directory. The three below are structurally absent
+ * because a Triage start is routing, not Session authoring: a title the reader
+ * never typed, startup instructions this plugin does not own, and a second
+ * checkout draft competing with the source-owned preparation.
+ *
+ * **`initialMessage` is admitted, and it has exactly one admitted producer**
+ * (`PLAN.md` §0a A4): the body resolved from the pressed action's own Prompt
+ * Library invocation. The invariant the blanket prohibition protected is
+ * unchanged and is now stated positively — **Triage never stringifies provider
+ * prose into a prompt**. The selected entry's title, body, facts and provider
+ * words still never reach a prompt, because entry context reaches the agent
+ * through the declared `entry` attachment, whose `resolveForDispatch`
+ * (`composer/attachmentRuntime.ts`) supplies authoritative facts at dispatch
+ * time — fresher than any snapshot a start could have embedded.
  */
 const PROHIBITED_SPAWN_MEMBERS = [
-    'initialMessage',
     'title',
     'agentSessionStartupInstructionsV1',
     'checkoutCreationDraft',
@@ -70,8 +78,6 @@ function withoutProhibitedSpawnMembers(
     return candidate as TriageSessionSpawnRequestV1;
 }
 
-export type TriageEntrySessionIntentV1 = 'ask' | 'fix';
-
 export type TriageEntrySessionDestinationV1 =
     | Readonly<{ kind: 'existing'; sessionId: SessionId }>
     | Readonly<{
@@ -88,16 +94,21 @@ export type TriageEntrySessionStartRequestV1 = Readonly<{
      * freezes a display path from it; nothing durable holds one to read.
      */
     display: TriageEntrySessionLinkDisplayV1;
-    workflowSubject: TriageSourceWorkflowSubjectV1;
-    intent: TriageEntrySessionIntentV1;
+    /**
+     * What the pressed action declared it needs on disk. It is the gate's ONE
+     * input: the entry's workflow subject decided which actions were offered at
+     * all, and re-deciding here from the subject a second time is what let the
+     * surface and the gate disagree about one press.
+     */
+    workspaceMode: TriageWorkspaceModeV1;
     destination: TriageEntrySessionDestinationV1;
 }>;
 
 export type TriageEntrySessionRejectionReasonV1 =
-    | 'existingSessionNotOfferedForFix'
-    | 'askUsesReferenceOnly'
-    | 'pullRequestFixRequiresPreparedWorkspace'
-    | 'nonPullRequestFixRequiresSelectedProject';
+    | 'existingSessionRequiresReferenceOnlyMode'
+    | 'referenceOnlyModeRequiresReferenceOnlyWorkspace'
+    | 'pullRequestModeRequiresPreparedWorkspace'
+    | 'repositoryModeRequiresSelectedProject';
 
 export type TriageEntrySessionDispositionV1 = 'created' | 'rejoined' | 'existing';
 
@@ -236,36 +247,45 @@ export async function resumeEntrySessionStart(
     };
 }
 
+/** The one refusal each mode produces when it was sent another mode's workspace. */
+const MODE_MISMATCH_REJECTION_V1 = Object.freeze({
+    reference_only: 'referenceOnlyModeRequiresReferenceOnlyWorkspace',
+    repository: 'repositoryModeRequiresSelectedProject',
+    pull_request: 'pullRequestModeRequiresPreparedWorkspace',
+}) satisfies Readonly<Record<TriageWorkspaceModeV1, TriageEntrySessionRejectionReasonV1>>;
+
 /**
- * The one intent-and-subject gate, evaluated before any provider, creator, link
- * or navigation call.
+ * The one workspace-mode gate, evaluated before any provider, creator, link or
+ * navigation call.
  *
- * V1 deliberately makes every Fix a new-Session flow, so there is no
- * existing-workspace comparison, no path normalization and no
- * mutate-before-agreement path. Ask is the only intent that may reuse an
- * existing Session, and it never materializes a workspace: an error entry
- * therefore cannot turn a stack frame, URL or source identity into a checkout,
- * and a pull-request Fix cannot start from a guessed directory.
+ * It validates one thing: that the materialization the caller sent is the one
+ * its declared mode names, read from the single pairing table both ends share
+ * (`entrySessionWorkspace.ts#TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1`). The
+ * three approved pairings are unchanged — a reference-only action never
+ * materializes a workspace, a pull-request action demands the source-prepared
+ * review workspace, and every repository action runs in the project the reader
+ * selected — but they are now stated once instead of derived here from an
+ * intent label and the entry's workflow subject.
+ *
+ * Reusing an EXISTING Session stays a reference-only affair: a start that
+ * carries a workspace has a directory to create, and an existing Session
+ * already has one. So there is still no existing-workspace comparison, no path
+ * normalization and no mutate-before-agreement path, and an error entry still
+ * cannot turn a stack frame, URL or source identity into a checkout.
  */
 function rejectionFor(
     request: TriageEntrySessionStartRequestV1,
 ): TriageEntrySessionRejectionReasonV1 | null {
     const destination = request.destination;
     if (destination.kind === 'existing') {
-        return request.intent === 'fix' ? 'existingSessionNotOfferedForFix' : null;
-    }
-    const materialization = destination.materialization.kind;
-    if (request.intent === 'ask') {
-        return materialization === 'referenceOnly' ? null : 'askUsesReferenceOnly';
-    }
-    if (request.workflowSubject === 'pullRequest') {
-        return materialization === 'reviewWorkspace'
+        return request.workspaceMode === 'reference_only'
             ? null
-            : 'pullRequestFixRequiresPreparedWorkspace';
+            : 'existingSessionRequiresReferenceOnlyMode';
     }
-    return materialization === 'selectedProject'
+    const required = TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1[request.workspaceMode];
+    return destination.materialization.kind === required
         ? null
-        : 'nonPullRequestFixRequiresSelectedProject';
+        : MODE_MISMATCH_REJECTION_V1[request.workspaceMode];
 }
 
 type ResolvedMaterialization =

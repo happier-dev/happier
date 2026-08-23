@@ -138,9 +138,38 @@ describe('parseTriageComposerEntryAttachmentValue', () => {
         expect(result.reason).toBe('sourceMismatch');
     });
 
-    it('rejects any field beyond the private identity record', () => {
-        // The value carries durable identity only: no locator, snapshot,
-        // credential, provider DTO, evidence or prompt text ever persists here.
+    it('accepts the one declared routing hint and keeps it out of identity', () => {
+        // An account-wide scope discovers entries across many provider scopes,
+        // so the configured connection alone names none of them. Without the
+        // last locator the target observed, `get` has nowhere to knock and the
+        // dispatch of a perfectly valid attachment is deterministically
+        // unresolved. The hint grants no authority: the source still
+        // reauthorizes the exact account and still validates its answer against
+        // the requested ref.
+        const withHint = parseTriageComposerEntryAttachmentValue({
+            ...valid,
+            lastKnownLocator: { v: 1, routingToken: 'acme/web', webUrl: 'https://example.invalid/42' },
+        });
+
+        expect(withHint.status).toBe('valid');
+        if (withHint.status !== 'valid') return;
+        expect(withHint.value.lastKnownLocator).toEqual({
+            v: 1,
+            routingToken: 'acme/web',
+            webUrl: 'https://example.invalid/42',
+        });
+        // Routing is not identity. A reattach after the repository moved must
+        // update the one attachment in place rather than adding a second
+        // selection of the same entry.
+        expect(deriveTriageComposerEntryAttachmentKey(withHint.value.entryRef))
+            .toBe(deriveTriageComposerEntryAttachmentKey(ENTRY_REF));
+    });
+
+    it('rejects any field beyond the declared record', () => {
+        // The value carries durable identity plus the one declared routing
+        // hint. No snapshot, credential, provider DTO, evidence or prompt text
+        // ever persists here, and an undeclared spelling of the hint is refused
+        // rather than silently ignored.
         const withLocator = parseTriageComposerEntryAttachmentValue({
             ...valid,
             locator: { v: 1, webUrl: 'https://example.invalid/42' },
