@@ -18,6 +18,7 @@ import type { Credentials } from '@/persistence';
 import { fetchSessionById, fetchSessionsPage, getOrCreateSessionByTag } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { normalizePathForComparison } from '@/utils/path/normalizePathForComparison';
 import {
   hasConnectedServiceBindings,
   mergeConnectedServiceRuntimeSnapshots,
@@ -25,7 +26,10 @@ import {
   type ConnectedServiceRuntimeSnapshot,
 } from '@/daemon/connectedServices/connectedServiceRuntimeSnapshot';
 import { listSessionMarkers, type DaemonSessionMarker } from '@/daemon/sessionRegistry';
-import { normalizePathForComparison } from '@/utils/path/normalizePathForComparison';
+import {
+  directSessionMarkerMatches,
+  readDirectSessionMarkerProviderId,
+} from '@/api/directSessions/markers/readDirectSessionMarkerIdentity';
 
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -50,72 +54,6 @@ function resolveSessionSummaryTitle(metadata: Readonly<Record<string, unknown>>)
 function resolveDirectRemoteSessionId(metadata: Readonly<Record<string, unknown>>): string | null {
   const directSession = asMetadataRecord(metadata.directSessionV1);
   return normalizeNullableString(directSession?.remoteSessionId);
-}
-
-function resolveMetadataRemoteSessionId(
-  metadata: Readonly<Record<string, unknown>> | null,
-  providerId: DirectSessionsProviderId,
-): string | null {
-  if (!metadata) return null;
-
-  const directSession = asMetadataRecord(metadata.directSessionV1);
-  if (directSession?.providerId === providerId) {
-    const directRemoteSessionId = normalizeNullableString(directSession.remoteSessionId);
-    if (directRemoteSessionId) return directRemoteSessionId;
-  }
-
-  switch (providerId) {
-    case 'codex': {
-      const codexSessionId = normalizeNullableString(metadata.codexSessionId);
-      if (codexSessionId) return codexSessionId;
-      break;
-    }
-    case 'claude': {
-      const claudeSessionId = normalizeNullableString(metadata.claudeSessionId);
-      if (claudeSessionId) return claudeSessionId;
-      break;
-    }
-    case 'opencode': {
-      const openCodeSessionId = normalizeNullableString(metadata.opencodeSessionId);
-      if (openCodeSessionId) return openCodeSessionId;
-      break;
-    }
-  }
-
-  const runtimeDescriptor = asMetadataRecord(metadata.agentRuntimeDescriptorV1);
-  if (runtimeDescriptor?.providerId !== providerId) return null;
-  const provider = asMetadataRecord(runtimeDescriptor.provider);
-  return normalizeNullableString(provider?.vendorSessionId);
-}
-
-function resolveMarkerProviderId(marker: DaemonSessionMarker): DirectSessionsProviderId | null {
-  const metadata = asMetadataRecord(marker.metadata);
-  const metadataFlavor = normalizeNullableString(metadata?.flavor);
-  if (metadataFlavor === 'claude' || metadataFlavor === 'codex' || metadataFlavor === 'opencode') {
-    return metadataFlavor;
-  }
-  if (marker.flavor === 'claude' || marker.flavor === 'codex' || marker.flavor === 'opencode') {
-    return marker.flavor;
-  }
-  const respawn = asMetadataRecord(marker.respawn);
-  const backendTarget = asMetadataRecord(respawn?.backendTarget);
-  const agentId = normalizeNullableString(backendTarget?.agentId);
-  return agentId === 'claude' || agentId === 'codex' || agentId === 'opencode' ? agentId : null;
-}
-
-function resolveMarkerRemoteSessionId(marker: DaemonSessionMarker, providerId: DirectSessionsProviderId): string | null {
-  const respawn = asMetadataRecord(marker.respawn);
-  return normalizeNullableString(respawn?.resume)
-    ?? resolveMetadataRemoteSessionId(asMetadataRecord(marker.metadata), providerId);
-}
-
-function markerMatchesRemoteSession(
-  marker: DaemonSessionMarker,
-  providerId: DirectSessionsProviderId,
-  remoteSessionId: string,
-): boolean {
-  if (resolveMarkerProviderId(marker) !== providerId) return false;
-  return resolveMarkerRemoteSessionId(marker, providerId) === remoteSessionId;
 }
 
 function resolveMarkerDirectoryKeys(marker: DaemonSessionMarker): ReadonlySet<string> {
@@ -159,7 +97,11 @@ async function resolveConnectedServiceRuntimeSnapshotForDirectLink(params: Reado
     .filter((entry) => hasConnectedServiceBindings(entry.snapshot));
 
   const exactRemoteMatch = markersWithSnapshots
-    .filter((entry) => markerMatchesRemoteSession(entry.marker, params.providerId, params.remoteSessionId))
+    .filter((entry) => directSessionMarkerMatches({
+      marker: entry.marker,
+      providerId: params.providerId,
+      remoteSessionId: params.remoteSessionId,
+    }))
     .sort((left, right) => right.marker.updatedAt - left.marker.updatedAt)[0];
   if (exactRemoteMatch) return exactRemoteMatch.snapshot;
 
@@ -167,7 +109,7 @@ async function resolveConnectedServiceRuntimeSnapshotForDirectLink(params: Reado
   if (!directoryKey) return {};
 
   const contextualMatches = markersWithSnapshots
-    .filter((entry) => resolveMarkerProviderId(entry.marker) === params.providerId)
+    .filter((entry) => readDirectSessionMarkerProviderId(entry.marker) === params.providerId)
     .filter((entry) => resolveMarkerDirectoryKeys(entry.marker).has(directoryKey))
     .sort((left, right) => right.marker.updatedAt - left.marker.updatedAt);
 
@@ -378,6 +320,14 @@ function resolveSourceKey(providerId: DirectSessionsProviderId, source: DirectSe
       const directory = normalizeNullableString(source.directory) ?? '';
       return `opencodeServer:${baseUrl}:${directory}`;
     }
+    case 'pi': {
+      if (source.kind !== 'piAgentDir') return 'piAgentDir:invalid';
+      // Dedupe keys must survive equivalent path spellings (mixed separators, home
+      // syntax, trailing separators) or repeated linking mints a second session for
+      // one pi source — normalize with the canonical comparison owner.
+      const agentDir = normalizePathForComparison(source.agentDir) ?? '';
+      return `piAgentDir:${agentDir}`;
+    }
     default:
       return 'unknown';
   }
@@ -564,10 +514,10 @@ async function findExistingSessionIdByTag(params: Readonly<{
   tag: string;
   metadataMatches?: (metadata: Readonly<Record<string, unknown>>) => boolean;
   metadataIdentityMatches?: (metadata: Readonly<Record<string, unknown>>) => boolean;
-}>): Promise<string | null> {
+}>): Promise<Readonly<{ sessionId: string; metadata: Record<string, unknown> }> | null> {
   const maxPages = resolveMaxScanPages();
 
-  const scan = async (archivedOnly: boolean): Promise<string | null> => {
+  const scan = async (archivedOnly: boolean): Promise<Readonly<{ sessionId: string; metadata: Record<string, unknown> }> | null> => {
     let cursor: string | undefined;
     for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
       const page = await fetchSessionsPage({ token: params.credentials.token, cursor, limit: 200, archivedOnly });
@@ -579,7 +529,7 @@ async function findExistingSessionIdByTag(params: Readonly<{
           (rowTag && rowTag === params.tag && (!params.metadataMatches || params.metadataMatches(meta)))
           || params.metadataIdentityMatches?.(meta) === true
         )) {
-          return row.id;
+          return { sessionId: row.id, metadata: meta };
         }
       }
       if (!page.hasNext || !page.nextCursor) break;
@@ -591,6 +541,18 @@ async function findExistingSessionIdByTag(params: Readonly<{
   const activeHit = await scan(false);
   if (activeHit) return activeHit;
   return await scan(true);
+}
+
+function isImportedPersistedSessionForIdentity(params: Readonly<{
+  metadata: Readonly<Record<string, unknown>>;
+  providerId: DirectSessionsProviderId;
+  remoteSessionId: string;
+}>): boolean {
+  if (asMetadataRecord(params.metadata.directSessionV1)) return false;
+  const imported = asMetadataRecord(params.metadata.externalHistoryImportV1);
+  return imported?.v === 1
+    && normalizeNullableString(imported.providerId) === params.providerId
+    && normalizeNullableString(imported.remoteSessionId) === params.remoteSessionId;
 }
 
 function metadataProvesCodexGroup(metadata: Readonly<Record<string, unknown>>, expectedGroupId: string): boolean {
@@ -679,6 +641,9 @@ function buildDirectSessionMetadata(params: Readonly<{
     case 'claude':
       base.claudeSessionId = params.remoteSessionId;
       break;
+    case 'pi':
+      base.piSessionId = params.remoteSessionId;
+      break;
     case 'opencode':
       base.opencodeSessionId = params.remoteSessionId;
       if (params.runtimeDescriptor?.providerId === 'opencode') {
@@ -747,8 +712,8 @@ export async function ensureDirectSessionLink(params: Readonly<{
     remoteSessionId,
     source,
   });
-  let existingSessionId = await findExistingSessionIdByTag({ credentials: params.credentials, tag });
-  if (!existingSessionId && params.providerId === 'codex' && source.kind === 'codexHome') {
+  let existingSession = await findExistingSessionIdByTag({ credentials: params.credentials, tag });
+  if (!existingSession && params.providerId === 'codex' && source.kind === 'codexHome') {
     const expectedGroupId = normalizeNullableString(source.connectedServiceGroupId);
     const predecessorTag = computeRemotePredecessorDirectSessionTag({
       machineId: params.machineId,
@@ -757,7 +722,7 @@ export async function ensureDirectSessionLink(params: Readonly<{
       source,
     });
     if (expectedGroupId && predecessorTag && predecessorTag !== tag) {
-      existingSessionId = await findExistingSessionIdByTag({
+      existingSession = await findExistingSessionIdByTag({
         credentials: params.credentials,
         tag: predecessorTag,
         metadataMatches: (metadata) => metadataProvesCodexGroup(metadata, expectedGroupId),
@@ -769,24 +734,33 @@ export async function ensureDirectSessionLink(params: Readonly<{
       });
     }
   }
-  if (existingSessionId) {
+  if (existingSession) {
+    const isImportedPersistedSession = isImportedPersistedSessionForIdentity({
+      metadata: existingSession.metadata,
+      providerId: params.providerId,
+      remoteSessionId,
+    });
     await refreshExistingDirectSessionMetadataIfNeeded({
       credentials: params.credentials,
-      sessionId: existingSessionId,
-      directSessionIdentity: {
-        tag,
-        machineId: params.machineId,
-        providerId: params.providerId,
-        remoteSessionId,
-        source,
-        codexBackendMode,
-        runtimeDescriptor,
-      },
+      sessionId: existingSession.sessionId,
+      ...(isImportedPersistedSession
+        ? {}
+        : {
+          directSessionIdentity: {
+            tag,
+            machineId: params.machineId,
+            providerId: params.providerId,
+            remoteSessionId,
+            source,
+            codexBackendMode,
+            runtimeDescriptor,
+          },
+        }),
       titleHint: params.titleHint,
       directoryHint: params.directoryHint,
       connectedServiceRuntimeSnapshot,
     });
-    return { sessionId: existingSessionId, created: false, tag };
+    return { sessionId: existingSession.sessionId, created: false, tag };
   }
 
   const metadata = buildDirectSessionMetadata({

@@ -41,7 +41,7 @@ import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSession
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { logger } from '@/utils/logger';
 
-import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
+import type { RpcHandlerRegistrar } from '../rpc/types';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
 type DirectSessionsErrorCode = 'invalid_request' | 'machine_offline' | 'provider_unavailable' | 'internal_error';
@@ -96,7 +96,7 @@ function isPidAlive(pid: number): boolean {
 }
 
 export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
-  rpcHandlerManager: RpcHandlerManager;
+  rpcHandlerManager: RpcHandlerRegistrar;
   spawnSession?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   stopSession?: (sessionId: string) => Promise<boolean>;
   emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;

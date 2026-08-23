@@ -121,16 +121,20 @@ describe('protocol package root exports', () => {
     });
 
     it('exports direct sessions daemon RPC schemas', () => {
-        expect(typeof (protocol as any).DirectSessionsProviderIdSchema?.safeParse).toBe('function');
-        expect((protocol as any).DirectSessionsProviderIdSchema.parse('codex')).toBe('codex');
-        expect((protocol as any).DirectSessionsProviderIdSchema.parse('claude')).toBe('claude');
-        expect((protocol as any).DirectSessionsProviderIdSchema.parse('opencode')).toBe('opencode');
-        expect(typeof (protocol as any).DirectSessionsCandidatesListRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DirectTranscriptPageRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DirectTranscriptReadAfterRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DirectSessionLinkEnsureRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DirectSessionTakeoverRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DirectSessionTakeoverPersistRequestSchema?.safeParse).toBe('function');
+        expect(typeof protocol.DirectSessionsProviderIdSchema?.safeParse).toBe('function');
+        expect(protocol.DirectSessionsProviderIdSchema.parse('codex')).toBe('codex');
+        expect(protocol.DirectSessionsProviderIdSchema.parse('claude')).toBe('claude');
+        expect(protocol.DirectSessionsProviderIdSchema.parse('opencode')).toBe('opencode');
+        expect(protocol.DirectSessionsProviderIdSchema.parse('pi')).toBe('pi');
+        expect(protocol.DirectSessionsSourceSchema.safeParse({ kind: 'piAgentDir' }).success).toBe(true);
+        expect(protocol.DirectSessionsSourceSchema.safeParse({ kind: 'piAgentDir', agentDir: '/custom/.pi/agent' }).success).toBe(true);
+        expect(protocol.DirectSessionsSourceSchema.safeParse({ kind: 'piAgentDir', agentDir: '' }).success).toBe(false);
+        expect(typeof protocol.DirectSessionsCandidatesListRequestSchema?.safeParse).toBe('function');
+        expect(typeof protocol.DirectTranscriptPageRequestSchema?.safeParse).toBe('function');
+        expect(typeof protocol.DirectTranscriptReadAfterRequestSchema?.safeParse).toBe('function');
+        expect(typeof protocol.DirectSessionLinkEnsureRequestSchema?.safeParse).toBe('function');
+        expect(typeof protocol.DirectSessionTakeoverRequestSchema?.safeParse).toBe('function');
+        expect(typeof protocol.DirectSessionTakeoverPersistRequestSchema?.safeParse).toBe('function');
     });
 
     it('exports session handoff schemas', () => {

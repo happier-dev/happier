@@ -16,6 +16,14 @@ const envKeys = ['PATH', 'HAPPIER_PI_PATH', HAPPIER_CONNECTED_SERVICE_SELECTIONS
 const TEMP_DIRS = new Set<string>();
 let envScope = createEnvKeyScope(envKeys);
 
+function readBackendArgs(backend: unknown): readonly string[] {
+  if (!backend || typeof backend !== 'object' || !('options' in backend)) return [];
+  const options = (backend as { options?: unknown }).options;
+  if (!options || typeof options !== 'object' || !('args' in options)) return [];
+  const args = (options as { args?: unknown }).args;
+  return Array.isArray(args) && args.every((arg) => typeof arg === 'string') ? args : [];
+}
+
 function createFakeBin(name: string): string {
   const dir = createTempDirSync('happier-pi-backend-');
   TEMP_DIRS.add(dir);
@@ -51,8 +59,7 @@ describe('pi backend argv', () => {
       permissionMode: 'default',
     });
 
-    const args = (backend as any).options?.args as string[] | undefined;
-    expect(Array.isArray(args)).toBe(true);
+    const args = readBackendArgs(backend);
     expect(args).toContain('--thinking');
     expect(args).toContain('high');
   });
@@ -66,8 +73,7 @@ describe('pi backend argv', () => {
       permissionMode: 'default',
     });
 
-    const args = (backend as any).options?.args as string[] | undefined;
-    expect(Array.isArray(args)).toBe(true);
+    const args = readBackendArgs(backend);
     expect(args).not.toContain('--thinking');
   });
 

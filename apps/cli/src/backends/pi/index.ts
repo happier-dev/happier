@@ -64,6 +64,7 @@ export const agent = {
   resolveConnectedServiceCandidatePersistedSessionFile: resolvePiConnectedServiceCandidatePersistedSessionFile,
   verifyResumeReachable: async (input) =>
     await (await import('@/backends/pi/connectedServices/verifyResumeReachablePi')).verifyResumeReachablePi(input),
+  getDirectSessionProviderOps: async () => (await import('./directSessions/providerOps')).piDirectSessionProviderOps,
   getSessionUsageLimitRecoveryControlAdapter: async () => piUsageLimitRecoveryControlAdapter,
   getDaemonSpawnHooks: async () => piDaemonSpawnHooks,
   vendorResumeSupport: AGENTS_CORE.pi.resume.vendorResume,

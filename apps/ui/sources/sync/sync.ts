@@ -5733,6 +5733,19 @@ class Sync {
                           throw new Error(page.error);
                       }
 
+                      if (page.truncated === true) {
+                          this.resetSessionTranscriptState(params.sessionId);
+                          await this.fetchDirectSessionMessages(params.sessionId, directSessionLink);
+                          return {
+                              loaded: 0,
+                              hasMore:
+                                  this.directSessionHasMoreOlderBySessionId.get(params.sessionId)
+                                  ?? knownHasMore
+                                  ?? true,
+                              status: 'not_ready',
+                          };
+                      }
+
                       const normalizedMessages = normalizeDirectTranscriptMessages(page.items);
                       if (normalizedMessages.length > 0) {
                           this.applyMessages(params.sessionId, normalizedMessages, { notifyVoice: false });
