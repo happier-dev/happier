@@ -291,6 +291,57 @@ describe('useTranscriptEntryHost initial fill sufficiency (S-L/S-M)', () => {
         expect(harness.isScrollable()).toBe(true);
     });
 
+    it('web post-settle fill stays out of an ANCHORED entry, whose anchor lookup owns the loader', async () => {
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        // Entry restore materializes an anchor with its own
+        // `loadOlder({ preservePrependViewport: false })` behind `anchorLookupInFlightRef`.
+        // Two viewport policies on one loader is the race; and because a concurrent load
+        // answers `in_flight`, this loop would have counted those as no-progress and given
+        // up without loading anything. A non-bottom entry must not start this fill at all.
+        const harness = createFillHarness({
+            layoutHeightPx: 600,
+            initialContentHeightPx: 200,
+            contentGrowthPerLoadPx: [250, 250],
+            loadDurationMs: 700,
+        });
+        harness.deps.sessionEntryViewportRef.current = { shouldFollowBottom: false } as SessionEntryViewportRefValue;
+
+        await renderHook(
+            (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+            { initialProps: harness.deps },
+        );
+        await vi.waitFor(() => {
+            expect(harness.sessionOpenLatch.initialFillStatus()).toBe('done');
+        });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(harness.loadOlder).not.toHaveBeenCalled();
+    });
+
+    it('web post-settle fill yields to a load already in flight instead of burning its budget', async () => {
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        const harness = createFillHarness({
+            layoutHeightPx: 600,
+            initialContentHeightPx: 200,
+            contentGrowthPerLoadPx: [250, 250],
+            loadDurationMs: 700,
+        });
+        // Another owner holds the loader: every call answers `in_flight` and adds no height.
+        harness.loadOlder.mockResolvedValue({ status: 'in_flight' as const, loaded: 0, hasMore: true });
+
+        await renderHook(
+            (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+            { initialProps: harness.deps },
+        );
+        await vi.waitFor(() => {
+            expect(harness.sessionOpenLatch.initialFillStatus()).toBe('done');
+        });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        // Yields on the first such answer rather than retrying to the no-progress bound.
+        expect(harness.loadOlder.mock.calls.length).toBe(1);
+    });
+
     it('web still reaches a scrollable transcript, so the older pager can arm at all', async () => {
         Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
         // The realistic tool-heavy tail: the newest page is collapsed tool calls and

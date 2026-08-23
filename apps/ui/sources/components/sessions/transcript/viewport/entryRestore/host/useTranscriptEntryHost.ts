@@ -1221,6 +1221,7 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
         if (deps.sessionOpenLatch.initialFillStatus() !== 'idle') return;
         if (deps.listLayoutHeight <= 0 || deps.listContentHeight <= 0) return;
         if (!deps.sessionOpenLatch.markInitialFillInProgress(deps.sessionId)) return;
+        const entersAtBottom = deps.sessionEntryViewportRef.current?.shouldFollowBottom !== false;
         if (Platform.OS === 'web') {
             // Web can paint the newest transcript immediately: keeping historical loads
             // inside the session-open latch serialized network, decrypt, and render work
@@ -1244,6 +1245,14 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
             // So keep filling to scrollability, but do it AFTER settlement and with the
             // prepend viewport preserved: the reader already has an interactive session and
             // older rows land above their view instead of moving it.
+            // Bottom entries only. An ANCHORED entry is owned by entry restore, which
+            // materializes its anchor with its own `loadOlder({ preservePrependViewport: false })`
+            // behind `anchorLookupInFlightRef`. Running this fill alongside it put two
+            // viewport policies on one loader with no shared ownership, and — because a
+            // concurrent load answers `in_flight` — this loop counted those answers as
+            // no-progress and could exhaust `maxNoProgressLoads` without ever loading a page.
+            // Filling to bottom-scrollability is not the contract for an anchored entry anyway.
+            if (!entersAtBottom) return;
             const webFillController = new AbortController();
             deps.initialFillAbortRef.current?.abort();
             deps.initialFillAbortRef.current = webFillController;
@@ -1271,6 +1280,11 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
                     if (Date.now() >= absoluteFillDeadlineMs) break;
                     const result = await deps.loadOlder({ preservePrependViewport: true, showLoadingIndicator: false });
                     if (!result || result.status === 'no_more') break;
+                    // Someone else owns a load right now, or the loader is not ready. Neither is
+                    // this loop's no-progress condition — counting them would burn the budget on
+                    // another owner's work — and that other load will grow the transcript, after
+                    // which the pager arms normally. Yield rather than spin or miscount.
+                    if (result.status === 'in_flight' || result.status === 'not_ready') break;
                     await Promise.resolve();
                     await Promise.resolve();
                     const contentHeightPx = deps.listContentHeightRef.current;
