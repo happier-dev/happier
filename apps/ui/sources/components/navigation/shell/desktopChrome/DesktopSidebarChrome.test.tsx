@@ -122,6 +122,7 @@ describe('DesktopSidebarChrome', () => {
         expect(directChildTestIDs(screen.findByTestId('desktop-sidebar-chrome-utility-row')!)).toEqual([
             'sidebar-back-button',
             'sidebar-forward-button',
+            'desktop-sidebar-action-operations',
             'nav-settings',
             'sidebar-collapse-button',
         ]);

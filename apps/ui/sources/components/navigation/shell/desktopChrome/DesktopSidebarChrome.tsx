@@ -10,6 +10,7 @@ import { t } from '@/text';
 import {
     DESKTOP_SIDEBAR_CHROME_ACTIONS_COMPACT_THRESHOLD_PX,
     DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX,
+    DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_BUTTON_SIZE_PX,
 } from './desktopChromeMetrics';
 import { desktopSidebarChromeStyles } from './desktopSidebarChromeStyles';
 import { DesktopShellWindowControlsHost } from './DesktopShellWindowControlsHost';
@@ -17,6 +18,7 @@ import { SidebarCollapseIcon } from '../SidebarIcons';
 import { SidebarLogoButton } from '../SidebarLogoButton';
 import type { AppUpdateStatusTagProps } from '@/components/ui/feedback/AppUpdateStatusTag';
 import { Icon } from '@/components/ui/icons/Icon';
+import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
 
 type DesktopSidebarChromeProps = Readonly<{
     sidebarWidthPx?: number | null;
@@ -115,6 +117,13 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                 compactThreshold={DESKTOP_SIDEBAR_CHROME_ACTIONS_COMPACT_THRESHOLD_PX}
                 compactActionIds={compactContentActionIds}
                 pinnedActionIds={compactContentActionIds}
+                leadingPinnedContent={(
+                    <ActionOperationActivityButton
+                        testID="desktop-sidebar-action-operations"
+                        buttonSize={32}
+                        iconSize={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
+                    />
+                )}
                 overflowPosition="beforePinned"
                 overflowTriggerTestID="sidebar-header-actions-overflow"
                 popoverBoundaryRef={props.popoverBoundaryRef}
@@ -189,7 +198,18 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                                 />
                             </Pressable>
                         ) : null}
-                        {topUtilityActions.map(renderTopUtilityAction)}
+                        {topUtilityActions.map((action) => (
+                            <React.Fragment key={action.id}>
+                                {action.id === 'settings' ? (
+                                    <ActionOperationActivityButton
+                                        testID="desktop-sidebar-action-operations"
+                                        buttonSize={DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_BUTTON_SIZE_PX}
+                                        iconSize={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
+                                    />
+                                ) : null}
+                                {renderTopUtilityAction(action)}
+                            </React.Fragment>
+                        ))}
                         {props.onPressCollapse ? (
                             <Pressable
                                 testID="sidebar-collapse-button"

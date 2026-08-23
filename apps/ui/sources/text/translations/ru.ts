@@ -757,6 +757,17 @@ export const ru: TranslationStructure = {
     permissions: "Разрешения",
     unreadSessions: "Непрочитанные сессии",
     updates: "Активность",
+    actionOperations: {
+      sections: { inProgress: "Выполняются", needsAttention: "Требуют внимания", recent: "Недавние" },
+      clearRecent: "Очистить недавние",
+      status: { accepted: "Принято", running: "Выполняется", succeeded: "Выполнено", failed: "Ошибка", cancelled: "Отменено", reconnecting: "Повторное подключение", unavailable: "Статус недоступен", setupNeedsAttention: "Сессия создана; настройка требует внимания" },
+      empty: "Здесь появятся длительные действия.",
+      openHint: "Открывает сведения о действии",
+      stop: "Остановить",
+      dismiss: "Скрыть",
+      stopFailed: "Не удалось остановить эту операцию. Возможно, она всё ещё выполняется.",
+      detail: { status: "Статус", progress: "Ход выполнения", error: "Ошибка", warning: "Предупреждение", result: "Результат", recoveryReference: "Ссылка для восстановления" },
+    },
   },
 
   approvals: {
@@ -4742,6 +4753,8 @@ export const ru: TranslationStructure = {
     daemonRpcUnavailableBody:
       "Happier не может подключиться к демону на этой машине. Он может быть офлайн, ещё запускаться или быть отключён от сервера.",
     launchStillPendingTitle: "Запуск всё ещё выполняется",
+    createdWithSetupIssueTitle: "Сеанс создан",
+    createdWithSetupIssueBody: "Сеанс создан, но начальная настройка не завершена. Можно повторить попытку на этом экране, не создавая новый сеанс.",
     launchStillPendingBody:
       "Happier ещё не подтвердил новую сессию. Запрос на запуск сохранён. Повторите попытку, чтобы продолжить тот же запуск без создания дубликата сессии.",
     connectedServiceSwitchUnavailable: {

@@ -725,6 +725,17 @@ export const ja: TranslationStructure = {
     permissions: "権限",
     unreadSessions: "未読のセッション",
     updates: "アクティビティ",
+    actionOperations: {
+      sections: { inProgress: "進行中", needsAttention: "確認が必要", recent: "最近" },
+      clearRecent: "最近の項目を消去",
+      status: { accepted: "受け付け済み", running: "実行中", succeeded: "完了", failed: "失敗", cancelled: "キャンセル済み", reconnecting: "再接続中", unavailable: "状態を確認できません", setupNeedsAttention: "セッションは作成されました。設定を確認してください" },
+      empty: "時間のかかるアクションはここに表示されます。",
+      openHint: "アクションの詳細を開きます",
+      stop: "停止",
+      dismiss: "非表示",
+      stopFailed: "この操作を停止できませんでした。まだ実行中の可能性があります。",
+      detail: { status: "状態", progress: "進捗", error: "エラー", warning: "警告", result: "結果", recoveryReference: "復旧参照" },
+    },
   },
 
   approvals: {
@@ -5075,6 +5086,8 @@ localTailscale: {
     daemonRpcUnavailableBody:
       "このマシン上のデーモンに接続できません。オフライン、起動中、またはサーバーから切断されている可能性があります。",
     launchStillPendingTitle: "起動処理はまだ進行中です",
+    createdWithSetupIssueTitle: "セッションを作成しました",
+    createdWithSetupIssueBody: "セッションは作成されましたが、初期設定が完了しませんでした。この画面から再試行しても、新しいセッションは作成されません。",
     launchStillPendingBody:
       "Happier はまだ新しいセッションを確認できていません。起動リクエストは保存されています。重複するセッションを作成せずに同じ起動を続けるには、再試行してください。",
     connectedServiceSwitchUnavailable: {

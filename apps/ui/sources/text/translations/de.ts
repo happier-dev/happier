@@ -529,6 +529,17 @@ export const de: TranslationStructure = {
         permissions: 'Berechtigungen',
         unreadSessions: 'Ungelesene Sessions',
         updates: 'Aktivität',
+        actionOperations: {
+            sections: { inProgress: 'In Bearbeitung', needsAttention: 'Aufmerksamkeit erforderlich', recent: 'Zuletzt' },
+            clearRecent: 'Letzte löschen',
+            status: { accepted: 'Angenommen', running: 'Wird ausgeführt', succeeded: 'Erfolgreich', failed: 'Fehlgeschlagen', cancelled: 'Abgebrochen', reconnecting: 'Verbindung wird wiederhergestellt', unavailable: 'Status nicht verfügbar', setupNeedsAttention: 'Session erstellt; Einrichtung erfordert Aufmerksamkeit' },
+            empty: 'Länger laufende Aktionen werden hier angezeigt.',
+            openHint: 'Öffnet die Details der Aktion',
+            stop: 'Stoppen',
+            dismiss: 'Ausblenden',
+            stopFailed: 'Dieser Vorgang konnte nicht gestoppt werden. Er läuft möglicherweise weiter.',
+            detail: { status: 'Zustand', progress: 'Fortschritt', error: 'Fehler', warning: 'Warnung', result: 'Ergebnis', recoveryReference: 'Wiederherstellungsreferenz' },
+        },
     },
 
     approvals: {
@@ -4435,6 +4446,8 @@ export const de: TranslationStructure = {
         daemonRpcUnavailableBody:
             'Happier erreicht den Daemon auf diesem Rechner nicht. Er ist womöglich offline, startet noch oder ist vom Server getrennt.',
         launchStillPendingTitle: 'Start läuft noch',
+        createdWithSetupIssueTitle: 'Session erstellt',
+        createdWithSetupIssueBody: 'Die Session wurde erstellt, aber die Ersteinrichtung wurde nicht abgeschlossen. Du kannst es auf diesem Bildschirm erneut versuchen, ohne eine weitere Session zu erstellen.',
         launchStillPendingBody:
             'Happier hat die neue Session noch nicht bestätigt. Deine Startanfrage ist weiterhin gespeichert. Versuch es erneut, um denselben Start fortzusetzen, ohne eine doppelte Session anzulegen.',
         connectedServiceSwitchUnavailable: {

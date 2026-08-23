@@ -791,6 +791,17 @@ export const pt: TranslationStructure = {
     permissions: "Permissões",
     unreadSessions: "Sessões não lidas",
     updates: "Atividade",
+    actionOperations: {
+      sections: { inProgress: "Em andamento", needsAttention: "Requer atenção", recent: "Recentes" },
+      clearRecent: "Limpar recentes",
+      status: { accepted: "Aceita", running: "Em andamento", succeeded: "Concluída", failed: "Falhou", cancelled: "Cancelada", reconnecting: "A reconectar", unavailable: "Estado indisponível", setupNeedsAttention: "Sessão criada; a configuração requer atenção" },
+      empty: "As ações de longa duração aparecerão aqui.",
+      openHint: "Abre os detalhes da ação",
+      stop: "Parar",
+      dismiss: "Ocultar",
+      stopFailed: "Não foi possível parar esta operação. Ela pode ainda estar em execução.",
+      detail: { status: "Estado", progress: "Progresso", error: "Erro", warning: "Aviso", result: "Resultado", recoveryReference: "Referência de recuperação" },
+    },
   },
 
   approvals: {
@@ -4922,6 +4933,8 @@ export const pt: TranslationStructure = {
     daemonRpcUnavailableBody:
       "O Happier não consegue acessar o daemon nesta máquina. Ele pode estar offline, iniciando ou desconectado do servidor.",
     launchStillPendingTitle: "A inicialização ainda está em andamento",
+    createdWithSetupIssueTitle: "Sessão criada",
+    createdWithSetupIssueBody: "A sessão foi criada, mas a configuração inicial não foi concluída. Você pode tentar novamente nesta tela sem criar outra sessão.",
     launchStillPendingBody:
       "O Happier ainda não confirmou a nova sessão. A solicitação de inicialização continua salva. Tente novamente para continuar a mesma inicialização sem criar uma sessão duplicada.",
     connectedServiceSwitchUnavailable: {

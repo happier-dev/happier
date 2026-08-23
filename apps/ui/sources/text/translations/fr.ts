@@ -529,6 +529,17 @@ export const fr: TranslationStructure = {
         permissions: 'Permissions',
         unreadSessions: 'Sessions non lues',
         updates: 'Activité',
+        actionOperations: {
+            sections: { inProgress: 'En cours', needsAttention: 'À vérifier', recent: 'Récentes' },
+            clearRecent: 'Effacer les récentes',
+            status: { accepted: 'Acceptée', running: 'En cours', succeeded: 'Réussie', failed: 'Échec', cancelled: 'Annulée', reconnecting: 'Reconnexion', unavailable: 'État indisponible', setupNeedsAttention: 'Session créée ; la configuration requiert votre attention' },
+            empty: 'Les actions de longue durée apparaîtront ici.',
+            openHint: 'Ouvre les détails de l’action',
+            stop: 'Arrêter',
+            dismiss: 'Masquer',
+            stopFailed: 'Impossible d’arrêter cette opération. Elle est peut-être toujours en cours.',
+            detail: { status: 'État', progress: 'Progression', error: 'Erreur', warning: 'Avertissement', result: 'Résultat', recoveryReference: 'Référence de récupération' },
+        },
     },
 
     approvals: {
@@ -4435,6 +4446,8 @@ export const fr: TranslationStructure = {
         daemonRpcUnavailableBody:
             'Happier n’arrive pas à joindre le daemon sur cette machine. Il est peut-être hors ligne, en cours de démarrage, ou déconnecté du serveur.',
         launchStillPendingTitle: 'Lancement toujours en cours',
+        createdWithSetupIssueTitle: 'Session créée',
+        createdWithSetupIssueBody: 'La session a été créée, mais sa configuration initiale ne s’est pas terminée. Vous pouvez réessayer depuis cet écran sans créer une autre session.',
         launchStillPendingBody:
             'Happier n’a pas encore confirmé la nouvelle session. Ta demande de lancement est toujours enregistrée. Réessaie pour continuer le même lancement sans créer de session en double.',
         connectedServiceSwitchUnavailable: {

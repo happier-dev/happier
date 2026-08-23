@@ -18,6 +18,7 @@ import { useResolvedDesktopWindowControls } from './desktopChrome/useResolvedDes
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { AppUpdateStatusTagProps } from '@/components/ui/feedback/AppUpdateStatusTag';
+import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
 
 export type CollapsedSidebarViewProps = Readonly<{
     desktopWindowControls?: React.ReactNode;
@@ -138,6 +139,7 @@ export const CollapsedSidebarView = React.memo((props: CollapsedSidebarViewProps
                     {resolvedDesktopWindowControls}
                 </DesktopShellWindowControlsHost>
                 {renderUpdateIndicatorWithFallback(props.desktopUpdateIndicator, logoButton)}
+                <ActionOperationActivityButton testID="collapsed-sidebar-action-operations" />
                 {Platform.OS === 'web' ? (
                     <Pressable
                         testID="sidebar-expand-button"

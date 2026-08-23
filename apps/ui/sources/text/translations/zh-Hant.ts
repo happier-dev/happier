@@ -834,6 +834,17 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         emptyDescription: '目前沒有待處理的請求或更新。',
         unreadSessions: '未讀工作階段',
         updates: '動態',
+        actionOperations: {
+            sections: { inProgress: '進行中', needsAttention: '需要處理', recent: '最近' },
+            clearRecent: '清除最近記錄',
+            status: { accepted: '已接受', running: '執行中', succeeded: '已成功', failed: '失敗', cancelled: '已取消', reconnecting: '正在重新連線', unavailable: '狀態無法使用', setupNeedsAttention: '工作階段已建立；設定需要處理' },
+            empty: '長時間執行的操作會顯示在這裡。',
+            openHint: '開啟操作詳細資訊',
+            stop: '停止',
+            dismiss: '隱藏',
+            stopFailed: '無法停止此操作。它可能仍在執行。',
+            detail: { status: '狀態', progress: '進度', error: '錯誤', warning: '警告', result: '結果', recoveryReference: '復原參照' },
+        },
     },
 
     memorySearchSettings: {
@@ -4181,6 +4192,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         daemonRpcUnavailableBody:
             'Happier 無法連線到此裝置上的守護程序。它可能離線、仍在啟動，或與伺服器中斷連線。',
         launchStillPendingTitle: '工作階段仍在啟動',
+        createdWithSetupIssueTitle: '工作階段已建立',
+        createdWithSetupIssueBody: '工作階段已建立，但初始設定尚未完成。你可以在此畫面重試，而不會建立另一個工作階段。',
         launchStillPendingBody:
             'Happier 尚未確認新的工作階段。啟動要求仍已儲存。請重試以繼續同一次啟動，不會建立重複的工作階段。',
         connectedServiceSwitchUnavailable: {

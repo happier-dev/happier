@@ -742,6 +742,17 @@ export const es: TranslationStructure = {
     permissions: "Permisos",
     unreadSessions: "Sesiones sin leer",
     updates: "Actividad",
+    actionOperations: {
+      sections: { inProgress: "En curso", needsAttention: "Requiere atención", recent: "Recientes" },
+      clearRecent: "Borrar recientes",
+      status: { accepted: "Aceptada", running: "En curso", succeeded: "Completada", failed: "Fallida", cancelled: "Cancelada", reconnecting: "Reconectando", unavailable: "Estado no disponible", setupNeedsAttention: "Sesión creada; la configuración requiere atención" },
+      empty: "Las acciones de larga duración aparecerán aquí.",
+      openHint: "Abre los detalles de la acción",
+      stop: "Detener",
+      dismiss: "Descartar",
+      stopFailed: "No se pudo detener esta operación. Puede que siga en curso.",
+      detail: { status: "Estado", progress: "Progreso", error: "Fallo", warning: "Advertencia", result: "Resultado", recoveryReference: "Referencia de recuperación" },
+    },
   },
 
   approvals: {
@@ -4801,6 +4812,8 @@ export const es: TranslationStructure = {
     daemonRpcUnavailableBody:
       "Happier no puede comunicarse con el daemon en esta máquina. Puede estar sin conexión, iniciándose o desconectado del servidor.",
     launchStillPendingTitle: "El inicio sigue en curso",
+    createdWithSetupIssueTitle: "Sesión creada",
+    createdWithSetupIssueBody: "La sesión se creó, pero la configuración inicial no terminó. Puedes volver a intentarlo desde esta pantalla sin crear otra sesión.",
     launchStillPendingBody:
       "Happier aún no ha confirmado la nueva sesión. La solicitud de inicio sigue guardada. Vuelve a intentarlo para continuar el mismo inicio sin crear una sesión duplicada.",
     connectedServiceSwitchUnavailable: {

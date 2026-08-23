@@ -35,6 +35,9 @@ import { ApprovalInboxCard } from '@/components/inbox/cards/ApprovalInboxCard';
 import { InboxSessionAttentionGroupCard } from '@/components/inbox/sessionAttention/InboxSessionAttentionGroupCard';
 import { getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { buildInboxSessionState } from '@/hooks/inbox/buildInboxSessionState';
+import { ActionOperationLedger } from '@/components/inbox/actionOperations/ActionOperationLedger';
+import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
+import { useActionOperationActivityModel } from '@/components/inbox/actionOperations/useActionOperationActivityModel';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -63,6 +66,14 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         textAlign: 'center',
         lineHeight: 22,
+    },
+    emptyActivityDescription: {
+        marginTop: 8,
+        fontSize: 14,
+        ...Typography.default(),
+        color: theme.colors.text.tertiary,
+        textAlign: 'center',
+        lineHeight: 20,
     },
 }));
 
@@ -98,6 +109,8 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const sessions = useAllSessionsForAttention();
+    const actionOperationModel = useActionOperationActivityModel();
+    const actionOperations = actionOperationModel.operations;
     const sessionRows = useAllSessionListRenderablesForAttention();
     const { unreadSessions, sessionsNeedingAttention } = React.useMemo(
         () => buildInboxSessionState({ sessions, sessionRows }),
@@ -109,10 +122,10 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
     }, [artifacts]);
 
     const showFriendsActivity = friendsEnabled && friendsIdentityReady;
-
     const isLoading = friendsEnabled ? (!feedLoaded || !friendsLoaded) : false;
     const isEmpty = !isLoading &&
         openApprovals.length === 0 &&
+        actionOperations.length === 0 &&
         sessionsNeedingAttention.length === 0 &&
         unreadSessions.length === 0 &&
         (!showFriendsActivity || (
@@ -169,6 +182,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                     />
                     <Text style={styles.emptyTitle}>{t('inbox.emptyTitle')}</Text>
                     <Text style={styles.emptyDescription}>{t('inbox.emptyDescription')}</Text>
+                    <Text style={styles.emptyActivityDescription}>{t('inbox.actionOperations.empty')}</Text>
                 </View>
             </View>
         );
@@ -194,6 +208,16 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
             }}>
                 <RecoveryKeyReminderBanner />
                 <UpdateBanner />
+
+                <ActionOperationLedger
+                    operations={actionOperations}
+                    observationForOperation={actionOperationModel.observationForOperation}
+                    contextForOperation={actionOperationModel.contextForOperation}
+                    onOpenOperation={openActionOperationDetail}
+                    canDismissOperation={actionOperationModel.canDismissOperation}
+                    onDismissOperation={actionOperationModel.dismissOperation}
+                    showEmptyState={false}
+                />
 
                 {openApprovals.length > 0 && (
                     <ItemGroup title={t('inbox.approvals')}>

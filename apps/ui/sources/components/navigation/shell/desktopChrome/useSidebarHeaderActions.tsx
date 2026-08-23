@@ -154,6 +154,8 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
         inboxEnabled,
         inboxHasContent,
         navigate,
+        styles.badge,
+        styles.badgeText,
         styles.topIndicatorDot,
         styles.topNotificationButton,
         theme.colors.chrome.header.foreground,

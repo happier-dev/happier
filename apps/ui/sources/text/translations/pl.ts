@@ -753,6 +753,17 @@ export const pl: TranslationStructure = {
     permissions: "Uprawnienia",
     unreadSessions: "Nieprzeczytane sesje",
     updates: "Aktywność",
+    actionOperations: {
+      sections: { inProgress: "W toku", needsAttention: "Wymaga uwagi", recent: "Ostatnie" },
+      clearRecent: "Wyczyść ostatnie",
+      status: { accepted: "Przyjęto", running: "W toku", succeeded: "Zakończono", failed: "Niepowodzenie", cancelled: "Anulowano", reconnecting: "Ponowne łączenie", unavailable: "Status niedostępny", setupNeedsAttention: "Sesja utworzona; konfiguracja wymaga uwagi" },
+      empty: "Długotrwałe działania pojawią się tutaj.",
+      openHint: "Otwiera szczegóły działania",
+      stop: "Zatrzymaj",
+      dismiss: "Ukryj",
+      stopFailed: "Nie udało się zatrzymać tej operacji. Może nadal trwać.",
+      detail: { status: "Stan", progress: "Postęp", error: "Błąd", warning: "Ostrzeżenie", result: "Wynik", recoveryReference: "Identyfikator odzyskiwania" },
+    },
   },
 
   approvals: {
@@ -4825,6 +4836,8 @@ export const pl: TranslationStructure = {
     daemonRpcUnavailableBody:
       "Happier nie może połączyć się z demonem na tej maszynie. Może być offline, w trakcie uruchamiania lub odłączony od serwera.",
     launchStillPendingTitle: "Uruchamianie nadal trwa",
+    createdWithSetupIssueTitle: "Sesja utworzona",
+    createdWithSetupIssueBody: "Sesja została utworzona, ale konfiguracja początkowa nie została ukończona. Możesz spróbować ponownie na tym ekranie bez tworzenia kolejnej sesji.",
     launchStillPendingBody:
       "Happier nie potwierdził jeszcze nowej sesji. Żądanie uruchomienia jest nadal zapisane. Spróbuj ponownie, aby kontynuować to samo uruchomienie bez tworzenia duplikatu sesji.",
     connectedServiceSwitchUnavailable: {

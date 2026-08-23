@@ -527,6 +527,17 @@ export const en = {
         permissions: 'Permissions',
         unreadSessions: 'Unread sessions',
         updates: 'Activity',
+        actionOperations: {
+            sections: { inProgress: 'In progress', needsAttention: 'Needs attention', recent: 'Recent' },
+            clearRecent: 'Clear recent',
+            status: { accepted: 'Accepted', running: 'Running', succeeded: 'Succeeded', failed: 'Failed', cancelled: 'Cancelled', reconnecting: 'Reconnecting', unavailable: 'Status unavailable', setupNeedsAttention: 'Session created; setup needs attention' },
+            empty: 'Long-running actions will appear here.',
+            openHint: 'Opens operation details',
+            stop: 'Stop',
+            dismiss: 'Dismiss',
+            stopFailed: 'Couldn’t stop this operation. It may still be running.',
+            detail: { status: 'Status', progress: 'Progress', error: 'Error', warning: 'Warning', result: 'Result', recoveryReference: 'Recovery reference' },
+        },
     },
 
     approvals: {
@@ -4435,6 +4446,9 @@ export const en = {
         launchStillPendingTitle: 'Launch still in progress',
         launchStillPendingBody:
             'Happier hasn’t confirmed the new session yet. Your launch request is still saved. Retry to continue the same launch without creating a duplicate session.',
+        createdWithSetupIssueTitle: 'Session created',
+        createdWithSetupIssueBody:
+            'The session was created, but its initial setup did not finish. You can retry from this screen without creating another session.',
         connectedServiceSwitchUnavailable: {
             title: 'Switch unavailable',
             body: ({ reason, agentId }: { reason: string; agentId: string }) =>

@@ -740,6 +740,17 @@ export const zhHans: TranslationStructure = {
     permissions: "权限",
     unreadSessions: "未读会话",
     updates: "动态",
+    actionOperations: {
+      sections: { inProgress: "进行中", needsAttention: "需要处理", recent: "最近" },
+      clearRecent: "清除最近记录",
+      status: { accepted: "已接受", running: "运行中", succeeded: "已成功", failed: "失败", cancelled: "已取消", reconnecting: "正在重新连接", unavailable: "状态不可用", setupNeedsAttention: "会话已创建；设置需要处理" },
+      empty: "长时间运行的操作会显示在这里。",
+      openHint: "打开操作详情",
+      stop: "停止",
+      dismiss: "隐藏",
+      stopFailed: "无法停止此操作。它可能仍在运行。",
+      detail: { status: "状态", progress: "进度", error: "错误", warning: "警告", result: "结果", recoveryReference: "恢复引用" },
+    },
   },
 
   approvals: {
@@ -4635,6 +4646,8 @@ export const zhHans: TranslationStructure = {
     daemonRpcUnavailableBody:
       "Happier 无法连接到此设备上的守护进程。它可能离线、仍在启动，或与服务器断开连接。",
     launchStillPendingTitle: "会话仍在启动",
+    createdWithSetupIssueTitle: "会话已创建",
+    createdWithSetupIssueBody: "会话已创建，但初始设置未完成。你可以在此屏幕重试，而不会创建另一个会话。",
     launchStillPendingBody:
       "Happier 尚未确认新会话。启动请求仍已保存。请重试以继续同一次启动，不会创建重复会话。",
     connectedServiceSwitchUnavailable: {
