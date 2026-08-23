@@ -219,6 +219,27 @@ describe('useTranscriptEntryHost initial fill sufficiency (S-L/S-M)', () => {
         };
     });
 
+    it('settles web session open before historical fill so the pager can backfill after first paint', async () => {
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        const harness = createFillHarness({
+            layoutHeightPx: 600,
+            initialContentHeightPx: 200,
+            contentGrowthPerLoadPx: [250, 250],
+            loadDurationMs: 700,
+        });
+
+        await renderHook(
+            (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+            { initialProps: harness.deps },
+        );
+        await vi.waitFor(() => {
+            expect(harness.sessionOpenLatch.initialFillStatus()).toBe('done');
+        });
+
+        expect(harness.loadOlder).not.toHaveBeenCalled();
+        expect(harness.listContentHeightRef.current).toBe(200);
+    });
+
     it('keeps filling through raw-only (sidechain) pages until displayable content is sufficient', async () => {
         // Pages 1-2 apply raw events only (all sidechain-routed: zero main-lane growth).
         // Pages 3-4 add displayable rows; page 4 makes the transcript scrollable.

@@ -6,7 +6,6 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 import { sync, type SessionViewportAnchorSnapshot, type SessionViewportSnapshot } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
-import { TRANSCRIPT_VISUAL_UPDATE_FALLBACK_TIMEOUT_MS } from '@/components/sessions/transcript/_constants';
 import type {
     TranscriptViewportTelemetryEvent,
     TranscriptViewportTelemetryObservationReason,
@@ -65,7 +64,6 @@ import type {
 } from '@/components/sessions/transcript/viewport/prepend/host/runTranscriptPrependOlderLoad';
 import type { TranscriptRenderWindowProjection } from '@/components/sessions/transcript/viewport/window/resolveTranscriptRenderWindowProjection';
 import type { TranscriptJumpTarget } from '@/components/sessions/transcript/viewport/jump/transcriptJumpTargetTypes';
-import { waitForVisualUpdateWithTimeout } from '@/components/sessions/transcript/pagination/waitForVisualUpdateWithTimeout';
 import type { TranscriptListRendererKind } from '@/components/sessions/transcript/viewport/shell/renderer/types';
 import type { TranscriptUserScrollIntentOwner, TranscriptUserScrollIntentTimestampReader } from '@/components/sessions/transcript/viewport/driver/userScrollIntentOwner';
 
@@ -1223,6 +1221,17 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
         if (deps.sessionOpenLatch.initialFillStatus() !== 'idle') return;
         if (deps.listLayoutHeight <= 0 || deps.listContentHeight <= 0) return;
         if (!deps.sessionOpenLatch.markInitialFillInProgress(deps.sessionId)) return;
+        if (Platform.OS === 'web') {
+            // Web can paint the newest transcript immediately and let the existing
+            // threshold pager backfill an underfilled viewport after readiness opens.
+            // Keeping historical loads inside the session-open latch serialized network,
+            // decrypt, and render work before the session became interactive.
+            applySessionOpenLatchEffects(deps.sessionOpenLatch.onInitialFillSettled({
+                nowMs: Date.now(),
+                sessionId: deps.sessionId,
+            }).effects);
+            return;
+        }
         deps.initialFillAbortRef.current?.abort();
         const controller = new AbortController();
         deps.initialFillAbortRef.current = controller;
@@ -1235,12 +1244,6 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
         fireAndForget((async () => {
             if (shouldPinDuringInitialFill) {
                 deps.pinToBottomRespectingNativeMountSettle('initial-open');
-                if (Platform.OS === 'web') {
-                    await waitForVisualUpdateWithTimeout({
-                        waitForNextVisualUpdate: deps.waitForNextVisualUpdate,
-                        timeoutMs: TRANSCRIPT_VISUAL_UPDATE_FALLBACK_TIMEOUT_MS,
-                    });
-                }
             }
             const tuning = sync.getSyncTuning();
             const startedAtMs = Date.now();
