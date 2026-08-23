@@ -51,10 +51,12 @@ describe('session handoff schemas', () => {
     if ('error' in mod) return;
 
     const startParsed = mod.SessionHandoffStartRequestSchema.safeParse({
+      requestId: 'action-request-1',
       sessionId: 'sess_1',
       sourceMachineId: 'machine_source',
       targetMachineId: 'machine_target',
       sessionStorageMode: 'persisted',
+      targetSessionStorageMode: 'direct',
       preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
       workspaceTransfer: {
         enabled: true,
@@ -65,6 +67,8 @@ describe('session handoff schemas', () => {
     });
     expect(startParsed.success).toBe(true);
     if (!startParsed.success) return;
+    expect(startParsed.data.requestId).toBe('action-request-1');
+    expect(startParsed.data.targetSessionStorageMode).toBe('direct');
     expect(startParsed.data.workspaceTransfer).toEqual({
       enabled: true,
       strategy: 'transfer_snapshot',
@@ -337,6 +341,21 @@ describe('session handoff schemas', () => {
         recoveryActions: [],
       }).success,
     ).toBe(false);
+  });
+
+  it('bounds the optional handoff action request correlation id', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+    const base = {
+      sessionId: 'sess_1',
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      sessionStorageMode: 'persisted' as const,
+      preferredTransportStrategies: ['server_routed_stream'] as const,
+    };
+    expect(mod.SessionHandoffStartRequestSchema.safeParse({ ...base, requestId: '' }).success).toBe(false);
+    expect(mod.SessionHandoffStartRequestSchema.safeParse({ ...base, requestId: 'x'.repeat(2001) }).success).toBe(false);
   });
 
   it('rejects oversized source controller metadata headers (no large JSON in handoffMetadataV2)', async () => {

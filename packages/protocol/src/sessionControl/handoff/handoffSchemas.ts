@@ -130,10 +130,12 @@ export type SessionHandoffResumePlan = z.infer<typeof SessionHandoffResumePlanSc
 
 export const SessionHandoffStartRequestSchema = z
   .object({
+    requestId: z.string().min(1).max(2000).optional(),
     sessionId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     sourceMachineId: z.string().min(1).max(MAX_MACHINE_ID_LENGTH),
     targetMachineId: z.string().min(1).max(MAX_MACHINE_ID_LENGTH),
     sessionStorageMode: SessionHandoffStorageModeSchema,
+    targetSessionStorageMode: SessionHandoffStorageModeSchema.optional(),
     preferredTransportStrategies: z
       .array(SessionHandoffTransportStrategySchema)
       .min(1)

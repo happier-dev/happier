@@ -68,6 +68,28 @@ describe('settleSpawnSessionNonce', () => {
     expect(result).toEqual({ status: 'timeout' });
   });
 
+  it('keeps a native-owned resolution pending past a bounded deadline until terminal evidence arrives', async () => {
+    let nowMs = 0;
+    let probes = 0;
+    const result = await settleSpawnSessionNonce({
+      spawnNonce: 'nonce-slow-native',
+      resolve: async (_spawnNonce, remainingTimeoutMs) => {
+        probes += 1;
+        expect(remainingTimeoutMs).toBeUndefined();
+        return probes === 2
+          ? { status: 'success' as const, sessionId: 'sess_slow_native' }
+          : { status: 'pending' as const };
+      },
+      timeoutMs: null,
+      pollIntervalMs: 90_001,
+      sleep: async (ms) => { nowMs += ms; },
+      now: () => nowMs,
+    });
+
+    expect(result).toEqual({ status: 'success', sessionId: 'sess_slow_native' });
+    expect(nowMs).toBeGreaterThan(90_000);
+  });
+
   it('passes the remaining deadline to each probe and bounds the final sleep', async () => {
     let nowMs = 0;
     const remainingBudgets: number[] = [];
@@ -75,6 +97,9 @@ describe('settleSpawnSessionNonce', () => {
     const result = await settleSpawnSessionNonce({
       spawnNonce: 'nonce-deadline',
       resolve: async (_spawnNonce, remainingTimeoutMs) => {
+        if (typeof remainingTimeoutMs !== 'number') {
+          throw new Error('bounded nonce resolution must receive a remaining deadline');
+        }
         remainingBudgets.push(remainingTimeoutMs);
         return { status: 'pending' as const };
       },
@@ -132,7 +157,7 @@ describe('settleSpawnSessionNonce', () => {
     expect(result).toEqual({ status: 'success', sessionId: 'sess_5' });
   });
 
-  it('treats resolver throws as not_found probes without aborting the loop', async () => {
+  it('treats resolver throws as pending probes without aborting the loop', async () => {
     const resolve = vi.fn()
       .mockRejectedValueOnce(new Error('transient'))
       .mockResolvedValueOnce({ status: 'success', sessionId: 'sess_6' });
@@ -144,5 +169,24 @@ describe('settleSpawnSessionNonce', () => {
       sleep: immediateSleep,
     });
     expect(result).toEqual({ status: 'success', sessionId: 'sess_6' });
+  });
+
+  it('treats a resolver transport throw as pending rather than terminal not-found evidence', async () => {
+    const resolve = vi.fn()
+      .mockRejectedValueOnce(new Error('transport disconnected'))
+      .mockResolvedValueOnce({ status: 'success', sessionId: 'sess_7' });
+
+    const result = await settleSpawnSessionNonce({
+      spawnNonce: 'nonce-7',
+      resolve,
+      timeoutMs: 5_000,
+      pollIntervalMs: 10,
+      // A zero not-found grace would fail immediately if a transport throw
+      // were conflated with definitive daemon evidence.
+      notFoundGraceMs: 0,
+      sleep: immediateSleep,
+    });
+
+    expect(result).toEqual({ status: 'success', sessionId: 'sess_7' });
   });
 });

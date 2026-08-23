@@ -44,47 +44,101 @@ export type SettleSpawnSessionNonceResult =
 
 const DEFAULT_NOT_FOUND_GRACE_MS = 15_000;
 
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      cleanup();
+      const error = new Error('Action operation cancelled');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error('Action operation cancelled');
+  error.name = 'AbortError';
+  throw error;
+}
+
+async function waitForSleepOrAbort(sleep: Promise<void>, signal?: AbortSignal): Promise<void> {
+  if (!signal) return await sleep;
+  throwIfAborted(signal);
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      const error = new Error('Action operation cancelled');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    signal.addEventListener('abort', onAbort, { once: true });
+    void sleep.then(
+      () => { cleanup(); resolve(); },
+      (error: unknown) => { cleanup(); reject(error); },
+    );
+  });
 }
 
 export async function settleSpawnSessionNonce(params: Readonly<{
   spawnNonce: string;
-  resolve: (spawnNonce: string, remainingTimeoutMs: number) => Promise<SpawnSessionNonceResolution>;
-  timeoutMs: number;
+  resolve: (spawnNonce: string, remainingTimeoutMs?: number) => Promise<SpawnSessionNonceResolution>;
+  /** `null` keeps provider-owned lifecycle settlement under its own custody. */
+  timeoutMs: number | null;
   pollIntervalMs: number;
   /**
    * How long a run of consecutive `not_found` resolutions is tolerated before
    * settling as `not_found`. A `pending`/`success` resolution resets the window.
    */
-  notFoundGraceMs?: number;
+  notFoundGraceMs?: number | null;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  signal?: AbortSignal;
 }>): Promise<SettleSpawnSessionNonceResult> {
   const now = params.now ?? Date.now;
-  const sleep = params.sleep ?? defaultSleep;
+  const sleep = params.sleep;
   const pollIntervalMs = Math.max(1, Math.trunc(params.pollIntervalMs));
-  const notFoundGraceMs = Math.max(0, Math.trunc(params.notFoundGraceMs ?? DEFAULT_NOT_FOUND_GRACE_MS));
-  const deadlineMs = now() + Math.max(0, Math.trunc(params.timeoutMs));
+  const notFoundGraceMs = params.notFoundGraceMs === null
+    ? null
+    : Math.max(0, Math.trunc(params.notFoundGraceMs ?? DEFAULT_NOT_FOUND_GRACE_MS));
+  const deadlineMs = params.timeoutMs === null
+    ? null
+    : now() + Math.max(0, Math.trunc(params.timeoutMs));
 
   let notFoundSinceMs: number | null = null;
   let isFirstProbe = true;
 
   while (true) {
+    throwIfAborted(params.signal);
     const beforeProbeMs = now();
-    if (!isFirstProbe && beforeProbeMs >= deadlineMs) {
+    if (!isFirstProbe && deadlineMs !== null && beforeProbeMs >= deadlineMs) {
       return { status: 'timeout' };
     }
-    const remainingTimeoutMs = Math.max(1, deadlineMs - beforeProbeMs);
+    const remainingTimeoutMs = deadlineMs === null
+      ? undefined
+      : Math.max(1, deadlineMs - beforeProbeMs);
     let resolution: SpawnSessionNonceResolution;
     try {
       resolution = await params.resolve(params.spawnNonce, remainingTimeoutMs);
     } catch {
-      // Transient transport failures are indistinguishable from "not tracked";
-      // treat them as a not_found probe so a dead daemon still settles via the
-      // grace window instead of aborting the loop.
-      resolution = { status: 'not_found' };
+      // A transport failure says nothing about whether an accepted child
+      // exists. Preserve it as pending until a caller-owned deadline or
+      // positive terminal resolver evidence settles the operation.
+      resolution = { status: 'pending' };
     }
+    throwIfAborted(params.signal);
 
     if (resolution.status === 'success') {
       const sessionId = typeof resolution.sessionId === 'string' ? resolution.sessionId.trim() : '';
@@ -105,17 +159,24 @@ export async function settleSpawnSessionNonce(params: Readonly<{
     const nowMs = now();
     if (resolution.status === 'not_found') {
       notFoundSinceMs ??= nowMs;
-      if (nowMs - notFoundSinceMs >= notFoundGraceMs) {
+      if (notFoundGraceMs !== null && nowMs - notFoundSinceMs >= notFoundGraceMs) {
         return { status: 'not_found' };
       }
     } else {
       notFoundSinceMs = null;
     }
 
-    if (nowMs >= deadlineMs) {
+    if (deadlineMs !== null && nowMs >= deadlineMs) {
       return { status: 'timeout' };
     }
-    await sleep(Math.min(pollIntervalMs, deadlineMs - nowMs));
+    const sleepMs = deadlineMs === null
+      ? pollIntervalMs
+      : Math.min(pollIntervalMs, deadlineMs - nowMs);
+    if (sleep) {
+      await waitForSleepOrAbort(sleep(sleepMs), params.signal);
+    } else {
+      await defaultSleep(sleepMs, params.signal);
+    }
     isFirstProbe = false;
   }
 }
