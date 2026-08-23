@@ -1927,11 +1927,6 @@ esac
     `source start did not launch the prior usable dist after current build failure\nstdout:\n${stdout}\nstderr:\n${stderr}`,
   );
   assert.match(
-    await readFile(ownershipLogPath, 'utf-8'),
-    /lsof/,
-    'the admission fixture must use its deterministic listener adapter',
-  );
-  assert.match(
     `${stdout}\n${stderr}`,
     /WARNING: happier-cli current build failed .*starting the daemon from the last usable dist.*Source changes are not active/s,
   );

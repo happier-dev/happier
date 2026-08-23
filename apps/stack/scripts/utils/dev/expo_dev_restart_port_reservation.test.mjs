@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import net from 'node:net';
 import { once } from 'node:events';
+import { execFileSync } from 'node:child_process';
 
 import { ensureDevExpoServer } from './expo_dev.mjs';
 import { getExpoStatePaths, writePidState } from '../expo/expo.mjs';
@@ -20,6 +21,8 @@ let previousPath = null;
 before(async () => {
   listenerFixtureRoot = await mkdtemp(join(tmpdir(), 'hstack-expo-listener-boundary-'));
   await mkdir(join(listenerFixtureRoot, 'listeners'), { recursive: true });
+  const systemLsofPath = execFileSync('/bin/sh', ['-c', 'command -v lsof'], { encoding: 'utf-8' }).trim();
+  assert.ok(systemLsofPath, 'lsof must be available for Expo listener-boundary tests');
   const { binDir } = writeFakeBin({
     root: listenerFixtureRoot,
     name: 'lsof',
@@ -46,7 +49,7 @@ fi
 if [ "\${TEST_EXPO_LISTENER_MARKERS_ONLY:-0}" = "1" ]; then
   exit 1
 fi
-exec /usr/sbin/lsof "$@"
+exec ${JSON.stringify(systemLsofPath)} "$@"
 `,
   });
   const env = buildStackHarnessEnv({ baseEnv: process.env, binDirs: [binDir] });
