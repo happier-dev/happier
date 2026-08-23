@@ -359,6 +359,7 @@ export async function fetchAndApplyMessages(params: {
     sessionId: string;
     scope?: 'main' | 'sidechain' | 'all';
     sidechainId?: string | null;
+    limit?: number;
     getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
     isSessionKnown?: (sessionId: string) => boolean;
     request: (path: string) => Promise<Response>;
@@ -390,6 +391,7 @@ export async function fetchAndApplyMessages(params: {
         sessionId,
         scope,
         sidechainId,
+        limit: params.limit,
     });
 
     const result = await runSessionMessagesPagePipeline({
