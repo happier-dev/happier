@@ -13,7 +13,10 @@ vi.mock('@/sync/ops', () => ({ forkSession: forkSessionMock }));
 vi.mock('@/components/sessions/transcript/forkContext/completeSessionForkNavigation', () => ({
     completeSessionForkNavigation: completeSessionForkNavigationMock,
 }));
-vi.mock('@/sync/sync', () => ({ sync: { refreshSessions: refreshSessionsMock } }));
+vi.mock('@/sync/sync', () => ({ sync: {
+    refreshSessions: refreshSessionsMock,
+    acquireUserRequestLease: () => () => {},
+} }));
 vi.mock('@/sync/domains/state/storage', () => ({
     storage: { getState: () => ({ sessions: sessionsRef.current }) },
 }));
@@ -157,6 +160,8 @@ describe('useSessionForkStrategyFlow', () => {
         });
         const { harness, onNavigated } = await mountFlow();
         await act(async () => { await harness.getCurrent().submit('replay'); });
+        const requestId = forkSessionMock.mock.calls[0]?.[0]?.requestId;
+        expect(typeof requestId).toBe('string');
 
         refreshSessionsMock.mockImplementation(async () => {
             sessionsRef.current = {
@@ -166,9 +171,10 @@ describe('useSessionForkStrategyFlow', () => {
                         forkV1: {
                             v: 1,
                             parentSessionId: 'parent_1',
-                            parentCutoffSeqInclusive: 12,
+                            parentCutoffSeqInclusive: 11,
                             createdAtMs: 5,
                             strategy: 'replay',
+                            requestId,
                         },
                     },
                 },
@@ -177,7 +183,7 @@ describe('useSessionForkStrategyFlow', () => {
 
         await act(async () => { await harness.getCurrent().checkForFork(); });
 
-        expect(refreshSessionsMock).toHaveBeenCalledWith();
+        expect(refreshSessionsMock).toHaveBeenCalledWith({ awaitSessionListHydration: true });
         expect(forkSessionMock).toHaveBeenCalledTimes(1);
         expect(completeSessionForkNavigationMock).toHaveBeenCalledWith(
             expect.objectContaining({ childSessionId: 'child_late', serverId: 'server_1' }),
@@ -204,6 +210,8 @@ describe('useSessionForkStrategyFlow', () => {
         });
         const { harness } = await mountFlow();
         await act(async () => { await harness.getCurrent().submit('replay'); });
+        const requestId = forkSessionMock.mock.calls[0]?.[0]?.requestId;
+        expect(typeof requestId).toBe('string');
 
         const lineage = {
             v: 1,
@@ -211,6 +219,7 @@ describe('useSessionForkStrategyFlow', () => {
             parentCutoffSeqInclusive: 12,
             createdAtMs: 5,
             strategy: 'replay',
+            requestId,
         };
         refreshSessionsMock.mockImplementation(async () => {
             sessionsRef.current = {

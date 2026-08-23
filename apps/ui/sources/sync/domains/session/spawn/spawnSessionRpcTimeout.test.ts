@@ -26,7 +26,7 @@ describe('readForkSessionRpcTimeoutMsFromEnv', () => {
     it('keeps the outer fork acknowledgement budget above spawn resolution', () => {
         delete process.env.EXPO_PUBLIC_HAPPIER_FORK_SESSION_RPC_TIMEOUT_MS;
 
-        expect(readForkSessionRpcTimeoutMsFromEnv()).toBe(6 * 60_000);
+        expect(readForkSessionRpcTimeoutMsFromEnv()).toBe(8 * 60_000);
     });
 });
 

@@ -79,6 +79,7 @@ function readMatchingChildSessionIds(params: Readonly<{
     parentSessionId: string;
     forkPoint: SessionForkPoint;
     route: SessionForkOperationRoute;
+    requestId: string;
 }>): Set<string> {
     const known = new Set<string>();
     for (const candidate of readSessionCandidates()) {
@@ -143,8 +144,8 @@ export function useSessionForkStrategyFlow(params: Readonly<{
         } catch {
             // Anything that fails AFTER navigation is best-effort follow-up: the
             // fork exists and the user is already looking at it, and the restored
-            // draft was written locally before hydration. Only a failure that
-            // never reached navigation leaves the child unopened.
+            // draft was written only after the child lineage was proven. Only a
+            // failure that never reached navigation leaves the child unopened.
             if (!navigated) {
                 applyPhase({ type: 'opening', route, childSessionId, stalled: true });
                 return;
@@ -167,21 +168,30 @@ export function useSessionForkStrategyFlow(params: Readonly<{
             parentSessionId: request.parentSessionId,
             forkPoint: request.forkPoint,
             route,
+            requestId: requestIdFor(route),
         });
 
         try {
-            const result = await forkSession({
+            const requestId = requestIdFor(route);
+            const forkOptions = {
                 ...(request.machineId ? { machineId: request.machineId } : {}),
                 ...(request.serverId ? { serverId: request.serverId } : {}),
                 parentSessionId: request.parentSessionId,
                 forkPoint: request.forkPoint,
                 strategy: route,
-                requestId: requestIdFor(route),
+                requestId,
                 ...(typeof request.replayMaxSeedChars === 'number'
                     ? { replayMaxSeedChars: request.replayMaxSeedChars }
                     : {}),
                 ...(request.replaySummaryRunner ? { replaySummaryRunner: request.replaySummaryRunner } : {}),
-            });
+            } as const;
+            const releaseUserRequestLease = sync.acquireUserRequestLease();
+            let result: Awaited<ReturnType<typeof forkSession>>;
+            try {
+                result = await forkSession(forkOptions);
+            } finally {
+                releaseUserRequestLease();
+            }
 
             const outcome = classifySessionForkRpcOutcome(result);
             if (outcome.type === 'created') {
@@ -199,7 +209,7 @@ export function useSessionForkStrategyFlow(params: Readonly<{
         } finally {
             inFlightRef.current = false;
         }
-    }, [applyPhase, openChild, phase.type, request, requestIdFor]);
+    }, [applyPhase, onNavigated, openChild, phase.type, request, requestIdFor]);
 
     const checkForFork = React.useCallback(async (): Promise<void> => {
         if (inFlightRef.current) return;
@@ -210,7 +220,7 @@ export function useSessionForkStrategyFlow(params: Readonly<{
         applyPhase({ type: 'unknown', route, checking: true, lastCheck: phase.lastCheck });
         try {
             try {
-                await sync.refreshSessions();
+                await sync.refreshSessions({ awaitSessionListHydration: true });
             } catch {
                 // A failed refresh only means the local view is still stale; the
                 // lookup below simply will not find anything yet.
@@ -220,6 +230,7 @@ export function useSessionForkStrategyFlow(params: Readonly<{
                 parentSessionId: request.parentSessionId,
                 forkPoint: request.forkPoint,
                 route,
+                requestId: requestIdFor(route),
                 knownChildSessionIds: knownChildrenRef.current,
             });
             if (lookup.type === 'found') {
@@ -235,7 +246,7 @@ export function useSessionForkStrategyFlow(params: Readonly<{
         } finally {
             inFlightRef.current = false;
         }
-    }, [applyPhase, openChild, phase, request]);
+    }, [applyPhase, openChild, phase, request, requestIdFor]);
 
     const retryOpen = React.useCallback(async (): Promise<void> => {
         if (inFlightRef.current) return;

@@ -11,6 +11,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
 import {
     createFollowUpSpawnedSessionWithServerScope,
+    requireLocalSessionVisibleForRoute,
     readRecoverableFollowUpPayload,
 } from './followUpSpawnedSession';
 
@@ -33,6 +34,23 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 },
             },
         });
+    });
+
+    it('owns one local route-readiness hydration attempt for a fork child', async () => {
+        const stored = {} as Session;
+        const ensureSessionVisibleForMessageRoute = vi.fn(async () => ({ kind: 'available' }));
+        const isLocalSessionReady = vi.fn(() => true);
+
+        await expect(requireLocalSessionVisibleForRoute({
+            sessionId: 'child',
+            serverId: 'server-a',
+            getStoredSession: () => stored,
+            ensureSessionVisibleForMessageRoute,
+            isLocalSessionReady,
+        })).resolves.toBe(stored);
+
+        expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledOnce();
+        expect(isLocalSessionReady).toHaveBeenCalledOnce();
     });
 
     it('attaches a recoverable follow-up payload when active-scope durable enqueue fails before navigation hydration', async () => {

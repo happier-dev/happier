@@ -14,6 +14,11 @@ import {
 
 type AppliedSession = Omit<Session, 'presence'> & { presence?: 'online' | number };
 
+export type EnsureSessionVisibleForMessageRoute = (
+    sessionId: string,
+    options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>,
+) => Promise<unknown>;
+
 // This covers only bounded server-to-client sync propagation after spawn already resolved.
 // Provider startup remains owned by the spawn RPC and nonce-settlement budgets.
 const POST_SPAWN_SESSION_VISIBILITY_GRACE_MAX_MS = 10_000;
@@ -97,14 +102,12 @@ async function ensureSessionHydratedForNavigation(params: Readonly<{
     serverId?: string | null;
     contextTimeoutMs: number;
     getStoredSession: (sessionId: string) => Session | null;
-    ensureSessionVisibleForMessageRoute?: (
-        sessionId: string,
-        options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>,
-    ) => Promise<unknown>;
+    ensureSessionVisibleForMessageRoute?: EnsureSessionVisibleForMessageRoute;
+    isLocalSessionReady?: (session: Session) => boolean;
     sleep: (ms: number) => Promise<void>;
     now: () => number;
     visibilityGraceMs: number;
-}>): Promise<void> {
+}>): Promise<Session> {
     const graceMs = Math.max(0, Math.min(
         params.visibilityGraceMs,
         POST_SPAWN_SESSION_VISIBILITY_GRACE_MAX_MS,
@@ -121,8 +124,9 @@ async function ensureSessionHydratedForNavigation(params: Readonly<{
             );
         }
 
-        if (params.getStoredSession(params.sessionId)) {
-            return;
+        const session = params.getStoredSession(params.sessionId);
+        if (session && (!params.isLocalSessionReady || params.isLocalSessionReady(session))) {
+            return session;
         }
 
         const remainingMs = deadlineMs - params.now();
@@ -131,6 +135,36 @@ async function ensureSessionHydratedForNavigation(params: Readonly<{
         }
         await params.sleep(Math.min(POST_SPAWN_SESSION_VISIBILITY_POLL_INTERVAL_MS, remainingMs));
     }
+}
+
+/**
+ * Fork navigation consumes the existing spawned-session hydration owner with
+ * zero propagation grace: one canonical hydration attempt, then one lineage
+ * proof over the materialized session. It deliberately adds no fork-local
+ * polling or second readiness owner.
+ */
+export async function requireLocalSessionVisibleForRoute(params: Readonly<{
+    sessionId: string;
+    serverId?: string | null;
+    getStoredSession: (sessionId: string) => Session | null;
+    ensureSessionVisibleForMessageRoute?: EnsureSessionVisibleForMessageRoute | null;
+    isLocalSessionReady?: (session: Session) => boolean;
+}>): Promise<Session> {
+    return await ensureSessionHydratedForNavigation({
+        sessionId: params.sessionId,
+        serverId: params.serverId,
+        contextTimeoutMs: 0,
+        getStoredSession: params.getStoredSession,
+        ...(params.ensureSessionVisibleForMessageRoute
+            ? { ensureSessionVisibleForMessageRoute: params.ensureSessionVisibleForMessageRoute }
+            : {}),
+        ...(params.isLocalSessionReady
+            ? { isLocalSessionReady: params.isLocalSessionReady }
+            : {}),
+        sleep: async () => {},
+        now: Date.now,
+        visibilityGraceMs: 0,
+    });
 }
 
 function getDefaultActiveSync() {
@@ -180,10 +214,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
     fetchSessionById?: typeof fetchSessionByIdWithServerScope;
     sendSessionMessageWithServerScope?: typeof sendSessionMessageWithServerScope;
     activeSync?: Partial<ActiveSyncLike> & Pick<ActiveSyncLike, 'refreshSessions'>;
-    ensureSessionVisibleForMessageRoute?: (
-        sessionId: string,
-        options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>,
-    ) => Promise<unknown>;
+    ensureSessionVisibleForMessageRoute?: EnsureSessionVisibleForMessageRoute;
     getStoredSession?: (sessionId: string) => Session | null;
     applySessions?: (sessions: AppliedSession[]) => void;
     sleep?: (ms: number) => Promise<void>;

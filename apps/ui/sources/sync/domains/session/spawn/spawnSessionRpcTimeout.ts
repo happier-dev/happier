@@ -5,7 +5,7 @@ const MAX_SPAWN_SESSION_RPC_TIMEOUT_MS = 10 * 60_000;
 // accept-then-async spawn resolution. The RPC acknowledgement
 // budget must exceed that total, otherwise a slow-but-healthy fork triggers
 // timeout-driven transport retries.
-const DEFAULT_FORK_SESSION_RPC_TIMEOUT_MS = 6 * 60_000;
+const DEFAULT_FORK_SESSION_RPC_TIMEOUT_MS = 8 * 60_000;
 
 function readBoundedTimeoutMsFromEnv(raw: string, fallback: number): number {
     const trimmed = raw.trim();
