@@ -12,9 +12,10 @@ import {
     type SessionTranscriptStorageMode,
 } from '@/sync/domains/session/transcriptStorageDefaults';
 import { RememberedEngineSelectionsByScopeV1Schema } from '@/sync/domains/sessionAuthoring/rememberedEngineSelections';
+import { NEW_SESSION_CHECKOUT_MODES } from '@/sync/domains/state/newSessionCheckoutDraft';
 
 const SessionTranscriptStorageModeSchema = z.enum(SESSION_TRANSCRIPT_STORAGE_MODES);
-const NewSessionDefaultCheckoutModeV1Schema = z.enum(['current_path', 'git_worktree']);
+const NewSessionDefaultCheckoutModeV1Schema = z.enum(NEW_SESSION_CHECKOUT_MODES);
 
 export const NEW_SESSION_WIZARD_SELECTION_SECTION_IDS = [
     'profiles',

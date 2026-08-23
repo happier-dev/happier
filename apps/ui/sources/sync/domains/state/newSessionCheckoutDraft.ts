@@ -1,3 +1,6 @@
+export const NEW_SESSION_CHECKOUT_MODES = ['current_path', 'git_worktree'] as const;
+export type NewSessionCheckoutMode = typeof NEW_SESSION_CHECKOUT_MODES[number];
+
 export interface NewSessionCheckoutCreationDraft {
     kind: 'git_worktree';
     displayName: string;
@@ -10,7 +13,7 @@ export interface NewSessionCheckoutDraft {
 }
 
 export interface NewSessionCheckoutSelection extends NewSessionCheckoutDraft {
-    explicit: boolean;
+    explicitMode: NewSessionCheckoutMode | null;
 }
 
 function normalizeNullableString(value: unknown): string | null {
@@ -62,15 +65,16 @@ export function resolveNewSessionCheckoutSelection(
 ): NewSessionCheckoutSelection {
     for (const source of sources) {
         if (!hasExplicitNewSessionCheckoutSelection(source)) continue;
+        const checkoutCreationDraft = parseNewSessionCheckoutDraft(source).checkoutCreationDraft;
         return {
-            checkoutCreationDraft: parseNewSessionCheckoutDraft(source).checkoutCreationDraft,
-            explicit: true,
+            checkoutCreationDraft,
+            explicitMode: checkoutCreationDraft ? 'git_worktree' : 'current_path',
         };
     }
 
     return {
         checkoutCreationDraft: null,
-        explicit: false,
+        explicitMode: null,
     };
 }
 

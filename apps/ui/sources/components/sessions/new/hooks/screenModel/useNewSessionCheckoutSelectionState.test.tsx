@@ -15,7 +15,7 @@ vi.mock('@/utils/worktree/generateWorktreeName', () => ({
 
 type HookParams = Parameters<typeof useNewSessionCheckoutSelectionState>[0];
 
-function makeRepoSnapshot(backendId: 'git' | 'svn' = 'git'): ScmWorkingSnapshot {
+function makeRepoSnapshot(backendId: 'git' | 'sapling' = 'git'): ScmWorkingSnapshot {
     return {
         projectKey: 'machine-1:/repo',
         fetchedAt: 1,
@@ -26,8 +26,7 @@ function makeRepoSnapshot(backendId: 'git' | 'svn' = 'git'): ScmWorkingSnapshot 
             mode: '.git',
             worktrees: [],
         },
-        capabilities: {},
-        branch: null,
+        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
         stashCount: 0,
         hasConflicts: false,
         entries: [],
@@ -40,7 +39,7 @@ function makeRepoSnapshot(backendId: 'git' | 'svn' = 'git'): ScmWorkingSnapshot 
             pendingAdded: 0,
             pendingRemoved: 0,
         },
-    } as ScmWorkingSnapshot;
+    };
 }
 
 function makeParams(overrides: Partial<HookParams> = {}): HookParams {
@@ -89,6 +88,8 @@ describe('useNewSessionCheckoutSelectionState', () => {
             { initialProps: makeParams({ persistedDraft: { checkoutCreationDraft: hydratedDraft } }) },
         );
 
+        expect(hook.getCurrent().checkoutCreationDraft).toEqual(hydratedDraft);
+
         await act(async () => {
             hook.getCurrent().setCheckoutCreationDraft(null);
         });
@@ -103,6 +104,74 @@ describe('useNewSessionCheckoutSelectionState', () => {
         await flushHookEffects();
 
         expect(hook.getCurrent().checkoutCreationDraft).toBeNull();
+        await hook.unmount();
+    });
+
+    it('recreates an explicit worktree choice after the selected path changes', async () => {
+        const hook = await renderHook(
+            (props: HookParams) => useNewSessionCheckoutSelectionState(props),
+            { initialProps: makeParams({ defaultCheckoutMode: 'current_path' }) },
+        );
+
+        await act(async () => {
+            hook.getCurrent().setCheckoutCreationDraft({
+                kind: 'git_worktree',
+                displayName: 'explicit-worktree',
+                baseRef: 'main',
+                branchMode: 'new',
+            });
+        });
+        await hook.rerender(makeParams({
+            defaultCheckoutMode: 'current_path',
+            selectedPath: '/repo-two',
+        }));
+        await flushHookEffects();
+
+        expect(hook.getCurrent().checkoutCreationDraft).toEqual({
+            kind: 'git_worktree',
+            displayName: 'calm-forest',
+            baseRef: null,
+            branchMode: 'new',
+        });
+        await hook.unmount();
+    });
+
+    it('regenerates a hydrated worktree choice instead of replaying its path-bound draft', async () => {
+        const hook = await renderHook(
+            (props: HookParams) => useNewSessionCheckoutSelectionState(props),
+            {
+                initialProps: makeParams({
+                    persistedDraft: {
+                        checkoutCreationDraft: {
+                            kind: 'git_worktree',
+                            displayName: 'hydrated-worktree',
+                            baseRef: 'main',
+                            branchMode: 'new',
+                        },
+                    },
+                }),
+            },
+        );
+
+        await hook.rerender(makeParams({
+            persistedDraft: {
+                checkoutCreationDraft: {
+                    kind: 'git_worktree',
+                    displayName: 'hydrated-worktree',
+                    baseRef: 'main',
+                    branchMode: 'new',
+                },
+            },
+            selectedPath: '/repo-two',
+        }));
+        await flushHookEffects();
+
+        expect(hook.getCurrent().checkoutCreationDraft).toEqual({
+            kind: 'git_worktree',
+            displayName: 'calm-forest',
+            baseRef: null,
+            branchMode: 'new',
+        });
         await hook.unmount();
     });
 
@@ -138,7 +207,7 @@ describe('useNewSessionCheckoutSelectionState', () => {
     it('preserves an explicit current-path selection that arrives with delayed Git detection', async () => {
         const hook = await renderHook(
             (props: HookParams) => useNewSessionCheckoutSelectionState(props),
-            { initialProps: makeParams({ repoScmSnapshot: makeRepoSnapshot('svn') }) },
+            { initialProps: makeParams({ repoScmSnapshot: makeRepoSnapshot('sapling') }) },
         );
 
         expect(hook.getCurrent().checkoutCreationDraft).toBeNull();
@@ -154,7 +223,7 @@ describe('useNewSessionCheckoutSelectionState', () => {
     });
 
     it('applies the worktree default when delayed repository detection becomes Git', async () => {
-        const initialProps = makeParams({ repoScmSnapshot: makeRepoSnapshot('svn') });
+        const initialProps = makeParams({ repoScmSnapshot: makeRepoSnapshot('sapling') });
         const hook = await renderHook(
             (props: HookParams) => useNewSessionCheckoutSelectionState(props),
             { initialProps },

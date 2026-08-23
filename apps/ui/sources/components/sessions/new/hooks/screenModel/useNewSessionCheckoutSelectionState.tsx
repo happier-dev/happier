@@ -6,9 +6,18 @@ import {
 import {
     resolveNewSessionCheckoutSelection,
     type NewSessionCheckoutCreationDraft,
+    type NewSessionCheckoutMode,
+    type NewSessionCheckoutSelection,
 } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { generateWorktreeName } from '@/utils/worktree/generateWorktreeName';
+
+function resolveCheckoutCreationDraftAction(
+    action: React.SetStateAction<NewSessionCheckoutCreationDraft | null>,
+    current: NewSessionCheckoutCreationDraft | null,
+): NewSessionCheckoutCreationDraft | null {
+    return typeof action === 'function' ? action(current) : action;
+}
 
 export function useNewSessionCheckoutSelectionState(params: Readonly<{
     persistedDraft: unknown;
@@ -16,7 +25,7 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
     selectedMachineId: string | null;
     selectedPath: string;
     repoScmSnapshot: ScmWorkingSnapshot | null;
-    defaultCheckoutMode: 'current_path' | 'git_worktree';
+    defaultCheckoutMode: NewSessionCheckoutMode;
     autoOpenWorktreePickerKey?: string | null;
 }>): Readonly<{
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
@@ -33,16 +42,29 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
         resolveNewSessionCheckoutSelection(params.tempSessionData, params.persistedDraft)
     ), [params.persistedDraft, params.tempSessionData]);
 
-    const [checkoutCreationDraft, setCheckoutCreationDraft] = React.useState<NewSessionCheckoutCreationDraft | null>(() => {
-        return initialCheckoutSelection.checkoutCreationDraft;
-    });
-    const [checkoutSelectionExplicitState, setCheckoutSelectionExplicit] = React.useState(initialCheckoutSelection.explicit);
-    const checkoutSelectionExplicit = initialCheckoutSelection.explicit || checkoutSelectionExplicitState;
-    const hasUserTouchedCheckoutSelectionRef = React.useRef(false);
+    const [checkoutSelectionState, setCheckoutSelectionState] = React.useState<NewSessionCheckoutSelection>(initialCheckoutSelection);
+    const hasLocalCheckoutSelectionAuthorityRef = React.useRef(false);
+    const effectiveCheckoutSelection = !hasLocalCheckoutSelectionAuthorityRef.current
+        && initialCheckoutSelection.explicitMode !== null
+        ? initialCheckoutSelection
+        : checkoutSelectionState;
+    const checkoutCreationDraft = effectiveCheckoutSelection.checkoutCreationDraft;
+    const checkoutSelectionExplicit = effectiveCheckoutSelection.explicitMode !== null;
+    const setCheckoutCreationDraft = React.useCallback<React.Dispatch<React.SetStateAction<NewSessionCheckoutCreationDraft | null>>>((next) => {
+        setCheckoutSelectionState((current) => ({
+            ...current,
+            checkoutCreationDraft: resolveCheckoutCreationDraftAction(next, current.checkoutCreationDraft),
+        }));
+    }, []);
     const setExplicitCheckoutCreationDraft = React.useCallback<React.Dispatch<React.SetStateAction<NewSessionCheckoutCreationDraft | null>>>((next) => {
-        hasUserTouchedCheckoutSelectionRef.current = true;
-        setCheckoutSelectionExplicit(true);
-        setCheckoutCreationDraft(next);
+        hasLocalCheckoutSelectionAuthorityRef.current = true;
+        setCheckoutSelectionState((current) => {
+            const checkoutCreationDraft = resolveCheckoutCreationDraftAction(next, current.checkoutCreationDraft);
+            return {
+                checkoutCreationDraft,
+                explicitMode: checkoutCreationDraft ? 'git_worktree' : 'current_path',
+            };
+        });
     }, []);
     const hasAppliedCheckoutDraftEffectRef = React.useRef(false);
     const shouldReconcileInitialHydratedCheckoutCreationDraftRef = React.useRef(initialCheckoutSelection.checkoutCreationDraft !== null);
@@ -58,15 +80,14 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
             hasAppliedCheckoutDraftEffectRef.current = true;
             return;
         }
-        if (hasUserTouchedCheckoutSelectionRef.current) {
+        if (hasLocalCheckoutSelectionAuthorityRef.current) {
             return;
         }
         shouldReconcileInitialHydratedCheckoutCreationDraftRef.current = false;
-        setCheckoutCreationDraft(initialCheckoutSelection.checkoutCreationDraft);
-        setCheckoutSelectionExplicit(initialCheckoutSelection.explicit);
+        setCheckoutSelectionState(initialCheckoutSelection);
     }, [
         initialCheckoutSelection.checkoutCreationDraft,
-        initialCheckoutSelection.explicit,
+        initialCheckoutSelection.explicitMode,
     ]);
 
     const checkoutChipModel = React.useMemo(() => {
@@ -115,6 +136,7 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
             return;
         }
         previousSelectionKeyRef.current = selectionKey;
+        hasLocalCheckoutSelectionAuthorityRef.current = true;
         if (checkoutCreationDraft === null) {
             return;
         }
@@ -123,9 +145,9 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
     }, [checkoutCreationDraft, params.selectedMachineId, params.selectedPath]);
 
     React.useEffect(() => {
-        if (checkoutSelectionExplicit || params.repoScmSnapshot === null || checkoutCreationDraft !== null) return;
+        if (params.repoScmSnapshot === null || checkoutCreationDraft !== null) return;
         if (
-            params.defaultCheckoutMode !== 'git_worktree'
+            (effectiveCheckoutSelection.explicitMode ?? params.defaultCheckoutMode) !== 'git_worktree'
             || params.repoScmSnapshot.repo.isRepo !== true
             || params.repoScmSnapshot.repo.backendId !== 'git'
         ) {
@@ -140,7 +162,7 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
         });
     }, [
         checkoutCreationDraft,
-        checkoutSelectionExplicit,
+        effectiveCheckoutSelection.explicitMode,
         params.defaultCheckoutMode,
         params.repoScmSnapshot,
         params.selectedMachineId,

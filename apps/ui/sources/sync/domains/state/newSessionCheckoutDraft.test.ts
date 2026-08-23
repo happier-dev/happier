@@ -97,7 +97,7 @@ describe('parseNewSessionCheckoutDraft', () => {
             },
         )).toEqual({
             checkoutCreationDraft: null,
-            explicit: true,
+            explicitMode: 'current_path',
         });
     });
 
@@ -119,7 +119,7 @@ describe('parseNewSessionCheckoutDraft', () => {
                 baseRef: 'main',
                 branchMode: 'new',
             },
-            explicit: true,
+            explicitMode: 'git_worktree',
         });
     });
 });

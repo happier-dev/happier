@@ -835,7 +835,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             selectedMachineId,
             selectedPath,
             ...(entryIntent ? { entryIntent } : {}),
-            ...(checkoutSelection.explicit
+            ...(checkoutSelection.explicitMode !== null
                 ? { checkoutCreationDraft: checkoutSelection.checkoutCreationDraft }
                 : {}),
             selectedProfileId,
