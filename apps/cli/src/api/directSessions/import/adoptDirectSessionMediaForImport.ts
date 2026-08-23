@@ -76,30 +76,35 @@ async function adoptDirectSessionMediaEnvelope(params: Readonly<{
       continue;
     }
 
-    const result = await persistSessionMediaItem({
-      workingDirectory: params.workingDirectory,
-      pathAllowanceRegistry,
-      input: {
-        sessionId: params.sessionId,
-        messageLocalId: params.messageLocalId,
-        role: readMediaRole(mediaRecord.role),
-        category: readMediaCategory(mediaRecord.category),
-        source: path.startsWith('file://')
-          ? {
-              kind: 'local-uri',
-              uri: path,
-              ...(readString(mediaRecord.mimeType) ? { mimeType: readString(mediaRecord.mimeType)! } : {}),
-              ...(readString(mediaRecord.name) ? { suggestedName: readString(mediaRecord.name)! } : {}),
-            }
-          : {
-              kind: 'local-file',
-              path,
-              ...(readString(mediaRecord.mimeType) ? { mimeType: readString(mediaRecord.mimeType)! } : {}),
-              ...(readString(mediaRecord.name) ? { suggestedName: readString(mediaRecord.name)! } : {}),
-            },
-        origin: readMediaOrigin(mediaRecord.origin),
-      },
-    });
+    let result: Awaited<ReturnType<typeof persistSessionMediaItem>>;
+    try {
+      result = await persistSessionMediaItem({
+        workingDirectory: params.workingDirectory,
+        pathAllowanceRegistry,
+        input: {
+          sessionId: params.sessionId,
+          messageLocalId: params.messageLocalId,
+          role: readMediaRole(mediaRecord.role),
+          category: readMediaCategory(mediaRecord.category),
+          source: path.startsWith('file://')
+            ? {
+                kind: 'local-uri',
+                uri: path,
+                ...(readString(mediaRecord.mimeType) ? { mimeType: readString(mediaRecord.mimeType)! } : {}),
+                ...(readString(mediaRecord.name) ? { suggestedName: readString(mediaRecord.name)! } : {}),
+              }
+            : {
+                kind: 'local-file',
+                path,
+                ...(readString(mediaRecord.mimeType) ? { mimeType: readString(mediaRecord.mimeType)! } : {}),
+                ...(readString(mediaRecord.name) ? { suggestedName: readString(mediaRecord.name)! } : {}),
+              },
+          origin: readMediaOrigin(mediaRecord.origin),
+        },
+      });
+    } catch {
+      continue;
+    }
 
     if (result.success) {
       adoptedMedia.push(result.item);

@@ -6,7 +6,13 @@ import type { PiSessionEntry } from './piEntryContext';
 import { mapPiSessionToDirectMessages } from './mapPiSessionToDirectMessages';
 import { resolvePiDirectSessionFile } from './resolvePiDirectSessionFile';
 
-type PiBackwardCursorV1 = Readonly<{ v: 1; kind: 'piBackward'; endExclusive: number; boundaryItemId?: string | null }>;
+type PiBackwardCursorV1 = Readonly<{
+  v: 1;
+  kind: 'piBackward';
+  endExclusive: number;
+  boundaryItemId?: string | null;
+  headItemId?: string | null;
+}>;
 export type PiForwardCursorV1 = Readonly<{
   v: 1;
   kind: 'piForward';
@@ -28,7 +34,8 @@ function decodeBackwardCursor(raw: string | undefined): PiBackwardCursorV1 | nul
     const endExclusive = typeof value.endExclusive === 'number' && Number.isFinite(value.endExclusive) ? value.endExclusive : NaN;
     if (!Number.isFinite(endExclusive) || endExclusive < 0) return null;
     const boundaryItemId = typeof value.boundaryItemId === 'string' && value.boundaryItemId ? value.boundaryItemId : null;
-    return { v: 1, kind: 'piBackward', endExclusive: Math.trunc(endExclusive), boundaryItemId };
+    const headItemId = typeof value.headItemId === 'string' && value.headItemId ? value.headItemId : null;
+    return { v: 1, kind: 'piBackward', endExclusive: Math.trunc(endExclusive), boundaryItemId, headItemId };
   } catch {
     return null;
   }
@@ -191,13 +198,19 @@ export async function pagePiTranscript(params: Readonly<{
   // endExclusive, collected newest-first so byte-limit truncation cuts the OLDER end and the next
   // page's window begins exactly where this one stopped. This keeps pages gap-free, overlap-free,
   // and reconstructable into full chronological order even when maxBytes truncates below maxItems.
-  // The cursor also carries the boundary item id (the last item the NEXT page would deliver, i.e.
-  // items[endExclusive - 1]): if the live session switched its active branch between requests, the
-  // item at that index is no longer the item the caller last saw, and applying the bare index
-  // would silently skip or duplicate entries. On anchor mismatch the pager reports `truncated`
-  // with no items so the caller resets — mirroring readAfterPiTranscript's anchor check.
+  // The cursor carries both the boundary item id (the last item the NEXT page would deliver) and
+  // the original projected head. The boundary prevents index drift; the head prevents a branch
+  // switch above a still-shared boundary from combining an abandoned newer suffix with the current
+  // older prefix. Normal appends remain valid because the original head stays on the active branch.
+  // On either mismatch the caller resets, mirroring readAfterPiTranscript's anchor check.
   const decoded = decodeBackwardCursor(params.cursor);
-  if (decoded && decoded.boundaryItemId && items[decoded.endExclusive - 1]?.id !== decoded.boundaryItemId) {
+  const boundaryChanged = decoded?.boundaryItemId
+    ? items[decoded.endExclusive - 1]?.id !== decoded.boundaryItemId
+    : false;
+  const projectedHeadChanged = decoded?.headItemId
+    ? !items.some((item) => item.id === decoded.headItemId)
+    : false;
+  if (boundaryChanged || projectedHeadChanged) {
     return {
       items: [],
       nextCursor: null,
@@ -231,6 +244,7 @@ export async function pagePiTranscript(params: Readonly<{
       kind: 'piBackward',
       endExclusive: newEndExclusive,
       boundaryItemId: items[newEndExclusive - 1]?.id ?? null,
+      headItemId: decoded?.headItemId ?? items.at(-1)?.id ?? null,
     })
     : null;
 

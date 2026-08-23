@@ -14,6 +14,7 @@ export async function loadDirectSessionTranscriptItems(params: Readonly<{
   const pages: DirectTranscriptRawMessageV1[][] = [];
   const maxPages = params.maxPages ?? 10_000;
   let cursor: string | undefined;
+  let complete = false;
 
   for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
     const page = await params.readPage(cursor);
@@ -27,8 +28,15 @@ export async function loadDirectSessionTranscriptItems(params: Readonly<{
     if (page.items.length > 0) {
       pages.push(page.items.slice());
     }
-    if (!page.hasMore || !page.nextCursor) break;
+    if (!page.hasMore || !page.nextCursor) {
+      complete = true;
+      break;
+    }
     cursor = page.nextCursor;
+  }
+
+  if (!complete) {
+    throw new Error('Direct-session transcript paging exceeded its page budget');
   }
 
   const ordered: DirectTranscriptRawMessageV1[] = [];

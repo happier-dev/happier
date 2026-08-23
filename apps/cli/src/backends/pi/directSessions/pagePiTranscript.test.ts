@@ -227,9 +227,7 @@ describe('pagePiTranscript', () => {
     // transcript. The cursor carries the boundary item id (the item the next page would
     // deliver first); when the boundary item no longer sits at that position in the new
     // active branch, the pager must report truncated (caller resets), mirroring
-    // readAfterPiTranscript's anchor check. A shared-prefix divergence (boundary item
-    // still present at the same index) pages through the common ancestor correctly and
-    // is covered by the linear/tree suites above.
+    // readAfterPiTranscript's anchor check.
     const agentDir = freshAgentDir();
     // Branch A: m1 -> m2 -> m3 -> m4 (active). Page 1 delivers [m3, m4], cursor boundary = m2's successor position.
     const lines = [
@@ -261,5 +259,85 @@ describe('pagePiTranscript', () => {
     const second = await pagePiTranscript({ source, env, remoteSessionId: SESSION_ID, direction: 'older', cursor: first.nextCursor ?? undefined, maxBytes: 10_000, maxItems: 2 });
     expect(second.truncated).toBe(true);
     expect(second.items).toEqual([]);
+  });
+
+  it('signals truncation when the active branch changes above a shared older-page boundary', async () => {
+    const agentDir = freshAgentDir();
+    const branchA = [
+      header,
+      msg('m1', null, 'user', 'message one', '2024-12-03T14:00:01.000Z'),
+      msg('m2', 'm1', 'assistant', 'message two', '2024-12-03T14:00:02.000Z'),
+      msg('a3', 'm2', 'assistant', 'branch A three', '2024-12-03T14:00:03.000Z'),
+      msg('a4', 'a3', 'assistant', 'branch A four', '2024-12-03T14:00:04.000Z'),
+    ];
+    const { source, env } = writeSession(agentDir, branchA);
+
+    const first = await pagePiTranscript({
+      source,
+      env,
+      remoteSessionId: SESSION_ID,
+      direction: 'older',
+      maxBytes: 10_000,
+      maxItems: 2,
+    });
+    expect(first.items.map((item) => item.id).map((id) => id.slice(-2))).toEqual(['a3', 'a4']);
+    expect(first.nextCursor).toBeTruthy();
+
+    writeSession(agentDir, [
+      header,
+      msg('m1', null, 'user', 'message one', '2024-12-03T14:00:01.000Z'),
+      msg('m2', 'm1', 'assistant', 'message two', '2024-12-03T14:00:02.000Z'),
+      msg('b3', 'm2', 'assistant', 'branch B three', '2024-12-03T14:00:03.000Z'),
+      msg('b4', 'b3', 'assistant', 'branch B four', '2024-12-03T14:00:04.000Z'),
+    ]);
+
+    const second = await pagePiTranscript({
+      source,
+      env,
+      remoteSessionId: SESSION_ID,
+      direction: 'older',
+      cursor: first.nextCursor ?? undefined,
+      maxBytes: 10_000,
+      maxItems: 2,
+    });
+    expect(second.truncated).toBe(true);
+    expect(second.items).toEqual([]);
+  });
+
+  it('keeps paging the original snapshot when the active branch only appends', async () => {
+    const agentDir = freshAgentDir();
+    const initial = [
+      header,
+      msg('m1', null, 'user', 'message one', '2024-12-03T14:00:01.000Z'),
+      msg('m2', 'm1', 'assistant', 'message two', '2024-12-03T14:00:02.000Z'),
+      msg('m3', 'm2', 'assistant', 'message three', '2024-12-03T14:00:03.000Z'),
+      msg('m4', 'm3', 'assistant', 'message four', '2024-12-03T14:00:04.000Z'),
+    ];
+    const { source, env } = writeSession(agentDir, initial);
+    const first = await pagePiTranscript({
+      source,
+      env,
+      remoteSessionId: SESSION_ID,
+      direction: 'older',
+      maxBytes: 10_000,
+      maxItems: 2,
+    });
+
+    writeSession(agentDir, [
+      ...initial,
+      msg('m5', 'm4', 'user', 'message five', '2024-12-03T14:00:05.000Z'),
+    ]);
+    const second = await pagePiTranscript({
+      source,
+      env,
+      remoteSessionId: SESSION_ID,
+      direction: 'older',
+      cursor: first.nextCursor ?? undefined,
+      maxBytes: 10_000,
+      maxItems: 2,
+    });
+
+    expect(second.truncated).not.toBe(true);
+    expect(second.items.map((item) => item.id).map((id) => id.slice(-2))).toEqual(['m1', 'm2']);
   });
 });
