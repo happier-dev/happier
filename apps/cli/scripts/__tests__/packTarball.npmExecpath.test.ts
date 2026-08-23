@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -6,18 +6,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTempDirSync } from '../../src/testkit/fs/tempDir';
 import { packTarball } from '../packTarball.mjs';
 
-const noopPackageDistWrite = () => undefined;
-const fakePackageDistFs = {
-  cpSync: noopPackageDistWrite,
-  mkdirSync: noopPackageDistWrite,
-  renameSync: noopPackageDistWrite,
-  rmSync: noopPackageDistWrite,
-};
+function createPackageRoot(): string {
+  const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+  mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+  return packageRoot;
+}
 
 describe('packTarball (npmExecpath)', () => {
   it('ignores non-npm npm_execpath values (e.g. yarn) and uses npm on PATH', () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
-    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const packageRoot = createPackageRoot();
     const tarballName = 'artifact.tgz';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
@@ -28,8 +26,7 @@ describe('packTarball (npmExecpath)', () => {
       destDir,
       npmExecpath: '/somewhere/yarn.js',
       spawnSync: spawn,
-      existsSync: () => true,
-      ...fakePackageDistFs,
+      existsSync,
       env: {},
     });
 
@@ -42,7 +39,7 @@ describe('packTarball (npmExecpath)', () => {
 
   it('uses node + npm-cli.js on Windows when npm_execpath points to a non-npm runner', () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
-    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const packageRoot = createPackageRoot();
     const tarballName = 'artifact.tgz';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
@@ -60,9 +57,8 @@ describe('packTarball (npmExecpath)', () => {
       existsSync: (targetPath) => {
         const normalized = String(targetPath).replaceAll('\\', '/').toLowerCase();
         const normalizedNpmCli = npmCliPath.replaceAll('\\', '/').toLowerCase();
-        return normalized === normalizedNpmCli || normalized.endsWith(`/${tarballName}`) || normalized.endsWith('/dist');
+        return existsSync(targetPath) || normalized === normalizedNpmCli;
       },
-      ...fakePackageDistFs,
       env: {},
     });
 
@@ -75,7 +71,7 @@ describe('packTarball (npmExecpath)', () => {
 
   it('falls back to npm.cmd on Windows when npm-cli.js cannot be resolved from node.exe', () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
-    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const packageRoot = createPackageRoot();
     const tarballName = 'artifact.tgz';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
@@ -88,11 +84,7 @@ describe('packTarball (npmExecpath)', () => {
       platform: 'win32',
       processExecPath: 'C:\\Program Files\\nodejs\\node.exe',
       spawnSync: spawn,
-      existsSync: (targetPath) => {
-        const normalized = String(targetPath).replaceAll('\\', '/').toLowerCase();
-        return normalized.endsWith(`/${tarballName}`) || normalized.endsWith('/dist');
-      },
-      ...fakePackageDistFs,
+      existsSync,
       env: {},
     });
 
@@ -105,7 +97,7 @@ describe('packTarball (npmExecpath)', () => {
 
   it('uses node + npm-cli.js on Windows when npm_execpath is missing', () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
-    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const packageRoot = createPackageRoot();
     const tarballName = 'artifact.tgz';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
@@ -123,9 +115,8 @@ describe('packTarball (npmExecpath)', () => {
       existsSync: (targetPath) => {
         const normalized = String(targetPath).replaceAll('\\', '/').toLowerCase();
         const normalizedNpmCli = npmCliPath.replaceAll('\\', '/').toLowerCase();
-        return normalized === normalizedNpmCli || normalized.endsWith(`/${tarballName}`) || normalized.endsWith('/dist');
+        return existsSync(targetPath) || normalized === normalizedNpmCli;
       },
-      ...fakePackageDistFs,
       env: {},
     });
 
@@ -138,7 +129,7 @@ describe('packTarball (npmExecpath)', () => {
 
   it('uses node + npm-cli.js when npm_execpath points at npm-cli.js', () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
-    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const packageRoot = createPackageRoot();
     const tarballName = 'artifact.tgz';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
@@ -150,8 +141,7 @@ describe('packTarball (npmExecpath)', () => {
       destDir,
       npmExecpath: npmCliPath,
       spawnSync: spawn,
-      existsSync: () => true,
-      ...fakePackageDistFs,
+      existsSync,
       env: {},
     });
 
@@ -164,7 +154,7 @@ describe('packTarball (npmExecpath)', () => {
 
   it('parses npm pack --json output even when prepack logs are mixed into stdout', () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
-    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const packageRoot = createPackageRoot();
     const tarballName = 'artifact.tgz';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
@@ -187,8 +177,7 @@ describe('packTarball (npmExecpath)', () => {
       destDir,
       npmInvocation: { command: 'npm', args: [] },
       spawnSync: spawn,
-      existsSync: () => true,
-      ...fakePackageDistFs,
+      existsSync,
       env: {},
     });
 
@@ -198,7 +187,7 @@ describe('packTarball (npmExecpath)', () => {
 
   it('applies a bounded timeout to npm pack invocations to prevent indefinite hangs', () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
-    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const packageRoot = createPackageRoot();
     const tarballName = 'artifact.tgz';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
@@ -208,8 +197,7 @@ describe('packTarball (npmExecpath)', () => {
       packageRoot,
       destDir,
       spawnSync: spawn,
-      existsSync: () => true,
-      ...fakePackageDistFs,
+      existsSync,
       env: {
         HAPPIER_CLI_PACK_TARBALL_TIMEOUT_MS: '123456',
       },
@@ -226,7 +214,7 @@ describe('packTarball (npmExecpath)', () => {
 
   it('does not mask incomplete package-dist filesystem adapters', () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
-    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const packageRoot = createPackageRoot();
     const tarballName = 'artifact.tgz';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
