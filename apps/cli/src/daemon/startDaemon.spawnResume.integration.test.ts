@@ -2804,7 +2804,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
-  it('waits for a stop-requested tracked runner to be observed exited before stop returns', async () => {
+  it('observes an already-missing tracked runner before stop attempts signaling', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
     process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
@@ -2841,6 +2841,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       const stopSessionModule = await import('./sessions/stopSession');
       vi.mocked(stopSessionModule.createStopSession).mockImplementation(({
         pidToTrackedSession,
+        areTrackedRunnersExited,
         waitForTrackedRunnersExit,
         loadTerminalHostAdapters: injectedLoadTerminalHostAdapters,
       }) => {
@@ -2852,6 +2853,12 @@ describe('startDaemon spawn resume wiring (integration)', () => {
               trackedSession.stopRequestedAtMs = Date.now();
               trackedPids.push(trackedSession.pid);
             }
+          }
+          if (!areTrackedRunnersExited) {
+            throw new Error('Expected exact pre-signal runner exit observation');
+          }
+          if (await areTrackedRunnersExited({ sessionId, trackedPids })) {
+            return { status: 'stopped' as const };
           }
           const exited = await waitForTrackedRunnersExit?.({ sessionId, trackedPids });
           return exited
@@ -2875,9 +2882,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
 
       await expect(stopSession('sess-stop-6480')).resolves.toEqual({ status: 'stopped' });
 
-      expect(waitForExitSpy).toHaveBeenCalledWith(expect.objectContaining({
-        sessionId: 'sess-stop-6480',
-      }));
+      expect(waitForExitSpy).not.toHaveBeenCalled();
       expect(onChildExitedSpy).toHaveBeenCalledWith(6480, {
         reason: 'process-missing',
         code: null,
