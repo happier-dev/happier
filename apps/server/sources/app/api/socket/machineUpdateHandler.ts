@@ -9,6 +9,7 @@ import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { recordMachineAlive } from "@/app/presence/presenceRecorder";
 import {
+    ActionOperationRevisionEphemeralV1Schema,
     DirectSessionTranscriptDeltaEphemeralSchema,
     MachineUpdateMetadataRequestSchema,
     type MachineUpdateMetadataResponse,
@@ -150,6 +151,24 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
             });
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in direct-session-transcript-delta handler: ${error}`);
+        }
+    });
+
+    socket.on('action-operation-updated', async (data: unknown) => {
+        try {
+            websocketEventsCounter.inc({ event_type: 'action-operation-updated' });
+            const machineId = readAuthenticatedMachineId(socket);
+            if (!machineId) return;
+            const parsed = ActionOperationRevisionEphemeralV1Schema.safeParse(data);
+            if (!parsed.success || parsed.data.machineId !== machineId) return;
+
+            eventRouter.emitEphemeral({
+                userId,
+                payload: parsed.data,
+                recipientFilter: { type: 'user-scoped-only' },
+            });
+        } catch (error) {
+            log({ module: 'websocket', level: 'error' }, `Error in action-operation-updated handler: ${error}`);
         }
     });
 

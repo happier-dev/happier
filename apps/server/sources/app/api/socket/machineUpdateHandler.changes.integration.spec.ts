@@ -340,4 +340,40 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
 
         expect(emitEphemeral).not.toHaveBeenCalled();
     });
+
+    it("routes opaque encrypted action-operation revisions to account-scoped UI sockets", async () => {
+        const { machineUpdateHandler } = await import("./machineUpdateHandler");
+        const socket = createFakeSocket({
+            data: { clientType: "machine-scoped", machineId: "m1" },
+        });
+        machineUpdateHandler("u1", socket as any);
+        const handler = getSocketHandler(socket, "action-operation-updated");
+        const payload = {
+            type: "action-operation-updated",
+            machineId: "m1",
+            content: { t: "encrypted", c: "opaque-ciphertext" },
+        };
+
+        await handler(payload);
+
+        expect(emitEphemeral).toHaveBeenCalledWith({
+            userId: "u1",
+            payload,
+            recipientFilter: { type: "user-scoped-only" },
+        });
+    });
+
+    it("rejects malformed, spoofed, and non-machine action-operation revisions", async () => {
+        const { machineUpdateHandler } = await import("./machineUpdateHandler");
+        for (const [data, payload] of [
+            [{ clientType: "machine-scoped", machineId: "m1" }, { type: "action-operation-updated", machineId: "m2", content: { t: "encrypted", c: "opaque" } }],
+            [{ clientType: "machine-scoped", machineId: "m1" }, { type: "action-operation-updated", machineId: "m1", content: { t: "plain", v: {} } }],
+            [{ clientType: "user-scoped" }, { type: "action-operation-updated", machineId: "m1", content: { t: "encrypted", c: "opaque" } }],
+        ] as const) {
+            const socket = createFakeSocket({ data });
+            machineUpdateHandler("u1", socket as any);
+            await getSocketHandler(socket, "action-operation-updated")(payload);
+        }
+        expect(emitEphemeral).not.toHaveBeenCalled();
+    });
 });

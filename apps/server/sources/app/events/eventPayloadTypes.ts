@@ -1,6 +1,7 @@
 import { Socket } from "socket.io";
 import type { LinkedProvider } from "@/app/auth/providers/linkedProviders";
 import type {
+    ActionOperationRevisionEphemeralV1,
     DirectSessionTranscriptDeltaEphemeral,
     ExecutionRunPublicState,
     PrimaryTurnStatusV1,
@@ -336,7 +337,7 @@ export type EphemeralEvent = {
         createdAt: number;
         updatedAt: number;
     };
-} | DirectSessionTranscriptDeltaEphemeral | {
+} | DirectSessionTranscriptDeltaEphemeral | ActionOperationRevisionEphemeralV1 | {
     type: 'machine-activity';
     id: string;
     active: boolean;
