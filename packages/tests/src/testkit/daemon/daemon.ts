@@ -722,7 +722,7 @@ export async function startTestDaemon(params: {
 
   let state: DaemonState;
   try {
-    const startupTimeoutMs = params.startupTimeoutMs ?? 45_000;
+    const startupTimeoutMs = phaseTimeoutMs;
     const exitStateGraceTimeoutMs = Math.min(startupTimeoutMs, 10_000);
     state = await runDaemonStartupPhase(
       'waitForDaemonState',

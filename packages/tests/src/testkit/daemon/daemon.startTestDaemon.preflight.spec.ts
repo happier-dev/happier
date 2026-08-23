@@ -360,6 +360,46 @@ describe('startTestDaemon', () => {
     }
   });
 
+  it('uses the configured daemon startup phase timeout while waiting for daemon state', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-state-phase-timeout-'));
+    const homeDir = resolve(testDir, 'home');
+
+    try {
+      const fakeScriptDir = resolve(testDir, 'fake-daemon', 'dist');
+      await mkdir(fakeScriptDir, { recursive: true });
+      await mkdir(homeDir, { recursive: true });
+      await writeHoldingDaemonScript(resolve(fakeScriptDir, 'index.mjs'), { writesState: false });
+
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: [resolve(fakeScriptDir, 'index.mjs')],
+        cwd: testDir,
+        env: {},
+      });
+
+      const result = await Promise.race([
+        startTestDaemon({
+          testDir,
+          happyHomeDir: homeDir,
+          env: {
+            HAPPIER_E2E_DAEMON_STARTUP_PHASE_TIMEOUT_MS: '5000',
+          },
+        }).then(
+          () => 'started',
+          (error: unknown) => error,
+        ),
+        new Promise<'still-pending'>((resolvePending) => setTimeout(() => resolvePending('still-pending'), 15_000)),
+      ]);
+
+      expect(result).toBeInstanceOf(Error);
+      expect(String((result as Error).message)).toContain('phase=waitForDaemonState');
+      expect(String((result as Error).message)).toContain('timeoutMs=5000');
+      expect(String((result as Error).message)).toContain('daemonStateExists=no');
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
   it('lets launch-spec resolution use the cli dist build timeout by default', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-launch-spec-build-budget-'));
     const homeDir = resolve(testDir, 'home');

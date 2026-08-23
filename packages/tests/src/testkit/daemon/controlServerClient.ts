@@ -95,7 +95,9 @@ export async function resolveDaemonSpawnSessionId(params: Readonly<{
         path: '/spawn-session/resolve',
         controlToken: params.controlToken,
         body: { spawnNonce: nonce },
-        timeoutMs: Math.min(5_000, remainingTimeoutMs),
+        timeoutMs: remainingTimeoutMs === undefined
+          ? undefined
+          : Math.min(5_000, remainingTimeoutMs),
       });
       if (resolved.status !== 200 || resolved.data.success !== true) {
         throw new Error(`spawn-session/resolve failed (status=${resolved.status})`);
