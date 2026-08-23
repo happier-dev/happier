@@ -521,3 +521,130 @@ const POINTER_PLATFORMS: ReadonlySet<string> = new Set<HappierPointerPlatform>([
 export function resolveHappierPointerPlatform(platformOs: string): HappierPointerPlatform {
   return POINTER_PLATFORMS.has(platformOs) ? platformOs as HappierPointerPlatform : 'web';
 }
+
+/** Everything a consumer may ask the selection to do. */
+export type HappierListMultiSelectionActions = Readonly<{
+  /** Turn selection mode on, optionally with one row already chosen. */
+  enter: (preselectKey?: HappierListMultiSelectionKey | null) => void;
+  exit: () => void;
+  clear: () => void;
+  replaceWith: (key: HappierListMultiSelectionKey) => void;
+  toggle: (key: HappierListMultiSelectionKey) => void;
+  selectRange: (targetKey: HappierListMultiSelectionKey) => void;
+  addRange: (targetKey: HappierListMultiSelectionKey) => void;
+  selectAllVisible: () => void;
+  setSelectedKeys: (keys: readonly HappierListMultiSelectionKey[]) => void;
+  setFocusedKey: (key: HappierListMultiSelectionKey | null) => void;
+  isSelected: (key: HappierListMultiSelectionKey) => boolean;
+}>;
+
+export type HappierListMultiSelectionRowsInput = Readonly<{
+  visibleOrderedKeys: readonly HappierListMultiSelectionKey[];
+  eligibleKeys?: readonly HappierListMultiSelectionKey[] | ReadonlySet<HappierListMultiSelectionKey> | null;
+}>;
+
+export type HappierListMultiSelectionStore = HappierListMultiSelectionActions & Readonly<{
+  getSnapshot: () => HappierListMultiSelectionSnapshot;
+  /** A row's three facts as one primitive, so a row re-renders only on its own change. */
+  getRowSnapshot: (key: HappierListMultiSelectionKey) => string;
+  subscribe: (listener: () => void) => () => void;
+  /**
+   * The rows the collection currently shows, in traversal order.
+   *
+   * The MOUNTED COLLECTION owns this call. Only it can see the rows its
+   * virtualizer has not mounted, which is what makes range extension and
+   * select-all agree with what the reader can actually reach. A consumer that
+   * has no such collection supplies rows through `updateScope` instead; the two
+   * are mutually exclusive by construction, never two writers.
+   */
+  setVisibleRows: (params: HappierListMultiSelectionRowsInput) => void;
+  /** A new scope clears the selection; the same scope only re-syncs the rows. */
+  updateScope: (params: HappierListMultiSelectionRowsInput & Readonly<{ scopeKey: string }>) => void;
+}>;
+
+/**
+ * The row primitive a store with no selection reports: not in selection mode,
+ * not selected, not the selection cursor. It is a named constant rather than a
+ * literal at each inert call site so the format has exactly one author.
+ */
+export const HAPPIER_LIST_MULTI_SELECTION_INERT_ROW_SNAPSHOT = '0:0:0';
+
+export const HAPPIER_LIST_MULTI_SELECTION_INERT_SNAPSHOT: HappierListMultiSelectionSnapshot = Object.freeze({
+  isSelectionMode: false,
+  selectedKeys: new Set<HappierListMultiSelectionKey>(),
+  anchorKey: null,
+  focusedKey: null,
+  visibleOrderedKeys: [],
+  eligibleKeys: new Set<HappierListMultiSelectionKey>(),
+  scopeKey: '',
+  version: 0,
+  count: 0,
+});
+
+/** The one derived fact, added where the state is committed rather than at each reader. */
+export function toHappierListMultiSelectionSnapshot(
+  state: HappierListMultiSelectionState,
+): HappierListMultiSelectionSnapshot {
+  return { ...state, count: state.selectedKeys.size };
+}
+
+/**
+ * The subscribable store over the reducer above.
+ *
+ * It is React-free on purpose: `apps/ui`'s sessions list and this package's
+ * `List` capability both bind it, and putting it beside the state machine is
+ * what keeps the snapshot shape, the row primitive and the version rule one
+ * answer rather than one per consumer.
+ */
+export function createHappierListMultiSelectionStore(
+  input: CreateHappierListMultiSelectionStateInput,
+): HappierListMultiSelectionStore {
+  const listeners = new Set<() => void>();
+  let state = createInitialHappierListMultiSelectionState(input);
+  let snapshot = toHappierListMultiSelectionSnapshot(state);
+
+  const dispatch = (action: HappierListMultiSelectionAction) => {
+    const nextState = reduceHappierListMultiSelection(state, action);
+    if (nextState === state) return;
+    state = nextState;
+    snapshot = toHappierListMultiSelectionSnapshot(state);
+    for (const listener of listeners) listener();
+  };
+
+  return {
+    getSnapshot: () => snapshot,
+    getRowSnapshot: (key) => [
+      state.isSelectionMode ? '1' : '0',
+      state.selectedKeys.has(key) ? '1' : '0',
+      state.focusedKey === key ? '1' : '0',
+    ].join(':'),
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    setVisibleRows: (params) => dispatch({
+      type: 'setVisibleOrder',
+      visibleOrderedKeys: params.visibleOrderedKeys,
+      eligibleKeys: params.eligibleKeys,
+    }),
+    updateScope: (params) => dispatch({
+      type: 'resetScope',
+      scopeKey: params.scopeKey,
+      visibleOrderedKeys: params.visibleOrderedKeys,
+      eligibleKeys: params.eligibleKeys,
+    }),
+    enter: (preselectKey) => dispatch({ type: 'enter', key: preselectKey }),
+    exit: () => dispatch({ type: 'exit' }),
+    clear: () => dispatch({ type: 'clear' }),
+    replaceWith: (key) => dispatch({ type: 'replace', key }),
+    toggle: (key) => dispatch({ type: 'toggle', key }),
+    selectRange: (targetKey) => dispatch({ type: 'selectRange', targetKey }),
+    addRange: (targetKey) => dispatch({ type: 'selectRange', targetKey, add: true }),
+    selectAllVisible: () => dispatch({ type: 'selectAllVisible' }),
+    setSelectedKeys: (keys) => dispatch({ type: 'setSelectedKeys', keys }),
+    setFocusedKey: (key) => dispatch({ type: 'setFocusedKey', key }),
+    isSelected: (key) => state.selectedKeys.has(key),
+  };
+}
