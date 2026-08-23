@@ -7,7 +7,7 @@ import { resolveForkInheritedOverridesFromMetadata } from './resolveForkInherite
 describe('resolveForkInheritedOverridesFromMetadata', () => {
   it('returns spawn seeds plus metadata overrides for valid parent overrides', () => {
     const result = resolveForkInheritedOverridesFromMetadata({
-      name: 'Migrate Hermes Lite to Happier',
+      name: '  Migrate Hermes Lite to Happier  ',
       permissionMode: 'yolo',
       permissionModeUpdatedAt: 123,
       modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'gpt-test' },
@@ -229,6 +229,7 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
 
   it('ignores invalid or cleared values while preserving valid override objects', () => {
     const result = resolveForkInheritedOverridesFromMetadata({
+      name: '   ',
       permissionMode: 'not-a-mode',
       permissionModeUpdatedAt: 123,
       modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'default' },
