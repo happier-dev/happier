@@ -395,6 +395,20 @@ describe('getPendingMessageVisualState', () => {
 
         expect(getPendingMessageVisualState(pendingMessage({
             pendingDeliveryStatus: 'blocked',
+            pendingDeliveryBlockedReason: 'conditional_steer_unavailable',
+        }))).toEqual({
+            kind: 'blocked',
+            showSpinner: false,
+            iconName: 'warning-circle',
+            deliveryBlockedReason: 'conditional_steer_unavailable',
+            deliveryBlockedPresentation: {
+                labelKey: 'session.pendingMessages.deliveryBlockedReasons.steeringUnavailable',
+                isUnknown: false,
+            },
+        });
+
+        expect(getPendingMessageVisualState(pendingMessage({
+            pendingDeliveryStatus: 'blocked',
             pendingDeliveryBlockedReason: 'unknown',
             pendingDeliveryBlockedReasonRaw: 'newer_runtime_reason',
         }))).toEqual({
