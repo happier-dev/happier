@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 
 import { createActionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { selectActionOperationObservationForOperation } from '@/sync/domains/actionOperations/actionOperationSelectors';
 
 import { refreshActionOperationDetail } from './openActionOperationDetail';
 
@@ -44,6 +45,7 @@ describe('action operation detail reopen', () => {
         });
 
         expect(store.getState().operationsById.get(lightweight.operationId)).toBe(lightweight);
-        expect(Array.from(store.getState().observationByScope.values())).toEqual(['status_unavailable']);
+        expect(Array.from(store.getState().observationByScope.values())).toEqual(['available']);
+        expect(selectActionOperationObservationForOperation(store.getState(), lightweight)).toBe('status_unavailable');
     });
 });
