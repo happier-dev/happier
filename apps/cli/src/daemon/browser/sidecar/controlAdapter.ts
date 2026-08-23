@@ -1,8 +1,9 @@
-import type {
-    BrowserCommandDispatchResultV1,
-    BrowserCommandErrorCodeV1,
-    BrowserCommandV1,
-    BrowserSidecarErrorCodeV1,
+import {
+    browserViewKey,
+    type BrowserCommandDispatchResultV1,
+    type BrowserCommandErrorCodeV1,
+    type BrowserCommandV1,
+    type BrowserSidecarErrorCodeV1,
 } from '@happier-dev/protocol';
 
 import {
@@ -135,10 +136,6 @@ type BoundView = BrowserSidecarCdpPageHandle & Readonly<{
     viewId: string;
 }>;
 
-function viewKey(input: Readonly<{ browserSessionId: string; viewId: string }>): string {
-    return `${input.browserSessionId}\u0000${input.viewId}`;
-}
-
 function dispatched(command: BrowserCommandV1): BrowserCommandDispatchResultV1 {
     return {
         v: 1,
@@ -216,7 +213,7 @@ export function createBrowserSidecarCdpControlAdapter(
 
     function readBoundView(command: Extract<BrowserCommandV1, { browserSessionId: string; viewId: string }>): BoundView | null {
         if (!isOwnedSession(command, input.browserSessionId)) return null;
-        return boundViews.get(viewKey(command)) ?? null;
+        return boundViews.get(browserViewKey(command)) ?? null;
     }
 
     async function dispatchPage(
@@ -288,7 +285,7 @@ export function createBrowserSidecarCdpControlAdapter(
                 params: { targetId: boundView.targetId },
             });
             if (command.kind === 'closeView') {
-                boundViews.delete(viewKey(command));
+                boundViews.delete(browserViewKey(command));
                 emitLifecycle({
                     type: 'unbound',
                     browserSessionId: command.browserSessionId,
@@ -311,7 +308,7 @@ export function createBrowserSidecarCdpControlAdapter(
         },
         resolvePageHandle(view) {
             if (view.browserSessionId !== input.browserSessionId) return null;
-            const bound = boundViews.get(viewKey(view));
+            const bound = boundViews.get(browserViewKey(view));
             if (!bound) return null;
             return {
                 targetId: bound.targetId,
@@ -319,7 +316,7 @@ export function createBrowserSidecarCdpControlAdapter(
             };
         },
         ownsView(ownerInput) {
-            return ownerInput.browserSessionId === input.browserSessionId && boundViews.has(viewKey(ownerInput));
+            return ownerInput.browserSessionId === input.browserSessionId && boundViews.has(browserViewKey(ownerInput));
         },
         supportsOpenView(command) {
             return supportsOpenViewCommand(command, input.browserSessionId);
@@ -338,7 +335,7 @@ export function createBrowserSidecarCdpControlAdapter(
                             url: command.target.url,
                             focus: command.focus ?? true,
                         });
-                        boundViews.set(viewKey(command), {
+                        boundViews.set(browserViewKey(command), {
                             browserSessionId: command.browserSessionId,
                             viewId: command.viewId,
                             targetId: page.targetId,

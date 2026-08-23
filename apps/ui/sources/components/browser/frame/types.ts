@@ -112,6 +112,20 @@ export type BrowserFrameNavigationCommand = Readonly<{
     kind: 'goBack' | 'goForward' | 'reload' | 'stop';
 }>;
 
+/**
+ * An engine's own navigation snapshot, normalized at the engine boundary. Carries the back/forward
+ * history flags the control reducer has no other producer for (G4); the adapter forwards it
+ * verbatim as a `navigationStateChanged` lifecycle signal. Only engines with real history truth
+ * report it — a sandboxed cross-origin iframe cannot read its guest's history and never does.
+ */
+export type BrowserFrameNavigationState = Readonly<{
+    url?: string | null;
+    title?: string | null;
+    loading: boolean;
+    canGoBack: boolean;
+    canGoForward: boolean;
+}>;
+
 export type WebIframeEngineConfig = Readonly<{
     kind: 'webIframe';
     title: string;
@@ -154,6 +168,7 @@ export type NativeWebViewEngineConfig = Readonly<{
     onLoadStart?: () => void;
     onLoadEnd?: () => void;
     onError?: () => void;
+    onNavigationStateChange?: (navigationState: BrowserFrameNavigationState) => void;
     onBlockedNavigation?: (url: string) => void;
     diagnostics?: BrowserDiagnosticsEngineBridgeConfig;
     automation?: BrowserAutomationEngineBridgeConfig;

@@ -278,6 +278,8 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'browser.automation.focus',
     'browser.automation.select',
     'browser.automation.setValue',
+    'browser.automation.upload',
+    'browser.automation.drag',
   ],
   browser_recording: [
     'browser.recording.start',

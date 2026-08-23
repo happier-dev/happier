@@ -1,7 +1,8 @@
-import type {
-    BrowserAdapterCapabilitiesV1,
-    BrowserDiagnosticFamilyV1,
-    BrowserDiagnosticUnavailableReasonV1,
+import {
+    browserViewKey,
+    type BrowserAdapterCapabilitiesV1,
+    type BrowserDiagnosticFamilyV1,
+    type BrowserDiagnosticUnavailableReasonV1,
 } from '@happier-dev/protocol';
 
 import type { BrowserDiagnosticsDaemonStore } from '../../diagnostics/store';
@@ -96,11 +97,7 @@ const DEFAULT_SIDECAR_CDP_DIAGNOSTIC_FAMILIES: readonly BrowserDiagnosticFamilyV
 ];
 
 function bindingKey(input: Readonly<{ browserSessionId: string; viewId: string; sourceId: string }>): string {
-    return `${input.browserSessionId}\u0000${input.viewId}\u0000${input.sourceId}`;
-}
-
-function viewKey(input: OrdinalTarget): string {
-    return `${input.browserSessionId}\u0000${input.viewId}`;
+    return browserViewKey(input, input.sourceId);
 }
 
 function uniqueFamilies(families: readonly BrowserDiagnosticFamilyV1[]): readonly BrowserDiagnosticFamilyV1[] {
@@ -206,7 +203,7 @@ export function createBrowserSidecarDiagnosticsEventSourceBridge(input: Readonly
     });
 
     function nextOrdinal(target: OrdinalTarget): number {
-        const key = viewKey(target);
+        const key = browserViewKey(target);
         const next = (ordinalsByView.get(key) ?? 0) + 1;
         ordinalsByView.set(key, next);
         return next;
@@ -247,7 +244,7 @@ export function createBrowserSidecarDiagnosticsEventSourceBridge(input: Readonly
                 stopBinding(binding);
             }
         }
-        ordinalsByView.delete(viewKey(closeInput));
+        ordinalsByView.delete(browserViewKey(closeInput));
     }
 
     return {

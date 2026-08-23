@@ -936,6 +936,17 @@ export type BrowserDiagnosticsElementPickerRequestV1 = z.infer<
   typeof BrowserDiagnosticsElementPickerRequestV1Schema
 >;
 
+export const BrowserDiagnosticsElementSourceLocationV1Schema = z
+  .object({
+    file: z.string().trim().min(1).max(1024),
+    line: z.number().int().positive().optional(),
+    column: z.number().int().positive().optional(),
+  })
+  .strict();
+export type BrowserDiagnosticsElementSourceLocationV1 = z.infer<
+  typeof BrowserDiagnosticsElementSourceLocationV1Schema
+>;
+
 export const BrowserDiagnosticsElementPickerResultV1Schema = z
   .object({
     v: z.literal(1),
@@ -949,6 +960,13 @@ export const BrowserDiagnosticsElementPickerResultV1Schema = z
     selectorPath: z.string().trim().min(1).max(2048).optional(),
     rect: BrowserDiagnosticsElementPickerRectV1Schema.optional(),
     accessibleName: z.string().max(512).optional(),
+    /**
+     * UB-7. The component that rendered the picked node and the source file it came from, read
+     * from the framework metadata the page already exposes (React fiber). Absent whenever the page
+     * is not a dev-build React tree — a picked element is still fully usable without them.
+     */
+    componentName: z.string().trim().min(1).max(128).optional(),
+    sourceLocation: BrowserDiagnosticsElementSourceLocationV1Schema.optional(),
     errorCode: BrowserDiagnosticUnavailableReasonV1Schema.optional(),
   })
   .strict();

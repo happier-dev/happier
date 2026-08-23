@@ -8,7 +8,10 @@ import type {
     PluginContributionRef,
 } from '@happier-dev/plugin-sdk';
 
-import { isLiteralPrivateNetworkHostname } from '@/plugins/runtime/fetch/service';
+import {
+    assessPluginNetworkOriginLocalities,
+    type PluginNetworkAddressResolver,
+} from '@/plugins/runtime/fetch/originLocality';
 import {
     withPluginInvocationServiceBindingAvailability,
 } from '@/plugins/runtime/invocation/services/unavailable';
@@ -44,17 +47,20 @@ export function matchesConnectedAccountOriginTarget(
  * `base` is the configured service base a source routes by, which for a
  * path-prefixed deployment carries the path segment the account lives beneath.
  * They are one declaration seen from two sides: `base` always begins with
- * `origin`, and `privateNetwork` is decided by the origin's host alone.
+ * `origin`.
+ *
+ * Neither fact carries a private-network decision, because a hostname's text
+ * cannot supply one: `assessPluginNetworkOriginLocality` owns that decision and
+ * needs the origin's resolved addresses to make it.
  */
 export type ConnectedAccountConfiguredEndpoint = Readonly<{
     origin: string;
     base: string;
-    privateNetwork: boolean;
 }>;
 
 export function normalizeConnectedAccountConfiguredOrigin(
     value: string,
-): Readonly<{ origin: string; privateNetwork: boolean }> {
+): Readonly<{ origin: string }> {
     const url = new URL(value);
     if (
         url.protocol !== 'https:'
@@ -64,10 +70,7 @@ export function normalizeConnectedAccountConfiguredOrigin(
     ) {
         throw new TypeError('Connected-account configured origin must be an exact credential-free HTTPS origin');
     }
-    return Object.freeze({
-        origin: url.origin,
-        privateNetwork: isLiteralPrivateNetworkHostname(url.hostname),
-    });
+    return Object.freeze({ origin: url.origin });
 }
 
 /**
@@ -104,21 +107,12 @@ export function normalizeConnectedAccountConfiguredBase(
     ) {
         throw rejected();
     }
-    return Object.freeze({
-        origin: url.origin,
-        base,
-        // The path routes; it is never a network-policy input.
-        privateNetwork: isLiteralPrivateNetworkHostname(url.hostname),
-    });
+    return Object.freeze({ origin: url.origin, base });
 }
 
 function originEndpoint(value: string): ConnectedAccountConfiguredEndpoint {
-    const origin = normalizeConnectedAccountConfiguredOrigin(value);
-    return Object.freeze({
-        origin: origin.origin,
-        base: origin.origin,
-        privateNetwork: origin.privateNetwork,
-    });
+    const origin = normalizeConnectedAccountConfiguredOrigin(value).origin;
+    return Object.freeze({ origin, base: origin });
 }
 
 function configurationService(
@@ -302,6 +296,8 @@ export async function resolveConnectedAccountConfiguredOrigins(input: Readonly<{
     /** Push revocation from the exact host-owned configuration snapshot. */
     configurationRevocationSignal?: AbortSignal;
     isGenerationCurrent(generation: string): boolean | Promise<boolean>;
+    /** DNS boundary for the private-network decision; defaults to the host resolver. */
+    resolveNetworkAddresses?: PluginNetworkAddressResolver;
 }>): Promise<ConnectedAccountConfiguredOriginResolution> {
     if (input.pluginId !== input.service.pluginId) {
         throw new TypeError('Connected-account producer network requests must be same-plugin');
@@ -326,6 +322,27 @@ export async function resolveConnectedAccountConfiguredOrigins(input: Readonly<{
     }
     const configured = (await input.resolveHostOwnedConfiguredOrigins(input.configuration))
         .map(normalizeConnectedAccountConfiguredOrigin);
+    // One private-network decision for every origin this resolution can admit,
+    // literal and resolved alike. A configured hostname that resolves inside a
+    // private range is private here exactly as a private literal is, so the
+    // account's credential cannot leave for it under a grant that never declared
+    // private-network access.
+    const localityByOrigin = await assessPluginNetworkOriginLocalities(
+        [
+            ...configured.map((endpoint) => endpoint.origin),
+            ...matching.flatMap(({ request }) => request.scope.targets.flatMap((target) => (
+                target.kind === 'fixedOrigin'
+                    ? [normalizeConnectedAccountConfiguredOrigin(target.origin).origin]
+                    : []
+            ))),
+        ],
+        input.resolveNetworkAddresses
+            ? { resolveAddresses: input.resolveNetworkAddresses }
+            : {},
+    );
+    const admits = (origin: string, privateNetwork: boolean | undefined): boolean => (
+        localityByOrigin.get(origin) === 'public' || privateNetwork === true
+    );
     if (!await input.isConfigurationCurrent(input.configuration)) {
         throw new Error('Connected-account configuration changed during origin resolution');
     }
@@ -340,8 +357,8 @@ export async function resolveConnectedAccountConfiguredOrigins(input: Readonly<{
                 : []
         ));
         const origins = [...fixed, ...configured]
-            .filter((origin) => !origin.privateNetwork || request.scope.privateNetwork === true)
-            .map((origin) => origin.origin);
+            .map((endpoint) => endpoint.origin)
+            .filter((origin) => admits(origin, request.scope.privateNetwork));
         const scope = Object.freeze({
             authority: 'selectedResource' as const,
             accessId: request.id,
@@ -363,8 +380,8 @@ export async function resolveConnectedAccountConfiguredOrigins(input: Readonly<{
                 : []
         ));
         const origins = [...fixed, ...configured]
-            .filter((origin) => !origin.privateNetwork || request.scope.privateNetwork === true)
-            .map((origin) => origin.origin);
+            .map((endpoint) => endpoint.origin)
+            .filter((origin) => admits(origin, request.scope.privateNetwork));
         const scope = Object.freeze({
             authority: 'selectedResource' as const,
             accessId: request.id,

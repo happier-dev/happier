@@ -75,6 +75,13 @@ export type BrowserAnnotationDraftElementTarget = Readonly<{
     accessibleName?: string;
     /** Bounding rect in CSS viewport px, used for the union crop. */
     rect?: BrowserAnnotationViewportRect;
+    /**
+     * UB-7. The component that rendered the picked node and the file it came from, carried through
+     * from the element picker so an attached element tells the agent where to edit, not only where
+     * to look. Absent when the engine cannot supply them (non-React page, production build).
+     */
+    componentName?: string;
+    sourceLocation?: BrowserDiagnosticsElementSourceLocationV1;
     addedAtMs: number;
 }>;
 

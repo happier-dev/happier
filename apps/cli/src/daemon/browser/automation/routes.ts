@@ -81,7 +81,9 @@ export function createBrowserAutomationRoutes(input: Readonly<{
           resultSummary: {
             controller: state.controller,
             controlEpoch: state.controlEpoch,
-            hasActiveLease: Boolean(state.activeLease),
+            ...(state.activeAutomationRequestId
+              ? { activeAutomationRequestId: state.activeAutomationRequestId }
+              : {}),
           },
         });
       }

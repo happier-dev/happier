@@ -2059,6 +2059,8 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'browser.automation.focus',
   'browser.automation.select',
   'browser.automation.setValue',
+  'browser.automation.upload',
+  'browser.automation.drag',
   'browser.recording.start',
   'browser.recording.stop',
   'browser.recording.cancel',

@@ -15,6 +15,26 @@ import {
 } from './configuredOrigins';
 
 const service = Object.freeze({ pluginId: 'acme.accounts', localId: 'work' });
+
+// DNS is the only system boundary this owner reaches. Every fixture name below
+// resolves through it, so the private-network decision is exercised by resolved
+// addresses rather than by the hostname's spelling.
+const RESOLVED_ADDRESSES_BY_HOSTNAME: Readonly<Record<string, readonly string[]>> = Object.freeze({
+    'api.example.test': ['93.184.216.34'],
+    'static.example.test': ['93.184.216.35'],
+    'other.example.test': ['93.184.216.36'],
+    'dev.azure.test': ['93.184.216.37'],
+    'server.example.test': ['93.184.216.38'],
+    'attacker.invalid': ['93.184.216.39'],
+    'localhost': ['127.0.0.1'],
+    // A self-hosted deployment whose public-looking name resolves inside RFC 1918.
+    'git.internal.example': ['10.0.0.7'],
+});
+const resolveNetworkAddresses = async (hostname: string): Promise<readonly string[]> => {
+    const addresses = RESOLVED_ADDRESSES_BY_HOSTNAME[hostname];
+    if (!addresses) throw new Error(`unexpected DNS lookup for ${hostname}`);
+    return addresses;
+};
 const configuration = Object.freeze({
     target: Object.freeze({ kind: 'service' as const, service, modeId: 'oauth' }),
     revision: 'configuration-7',
@@ -248,7 +268,6 @@ describe('connected-account configured origins', () => {
         })).toEqual([{
             origin: 'https://dev.azure.test',
             base: 'https://dev.azure.test/acme',
-            privateNetwork: false,
         }]);
         // A trailing slash is normalization, not a different deployment, and the
         // path case is preserved because a collection segment is case-bearing.
@@ -259,7 +278,6 @@ describe('connected-account configured origins', () => {
         })).toEqual([{
             origin: 'https://server.example.test',
             base: 'https://server.example.test/tfs/DefaultCollection',
-            privateNetwork: false,
         }]);
         // HostAccess keeps governing by the origin alone: the base never widens
         // or narrows the admitted network target.
@@ -270,7 +288,7 @@ describe('connected-account configured origins', () => {
         })).toEqual(['https://dev.azure.test']);
     });
 
-    it('derives the private-network decision of a configured base from its origin', () => {
+    it('projects a configured base as routing facts only, with no network-policy decision', () => {
         const configured = (value: string) => Object.freeze({
             ...configuration,
             values: Object.freeze({ 'service-base': value }),
@@ -283,7 +301,6 @@ describe('connected-account configured origins', () => {
         })).toEqual([{
             origin: 'https://192.168.4.7',
             base: 'https://192.168.4.7/tfs/DefaultCollection',
-            privateNetwork: true,
         }]);
         // The path is routing, never a network-policy input.
         expect(resolveHostOwnedConnectedAccountConfiguredEndpoints({
@@ -293,7 +310,6 @@ describe('connected-account configured origins', () => {
         })).toEqual([{
             origin: 'https://dev.azure.test',
             base: 'https://dev.azure.test/127.0.0.1',
-            privateNetwork: false,
         }]);
     });
 
@@ -344,6 +360,7 @@ describe('connected-account configured origins', () => {
             ],
             isConfigurationCurrent: () => configurationCurrent,
             isGenerationCurrent: () => generationCurrent,
+            resolveNetworkAddresses,
         });
         const binding = bindConnectedAccountConfiguredOrigins(
             createUnavailablePluginInvocationServiceBinding('process-4', 'producer'),
@@ -396,6 +413,7 @@ describe('connected-account configured origins', () => {
             resolveHostOwnedConfiguredOrigins: () => [origin],
             isConfigurationCurrent: () => true,
             isGenerationCurrent: () => true,
+            resolveNetworkAddresses,
         })).rejects.toThrow(/configured origin/i);
     });
 
@@ -423,6 +441,7 @@ describe('connected-account configured origins', () => {
             resolveHostOwnedConfiguredOrigins,
             isConfigurationCurrent: () => true,
             isGenerationCurrent: () => true,
+            resolveNetworkAddresses,
             configurationRevocationSignal: configurationRevocation.signal,
         });
         const binding = bindConnectedAccountConfiguredOrigins(
@@ -471,6 +490,7 @@ describe('connected-account configured origins', () => {
             resolveHostOwnedConfiguredOrigins: () => ['https://localhost:4311'],
             isConfigurationCurrent: () => true,
             isGenerationCurrent: () => true,
+            resolveNetworkAddresses,
         });
 
         await expect(resolve(true)).resolves.toMatchObject({
@@ -482,5 +502,60 @@ describe('connected-account configured origins', () => {
             }],
         });
         await expect(resolve(false)).rejects.toThrow(/no allowed origin/i);
+    });
+    it('refuses a configured origin that RESOLVES private unless the grant declares private-network access', async () => {
+        // `git.internal.example` is a public-looking name; only its A record says
+        // 10.0.0.7. The literal hostname carries no evidence of that, so a
+        // spelling-based decision admits the origin and routes the account
+        // credential into the private network under a grant that never asked.
+        const resolve = async (privateNetwork: boolean) => await resolveConnectedAccountConfiguredOrigins({
+            pluginId: 'acme.accounts',
+            service,
+            generation: 'process-resolved-private',
+            configuration,
+            hostAccessRequests: [networkRequest({
+                id: privateNetwork ? 'resolved-private-allowed' : 'resolved-private-denied',
+                ...(privateNetwork ? { privateNetwork: true } : {}),
+            })],
+            resolveHostOwnedConfiguredOrigins: () => ['https://git.internal.example'],
+            isConfigurationCurrent: () => true,
+            isGenerationCurrent: () => true,
+            resolveNetworkAddresses,
+        });
+
+        await expect(resolve(false)).rejects.toThrow(/no allowed origin/i);
+        await expect(resolve(true)).resolves.toMatchObject({
+            networkScopes: [{
+                accessId: 'resolved-private-allowed',
+                origins: ['https://git.internal.example'],
+                privateNetwork: true,
+            }],
+        });
+    });
+
+    it('refuses a manifest fixedOrigin that resolves private unless the grant declares private-network access', async () => {
+        const resolve = async (privateNetwork: boolean) => await resolveConnectedAccountConfiguredOrigins({
+            pluginId: 'acme.accounts',
+            service,
+            generation: 'process-resolved-private-fixed',
+            configuration,
+            hostAccessRequests: [networkRequest({
+                id: privateNetwork ? 'fixed-private-allowed' : 'fixed-private-denied',
+                fixedOrigin: 'https://git.internal.example',
+                ...(privateNetwork ? { privateNetwork: true } : {}),
+            })],
+            resolveHostOwnedConfiguredOrigins: () => [],
+            isConfigurationCurrent: () => true,
+            isGenerationCurrent: () => true,
+            resolveNetworkAddresses,
+        });
+
+        await expect(resolve(false)).rejects.toThrow(/no allowed origin/i);
+        await expect(resolve(true)).resolves.toMatchObject({
+            networkScopes: [{
+                origins: ['https://git.internal.example'],
+                privateNetwork: true,
+            }],
+        });
     });
 });

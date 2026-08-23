@@ -18,8 +18,22 @@ import type {
     BrowserAutomationEngineBridgeConfig,
     BrowserDiagnosticsEngineBridgeConfig,
     BrowserFrameNavigationCommand,
+    BrowserFrameNavigationState,
     BrowserNativeFrameMessageBridgeConfig,
 } from '../types';
+
+/**
+ * The `WebViewNavigation` payload `react-native-webview` hands to `onNavigationStateChange`. It is
+ * the raw nativeEvent (the library unwraps it before calling), and it fires from the load-start and
+ * load-finish paths only — never from the error path.
+ */
+type NativeWebViewNavigationState = Readonly<{
+    canGoBack?: boolean;
+    canGoForward?: boolean;
+    loading?: boolean;
+    title?: string;
+    url?: string;
+}>;
 
 type NativeWebViewCallbackEvent = Readonly<{
     nativeEvent?: Readonly<{
@@ -73,6 +87,12 @@ export function NativeWebViewEngine(props: Readonly<{
     onLoadStart?: () => void;
     onLoadEnd?: () => void;
     onError?: () => void;
+    /**
+     * G4: the ONLY producer of back/forward history truth for this engine. `WebView` reports a full
+     * navigation snapshot on every load start and load end; the adapter turns it into the
+     * `navigationStateChanged` lifecycle signal so the toolbar's Back/Forward can enable.
+     */
+    onNavigationStateChange?: (navigationState: BrowserFrameNavigationState) => void;
     onBlockedNavigation?: (url: string) => void;
     diagnostics?: BrowserDiagnosticsEngineBridgeConfig;
     automation?: BrowserAutomationEngineBridgeConfig;
@@ -157,6 +177,17 @@ export function NativeWebViewEngine(props: Readonly<{
         props.onError?.();
         emitNativeUnavailable(event, 'collector_unavailable', 'webview_load_failed');
     }, [emitNativeUnavailable, props.onError]);
+
+    const onNavigationStateChangeProp = props.onNavigationStateChange;
+    const handleNavigationStateChange = React.useCallback((navigationState: NativeWebViewNavigationState) => {
+        onNavigationStateChangeProp?.({
+            url: navigationState.url ?? props.url,
+            title: navigationState.title ?? null,
+            loading: navigationState.loading === true,
+            canGoBack: navigationState.canGoBack === true,
+            canGoForward: navigationState.canGoForward === true,
+        });
+    }, [onNavigationStateChangeProp, props.url]);
 
     const handleProcessCrash = React.useCallback(() => {
         props.onError?.();
@@ -383,6 +414,7 @@ export function NativeWebViewEngine(props: Readonly<{
             onLoadEnd={handleLoadEnd}
             onLoadStart={handleLoadStart}
             onMessage={injectedJavaScript || props.nativeMessageBridge ? handleWebViewMessage : undefined}
+            onNavigationStateChange={onNavigationStateChangeProp ? handleNavigationStateChange : undefined}
             onRenderProcessGone={handleProcessCrash}
             onShouldStartLoadWithRequest={shouldStartLoad}
             originWhitelist={[...props.originWhitelist]}

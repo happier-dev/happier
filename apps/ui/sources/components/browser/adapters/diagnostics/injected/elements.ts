@@ -87,6 +87,8 @@ export const INJECTED_ELEMENTS_RUNTIME = `
         ...(selected && selected.selectorPath ? { selectorPath: selected.selectorPath } : {}),
         ...(selected && selected.rect ? { rect: selected.rect } : {}),
         ...(selected && selected.accessibleName ? { accessibleName: selected.accessibleName } : {}),
+        ...(selected && selected.componentName ? { componentName: selected.componentName } : {}),
+        ...(selected && selected.sourceLocation ? { sourceLocation: selected.sourceLocation } : {}),
         ...(errorCode ? { errorCode: errorCode } : {})
       }
     });
@@ -125,13 +127,79 @@ export const INJECTED_ELEMENTS_RUNTIME = `
     activePicker = null;
   }
 
+  // UB-7. A selector path tells an agent where the node is on screen; the component that rendered
+  // it and the file it came from tell the agent where to make the edit. Both are read from the
+  // React fiber the host framework already hangs off the DOM node — nothing is injected into the
+  // page to obtain them, and both are simply absent when the page is not a dev-build React tree.
+  function reactFiberFor(node) {
+    try {
+      var keys = Object.keys(node);
+      for (var index = 0; index < keys.length; index += 1) {
+        var key = keys[index];
+        if (key.indexOf('__reactFiber$') === 0 || key.indexOf('__reactInternalInstance$') === 0) {
+          return node[key];
+        }
+      }
+    } catch (_error) {
+      // Proxied or frozen nodes: no component context available.
+    }
+    return null;
+  }
+
+  function componentNameForFiber(fiber) {
+    var type = fiber && fiber.type;
+    if (typeof type === 'function') {
+      return String(type.displayName || type.name || '').slice(0, 128);
+    }
+    if (type && typeof type === 'object') {
+      var render = type.render;
+      var name = type.displayName
+        || (render && (render.displayName || render.name))
+        || '';
+      return String(name).slice(0, 128);
+    }
+    return '';
+  }
+
+  function sourceLocationForFiber(fiber) {
+    var source = fiber && (fiber._debugSource || (fiber._debugOwner && fiber._debugOwner._debugSource));
+    if (!source || typeof source.fileName !== 'string' || source.fileName.length < 1) return undefined;
+    var line = Number(source.lineNumber || 0);
+    var column = Number(source.columnNumber || 0);
+    return {
+      file: source.fileName.slice(0, 1024),
+      ...(line > 0 ? { line: line } : {}),
+      ...(column > 0 ? { column: column } : {})
+    };
+  }
+
+  function componentContextFor(node) {
+    var fiber = reactFiberFor(node);
+    var depth = 0;
+    while (fiber && depth < 12) {
+      var componentName = componentNameForFiber(fiber);
+      if (componentName) {
+        var sourceLocation = sourceLocationForFiber(fiber);
+        return {
+          componentName: componentName,
+          ...(sourceLocation ? { sourceLocation: sourceLocation } : {})
+        };
+      }
+      fiber = fiber.return;
+      depth += 1;
+    }
+    return {};
+  }
+
   function selectedElementPayload(node) {
     var accessibleName = accessibleNameFor(node);
+    var componentContext = componentContextFor(node);
     return {
       backendNodeRef: backendNodeRefFor(node),
       selectorPath: selectorPathFor(node),
       rect: rectFor(node),
-      ...(accessibleName ? { accessibleName: accessibleName } : {})
+      ...(accessibleName ? { accessibleName: accessibleName } : {}),
+      ...componentContext
     };
   }
 
@@ -195,6 +263,57 @@ export const INJECTED_ELEMENTS_RUNTIME = `
   }
 
   var automationTimers = [];
+  var automationDialogLog = null;
+
+  // UB-5. A page modal blocks the page thread, so an automation action that trips one used to hang
+  // until the host timeout with no explanation. For the duration of one command we replace the
+  // three dialog entry points with auto-dismissing stubs and count what they caught; the summary
+  // rides out on the action result. Metadata only — dialog text is page content and never leaves.
+  // The originals are restored as soon as the command returns, so a page-driven dialog outside an
+  // automation action still behaves normally.
+  function installAutomationDialogGuard() {
+    var log = { count: 0, kinds: [] };
+    var originals = [];
+    var dismissals = { alert: undefined, confirm: false, prompt: null };
+    var kinds = ['alert', 'confirm', 'prompt'];
+    for (var index = 0; index < kinds.length; index += 1) {
+      installOneAutomationDialogStub(kinds[index], log, originals, dismissals);
+    }
+    automationDialogLog = log;
+    return function restoreAutomationDialogGuard() {
+      for (var restoreIndex = 0; restoreIndex < originals.length; restoreIndex += 1) {
+        try {
+          window[originals[restoreIndex].kind] = originals[restoreIndex].original;
+        } catch (_error) {
+          // A page that froze `window.alert` keeps our stub; nothing else we can do.
+        }
+      }
+      automationDialogLog = null;
+    };
+  }
+
+  function installOneAutomationDialogStub(kind, log, originals, dismissals) {
+    try {
+      if (typeof window[kind] !== 'function') return;
+      originals.push({ kind: kind, original: window[kind] });
+      window[kind] = function () {
+        log.count += 1;
+        if (log.kinds.indexOf(kind) < 0) log.kinds.push(kind);
+        return dismissals[kind];
+      };
+    } catch (_error) {
+      // Page-owned globals may be non-writable; leave the real dialog in place.
+    }
+  }
+
+  function automationDialogSummary() {
+    if (!automationDialogLog || automationDialogLog.count < 1) return undefined;
+    return {
+      count: Math.min(automationDialogLog.count, 50),
+      kinds: automationDialogLog.kinds.slice(0, 3),
+      handling: 'dismissed'
+    };
+  }
 
   function isCurrentAutomationCommand(message) {
     return message
@@ -228,8 +347,13 @@ export const INJECTED_ELEMENTS_RUNTIME = `
       stale: stale === true,
       durationMs: Math.max(0, now() - startedAt),
       ...(errorCode ? { errorCode: errorCode } : {}),
-      data: data || {}
+      data: withAutomationDialogSummary(data || {})
     });
+  }
+
+  function withAutomationDialogSummary(data) {
+    var dialogs = automationDialogSummary();
+    return dialogs ? Object.assign({}, data, { javascriptDialogs: dialogs }) : data;
   }
 
   function summarizeAutomationRect(node) {
@@ -396,6 +520,120 @@ export const INJECTED_ELEMENTS_RUNTIME = `
     }
   }
 
+  function automationFileFrom(descriptor) {
+    if (!descriptor || typeof descriptor !== 'object') return null;
+    var name = String(descriptor.name || 'upload.bin').slice(0, 255);
+    var mimeType = String(descriptor.mimeType || 'application/octet-stream').slice(0, 128);
+    // `text` is the only content field: the egress redactor already reduces that key to a length,
+    // so uploaded content can never reach a timeline. Binary is carried base64-encoded in it.
+    var text = typeof descriptor.text === 'string' ? descriptor.text : '';
+    try {
+      if (descriptor.base64 === true) {
+        var binary = atob(text);
+        var bytes = new Uint8Array(binary.length);
+        for (var index = 0; index < binary.length; index += 1) {
+          bytes[index] = binary.charCodeAt(index);
+        }
+        return new File([bytes], name, { type: mimeType });
+      }
+      return new File([text], name, { type: mimeType });
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function handleAutomationUpload(command, startedAt) {
+    var payload = command.payload || {};
+    var node = firstAutomationElement(payload);
+    if (!node) {
+      postAutomationResult(command, startedAt, false, {}, 'selector_not_found');
+      return;
+    }
+    if (String(node.tagName || '').toLowerCase() !== 'input' || String(node.type || '') !== 'file') {
+      postAutomationResult(command, startedAt, false, {}, 'unsupported_action');
+      return;
+    }
+    var descriptors = Array.isArray(payload.files) ? payload.files.slice(0, 10) : [];
+    if (descriptors.length < 1) {
+      postAutomationResult(command, startedAt, false, {}, 'unsupported_action');
+      return;
+    }
+    if (typeof DataTransfer !== 'function' || typeof File !== 'function') {
+      postAutomationResult(command, startedAt, false, {}, 'runtime_unavailable');
+      return;
+    }
+    try {
+      var transfer = new DataTransfer();
+      var attached = 0;
+      for (var index = 0; index < descriptors.length; index += 1) {
+        var file = automationFileFrom(descriptors[index]);
+        if (!file) continue;
+        transfer.items.add(file);
+        attached += 1;
+      }
+      if (attached < 1) {
+        postAutomationResult(command, startedAt, false, {}, 'unsupported_action');
+        return;
+      }
+      node.files = transfer.files;
+      dispatchAutomationEvent(node, 'input');
+      dispatchAutomationEvent(node, 'change');
+      postAutomationResult(command, startedAt, true, {
+        matched: true,
+        fileCount: attached,
+        element: summarizeAutomationElement(node)
+      });
+    } catch (_error) {
+      postAutomationResult(command, startedAt, false, {}, 'runtime_unavailable');
+    }
+  }
+
+  function dispatchAutomationDragEvent(node, type, transfer) {
+    try {
+      var event;
+      if (typeof DragEvent === 'function') {
+        event = new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: transfer });
+      } else if (typeof MouseEvent === 'function') {
+        event = new MouseEvent(type, { bubbles: true, cancelable: true, view: window });
+        try { event.dataTransfer = transfer; } catch (_assignError) { /* read-only in old engines */ }
+      }
+      if (event && node && typeof node.dispatchEvent === 'function') {
+        node.dispatchEvent(event);
+      }
+    } catch (_error) {
+      // Synthetic drag events are best-effort and intentionally untrusted.
+    }
+  }
+
+  function handleAutomationDrag(command, startedAt) {
+    var payload = command.payload || {};
+    var source = queryAutomationElements({ locator: payload.from || payload.locator || payload.source })[0];
+    var target = queryAutomationElements({ locator: payload.to || payload.target || payload.destination })[0];
+    if (!source || !target) {
+      postAutomationResult(command, startedAt, false, {}, 'selector_not_found');
+      return;
+    }
+    if (typeof DataTransfer !== 'function') {
+      postAutomationResult(command, startedAt, false, {}, 'runtime_unavailable');
+      return;
+    }
+    try {
+      var transfer = new DataTransfer();
+      dispatchAutomationDragEvent(source, 'dragstart', transfer);
+      dispatchAutomationDragEvent(target, 'dragenter', transfer);
+      dispatchAutomationDragEvent(target, 'dragover', transfer);
+      dispatchAutomationDragEvent(target, 'drop', transfer);
+      dispatchAutomationDragEvent(source, 'dragend', transfer);
+      postAutomationResult(command, startedAt, true, {
+        matched: true,
+        source: summarizeAutomationElement(source),
+        target: summarizeAutomationElement(target)
+      });
+    } catch (_error) {
+      postAutomationResult(command, startedAt, false, {}, 'runtime_unavailable');
+    }
+  }
+
   function handleAutomationScroll(command, startedAt) {
     var payload = command.payload || {};
     var deltaX = Number(payload.deltaX || 0);
@@ -461,6 +699,15 @@ export const INJECTED_ELEMENTS_RUNTIME = `
   function handleAutomationCommand(message) {
     if (!isCurrentAutomationCommand(message)) return;
     var startedAt = now();
+    var restoreDialogGuard = installAutomationDialogGuard();
+    try {
+      routeAutomationCommand(message, startedAt);
+    } finally {
+      restoreDialogGuard();
+    }
+  }
+
+  function routeAutomationCommand(message, startedAt) {
     switch (message.commandName) {
       case 'snapshot':
       case 'semanticSnapshot':
@@ -477,6 +724,12 @@ export const INJECTED_ELEMENTS_RUNTIME = `
       case 'type':
       case 'setValue':
         handleAutomationType(message, startedAt);
+        break;
+      case 'upload':
+        handleAutomationUpload(message, startedAt);
+        break;
+      case 'drag':
+        handleAutomationDrag(message, startedAt);
         break;
       case 'scroll':
         handleAutomationScroll(message, startedAt);

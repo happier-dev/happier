@@ -1,4 +1,5 @@
 import {
+    browserViewKey,
     BrowserDiagnosticEventV1Schema,
     type BrowserDiagnosticEventV1,
     type BrowserDiagnosticsSnapshotV1,
@@ -33,10 +34,6 @@ export type BrowserDiagnosticsDaemonStore = Readonly<{
     getSnapshot(): BrowserDiagnosticsSnapshotV1;
     getViewSnapshot(input: Readonly<{ browserSessionId: string; viewId: string }>): BrowserDiagnosticsSnapshotV1;
 }>;
-
-function browserDiagnosticsViewKey(event: Pick<BrowserDiagnosticEventV1, 'browserSessionId' | 'viewId'>): string {
-    return `${event.browserSessionId}\u0000${event.viewId}`;
-}
 
 function sortEvents(events: readonly BrowserDiagnosticEventV1[]): readonly BrowserDiagnosticEventV1[] {
     return [...events].sort((a, b) => a.capturedAtMs - b.capturedAtMs || a.eventId.localeCompare(b.eventId));
@@ -95,7 +92,7 @@ export function createBrowserDiagnosticsDaemonStore(input: Readonly<{
         }
 
         const event = parsed.data;
-        const key = browserDiagnosticsViewKey(event);
+        const key = browserViewKey(event);
         const existing = viewsByKey.get(key);
         if (existing && event.navigationGeneration < existing.navigationGeneration) {
             appendDiagnostic('stale_navigation');
@@ -110,7 +107,7 @@ export function createBrowserDiagnosticsDaemonStore(input: Readonly<{
         publishEvent: publishRawEvent,
         publishRawEvent,
         clearView(input) {
-            viewsByKey.delete(browserDiagnosticsViewKey(input));
+            viewsByKey.delete(browserViewKey(input));
         },
         clearSession(input) {
             for (const [key, view] of viewsByKey.entries()) {
@@ -128,7 +125,7 @@ export function createBrowserDiagnosticsDaemonStore(input: Readonly<{
             diagnostics: diagnostics.map((diagnostic) => ({ ...diagnostic })),
         }),
         getViewSnapshot(viewInput) {
-            const view = viewsByKey.get(browserDiagnosticsViewKey(viewInput));
+            const view = viewsByKey.get(browserViewKey(viewInput));
             return {
                 v: 1,
                 machineId: input.machineId,

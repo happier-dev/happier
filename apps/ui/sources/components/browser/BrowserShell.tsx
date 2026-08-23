@@ -90,13 +90,12 @@ import {
     type BrowserDiagnosticsInteractionControls,
     type BrowserDiagnosticsRuntimeProjection,
 } from './diagnostics';
-import { BrowserOriginChip } from './BrowserOriginChip';
 import {
     BrowserToolbarOverflowMenu,
-    BrowserToolbarTitle,
     SecurityOriginIndicator,
     type BrowserToolbarOverflowItem,
 } from './toolbar';
+import { BROWSER_CHROME_WIDTH, useBrowserChromeDensity } from './browserChromeDensity';
 import { BrowserStatusBar } from './BrowserStatusBar';
 import { BrowserToolbar } from './BrowserToolbar';
 import { BrowserViewHost } from './BrowserViewHost';
@@ -124,12 +123,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     toolbarRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        // Wrap in narrow panes (the session-details browser surface is narrow): the address field
-        // keeps a usable minimum width and the secondary controls (origin chip, context/annotation/
-        // recording/automation) flow onto a second line instead of squeezing the flex address field
-        // down to zero width — which previously hid the address bar entirely.
-        flexWrap: 'wrap',
-        rowGap: 8,
+        // The row no longer WRAPS. Wrapping was the old answer to nine clusters in a 380px pane, and
+        // it bought a usable address field with a toolbar that silently doubled in height. There are
+        // four clusters now — navigation, address, identity, overflow — and the collapsed density
+        // drops the identity chip to its glyph, so the row fits without a second line.
+        flexWrap: 'nowrap',
         gap: 8,
         paddingHorizontal: 10,
         paddingVertical: 8,
@@ -138,12 +136,27 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.base,
     },
     addressFieldSlot: {
-        // Priority slot: never collapses below a usable width, so wrapping pushes the secondary
-        // controls to the next line rather than starving the address input.
+        // Priority slot: never collapses below a usable width, so the secondary controls shrink
+        // before the address input does.
         flexGrow: 1,
         flexShrink: 1,
-        flexBasis: 200,
-        minWidth: 160,
+        flexBasis: BROWSER_CHROME_WIDTH.addressFloor,
+        minWidth: 0,
+    },
+    // Live-status controls (recording / automation) sit on their own line UNDER the chrome rather
+    // than inside it. They appear only while something is actually running, so a row that exists
+    // only in that moment can afford the height, and the toolbar above it never reflows.
+    liveStatusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        rowGap: 6,
+        gap: 8,
+        paddingHorizontal: 10,
+        paddingBottom: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
     viewHost: {
         flex: 1,

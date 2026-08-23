@@ -18,11 +18,17 @@ import { createLoggerAndEventsAvailablePluginInvocationServiceBinding } from '..
 import {
     createStablePluginHttpHost as createProductionStablePluginHttpHost,
     createPluginHttpService as createProductionPluginHttpService,
-    isLiteralPrivateNetworkHostname,
     type PluginHttpRuntimeAdapter,
     type CreatePluginHttpServiceParams,
     type PluginRequestInterceptorRegistryV1,
 } from './service';
+
+// The private-network decision now reaches DNS, the one system boundary this
+// owner touches. Every fixture host resolves to a public address unless a test
+// says otherwise, so admission is decided by resolved addresses, not spelling.
+const testResolveNetworkAddresses = async (hostname: string): Promise<readonly string[]> => (
+    hostname === 'localhost' ? ['127.0.0.1'] : ['93.184.216.34']
+);
 
 type CanonicalFetchRequest = Parameters<HttpService['request']>[0];
 type TestFetchRequest = Omit<CanonicalFetchRequest, 'body' | 'redirect'> & Readonly<{
@@ -167,6 +173,7 @@ function createStablePluginHttpHost(
     }>,
 ) {
     return createProductionStablePluginHttpHost({
+        resolveNetworkAddresses: testResolveNetworkAddresses,
         ...params,
         adapter: Object.freeze({
             request: async (
@@ -212,7 +219,7 @@ describe('createPluginHttpService', () => {
             request: async () => createResponse('unexpected HTTP request'),
             openWebSocket,
         }) as unknown as HttpService;
-        const host = createProductionStablePluginHttpHost({ adapter });
+        const host = createProductionStablePluginHttpHost({ adapter, resolveNetworkAddresses: testResolveNetworkAddresses });
         const seed = Object.freeze({
             plugin: Object.freeze({ id: 'caller.plugin', version: '1.0.0' }),
             contribution: Object.freeze({ id: 'run', qualifiedId: 'caller.plugin/actions/run' }),
@@ -278,6 +285,7 @@ describe('createPluginHttpService', () => {
         });
         const openWebSocket = vi.fn(async () => connection);
         const host = createProductionStablePluginHttpHost({
+            resolveNetworkAddresses: testResolveNetworkAddresses,
             adapter: Object.freeze({
                 request: async () => createResponse('unexpected HTTP request'),
                 openWebSocket,
@@ -341,6 +349,7 @@ describe('createPluginHttpService', () => {
         });
         let adapterInput: Parameters<HttpService['openWebSocket']>[0] | null = null;
         const host = createProductionStablePluginHttpHost({
+            resolveNetworkAddresses: testResolveNetworkAddresses,
             adapter: Object.freeze({
                 request: async () => createResponse('unexpected HTTP request'),
                 async openWebSocket(input) {
@@ -410,7 +419,7 @@ describe('createPluginHttpService', () => {
             }),
         });
         const revocation = new AbortController();
-        const host = createProductionStablePluginHttpHost({ adapter });
+        const host = createProductionStablePluginHttpHost({ adapter, resolveNetworkAddresses: testResolveNetworkAddresses });
         const seed = Object.freeze({
             plugin: Object.freeze({ id: 'caller.plugin', version: '1.0.0' }),
             contribution: Object.freeze({ id: 'pending-open', qualifiedId: 'caller.plugin/actions/pending-open' }),
@@ -516,7 +525,7 @@ describe('createPluginHttpService', () => {
                 return connection;
             },
         });
-        const host = createProductionStablePluginHttpHost({ adapter });
+        const host = createProductionStablePluginHttpHost({ adapter, resolveNetworkAddresses: testResolveNetworkAddresses });
         const createBinding = (id: string, networkRevocationSignal: AbortSignal) => Object.freeze({
             ...createLoggerAndEventsAvailablePluginInvocationServiceBinding(
                 'generation-websocket',
@@ -603,17 +612,6 @@ describe('createPluginHttpService', () => {
         await Promise.resolve();
         remoteConfiguration.abort(Object.freeze({ kind: 'configurationReplaced' as const }));
         expect(remoteRecord.lifecycleAbortCalls()).toBe(0);
-    });
-
-    it('classifies only literal loopback and private IP hostnames as private-network targets', () => {
-        expect([
-            'localhost', 'api.localhost',
-            '127.0.0.1', '10.2.3.4', '169.254.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.2',
-            '::1', 'fc00::1', 'fd12::1', 'fe80::1', '[::1]',
-        ].every(isLiteralPrivateNetworkHostname)).toBe(true);
-        expect([
-            'example.test', '172.15.255.255', '172.32.0.1', '192.0.2.1', '2001:db8::1',
-        ].some(isLiteralPrivateNetworkHostname)).toBe(false);
     });
 
     it('exposes a manual 3xx and re-enters interceptors and final policy for an explicit next request', async () => {

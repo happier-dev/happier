@@ -54,6 +54,8 @@ export const BrowserAutomationMutatingActionKindV1Schema = z.enum([
   'focus',
   'select',
   'setValue',
+  'upload',
+  'drag',
   'evaluate',
   'startElementPicker',
   'cancelElementPicker',
@@ -79,6 +81,8 @@ export const BrowserAutomationAdapterCapabilityKindV1Schema = z.enum([
   'press',
   'scroll',
   'hover',
+  'upload',
+  'drag',
   'waitFor',
   'evaluate',
   'elementPicker',
@@ -131,20 +135,9 @@ export const BrowserAutomationActionRequestV1Schema = z
     actionKind: BrowserAutomationActionKindV1Schema,
     payload: z.record(z.string(), z.unknown()).optional().default({}),
     timeoutMs: PositiveTimeoutMsSchema,
-    expectedControlEpoch: NonNegativeIntSchema.optional(),
-    leaseId: IdSchema.optional(),
-    idempotencyKey: IdSchema.optional(),
-    expectedSyntheticInputWindowMs: z.number().int().nonnegative().max(5_000).optional().default(0),
   })
   .strict()
   .superRefine((request, context) => {
-    if (isBrowserAutomationMutatingActionKind(request.actionKind) && !request.leaseId) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['leaseId'],
-        message: 'Mutating browser automation actions require an active action lease.',
-      });
-    }
     if (request.actionKind !== 'evaluate') return;
 
     const payload = request.payload;
@@ -186,6 +179,32 @@ export const BrowserAutomationActionStatusV1Schema = z.enum([
   'unsupported',
 ]);
 export type BrowserAutomationActionStatusV1 = z.infer<typeof BrowserAutomationActionStatusV1Schema>;
+
+export const BrowserAutomationJavaScriptDialogKindV1Schema = z.enum(['alert', 'confirm', 'prompt']);
+export type BrowserAutomationJavaScriptDialogKindV1 = z.infer<
+  typeof BrowserAutomationJavaScriptDialogKindV1Schema
+>;
+
+/**
+ * UB-5 dialog contract. A page modal (`alert`/`confirm`/`prompt`) blocks the page thread, so an
+ * automation action that trips one used to stall silently until `timeoutMs` elapsed. The injected
+ * page runtime now auto-dismisses any dialog raised while an action executes and reports it under
+ * `resultSummary.javascriptDialogs` on the action result — the agent learns the page asked instead
+ * of reading a bare timeout. Auto-dismiss is the whole contract: there is no dialog state machine,
+ * no pending-dialog registry, and no accept/respond verb.
+ *
+ * Metadata only. Dialog messages and prompt default values are page content and never egress.
+ */
+export const BrowserAutomationJavaScriptDialogSummaryV1Schema = z
+  .object({
+    count: z.number().int().positive().max(50),
+    kinds: z.array(BrowserAutomationJavaScriptDialogKindV1Schema).min(1).max(3),
+    handling: z.literal('dismissed'),
+  })
+  .strict();
+export type BrowserAutomationJavaScriptDialogSummaryV1 = z.infer<
+  typeof BrowserAutomationJavaScriptDialogSummaryV1Schema
+>;
 
 export const BrowserAutomationActionResultV1Schema = z
   .object({
@@ -289,27 +308,21 @@ export const BrowserAutomationTimelineV1Schema = z
   });
 export type BrowserAutomationTimelineV1 = z.infer<typeof BrowserAutomationTimelineV1Schema>;
 
-export const BrowserAutomationActionLeaseV1Schema = z
-  .object({
-    leaseId: IdSchema,
-    browserSessionId: IdSchema,
-    viewId: IdSchema,
-    holder: BrowserAutomationRequesterKindV1Schema,
-    requesterRef: BrowserAutomationRequesterRefV1Schema,
-    acquiredAtMs: NonNegativeIntSchema,
-    expiresAtMs: NonNegativeIntSchema,
-    controlEpoch: NonNegativeIntSchema,
-  })
-  .strict();
-export type BrowserAutomationActionLeaseV1 = z.infer<typeof BrowserAutomationActionLeaseV1Schema>;
-
+/**
+ * Who currently drives a browser view, and the epoch that a human takeover bumps.
+ *
+ * `activeAutomationRequestId` is the single-flight fact: at most one mutating automation action
+ * runs per view, and its presence is what `controller: 'agent'` means. There is deliberately no
+ * lease here — an action lease existed until 2026-08-23 with no minting path, which made every
+ * mutating verb undispatchable. Concurrency is single-flight, consent is the action-approval
+ * danger floor, and human takeover is the human-input cancel path.
+ */
 export const BrowserAutomationControllerStateV1Schema = z
   .object({
     browserSessionId: IdSchema,
     viewId: IdSchema,
     controller: BrowserAutomationControllerKindV1Schema,
     controlEpoch: NonNegativeIntSchema,
-    activeLease: BrowserAutomationActionLeaseV1Schema.optional(),
     activeAutomationRequestId: IdSchema.optional(),
   })
   .strict();
@@ -343,6 +356,8 @@ export const DEFAULT_BROWSER_AUTOMATION_ACTION_CAPABILITIES = {
   press: UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY,
   scroll: UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY,
   hover: UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY,
+  upload: UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY,
+  drag: UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY,
   waitFor: UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY,
   evaluate: UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY,
   elementPicker: UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY,
@@ -368,6 +383,8 @@ export const BrowserAutomationActionCapabilityMapV1Schema = z
     press: BrowserAutomationActionCapabilityV1Schema.optional().default(UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY),
     scroll: BrowserAutomationActionCapabilityV1Schema.optional().default(UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY),
     hover: BrowserAutomationActionCapabilityV1Schema.optional().default(UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY),
+    upload: BrowserAutomationActionCapabilityV1Schema.optional().default(UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY),
+    drag: BrowserAutomationActionCapabilityV1Schema.optional().default(UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY),
     waitFor: BrowserAutomationActionCapabilityV1Schema.optional().default(UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY),
     evaluate: BrowserAutomationActionCapabilityV1Schema.optional().default(UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY),
     elementPicker: BrowserAutomationActionCapabilityV1Schema.optional().default(

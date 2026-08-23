@@ -1,4 +1,5 @@
 import {
+  browserViewKey,
   BrowserAutomationActionRequestV1Schema,
   BrowserAutomationActionResultV1Schema,
   BrowserAutomationTimelineEntryV1Schema,
@@ -7,8 +8,10 @@ import {
   type BrowserAutomationActionKindV1,
   type BrowserAutomationActionRequestV1,
   type BrowserAutomationActionResultV1,
+  type BrowserAutomationControllerKindV1,
   type BrowserAutomationControllerStateV1,
   type BrowserAutomationErrorCodeV1,
+  type BrowserAutomationRequesterRefV1,
   type BrowserAutomationTimelineEntryV1,
   type BrowserAutomationTimelineV1,
 } from '@happier-dev/protocol';
@@ -17,8 +20,6 @@ import { executeBrowserAutomationAction } from './actions';
 import type { BrowserAutomationAdapter } from './adapters/types';
 import {
   createBrowserAutomationOwnerRegistry,
-  type BrowserAutomationLeaseAcquireInput,
-  type BrowserAutomationLeaseAcquireResult,
   type BrowserAutomationOwnerRegistry,
   type BrowserAutomationViewRef,
 } from './owners';
@@ -48,8 +49,6 @@ export type BrowserAutomationViewLifecycleSubscriber = (
 ) => void;
 
 export type BrowserAutomationDaemonService = Readonly<{
-  acquireLease(input: BrowserAutomationLeaseAcquireInput): BrowserAutomationLeaseAcquireResult;
-  releaseLease(input: BrowserAutomationViewRef & Readonly<{ leaseId: string }>): void;
   execute(request: BrowserAutomationActionRequestV1): Promise<BrowserAutomationActionResultV1>;
   cancelActive(
     input: BrowserAutomationViewRef & Readonly<{ requesterRef: { kind: string; id: string } }>,
@@ -70,13 +69,16 @@ export type BrowserAutomationDaemonService = Readonly<{
 type ViewRuntime = {
   navigationGeneration: number;
   timeline: BrowserAutomationTimelineEntryV1[];
+  /**
+   * Single-flight: the one mutating automation action in flight for this view, with the provenance
+   * that admitted it. One object, one owner — `cancelActive` compares against this requester, and
+   * `getStatus` projects it, so there is no second copy of "who is driving this view".
+   */
   activeAutomationRequestId: string | null;
+  activeRequesterRef: BrowserAutomationRequesterRefV1 | null;
+  activeController: BrowserAutomationControllerKindV1 | null;
   cancel: ((errorCode: BrowserAutomationErrorCodeV1) => void) | null;
 };
-
-function viewKey(view: BrowserAutomationViewRef): string {
-  return `${view.browserSessionId} ${view.viewId}`;
-}
 
 export function createBrowserAutomationDaemonService(input: Readonly<{
   adapter: BrowserAutomationAdapter;
@@ -86,7 +88,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
   subscribeViewLifecycle?: (listener: BrowserAutomationViewLifecycleSubscriber) => () => void;
 }>): BrowserAutomationDaemonService {
   const now = input.now ?? (() => Date.now());
-  const owners = input.owners ?? createBrowserAutomationOwnerRegistry({ now });
+  const owners = input.owners ?? createBrowserAutomationOwnerRegistry();
   let timelineCounter = 0;
   const generateTimelineEntryId = input.generateTimelineEntryId
     ?? (() => `timeline_${(timelineCounter += 1)}_${now()}`);
@@ -98,13 +100,15 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
   }) ?? null;
 
   function runtimeFor(view: BrowserAutomationViewRef): ViewRuntime {
-    const key = viewKey(view);
+    const key = browserViewKey(view);
     const existing = runtimes.get(key);
     if (existing) return existing;
     const created: ViewRuntime = {
       navigationGeneration: 0,
       timeline: [],
       activeAutomationRequestId: null,
+      activeRequesterRef: null,
+      activeController: null,
       cancel: null,
     };
     runtimes.set(key, created);
@@ -119,7 +123,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
   }
 
   function closeView(view: BrowserAutomationViewRef): void {
-    const key = viewKey(view);
+    const key = browserViewKey(view);
     const runtime = runtimes.get(key);
     runtime?.cancel?.('view_closed');
     runtimes.delete(key);
@@ -189,21 +193,12 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
 
     const mutating = isBrowserAutomationMutatingActionKind(request.actionKind);
 
-    if (mutating) {
-      // Consent is enforced upstream by the action-approval danger floor. This lease only
-      // coordinates active control for a view; lease ownership is not human consent.
-      const validation = owners.validateLease({
-        browserSessionId: request.browserSessionId,
-        viewId: request.viewId,
-        leaseId: request.leaseId ?? '',
-        requesterRef: request.requesterRef,
-      });
-      if (!validation.ok) {
-        return failureResult(request, controlEpoch, runtime.navigationGeneration, validation.errorCode);
-      }
-      if (runtime.activeAutomationRequestId) {
-        return failureResult(request, controlEpoch, runtime.navigationGeneration, 'lease_conflict');
-      }
+    // Single-flight is the whole arbitration for a mutating action. Consent is enforced upstream by
+    // the action-approval danger floor, and human takeover cancels the in-flight action; neither is
+    // this check's job. (An action lease used to sit here and no code path could mint one, so every
+    // mutating verb was undispatchable — G3/OE-1.)
+    if (mutating && runtime.activeAutomationRequestId) {
+      return failureResult(request, controlEpoch, runtime.navigationGeneration, 'automation_busy');
     }
 
     const navigationGenerationBefore = runtime.navigationGeneration;
@@ -213,6 +208,8 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
 
     if (mutating) {
       runtime.activeAutomationRequestId = request.automationRequestId;
+      runtime.activeRequesterRef = request.requesterRef;
+      runtime.activeController = request.requestedBy === 'user' ? 'human' : request.requestedBy;
     }
 
     const cancellation = new Promise<{ canceled: true; errorCode: BrowserAutomationErrorCodeV1 }>((resolve) => {
@@ -266,22 +263,24 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
     } finally {
       if (mutating) {
         runtime.activeAutomationRequestId = null;
+        runtime.activeRequesterRef = null;
+        runtime.activeController = null;
         runtime.cancel = null;
       }
     }
   }
 
   return {
-    acquireLease: (acquireInput) => owners.acquireLease(acquireInput),
-    releaseLease: (releaseInput) => owners.releaseLease(releaseInput),
     execute,
     cancelActive(cancelInput) {
       const runtime = runtimeFor(cancelInput);
       if (!runtime.activeAutomationRequestId || !runtime.cancel) {
         return { ok: false, errorCode: 'no_active_action' };
       }
-      const state = owners.getControllerState(cancelInput);
-      const activeRequesterRef = state.activeLease?.requesterRef;
+      // Provenance for the in-flight action, recorded at admission. Before the lease was removed
+      // this read the lease's requester, which no request could ever carry, so `owner_mismatch`
+      // was unreachable and any caller could cancel any agent's action.
+      const activeRequesterRef = runtime.activeRequesterRef;
       if (
         activeRequesterRef
         && (activeRequesterRef.kind !== cancelInput.requesterRef.kind
@@ -292,7 +291,13 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       runtime.cancel('user_canceled');
       return { ok: true };
     },
-    getStatus: (view) => owners.getControllerState(view),
+    getStatus(view) {
+      const runtime = runtimeFor(view);
+      return owners.getControllerState(view, {
+        activeAutomationRequestId: runtime.activeAutomationRequestId,
+        ...(runtime.activeController ? { controller: runtime.activeController } : {}),
+      });
+    },
     closeView,
     dispose() {
       unsubscribeViewLifecycle?.();

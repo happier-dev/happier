@@ -9,8 +9,17 @@ public final class HappierHostedWebFrameModule: Module {
   public func definition() -> ModuleDefinition {
     Name("HappierHostedWebFrame")
 
-    AsyncFunction("registerArtifact") { (input: [String: Any]) -> Bool in
-      HostedWebArtifactRegistryOwner.shared.register(input)
+    // The strict typed admission result, identical in shape to Android/JS. iOS
+    // has no profile-isolation capability class, so it reports only the two
+    // outcomes its registry can produce.
+    AsyncFunction("registerArtifact") { (input: [String: Any]) -> [String: Any] in
+      if HostedWebArtifactRegistryOwner.shared.register(input) {
+        return ["kind": "registered"]
+      }
+      return [
+        "kind": "unavailable",
+        "code": "native_artifact_resource_registration_failed",
+      ]
     }
 
     // This is intentionally a synchronous acknowledgement. Artifact keeps its

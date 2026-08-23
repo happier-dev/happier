@@ -299,6 +299,53 @@ export function normalizeProviderEndpointUrlSyntax(
   };
 }
 
+/**
+ * The one host-locality decision for an endpoint, shared by every caller that
+ * must know whether a destination is public, private or loopback. A literal
+ * address decides alone; a hostname decides only from its resolved A/AAAA
+ * answers, so a name that resolves inside a private range can never be read as
+ * public. Callers that layer their own scheme or consent policy do so on top of
+ * this result rather than re-deriving locality from the hostname text.
+ */
+export function assessEndpointHostLocality(input: Readonly<{
+  hostname: string;
+  literalAddress: ParsedProviderIpAddress | null;
+  resolvedAddresses?: readonly string[];
+}>): Readonly<{
+  locality: 'public' | 'private' | 'loopback';
+  resolvedAddresses: readonly string[];
+  nonPublicAddresses: readonly string[];
+}> {
+  const literalAddress = input.literalAddress;
+  if (literalAddress) {
+    // `normalizeProviderEndpointUrlSyntax` already rejects this case; keep the explicit guard here
+    // so this authorization layer remains independently fail-closed and the narrowed type is exact.
+    if (literalAddress.locality === 'unsafe') fail('unsafe_address', 'Provider endpoint targets an unsafe destination.');
+    const locality = literalAddress.locality;
+    const resolvedAddresses = [literalAddress.normalized];
+    return {
+      locality,
+      resolvedAddresses,
+      nonPublicAddresses: locality === 'public' ? [] : resolvedAddresses,
+    };
+  }
+  const hostnameSyntax = classifyProviderHostnameSyntax(input.hostname);
+  if (!input.resolvedAddresses || input.resolvedAddresses.length === 0) {
+    fail('dns_resolution_required', 'Provider endpoint needs a successful A/AAAA resolution.');
+  }
+  const resolved = normalizeAndValidateResolvedAddresses(input.resolvedAddresses);
+  if (hostnameSyntax === 'loopback' && !resolved.allLoopback) {
+    fail('unsafe_address', 'A localhost provider endpoint resolved outside loopback.');
+  }
+  return {
+    locality: resolved.allLoopback
+      ? 'loopback'
+      : resolved.hasPrivate || resolved.nonPublic.length > 0 ? 'private' : 'public',
+    resolvedAddresses: resolved.all,
+    nonPublicAddresses: resolved.nonPublic,
+  };
+}
+
 export function assessProviderEndpoint(
   rawUrl: string,
   options: Readonly<{
@@ -307,31 +354,11 @@ export function assessProviderEndpoint(
   }> = {},
 ): AssessedProviderEndpoint {
   const syntax = normalizeProviderEndpointUrlSyntax(rawUrl);
-  const literalAddress = syntax.literalAddress;
-
-  let resolvedAddresses: readonly string[];
-  let nonPublicAddresses: readonly string[];
-  let locality: 'public' | 'private' | 'loopback';
-  if (literalAddress) {
-    // `normalizeProviderEndpointUrlSyntax` already rejects this case; keep the explicit guard here
-    // so this authorization layer remains independently fail-closed and the narrowed type is exact.
-    if (literalAddress.locality === 'unsafe') fail('unsafe_address', 'Provider endpoint targets an unsafe destination.');
-    locality = literalAddress.locality;
-    resolvedAddresses = [literalAddress.normalized];
-    nonPublicAddresses = locality === 'public' ? [] : resolvedAddresses;
-  } else {
-    const hostnameSyntax = classifyProviderHostnameSyntax(syntax.hostname);
-    if (!options.resolvedAddresses || options.resolvedAddresses.length === 0) {
-      fail('dns_resolution_required', 'Provider endpoint needs a successful A/AAAA resolution.');
-    }
-    const resolved = normalizeAndValidateResolvedAddresses(options.resolvedAddresses);
-    resolvedAddresses = resolved.all;
-    nonPublicAddresses = resolved.nonPublic;
-    if (hostnameSyntax === 'loopback' && !resolved.allLoopback) {
-      fail('unsafe_address', 'A localhost provider endpoint resolved outside loopback.');
-    }
-    locality = resolved.allLoopback ? 'loopback' : resolved.hasPrivate || resolved.nonPublic.length > 0 ? 'private' : 'public';
-  }
+  const { locality, resolvedAddresses, nonPublicAddresses } = assessEndpointHostLocality({
+    hostname: syntax.hostname,
+    literalAddress: syntax.literalAddress,
+    ...(options.resolvedAddresses ? { resolvedAddresses: options.resolvedAddresses } : {}),
+  });
 
   if (syntax.protocol === 'http:' && locality === 'public') {
     fail('http_public_forbidden', 'Public provider endpoints must use HTTPS.');

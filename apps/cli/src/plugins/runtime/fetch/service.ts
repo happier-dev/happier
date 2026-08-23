@@ -4,7 +4,6 @@ import {
     type PluginRequestInterceptorContributionV1,
 } from '@happier-dev/protocol';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { isIP } from 'node:net';
 import type {
     HttpMethod,
     PluginFetchCredentialBinding,
@@ -21,6 +20,10 @@ import type {
     PluginInvocationServiceBinding,
     PluginInvocationServicesSeed,
 } from '../invocation/services/types';
+import {
+    assessPluginNetworkOriginLocality,
+    type PluginNetworkAddressResolver,
+} from './originLocality';
 import {
     normalizePluginWebSocketOpenInput,
     type PluginWebSocketRuntimeOptions,
@@ -141,6 +144,8 @@ export type StablePluginHttpHostParams = Readonly<{
         seed: PluginInvocationServicesSeed;
         mismatch: PluginHttpDisclosureMismatch;
     }>): void;
+    /** DNS boundary for the private-network decision; defaults to the host resolver. */
+    resolveNetworkAddresses?: PluginNetworkAddressResolver;
 }>;
 
 export type StablePluginHttpBindingPolicy = Readonly<{
@@ -195,29 +200,6 @@ const STANDARD_SECURITY_SENSITIVE_INTERCEPTOR_HEADER_PREFIXES_V1 = [
     'x-forwarded-',
 ] as const;
 
-export function isLiteralPrivateNetworkHostname(hostname: string): boolean {
-    const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, '');
-    if (normalized === 'localhost' || normalized.endsWith('.localhost')) return true;
-    const ipKind = isIP(normalized);
-    if (ipKind === 4) {
-        const [first = 0, second = 0] = normalized.split('.').map(Number);
-        return first === 10
-            || first === 127
-            || (first === 169 && second === 254)
-            || (first === 172 && second >= 16 && second <= 31)
-            || (first === 192 && second === 168);
-    }
-    if (ipKind === 6) {
-        return normalized === '::1'
-            || normalized.startsWith('fc')
-            || normalized.startsWith('fd')
-            || normalized.startsWith('fe8')
-            || normalized.startsWith('fe9')
-            || normalized.startsWith('fea')
-            || normalized.startsWith('feb');
-    }
-    return false;
-}
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 // Invocation bindings created by one stable host are distinct service objects,
 // but nested fetches still belong to the same logical async operation.
@@ -923,6 +905,9 @@ function privateCredentialHeaderNameSet(input: Readonly<{
 }
 
 export function createStablePluginHttpHost(params: StablePluginHttpHostParams): StablePluginHttpHost {
+    const resolverOptions = params.resolveNetworkAddresses
+        ? { resolveAddresses: params.resolveNetworkAddresses }
+        : {};
     const bindService = (
         seed: PluginInvocationServicesSeed,
         binding: PluginInvocationServiceBinding,
@@ -968,10 +953,12 @@ export function createStablePluginHttpHost(params: StablePluginHttpHostParams): 
                     }
                     const url = new URL(effect.request.url);
                     const method = (effect.request.method ?? 'GET').toUpperCase();
-                    const privateNetwork = isLiteralPrivateNetworkHostname(url.hostname);
                     const selectedResourceScopes = binding.networkScopes?.filter((scope) => (
                         scope.authority === 'selectedResource'
                     )) ?? [];
+                    const privateNetwork = selectedResourceScopes.length === 0
+                        ? false
+                        : await assessPluginNetworkOriginLocality(url.origin, resolverOptions) === 'private';
                     const withinBoundScope = selectedResourceScopes.some((scope) => (
                         scope.origins.includes(url.origin)
                         && (scope.methods === undefined || scope.methods.includes(method as HttpMethod))
@@ -1132,7 +1119,10 @@ export function createStablePluginHttpHost(params: StablePluginHttpHostParams): 
                     }
                     const admittedInput = snapshotPluginWebSocketOpenInput(input);
                     const normalized = normalizePluginWebSocketOpenInput(admittedInput);
-                    const privateNetwork = isLiteralPrivateNetworkHostname(normalized.url.hostname);
+                    const privateNetwork = await assessPluginNetworkOriginLocality(
+                        normalized.targetOrigin,
+                        resolverOptions,
+                    ) === 'private';
                     const permitted = binding.networkClientScopes?.some((scope) => (
                         scope.origins.includes(normalized.targetOrigin)
                         && scope.transports.includes('websocket')

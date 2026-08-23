@@ -1,4 +1,4 @@
-import type { BrowserDiagnosticEventV1 } from '@happier-dev/protocol';
+import { browserViewKey, type BrowserDiagnosticEventV1 } from '@happier-dev/protocol';
 
 /**
  * Offline diagnostics bundle (Part 2). A capped (size + time) daemon-side ring buffer over the
@@ -65,10 +65,6 @@ function eventByteSize(event: BrowserDiagnosticEventV1): number {
         // Circular/oversized serialization → treat as over-budget so it is dropped.
         return Number.MAX_SAFE_INTEGER;
     }
-}
-
-function viewKey(input: Readonly<{ browserSessionId: string; viewId: string }>): string {
-    return `${input.browserSessionId}\u0000${input.viewId}`;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -158,7 +154,7 @@ export function createBrowserContextDiagnosticsRingBuffer(
 
     return {
         record(event) {
-            const key = viewKey(event);
+            const key = browserViewKey(event);
             // Per-event byte cap: an oversized single event cannot fit any honest budget — drop it
             // and flag the view as truncated rather than letting one event blow the aggregate budget.
             const bytes = eventByteSize(event);
@@ -193,7 +189,7 @@ export function createBrowserContextDiagnosticsRingBuffer(
         },
 
         summarize(request) {
-            const key = viewKey(request);
+            const key = browserViewKey(request);
             const events = eventsByView.get(key) ?? [];
             const family = familyForKind(request.kind);
             const cutoff = now() - windowMs;
@@ -223,7 +219,7 @@ export function createBrowserContextDiagnosticsRingBuffer(
         },
 
         clearView(input) {
-            const key = viewKey(input);
+            const key = browserViewKey(input);
             eventsByView.delete(key);
             aggregateBytesByView.delete(key);
             evictedByView.delete(key);
