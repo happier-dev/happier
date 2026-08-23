@@ -208,18 +208,17 @@ test('production reload composition keeps app and Prisma reloads exclusive while
     ['spawn', 104, 5104, 'always'],
   ]);
   assert.deepEqual(calls.filter(([kind]) => kind === 'kill'), [
-    ['kill', 101, 1450],
-    ['kill', 102, 1450],
-    ['kill', 103, 1450],
-    ['kill', 102, 1450],
+    ['kill', 301, 1450],
+    ['kill', 302, 1450],
+    ['kill', 303, 1450],
   ]);
   assert.ok(
     calls.findIndex(([kind]) => kind === 'maintenance')
-      < calls.findIndex(([kind, pid]) => kind === 'kill' && pid === 101),
+      < calls.findIndex(([kind, pid]) => kind === 'kill' && pid === 301),
     'exclusive mode must enter maintenance before stopping the incumbent backend',
   );
   assert.ok(
-    calls.findIndex(([kind, pid]) => kind === 'kill' && pid === 101)
+    calls.findIndex(([kind, pid]) => kind === 'kill' && pid === 301)
       < calls.findIndex(([kind, pid]) => kind === 'spawn' && pid === 102),
     'exclusive mode must stop the incumbent backend before spawning its replacement',
   );
