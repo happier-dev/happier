@@ -17,6 +17,8 @@ import {
   getPsEnvLine,
   killPidOwnedByStack,
   killProcessGroupOwnedByStack,
+  listPidsWithEnvNeedles,
+  listPidsWithEnvNeedlesAndEnvBindingNames,
   listPsPidsForEnvQueries,
   observePsEnvLine,
   readStackProcessKindFromEnvLine,
