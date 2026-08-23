@@ -40,7 +40,12 @@ describe("createLightSqliteHarness", () => {
     it("restores env and removes temp dir when initialization fails", async () => {
         const rootDir = await mkdtemp(join(tmpdir(), "happier-light-harness-root-"));
         const prefix = "happier-light-harness-fail-";
-        const envSnapshot = snapshotEnvValues(["PATH", "HAPPIER_DB_PROVIDER", "HAPPIER_SERVER_LIGHT_DATA_DIR"]);
+        const envSnapshot = snapshotEnvValues([
+            "PATH",
+            "npm_execpath",
+            "HAPPIER_DB_PROVIDER",
+            "HAPPIER_SERVER_LIGHT_DATA_DIR",
+        ]);
 
         const listHarnessDirs = async () => {
             const entries = await readdir(rootDir, { withFileTypes: true });
@@ -51,7 +56,10 @@ describe("createLightSqliteHarness", () => {
         };
 
         const before = await listHarnessDirs();
-        applyEnvValues({ PATH: "" });
+        applyEnvValues({
+            PATH: "",
+            npm_execpath: join(rootDir, "missing-package-manager.cjs"),
+        });
 
         await expect(
             createLightSqliteHarness({
