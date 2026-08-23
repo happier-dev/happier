@@ -96,8 +96,23 @@ export type AzureDevOpsRoute =
     repositoryId: string;
     pullRequestId: number;
   }>
+  /**
+   * The pull request's review threads: the whole list, or one thread by id.
+   *
+   * One resource rather than two, because the thread and the thread list are the same Azure
+   * contract at the same pinned `api-version` — a separate route family would be a second place
+   * for that pin to drift.
+   */
   | Readonly<{
     resource: Extract<AzureDevOpsResource, 'threads'>;
+    repositoryId: string;
+    pullRequestId: number;
+    /** Addresses ONE thread. Absent asks for the list. */
+    threadId?: number;
+  }>
+  /** The pull request's reviewer collection. */
+  | Readonly<{
+    resource: Extract<AzureDevOpsResource, 'reviewers'>;
     repositoryId: string;
     pullRequestId: number;
   }>
@@ -300,6 +315,22 @@ export type AzurePullRequestMergeStatus =
   | 'rejectedByPolicy'
   | 'failure';
 
+/**
+ * The three completion options this vertical sends and reads back.
+ *
+ * They are decoded as VALUES rather than as a presence flag because an Azure `PATCH` may
+ * "silently ignore the update" of a property it does not accept. A confirming read that only
+ * checked the status code would call that silent no-op a success, so the completion path compares
+ * the exact fields it sent — and it can only do that if the read carries them.
+ *
+ * Each is `null` when Azure returned no value for it, which is a different answer from `false`.
+ */
+export type AzureCompletionOptionsRow = Readonly<{
+  deleteSourceBranch: boolean | null;
+  transitionWorkItems: boolean | null;
+  bypassPolicy: boolean | null;
+}>;
+
 export type AzurePullRequestRow = Readonly<{
   pullRequestId: number;
   repositoryId: string;
@@ -323,7 +354,13 @@ export type AzurePullRequestRow = Readonly<{
   supportsIterations: boolean;
   /** Set when auto-complete is enabled: completion can then fire outside our request. */
   autoCompleteSetBy: AzureIdentityRow | null;
-  hasStoredCompletionOptions: boolean;
+  /**
+   * Stored completion options, or `null` when Azure returned none.
+   *
+   * They can carry a `transitionWorkItems: true` set elsewhere, so they are a fact a completion
+   * path must disclose and overwrite explicitly rather than silently inherit.
+   */
+  completionOptions: AzureCompletionOptionsRow | null;
   url: string | null;
 }>;
 

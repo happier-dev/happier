@@ -48,33 +48,46 @@ export async function resolveOhMyPiSessionsRoot(params: Readonly<{
   return resolution.sessionsRoot;
 }
 
+/**
+ * Why a session file could not be produced. A caller that collapses these into
+ * "no file" cannot tell an absent or unreadable source from one whose bytes now
+ * belong to a different session, and a transcript reader that cannot tell them
+ * apart reports both as an authoritative empty history.
+ */
+export type OhMyPiSessionFileResolutionV1 =
+  | Readonly<{ ok: true; filePath: string }>
+  | Readonly<{ ok: false; reason: 'source_unavailable' | 'source_replaced' }>;
+
 export async function resolveOhMyPiSessionFile(params: Readonly<{
   source: OhMyPiExternalSessionSource;
   remoteSessionId: string;
   sessionFilePath?: string | null;
   env?: NodeJS.ProcessEnv;
-}>): Promise<Readonly<{ filePath: string }> | null> {
+}>): Promise<OhMyPiSessionFileResolutionV1> {
   const sessionRoots = await listOhMyPiSessionRoots({
     source: params.source,
     env: params.env,
   });
   if (params.sessionFilePath) {
     const requestedMetadata = await lstat(params.sessionFilePath).catch(() => null);
-    if (!requestedMetadata?.isFile() || requestedMetadata.isSymbolicLink()) return null;
+    if (!requestedMetadata?.isFile() || requestedMetadata.isSymbolicLink()) {
+      return { ok: false, reason: 'source_unavailable' };
+    }
     const requestedPath = await realpath(params.sessionFilePath).catch(() => null);
-    if (!requestedPath) return null;
+    if (!requestedPath) return { ok: false, reason: 'source_unavailable' };
     const isWithinRoot = sessionRoots.some((sessionRoot) => (
       isCanonicalAbsolutePathInsideRoot(sessionRoot, requestedPath)
     ));
-    if (!isWithinRoot) return null;
+    if (!isWithinRoot) return { ok: false, reason: 'source_unavailable' };
     const descriptor = await scanJsonlSessionFile(requestedPath);
-    return descriptor?.sessionId === params.remoteSessionId
-      ? { filePath: requestedPath }
-      : null;
+    if (!descriptor) return { ok: false, reason: 'source_unavailable' };
+    return descriptor.sessionId === params.remoteSessionId
+      ? { ok: true, filePath: requestedPath }
+      : { ok: false, reason: 'source_replaced' };
   }
   for (const sessionRoot of sessionRoots) {
     const found = await findNewestSessionFileInDir({ sessionId: params.remoteSessionId, dir: sessionRoot });
-    if (found) return { filePath: found };
+    if (found) return { ok: true, filePath: found };
   }
-  return null;
+  return { ok: false, reason: 'source_unavailable' };
 }

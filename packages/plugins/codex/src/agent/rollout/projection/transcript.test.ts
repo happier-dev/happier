@@ -164,4 +164,114 @@ describe('mapCodexRolloutLineToExternalMessages', () => {
       },
     });
   });
+
+  // The sidechain transcript rows a child rollout file produces carry
+  // `sidechainId = <child thread id>`, and the host nests them under the
+  // parent tool call whose tool id equals that sidechain id. Projecting the
+  // spawn/complete pair as that tool call is what makes a Codex sub-agent
+  // render as a nested run instead of a detached, unattributed thread.
+  it('projects a Codex sub-agent spawn and completion as the canonical SubAgent tool call keyed by thread id', () => {
+    const items = mapCodexRolloutLineToExternalMessages({
+      fileRelPath: 'sessions/rollout-test.jsonl',
+      lineStartOffsetBytes: 7,
+      lineValue: { timestamp: '2026-03-06T12:34:56.000Z' },
+      actions: [
+        {
+          type: 'subagent-spawn',
+          threadId: 'thread-child-1',
+          prompt: 'Review the paging corridor',
+          nickname: 'reviewer',
+          role: 'reviewer',
+        },
+        {
+          type: 'subagent-complete',
+          threadId: 'thread-child-1',
+          status: 'completed',
+          summaryText: 'Found one overlap defect',
+        },
+      ],
+    });
+
+    expect(items).toHaveLength(2);
+    expect(items[0]?.raw).toEqual({
+      role: 'agent',
+      content: {
+        type: 'codex',
+        data: {
+          type: 'tool-call',
+          callId: 'thread-child-1',
+          name: 'SubAgent',
+          input: {
+            prompt: 'Review the paging corridor',
+            nickname: 'reviewer',
+            role: 'reviewer',
+          },
+          id: 'codex:sessions/rollout-test.jsonl:000000000007:000',
+        },
+      },
+    });
+    expect(items[1]?.raw).toEqual({
+      role: 'agent',
+      content: {
+        type: 'codex',
+        data: {
+          type: 'tool-call-result',
+          callId: 'thread-child-1',
+          output: {
+            status: 'completed',
+            summary: 'Found one overlap defect',
+          },
+          id: 'codex:sessions/rollout-test.jsonl:000000000007:001',
+        },
+      },
+    });
+  });
+
+  it('marks an interrupted sub-agent completion as an errored run', () => {
+    const items = mapCodexRolloutLineToExternalMessages({
+      fileRelPath: 'sessions/rollout-test.jsonl',
+      lineStartOffsetBytes: 8,
+      lineValue: {},
+      actions: [{
+        type: 'subagent-complete',
+        threadId: 'thread-child-2',
+        status: 'interrupted',
+        summaryText: null,
+      }],
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.raw).toEqual({
+      role: 'agent',
+      content: {
+        type: 'codex',
+        data: {
+          type: 'tool-call-result',
+          callId: 'thread-child-2',
+          output: { status: 'interrupted' },
+          id: 'codex:sessions/rollout-test.jsonl:000000000008:000',
+          isError: true,
+        },
+      },
+    });
+  });
+
+  // A sub-agent's OWN transcript must not restate the parent's roster row.
+  it('does not project sub-agent facts into the child sidechain stream', () => {
+    const items = mapCodexRolloutLineToExternalMessages({
+      fileRelPath: 'sessions/rollout-child.jsonl',
+      lineStartOffsetBytes: 9,
+      lineValue: {},
+      sidechainId: 'thread-child-1',
+      actions: [{
+        type: 'subagent-spawn',
+        threadId: 'thread-child-1',
+        prompt: null,
+        nickname: null,
+        role: null,
+      }],
+    });
+
+    expect(items).toHaveLength(0);
+  });
 });

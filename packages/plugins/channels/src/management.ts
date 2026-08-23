@@ -24,9 +24,11 @@ import {
   ConversationConnectionCreateInputV1Schema,
   ConversationConnectionDeleteInputV1Schema,
   ConversationConnectionPollRetryInputV1Schema,
+  ConversationConnectionRetestInputV1Schema,
   ConversationConnectionPrepareInputV1Schema,
   isConversationConnectionSelectableTransportV1,
   ConversationConnectionSetEnabledInputV1Schema,
+  ConversationConnectionTestInputV1Schema,
   ConversationConnectionTestResultV1Schema,
   ConversationConnectionTransferInputV1Schema,
   ConversationConnectionUpdateInputV1Schema,
@@ -43,8 +45,11 @@ import {
   ConversationPrincipalResolveResultV1Schema,
   ConversationTransportFactReportInputV1Schema,
   MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
+  MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
   areConversationEndpointIdentitiesEqual,
+  conversationBindingInputModesForEndpointV1,
   conversationBindingPolicyForOmittedFieldsV1,
+  isConversationBindingInputModeDeliverableV1,
   hasCanonicalConversationResolutionCandidateOrderV1,
   type ConversationBindingCreateResultV1,
   type ConversationBindingCreateInputV1,
@@ -62,6 +67,9 @@ import {
   type ConversationConnectionCreateInputV1,
   type ConversationConnectionDeleteInputV1,
   type ConversationConnectionPollRetryInputV1,
+  type ConversationConnectionRetestInputV1,
+  type ConversationConnectionRetestResultV1,
+  type ConversationConnectionTestInputV1,
   type ConversationConnectionTransferInputV1,
   type ConversationConnectionTransferResultV1,
   type ConversationProviderConnectionStopInputV1,
@@ -95,7 +103,10 @@ import {
   CHANNEL_STATE_RECORD_KIND,
   isCanonicalChannelStateRecordIdentity,
 } from './collections.js';
-import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
+import {
+  MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
+  requireChannelsAccountStorage,
+} from './requiredAccountStorage.js';
 import {
   abandonConversationConnectionStop,
   confirmConversationConnectionStop,
@@ -116,18 +127,21 @@ import {
   type ConversationTransferStopRequestV1,
   areConversationMaterializationRefsEqual,
 } from './connectionLifecycle.js';
-import { hasCurrentConversationTransportCaller } from './reconciliation.js';
+import {
+  hasCurrentConversationTransportCaller,
+  readConversationBindingInputModesNoLongerDeliverable,
+} from './reconciliation.js';
 import {
   transitionConversationBinding,
   type ConversationBindingStateV1,
 } from './bindingTransition.js';
 import {
-  assertConversationApprovalPolicyCanPersist,
   isChannelStateJsonRecord as isJsonRecord,
   ownChannelStateValue as own,
   readConversationBindingManagementRows,
   readConversationIngressAttentionPage,
   readConversationBindingUpdateRow,
+  readConversationConnectionSharedEndpointInputModes,
   readConversationConnectionUpdateRow,
   mutateConversationConnectionLifecycleInAccountCollection,
   setConversationBindingEnabledInAccountCollection,
@@ -277,6 +291,7 @@ type BindingEndpointCandidates = Readonly<{
   kind: 'endpointCandidates';
   candidates: readonly ConversationResolvedEndpointV1[];
   witness: BindingResolutionProvider;
+  sharedEndpointInputModes?: readonly ConversationBindingInputModeV1[];
 }>;
 type BindingEndpointResolution = BindingResolutionTerminal | BindingEndpointCandidates;
 type BindingPrincipalCandidates = Readonly<{
@@ -293,6 +308,8 @@ type BindingAudienceResolution = BindingResolutionTerminal | Readonly<{
   endpoint: ConversationResolvedEndpointV1;
   allowedPrincipalIds: readonly string[];
   witness: BindingResolutionProvider;
+  /** The provider-authenticated shared-endpoint delivery truth for this connection. */
+  sharedEndpointInputModes?: readonly ConversationBindingInputModeV1[];
 }>;
 
 function pluginError(code: string, message: string, retryable = false): PluginError {
@@ -385,6 +402,16 @@ function readAdmittedConnectionPollRetryInput(input: JsonValue): ConversationCon
     ConversationConnectionPollRetryInputV1Schema,
     'channels_connection_poll_retry_input_invalid',
     'Connection poll retry input was not admitted by its strict contract.',
+  );
+}
+
+/** The present-user retest re-observes exactly one saved connection row. */
+function readAdmittedConnectionRetestInput(input: JsonValue): ConversationConnectionRetestInputV1 {
+  return readAdmittedActionInput(
+    input,
+    ConversationConnectionRetestInputV1Schema,
+    'channels_connection_retest_input_invalid',
+    'Connection retest input was not admitted by its strict contract.',
   );
 }
 
@@ -769,9 +796,16 @@ async function resolveBindingEndpointCandidates(input: Readonly<{
   if (reread.kind !== 'current') return reread;
 
   const result = readEndpointResolveResult(execution.result);
-  return result.kind === 'notReady'
-    ? result
-    : { kind: 'endpointCandidates', candidates: result.candidates, witness: reread.provider };
+  if (result.kind === 'notReady') return result;
+  const sharedEndpointInputModes = readConversationConnectionSharedEndpointInputModes(
+    reread.connection.payload,
+  );
+  return {
+    kind: 'endpointCandidates',
+    candidates: result.candidates,
+    witness: reread.provider,
+    ...(sharedEndpointInputModes === undefined ? {} : { sharedEndpointInputModes }),
+  };
 }
 
 /** Resolves principals only after the caller's endpoint selection is freshly re-proven. */
@@ -919,6 +953,9 @@ async function resolveBindingAudienceSelection(input: Readonly<{
     endpoint,
     allowedPrincipalIds,
     witness: principalResolution.witness,
+    ...(endpointResolution.sharedEndpointInputModes === undefined
+      ? {}
+      : { sharedEndpointInputModes: endpointResolution.sharedEndpointInputModes }),
   };
 }
 
@@ -1057,21 +1094,40 @@ function readTransferTransportKind(current: ConversationConnectionUpdateRow): 'c
   return transport.kind;
 }
 
-function readTransferImmutableConnectionIdentity(current: ConversationConnectionUpdateRow): Readonly<{
+/**
+ * The one reader of a saved connection's immutable provider identity.
+ *
+ * Transfer, delete finalization, and retest all decide against the same two
+ * persisted facts — `providerConnectionKey` and `integrationPrincipal.id` — and
+ * only their operation-scoped corrupt-row error identity differs. Keeping one
+ * reader is what stops a caller from comparing a subset of the tuple.
+ */
+function readImmutableConnectionIdentity(
+  current: ConversationConnectionUpdateRow,
+  corrupt: Readonly<{ code: string; message: string }>,
+): Readonly<{
   providerConnectionKey: string;
   integrationPrincipalId: string;
 }> {
   const providerConnectionKey = own(current.payload, 'providerConnectionKey');
   const integrationPrincipal = own(current.payload, 'integrationPrincipal');
-  if (typeof providerConnectionKey !== 'string'
-    || !isJsonRecord(integrationPrincipal)
-    || typeof integrationPrincipal.id !== 'string') {
-    throw pluginError(
-      'channels_connection_transfer_corrupt',
-      'Connection transfer could not read the retained immutable provider identity.',
-    );
+  const integrationPrincipalId = isJsonRecord(integrationPrincipal)
+    ? own(integrationPrincipal, 'id')
+    : undefined;
+  if (typeof providerConnectionKey !== 'string' || typeof integrationPrincipalId !== 'string') {
+    throw pluginError(corrupt.code, corrupt.message);
   }
-  return { providerConnectionKey, integrationPrincipalId: integrationPrincipal.id };
+  return { providerConnectionKey, integrationPrincipalId };
+}
+
+function readTransferImmutableConnectionIdentity(current: ConversationConnectionUpdateRow): Readonly<{
+  providerConnectionKey: string;
+  integrationPrincipalId: string;
+}> {
+  return readImmutableConnectionIdentity(current, {
+    code: 'channels_connection_transfer_corrupt',
+    message: 'Connection transfer could not read the retained immutable provider identity.',
+  });
 }
 
 function isRequestedTransferAlreadyCurrent(input: Readonly<{
@@ -1335,10 +1391,7 @@ async function resolveBindingTargetForPersistence(
   target: ConversationBindingTargetMutationV1,
   context: PluginInvocationContext,
 ): Promise<ConversationBindingTargetV1 | ConversationAutomationTargetNotVerifiedResult> {
-  if (target.kind === 'session') {
-    assertConversationApprovalPolicyCanPersist(target);
-    return target;
-  }
+  if (target.kind === 'session') return target;
   // A conversation binding is an additional invocation source for an
   // Automation the Account already owns: several bindings may name the same
   // target, so persistence only asks whether that target is still current.
@@ -1908,6 +1961,13 @@ function connectionRows(input: Readonly<{
       overlapSafety: input.setup.overlapSafety,
       replayContinuity: input.setup.replayContinuity,
       outboundTextLimit: input.setup.outboundTextLimit,
+      // The provider-authenticated shared-endpoint delivery truth. It is a
+      // Channels fact rather than opaque provider configuration because the
+      // binding policy owner and the surface that offers that policy both
+      // decide from it.
+      ...(input.setup.sharedEndpointInputModes === undefined
+        ? {}
+        : { sharedEndpointInputModes: [...input.setup.sharedEndpointInputModes] }),
       ...(input.setup.pairingDeepLinkTemplate === undefined
         ? {}
         : { pairingDeepLinkTemplate: input.setup.pairingDeepLinkTemplate }),
@@ -2296,6 +2356,9 @@ export async function prepareConversationConnectionForInvocation(
     overlapSafety: prepared.setup.overlapSafety,
     replayContinuity: prepared.setup.replayContinuity,
     outboundTextLimit: prepared.setup.outboundTextLimit,
+    ...(prepared.setup.sharedEndpointInputModes === undefined
+      ? {}
+      : { sharedEndpointInputModes: prepared.setup.sharedEndpointInputModes }),
     ...(prepared.setup.integrationPrincipal.label === undefined
       ? {}
       : { destinationLabel: prepared.setup.integrationPrincipal.label }),
@@ -2530,6 +2593,178 @@ export async function retryConversationConnectionPollForInvocation(
   throw pluginError(
     'channels_connection_poll_retry_result_invalid',
     'The connection poll retry did not return or retain its cleared row.',
+    true,
+  );
+}
+
+/**
+ * Re-runs the provider's own connection test against the connection the user
+ * already saved, so a connection that failed after creation has an exit other
+ * than delete-and-recreate.
+ *
+ * It is a re-observation, not a second health system: the request is composed
+ * entirely from retained facts and pinned to the frozen transport origin, a
+ * still-failing probe is reported with the shared provider-failure vocabulary
+ * and writes nothing, and a ready probe settles the one canonical
+ * `providerReadiness` field through the same lifecycle owner the provider
+ * transport reports through.
+ */
+export async function retestConversationConnectionForInvocation(
+  input: JsonValue,
+  context: PluginInvocationContext,
+): Promise<ConversationConnectionRetestResultV1> {
+  const request = readAdmittedConnectionRetestInput(input);
+  const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+  assertNotAborted(context.signal);
+  const row = await collection.get(request.connectionId, { signal: context.signal });
+  assertNotAborted(context.signal);
+  if (row === null || row.revision !== request.expectedRevision) {
+    throw conversationConnectionRetestConflict();
+  }
+  const current = readConversationConnectionUpdateRow({ row, connectionId: request.connectionId });
+  // Deleting, disabled, and mid-transfer connections have no current transport
+  // to re-observe, and the readiness owner would refuse the result anyway.
+  if (current.lifecycle.authorityEpoch !== request.authorityEpoch
+    || current.lifecycle.deletionState !== 'none'
+    || current.lifecycle.pendingOldTransportStop !== null
+    || !current.lifecycle.enabled) {
+    throw conversationConnectionRetestConflict();
+  }
+  const transport = own(current.payload, 'transport');
+  if (!isJsonRecord(transport) || typeof transport.kind !== 'string') {
+    throw pluginError(
+      'channels_connection_retest_corrupt',
+      'Connection retest target has an invalid persisted transport.',
+    );
+  }
+  const provider = await readCurrentProviderContributionForPersistedSelection({
+    context: {
+      targetedContributions: context.services.targetedContributions,
+      signal: context.signal,
+    },
+    providerPluginId: current.providerPluginId,
+    providerContributionSelection: current.providerContributionSelection,
+  });
+  // `connectionTest` is a `required: true` role on the Channels provider point,
+  // so an admitted contribution always carries it; there is no absent case to
+  // branch on here.
+  const connectionTest = provider.operations.connectionTest;
+  let testRequest: ConversationConnectionTestInputV1;
+  try {
+    testRequest = ConversationConnectionTestInputV1Schema.parse({
+      v: 1,
+      connectionId: request.connectionId,
+      providerConnectionKey: own(current.payload, 'providerConnectionKey'),
+      providerConfigVersion: own(current.payload, 'providerConfigVersion'),
+      providerConfig: own(current.payload, 'providerConfig'),
+      credentialRef: own(current.payload, 'credentialRef'),
+      selectedTransport: transport.kind,
+    });
+  } catch (cause) {
+    throw new PluginError({
+      code: 'channels_connection_retest_corrupt',
+      message: 'Connection retest could not read the retained provider connection details.',
+    }, { cause });
+  }
+  const execution = await context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
+    connectionTest,
+    testRequest,
+    { signal: context.signal, expectedExecutionOrigin: current.transportOrigin },
+  );
+  assertNotAborted(context.signal);
+  let testResult: ReturnType<typeof ConversationConnectionTestResultV1Schema.parse>;
+  try {
+    testResult = ConversationConnectionTestResultV1Schema.parse(execution.result);
+  } catch (cause) {
+    throw new PluginError({
+      code: 'channels_connection_test_result_invalid',
+      message: 'Provider connection test returned an invalid result.',
+    }, { cause });
+  }
+  // A transient provider refusal is the answer, not a new retained verdict.
+  // Only the connection's transport may supersede retained attention.
+  if (testResult.kind === 'notReady') return testResult;
+  // Immutable connection identity is the whole tuple, exactly as create and
+  // transfer compare it. A credential that still answers for the saved provider
+  // connection key but now resolves to a different integration principal is a
+  // different destination, and clearing readiness for it would silently rebind
+  // the saved connection to someone else's account.
+  const retainedIdentity = readImmutableConnectionIdentity(current, {
+    code: 'channels_connection_retest_corrupt',
+    message: 'Connection retest could not read the retained provider connection details.',
+  });
+  if (testResult.providerConnectionKey !== retainedIdentity.providerConnectionKey
+    || testResult.integrationPrincipal.id !== retainedIdentity.integrationPrincipalId) {
+    throw pluginError(
+      'channels_connection_test_identity_mismatch',
+      'Provider connection test disagreed about immutable connection identity.',
+    );
+  }
+  // Identity alone is not readiness. A platform can narrow what an unchanged
+  // integration is allowed to deliver — re-enabling a Telegram bot's BotFather
+  // group privacy stops ordinary supergroup messages outright — and a saved
+  // shared binding that promised those messages then observes nothing at all.
+  // The probe restates the CURRENT capability, so the retained promise is
+  // compared against it here rather than being cleared by a stale one.
+  const unsatisfiable = await readConversationBindingInputModesNoLongerDeliverable({
+    context,
+    connectionId: request.connectionId,
+    sharedEndpointInputModes: testResult.sharedEndpointInputModes,
+  });
+  assertNotAborted(context.signal);
+  const readinessFact: Parameters<
+    typeof recordConversationConnectionProviderReadiness
+  >[0]['fact'] = unsatisfiable.length === 0
+    ? { kind: 'providerReadiness', status: 'ready' }
+    : {
+      kind: 'providerReadiness',
+      status: 'attention',
+      code: 'providerPermissionMissing',
+      diagnostic: `This integration can no longer deliver ${unsatisfiable.join(', ')} for shared conversations, so saved bindings that use it receive nothing.`,
+    };
+  const transition = recordConversationConnectionProviderReadiness({
+    current: current.lifecycle,
+    reportedAuthorityEpoch: request.authorityEpoch,
+    fact: readinessFact,
+  });
+  if (transition.kind === 'staleAuthority') throw conversationConnectionRetestConflict();
+  if (readinessFact.status === 'attention') {
+    if (transition.kind === 'recorded') {
+      await persistConversationConnectionLifecycle({
+        collection,
+        row,
+        current,
+        lifecycle: transition.connection,
+        operation: 'channels_connection_retest',
+      }, context);
+    }
+    return {
+      kind: 'notReady',
+      reason: 'permissionMissing',
+      diagnostic: readinessFact.diagnostic,
+    };
+  }
+  const revision = transition.kind === 'rejoined'
+    ? row.revision
+    : await persistConversationConnectionLifecycle({
+      collection,
+      row,
+      current,
+      lifecycle: transition.connection,
+      operation: 'channels_connection_retest',
+    }, context);
+  return {
+    kind: 'ready',
+    connectionId: request.connectionId,
+    revision,
+    authorityEpoch: request.authorityEpoch,
+  };
+}
+
+function conversationConnectionRetestConflict(): PluginError {
+  return pluginError(
+    'channels_connection_retest_conflict',
+    'The saved connection changed before its retest could observe the current provider.',
     true,
   );
 }
@@ -3342,6 +3577,16 @@ export async function settleConversationProviderExclusiveCheckpointedPollReplace
   }
 }
 
+/**
+ * How many relation rows one delete-finalization page inspects.
+ *
+ * It is derived from the atomic mutation batch that page produces, not chosen:
+ * a binding row can contribute at most three mutations (its projection
+ * frontier, its session rotation, and the binding itself), and the connection
+ * page adds one leading `assert`, so `32 * 3 + 1 = 97` stays inside the
+ * hundred-operation Collection batch bound. Raising this number without
+ * re-deriving that arithmetic produces a batch the Collection rejects.
+ */
 const MAX_CONNECTION_DELETE_RELATION_ROWS = 32;
 
 function stateRowFromCollectionRow(row: Readonly<{
@@ -3382,18 +3627,10 @@ function readFinalizingReservationIdentity(current: ConversationConnectionUpdate
   providerConnectionKey: string;
   integrationPrincipalId: string;
 }> {
-  const providerConnectionKey = own(current.payload, 'providerConnectionKey');
-  const integrationPrincipal = own(current.payload, 'integrationPrincipal');
-  const integrationPrincipalId = isJsonRecord(integrationPrincipal)
-    ? own(integrationPrincipal, 'id')
-    : undefined;
-  if (typeof providerConnectionKey !== 'string' || typeof integrationPrincipalId !== 'string') {
-    throw pluginError(
-      'channels_connection_finalizer_identity_corrupt',
-      'A finalizing connection has no canonical immutable reservation identity.',
-    );
-  }
-  return { providerConnectionKey, integrationPrincipalId };
+  return readImmutableConnectionIdentity(current, {
+    code: 'channels_connection_finalizer_identity_corrupt',
+    message: 'A finalizing connection has no canonical immutable reservation identity.',
+  });
 }
 
 /** Validates and tombstones the deterministic binding-owned projection rows. */
@@ -3514,12 +3751,16 @@ async function finalizeConversationConnectionDelete(input: Readonly<{
   if (custody.kind !== 'settled') return;
 
   const relationPage = await collection.query({
-    index: CHANNEL_STATE_INDEX_ID.byConnectionBinding,
+    index: 'by-connection-binding' as typeof CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
     prefix: [input.connectionId],
     // Bound relation cleanup must see every binding-scoped ingress obligation
     // before it reaches the unbound checkpoint/census rows. Otherwise a full
     // first page can remove a census while a later attempting/blocked
-    // obligation still needs its immutable ingress evidence.
+    // obligation still needs its immutable ingress evidence. `binding-id` stays
+    // the second V2 field with the same null sentinel, so descending order
+    // still yields every bound row before the unbound ones; the added
+    // `record-kind`/`attention` fields only order rows inside an already equal
+    // binding-id group, which this loop never assigns authority to.
     order: 'desc',
     limit: MAX_CONNECTION_DELETE_RELATION_ROWS,
   }, { signal: input.context.signal });
@@ -3654,7 +3895,7 @@ async function finalizeConversationBindingDelete(input: Readonly<{
   if (custody.kind !== 'settled') return;
 
   const relationPage = await collection.query({
-    index: CHANNEL_STATE_INDEX_ID.byConnectionBinding,
+    index: 'by-connection-binding' as typeof CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
     prefix: [current.binding.connectionId, input.bindingId],
     order: 'desc',
     limit: MAX_CONNECTION_DELETE_RELATION_ROWS,
@@ -3750,7 +3991,12 @@ export async function finalizeConversationConnectionDeletesForInvocation(
       index: CHANNEL_STATE_INDEX_ID.byKind,
       prefix: [CHANNEL_STATE_RECORD_KIND.connection],
       order: 'asc',
-      limit: MAX_CONNECTION_DELETE_RELATION_ROWS,
+      // The connection quota is the census bound; the relation-row page bound
+      // happens to share its current value but answers a different question.
+      limit: Math.min(
+        MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
+        MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
+      ),
     }, { signal: context.signal });
   } catch {
     // Binding finalization is independently enumerable from the same existing
@@ -3780,23 +4026,31 @@ export async function finalizeConversationConnectionDeletesForInvocation(
   }
   if (context.signal.aborted) return;
 
-  let bindingPage: Awaited<ReturnType<ChannelStateCollection['query']>> | undefined;
-  try {
-    bindingPage = await collection.query({
-      index: CHANNEL_STATE_INDEX_ID.byKind,
-      prefix: [CHANNEL_STATE_RECORD_KIND.binding],
-      order: 'asc',
-      // Binding quota is itself the established bounded census. Reading it in
-      // one page makes every retained finalizing row rejoin without adding a
-      // cursor, scanner, or separate cleanup scheduler.
-      limit: MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
-    }, { signal: context.signal });
-  } catch {
-    finalizationFailed = true;
-  }
-  if (bindingPage !== undefined) {
+  // The binding quota is the established bounded census, but it exceeds the
+  // canonical query page bound, so the census is read as consecutive pages of
+  // the same existing index. The keyset cursor is loop-local: finalization
+  // still owns no persisted cursor, scanner, or cleanup scheduler, and a crash
+  // or conflict simply resumes from current rows on the next wake.
+  let bindingCursor: string | undefined;
+  let remainingBindings = MAX_CONVERSATION_BINDINGS_PER_ACCOUNT;
+  while (remainingBindings > 0) {
+    if (context.signal.aborted) return;
+    let bindingPage: Awaited<ReturnType<ChannelStateCollection['query']>> | undefined;
+    try {
+      bindingPage = await collection.query({
+        index: CHANNEL_STATE_INDEX_ID.byKind,
+        prefix: [CHANNEL_STATE_RECORD_KIND.binding],
+        order: 'asc',
+        limit: Math.min(remainingBindings, MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE),
+        ...(bindingCursor === undefined ? {} : { cursor: bindingCursor }),
+      }, { signal: context.signal });
+    } catch {
+      finalizationFailed = true;
+    }
+    if (bindingPage === undefined) break;
     for (const stored of bindingPage.rows) {
       if (context.signal.aborted) return;
+      remainingBindings -= 1;
       const row = stateRowFromCollectionRow(stored);
       if (row === undefined || row.value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.binding) {
         continue;
@@ -3813,6 +4067,8 @@ export async function finalizeConversationConnectionDeletesForInvocation(
         finalizationFailed = true;
       }
     }
+    bindingCursor = bindingPage.nextCursor;
+    if (bindingCursor === undefined) break;
   }
   if (context.signal.aborted) return;
   if (finalizationFailed) throw new Error('Channels delete finalization failed.');
@@ -3840,6 +4096,13 @@ export async function createConversationBindingForInvocation(
   // can answer for this exact binding rather than for the target alone.
   const newBindingId = createBindingId();
   const defaults = conversationBindingPolicyForOmittedFieldsV1(endpoint.audience);
+  const inputMode = createInput.inputMode ?? defaults.inputMode;
+  assertConversationBindingInputModeIsDeliverable({
+    audience: endpoint.audience,
+    inputMode,
+    sharedEndpointInputModes: audience.sharedEndpointInputModes,
+    operation: 'channels_binding_create',
+  });
   const createCandidate = (target: ConversationBindingTargetV1) => createConversationBindingRow({
     bindingId: newBindingId,
     connectionId: createInput.connectionId,
@@ -3847,7 +4110,7 @@ export async function createConversationBindingForInvocation(
     target,
     allowedPrincipalIds,
     allowBotSenders: createInput.allowBotSenders ?? defaults.allowBotSenders,
-    inputMode: createInput.inputMode ?? defaults.inputMode,
+    inputMode,
     inboundDebounceMs: createInput.inboundDebounceMs ?? defaults.inboundDebounceMs,
     linkPreviewPolicy: createInput.linkPreviewPolicy ?? defaults.linkPreviewPolicy,
     senderFeedback: createInput.senderFeedback ?? defaults.senderFeedback,
@@ -3906,6 +4169,44 @@ export async function createConversationBindingForInvocation(
     );
   }
   return { kind: 'created', binding: candidate.binding };
+}
+
+/**
+ * A binding may only promise an incoming-message policy the connection's
+ * provider proved it can deliver.
+ *
+ * The provider authenticates that truth once during setup; this is the single
+ * writer-side gate that keeps an impossible promise — a shared conversation
+ * whose platform withholds ordinary messages, bound to `allAllowedMessages` —
+ * out of the retained Account policy. The surface offers the same set from the
+ * same protocol owner, so the two can never disagree.
+ */
+function assertConversationBindingInputModeIsDeliverable(input: Readonly<{
+  audience: ConversationResolvedEndpointV1['audience'];
+  inputMode: ConversationBindingInputModeV1;
+  sharedEndpointInputModes: readonly ConversationBindingInputModeV1[] | undefined;
+  operation: 'channels_binding_create' | 'channels_binding_update';
+}>): void {
+  if (isConversationBindingInputModeDeliverableV1({
+    audience: input.audience,
+    inputMode: input.inputMode,
+    ...(input.sharedEndpointInputModes === undefined
+      ? {}
+      : { sharedEndpointInputModes: input.sharedEndpointInputModes }),
+  })) return;
+  throw new PluginError({
+    code: `${input.operation}_input_mode_unsupported`,
+    message: 'The selected integration cannot deliver this incoming message policy for a shared conversation.',
+    details: {
+      inputMode: input.inputMode,
+      deliverableInputModes: [...conversationBindingInputModesForEndpointV1({
+        audience: input.audience,
+        ...(input.sharedEndpointInputModes === undefined
+          ? {}
+          : { sharedEndpointInputModes: input.sharedEndpointInputModes }),
+      })],
+    },
+  });
 }
 
 /** All existing-binding writes share one transition, verifier, and atomic persistence owner. */
@@ -3979,6 +4280,17 @@ async function mutateConversationBinding(
     if (audience.kind !== 'ready') return audience;
   }
 
+  const requestedInputMode = policyUpdate?.inputMode ?? current.binding.inputMode;
+  const requestedEndpoint = audience?.endpoint ?? current.binding.endpoint;
+  if (policyUpdate?.inputMode !== undefined || audience !== null) {
+    assertConversationBindingInputModeIsDeliverable({
+      audience: requestedEndpoint.audience,
+      inputMode: requestedInputMode,
+      sharedEndpointInputModes: readConversationConnectionSharedEndpointInputModes(connection.payload),
+      operation: 'channels_binding_update',
+    });
+  }
+
   let target = current.binding.target;
   if (updateInput.target !== undefined) {
     const verifiedTarget = await resolveBindingTargetForPersistence(updateInput.target, context);
@@ -3989,11 +4301,11 @@ async function mutateConversationBinding(
     current: current.binding,
     requested: {
       ...current.binding,
-      endpoint: audience?.endpoint ?? current.binding.endpoint,
+      endpoint: requestedEndpoint,
       target,
       allowedPrincipalIds: audience?.allowedPrincipalIds ?? current.binding.allowedPrincipalIds,
       allowBotSenders: policyUpdate?.allowBotSenders ?? current.binding.allowBotSenders,
-      inputMode: policyUpdate?.inputMode ?? current.binding.inputMode,
+      inputMode: requestedInputMode,
       inboundDebounceMs: policyUpdate?.inboundDebounceMs ?? current.binding.inboundDebounceMs,
       linkPreviewPolicy: policyUpdate?.linkPreviewPolicy ?? current.binding.linkPreviewPolicy,
       senderFeedback: policyUpdate?.senderFeedback ?? current.binding.senderFeedback,
@@ -4014,10 +4326,6 @@ async function mutateConversationBinding(
       authorityEpoch: transition.binding.authorityEpoch,
     };
   }
-
-  // A legacy persisted enabled policy may be read and projected as unavailable,
-  // but an ordinary update must not re-persist it around C5's target gate.
-  assertConversationApprovalPolicyCanPersist(transition.binding.target);
 
   const next = withConversationBindingPolicy({
     row,
@@ -4322,7 +4630,14 @@ function transferConnectionValue(input: Readonly<{
   lifecycle: ConversationConnectionLifecycleStateV1;
   now: number;
 }>): JsonRecord {
-  const { pairingDeepLinkTemplate: _oldPairingDeepLinkTemplate, ...payloadWithoutPairingTemplate } = input.current.payload;
+  const {
+    pairingDeepLinkTemplate: _oldPairingDeepLinkTemplate,
+    // The replacement provider re-authenticates its own shared-endpoint
+    // delivery truth. Retaining the predecessor's would leave the surface and
+    // the binding writer deciding from a capability nothing proved.
+    sharedEndpointInputModes: _oldSharedEndpointInputModes,
+    ...payloadWithoutPairingTemplate
+  } = input.current.payload;
   const replacementCurrent: ConversationConnectionUpdateRow = {
     ...input.current,
     payload: {
@@ -4339,6 +4654,9 @@ function transferConnectionValue(input: Readonly<{
       overlapSafety: input.prepared.setup.overlapSafety,
       replayContinuity: input.prepared.setup.replayContinuity,
       outboundTextLimit: input.prepared.setup.outboundTextLimit,
+      ...(input.prepared.setup.sharedEndpointInputModes === undefined
+        ? {}
+        : { sharedEndpointInputModes: [...input.prepared.setup.sharedEndpointInputModes] }),
       ...(input.prepared.setup.pairingDeepLinkTemplate === undefined
         ? {}
         : { pairingDeepLinkTemplate: input.prepared.setup.pairingDeepLinkTemplate }),
@@ -4528,6 +4846,26 @@ export async function transferConversationConnectionForInvocation(
       connectionId: transferInput.connectionId,
       revision: postSetupRow.revision,
       authorityEpoch: postSetupCurrent.lifecycle.authorityEpoch,
+    };
+  }
+
+  // A replacement credential re-authenticates its own shared-endpoint delivery
+  // truth, and the committed row adopts it verbatim. If that truth is narrower
+  // than a promise an enabled binding already made, committing here would leave
+  // the binding intact, enabled, and permanently unable to observe anything.
+  // The transfer is refused before any authority moves, so the incumbent
+  // connection and its bindings survive untouched.
+  const unsatisfiableAfterTransfer = await readConversationBindingInputModesNoLongerDeliverable({
+    context,
+    connectionId: transferInput.connectionId,
+    sharedEndpointInputModes: prepared.setup.sharedEndpointInputModes,
+  });
+  assertNotAborted(context.signal);
+  if (unsatisfiableAfterTransfer.length > 0) {
+    return {
+      kind: 'notReady',
+      reason: 'permissionMissing',
+      diagnostic: `The replacement integration cannot deliver ${unsatisfiableAfterTransfer.join(', ')} for shared conversations, which saved bindings on this connection require.`,
     };
   }
 

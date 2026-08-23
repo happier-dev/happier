@@ -1,21 +1,14 @@
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
-import { pollTelegramObservations, setupTelegramChatEventSource } from './channelActions.js';
+import { admitTelegramAutomationOccurrences } from './automationEvents.js';
+import { setupTelegramChatEventSource } from './channelActions.js';
 import { TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID } from './constants.js';
+import type { TelegramBotIdentity, TelegramIncomingMessage, TelegramUpdate } from './telegramBotApi.js';
 
 const telegramAccount = Object.freeze({
   service: Object.freeze({ pluginId: 'happier.channel.telegram', localId: 'telegram-bot' }),
   accountId: 'bot:123',
-});
-
-const connection = Object.freeze({
-  v: 1 as const,
-  connectionId: 'connection-1',
-  providerConnectionKey: 'telegram-bot:123',
-  providerConfigVersion: 1 as const,
-  providerConfig: Object.freeze({ botUsername: 'HappierBot', canReadAllGroupMessages: false }),
-  credentialRef: telegramAccount,
 });
 
 function response(value: unknown) {
@@ -31,6 +24,13 @@ const botIdentity = {
   ok: true,
   result: { id: 123, is_bot: true, first_name: 'Happier Bot', username: 'HappierBot' },
 };
+
+const identity: TelegramBotIdentity = Object.freeze({
+  id: '123',
+  username: 'HappierBot',
+  displayName: 'Happier Bot',
+  canReadAllGroupMessages: false,
+});
 
 function armedDefinition(chatId: string) {
   return {
@@ -82,27 +82,41 @@ function context(
   };
 }
 
-function pollHttp(updates: readonly unknown[]) {
+function message(overrides: Partial<TelegramIncomingMessage> = {}): TelegramIncomingMessage {
   return {
-    request: vi.fn(async (input: Readonly<{ url: string }>) => response(
-      input.url.includes('/getMe') ? botIdentity : { ok: true, result: updates },
-    )),
+    messageId: '9',
+    chatId: '-100456',
+    chatType: 'supergroup',
+    messageThreadId: null,
+    senderId: '789',
+    senderIsBot: false,
+    senderIsChat: false,
+    text: 'deploy the site',
+    textEntities: [],
+    replyToMessageId: null,
+    replyToSenderId: null,
+    forwarded: false,
+    viaBotId: null,
+    sentAtMs: 1_700_000_008_000,
+    editedAtMs: null,
+    ...overrides,
   };
 }
 
-const chatMessage = {
-  update_id: 51,
-  message: {
-    message_id: 9,
-    date: 1_700_000_008,
-    chat: { id: -100456, type: 'supergroup' },
-    from: { id: 789, is_bot: false },
-    text: 'deploy the site',
-  },
-};
+function update(overrides: Partial<TelegramUpdate> = {}): TelegramUpdate {
+  return { updateId: '51', kind: 'message', message: message(), ...overrides };
+}
 
+const noHttp = { request: vi.fn(async () => response({ ok: true, result: [] })) };
+
+/**
+ * The Telegram Automation Event is WITHHELD from `plugin.ts`, so this retained
+ * admission has no live call site (see the resume note in
+ * `automationEvents.ts`). These tests therefore drive the retained entry point
+ * itself, which is exactly what a re-declared Event restores.
+ */
 describe('Telegram Automation Event source', () => {
-  it('admits an Automation Event occurrence for a real observed message through the existing Channels poll', async () => {
+  it('admits an occurrence for a real observed message in an armed chat', async () => {
     const admitted: unknown[] = [];
     const execute = vi.fn(async (actionId: string, input: unknown) => {
       if (actionId === 'automation.event.sources.list') {
@@ -115,12 +129,12 @@ describe('Telegram Automation Event source', () => {
       throw new Error(`unexpected ${actionId}`);
     });
 
-    const result = await pollTelegramObservations({
-      ...connection,
-      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() },
-      limit: 10,
-      waitMs: 0,
-    }, context(pollHttp([chatMessage]), execute));
+    const outcome = await admitTelegramAutomationOccurrences({
+      context: context(noHttp, execute),
+      identity,
+      updates: [update()],
+      observationReceivedAt: 1_700_000_009_000,
+    });
 
     expect(admitted).toHaveLength(1);
     expect(admitted[0]).toMatchObject({
@@ -129,10 +143,7 @@ describe('Telegram Automation Event source', () => {
       payload: { chatId: '-100456', chatType: 'supergroup', text: 'deploy the site', senderId: '789' },
       definitions: [{ automationId: '11111111-1111-4111-8111-111111111111', templateVersion: 1 }],
     });
-    // The Channel observation for the same update is still delivered: the one
-    // poll continues to serve both consumers.
-    expect(result).toMatchObject({ kind: 'batch' });
-    expect(result.checkpointAfterBatch.offset).toBe('52');
+    expect(outcome).toEqual({ stopBeforeUpdateId: null, admittedCount: 1 });
   });
 
   it('does not admit an occurrence for a chat no Automation watches', async () => {
@@ -142,14 +153,14 @@ describe('Telegram Automation Event source', () => {
       }
       throw new Error(`unexpected ${actionId}`);
     });
-    const result = await pollTelegramObservations({
-      ...connection,
-      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() },
-      limit: 10,
-      waitMs: 0,
-    }, context(pollHttp([chatMessage]), execute));
-    expect(execute.mock.calls.every(([id]) => id === 'automation.event.sources.list')).toBe(true);
-    expect(result).toMatchObject({ kind: 'batch' });
+    const outcome = await admitTelegramAutomationOccurrences({
+      context: context(noHttp, execute),
+      identity,
+      updates: [update()],
+      observationReceivedAt: 1_700_000_009_000,
+    });
+    expect(execute.mock.calls.map(([id]) => id)).toEqual(['automation.event.sources.list']);
+    expect(outcome).toEqual({ stopBeforeUpdateId: null, admittedCount: 0 });
   });
 
   it('withholds the shared checkpoint past an occurrence that was not admitted checkpoint-safely', async () => {
@@ -159,68 +170,40 @@ describe('Telegram Automation Event source', () => {
       }
       return { results: [{ kind: 'blocked', reason: 'capacity', checkpointSafe: false }] };
     });
-    const result = await pollTelegramObservations({
-      ...connection,
-      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() },
-      limit: 10,
-      waitMs: 0,
-    }, context(pollHttp([chatMessage]), execute));
-    // Telegram's `offset` confirms updates for every reader, so the batch must
-    // stop before the unadmitted update instead of discarding it.
-    expect(result.checkpointAfterBatch.offset).toBe('51');
-    expect(result).toMatchObject({ kind: 'checkpointOnly' });
+    // Telegram's `offset` confirms updates for every reader, so the caller must
+    // be told to stop before the unadmitted update instead of discarding it.
+    await expect(admitTelegramAutomationOccurrences({
+      context: context(noHttp, execute),
+      identity,
+      updates: [update()],
+      observationReceivedAt: 1_700_000_009_000,
+    })).resolves.toEqual({ stopBeforeUpdateId: '51', admittedCount: 0 });
   });
 
   it('does not admit an edit, because the Channels ingress already refuses edits as content', async () => {
-    const execute = vi.fn(async (actionId: string) => {
-      if (actionId === 'automation.event.sources.list') {
-        return { kind: 'page', definitions: [armedDefinition('-100456')], nextCursor: null, revision: '7' };
-      }
-      throw new Error('an edit must not be admitted as a new occurrence');
+    const execute = vi.fn(async () => {
+      throw new Error('an edit must not reach the Automation catalog');
     });
-    await pollTelegramObservations({
-      ...connection,
-      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() },
-      limit: 10,
-      waitMs: 0,
-    }, context(pollHttp([{
-      update_id: 51,
-      edited_message: { ...chatMessage.message, edit_date: 1_700_000_009 },
-    }]), execute));
-    expect(execute.mock.calls.map(([id]) => id)).not.toContain('automation.event.admit');
+    await expect(admitTelegramAutomationOccurrences({
+      context: context(noHttp, execute),
+      identity,
+      updates: [update({ kind: 'editedMessage', message: message({ editedAtMs: 1_700_000_009_000 }) })],
+      observationReceivedAt: 1_700_000_009_000,
+    })).resolves.toEqual({ stopBeforeUpdateId: null, admittedCount: 0 });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('does not admit this bot\'s own message, so a replying Automation cannot retrigger itself', async () => {
-    const execute = vi.fn(async (actionId: string) => {
-      if (actionId === 'automation.event.sources.list') {
-        return { kind: 'page', definitions: [armedDefinition('-100456')], nextCursor: null, revision: '7' };
-      }
-      throw new Error('the integration self must not be admitted');
-    });
-    await pollTelegramObservations({
-      ...connection,
-      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() },
-      limit: 10,
-      waitMs: 0,
-    }, context(pollHttp([{
-      update_id: 51,
-      message: { ...chatMessage.message, from: { id: 123, is_bot: true } },
-    }]), execute));
-    expect(execute.mock.calls.map(([id]) => id)).not.toContain('automation.event.admit');
-  });
-
-  it('never admits from the baseline poll that discards Telegram history', async () => {
     const execute = vi.fn(async () => {
-      throw new Error('baseline must not reach the Automation host actions');
+      throw new Error('the integration self must not reach the Automation catalog');
     });
-    const result = await pollTelegramObservations({
-      ...connection,
-      checkpoint: null,
-      limit: 10,
-      waitMs: 0,
-    }, context(pollHttp([chatMessage]), execute));
+    await expect(admitTelegramAutomationOccurrences({
+      context: context(noHttp, execute),
+      identity,
+      updates: [update({ message: message({ senderId: '123', senderIsBot: true }) })],
+      observationReceivedAt: 1_700_000_009_000,
+    })).resolves.toEqual({ stopBeforeUpdateId: null, admittedCount: 0 });
     expect(execute).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ kind: 'checkpointOnly' });
   });
 
   it('resolves a chat into immutable source facts for the Automation composer', async () => {
@@ -244,43 +227,36 @@ describe('Telegram Automation Event source', () => {
     });
   });
 
-  it('never fails the shipped Channels poll when the Automation catalog cannot be read', async () => {
-    // The one poll serves both consumers, and a failing provider poll Action is
-    // recorded by the Channels ingress as a non-retryable blocked connection on
-    // the first attempt. An Automation-side failure must never reach it.
+  it('never withholds the shared checkpoint when the Automation catalog cannot be read', async () => {
+    // The Automation catalog is a separate authority whose unavailability is
+    // unbounded. Holding the shared single-consumer offset for it would stop
+    // Channel delivery for this bot entirely, so the occurrence is the bounded
+    // loss and the caller is free to consume the batch.
     const execute = vi.fn(async () => {
       throw new PluginError({
         code: 'automation_event_adopted_definitions_unavailable',
         message: 'automation_event_adopted_definitions_unavailable',
       });
     });
-    const result = await pollTelegramObservations({
-      ...connection,
-      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() },
-      limit: 10,
-      waitMs: 0,
-    }, context(pollHttp([chatMessage]), execute));
-    // The Automation catalog is a separate authority whose unavailability is
-    // unbounded. Holding the shared single-consumer offset for it would stop
-    // Channel delivery for this bot entirely, so the batch is consumed and the
-    // occurrence is the bounded loss.
-    expect(result).toMatchObject({ kind: 'batch' });
-    expect(result.checkpointAfterBatch.offset).toBe('52');
+    await expect(admitTelegramAutomationOccurrences({
+      context: context(noHttp, execute),
+      identity,
+      updates: [update()],
+      observationReceivedAt: 1_700_000_009_000,
+    })).resolves.toEqual({ stopBeforeUpdateId: null, admittedCount: 0 });
   });
 
-  it('still delivers Channel observations when a catalog page read tears mid-scan', async () => {
+  it('never withholds the shared checkpoint when a catalog page read tears mid-scan', async () => {
     const execute = vi.fn(async () => ({ kind: 'cursorStale' }));
-    const result = await pollTelegramObservations({
-      ...connection,
-      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() },
-      limit: 10,
-      waitMs: 0,
-    }, context(pollHttp([chatMessage]), execute));
-    expect(result).toMatchObject({ kind: 'batch' });
-    expect(result.checkpointAfterBatch.offset).toBe('52');
+    await expect(admitTelegramAutomationOccurrences({
+      context: context(noHttp, execute),
+      identity,
+      updates: [update()],
+      observationReceivedAt: 1_700_000_009_000,
+    })).resolves.toEqual({ stopBeforeUpdateId: null, admittedCount: 0 });
   });
 
-  it('still delivers Channel observations when the admission call itself fails', async () => {
+  it('never withholds the shared checkpoint when the admission call itself fails', async () => {
     const execute = vi.fn(async (actionId: string) => {
       if (actionId === 'automation.event.sources.list') {
         return { kind: 'page', definitions: [armedDefinition('-100456')], nextCursor: null, revision: '7' };
@@ -290,14 +266,12 @@ describe('Telegram Automation Event source', () => {
         message: 'automation_event_host_evidence_unavailable',
       });
     });
-    const result = await pollTelegramObservations({
-      ...connection,
-      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() },
-      limit: 10,
-      waitMs: 0,
-    }, context(pollHttp([chatMessage]), execute));
-    expect(result).toMatchObject({ kind: 'batch' });
-    expect(result.checkpointAfterBatch.offset).toBe('52');
+    await expect(admitTelegramAutomationOccurrences({
+      context: context(noHttp, execute),
+      identity,
+      updates: [update()],
+      observationReceivedAt: 1_700_000_009_000,
+    })).resolves.toEqual({ stopBeforeUpdateId: null, admittedCount: 0 });
   });
 
   it('exhausts the whole source catalog cursor chain instead of truncating it at a page ceiling', async () => {
@@ -324,34 +298,36 @@ describe('Telegram Automation Event source', () => {
       throw new Error(`unexpected ${actionId}`);
     });
 
-    const result = await pollTelegramObservations({
-      ...connection,
-      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() },
-      limit: 10,
-      waitMs: 0,
-    }, context(pollHttp([chatMessage]), execute));
+    const outcome = await admitTelegramAutomationOccurrences({
+      context: context(noHttp, execute),
+      identity,
+      updates: [update()],
+      observationReceivedAt: 1_700_000_009_000,
+    });
 
     expect(page).toBe(lastPage);
     expect(admitted).toHaveLength(1);
-    expect(result).toMatchObject({ kind: 'batch' });
-    expect(result.checkpointAfterBatch.offset).toBe('52');
+    expect(outcome).toEqual({ stopBeforeUpdateId: null, admittedCount: 1 });
   });
 
-  it('delivers Channel observations normally on a host with no Automation Event producer', async () => {
+  it('treats a host with no Automation Event producer as proof nothing could be armed', async () => {
     // `unsupported_action` proves this host has no Automation Event producer at
-    // all, so no Telegram source can be armed and nothing can be lost by
-    // consuming the batch.
+    // all, so no Telegram source can be armed and nothing can be lost.
+    const warn = vi.fn();
     const execute = vi.fn(async () => {
       throw new PluginError({ code: 'unsupported_action', message: 'unsupported_action' });
     });
-    const result = await pollTelegramObservations({
-      ...connection,
-      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() },
-      limit: 10,
-      waitMs: 0,
-    }, context(pollHttp([chatMessage]), execute));
-    expect(result).toMatchObject({ kind: 'batch' });
-    expect(result.checkpointAfterBatch.offset).toBe('52');
+    const invocation = context(noHttp, execute);
+    (invocation.services as unknown as { logger: { warn: typeof warn } }).logger.warn = warn;
+    await expect(admitTelegramAutomationOccurrences({
+      context: invocation,
+      identity,
+      updates: [update()],
+      observationReceivedAt: 1_700_000_009_000,
+    })).resolves.toEqual({ stopBeforeUpdateId: null, admittedCount: 0 });
+    // `absent` proves nothing could be armed, so it must not be reported as an
+    // unevaluated occurrence loss.
+    expect(warn.mock.calls.map(([event]) => event))
+      .not.toContain('telegram_automation_event.occurrences_unevaluated');
   });
-
 });

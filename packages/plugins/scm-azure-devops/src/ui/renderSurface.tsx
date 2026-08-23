@@ -82,6 +82,7 @@ import type {
   AzureProjectedThreadRowV1,
 } from '../triage/detail/projection.js';
 
+import { AzureMutationControls, AzureThreadStatusControl } from './detail/mutations.js';
 import {
   useAzureCommits,
   useAzureIterationChanges,
@@ -179,11 +180,13 @@ function PagedFooter({
 /* -------------------------------------------------------------------- Overview */
 
 function OverviewPanel({
+  input,
   overview,
   iterations,
   locale,
   nowMs,
 }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
   overview: AzureDetailOverviewV1;
   iterations: AzureReadStateV1<AzureIterationsViewV1>;
   locale: string;
@@ -234,6 +237,12 @@ function OverviewPanel({
             </Row>
           </Stack>
         )}
+        {/*
+          * The writes live on Overview because it is the tab a detail opens on and the one that
+          * already states what this pull request currently is. A tab of their own would put a
+          * destructive control behind a click that says nothing about what is behind it.
+          */}
+        <AzureMutationControls input={input} overview={overview} />
         <Divider />
         <Metadata
           title="Observation"
@@ -647,6 +656,10 @@ function ThreadsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
   const controller = useAzureThreads(input);
   const state: AzureReadStateV1<AzureThreadsViewV1> = controller.state;
   const [window, setWindow] = React.useState(AZURE_THREAD_WINDOW_V1);
+  // Which thread's status control is open, and never more than one. Every row carrying its own
+  // status picker would put six radio buttons on every line of a review conversation; opening one
+  // from the row it belongs to keeps the write beside its thread without burying the thread.
+  const [openThreadId, setOpenThreadId] = React.useState<string | null>(null);
 
   if (state.kind === 'loading') {
     return <LoadingState title="Reading the threads from Azure DevOps" titleKey="plugins.azureDevops.ui.readingThreads" />;
@@ -667,6 +680,9 @@ function ThreadsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
   const { rows } = state.value;
   const shown = rows.slice(0, window);
   const remaining = rows.length - shown.length;
+  // A thread that scrolled out of the shown window takes its open control with it, rather than
+  // leaving a status picker addressing a thread the reader can no longer see.
+  const openThread = shown.find((row) => row.id === openThreadId) ?? null;
 
   return (
     <List
@@ -674,6 +690,13 @@ function ThreadsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
       accessibilityLabelKey="plugins.azureDevops.ui.threadsLabel"
       items={shown}
       keyForItem={(row) => row.id}
+      header={openThread === null ? undefined : (
+        <AzureThreadStatusControl
+          input={input}
+          thread={openThread}
+          onClose={() => setOpenThreadId(null)}
+        />
+      )}
       empty={(
         <EmptyState
           title="No threads"
@@ -717,7 +740,26 @@ function ThreadsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
         </Stack>
       )}
       renderItem={(row) => (
-        <Item title={threadHeadline(row)} subtitle={threadSubtitle(row)} />
+        <Item
+          title={threadHeadline(row)}
+          subtitle={threadSubtitle(row)}
+          // The row itself stays unpressable and the control lives in the accessory, because the
+          // row body sits inside the row's own pressable and an interactive body there would be a
+          // button inside a button.
+          accessory={(
+            <Button
+              title={text('plugins.azureDevops.ui.threadStatusRow', 'Status')}
+              titleKey="plugins.azureDevops.ui.threadStatusRow"
+              variant="plain"
+              accessibilityLabel={text(
+                'plugins.azureDevops.ui.setThreadStatus',
+                'Set the status of thread {thread}',
+                { thread: row.id },
+              )}
+              onPress={() => setOpenThreadId(row.id)}
+            />
+          )}
+        />
       )}
     />
   );
@@ -744,6 +786,7 @@ function AzureDetailBody({
   const panels: Readonly<Record<AzureDetailTabIdV1, React.ReactNode>> = {
     overview: (
       <OverviewPanel
+        input={input}
         overview={overview}
         iterations={iterations.state}
         locale={locale}

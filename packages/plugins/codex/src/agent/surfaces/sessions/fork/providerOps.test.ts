@@ -5,15 +5,21 @@ import { createCodexForkSurface } from './providerOps.js';
 describe('createCodexForkSurface', () => {
   it('preserves connected-service group affinity in fork launch metadata', async () => {
     const forkNative = vi.fn(async () => ({ providerSessionId: ' forked-thread ' }));
+    const controller = new AbortController();
     const surface = createCodexForkSurface({
       forkNative,
       baseProcessEnv: { EXISTING: '1' },
     });
+    type CancellableFork = (
+      request: Parameters<NonNullable<typeof surface.fork>>[0] & Readonly<{ signal?: AbortSignal }>,
+    ) => ReturnType<NonNullable<typeof surface.fork>>;
+    const fork = surface.fork as CancellableFork;
 
-    const result = await surface.fork?.({
+    const result = await fork({
       parentSessionId: 'parent-session',
       directory: '/repo',
       forkPoint: { kind: 'latest' },
+      signal: controller.signal,
       parentMetadata: {
         providerSessionId: 'stale-other-agent-thread',
         codexSessionId: 'parent-thread',
@@ -33,6 +39,7 @@ describe('createCodexForkSurface', () => {
         EXISTING: '1',
         CODEX_HOME: '/codex-home',
       },
+      signal: controller.signal,
     });
     expect(result?.providerSessionId).toBe('forked-thread');
     expect(result?.launch.environmentVariables).toEqual({ CODEX_HOME: '/codex-home' });

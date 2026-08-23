@@ -38,12 +38,24 @@ export type GitlabHttpResponse = Readonly<{
 export type GitlabHttpFetcher = (
   url: string,
   init: Readonly<{
-    method: string;
+    method: GitlabRequestMethod;
     headers: Readonly<Record<string, string>>;
+    /** Already-encoded request bytes. Absent on every read. */
+    body?: Uint8Array;
     redirect: 'error';
     signal: AbortSignal;
   }>,
 ) => Promise<GitlabHttpResponse>;
+
+/**
+ * The verbs this source may send.
+ *
+ * It is deliberately a closed set rather than `string`: the manifest network
+ * grant enumerates exactly these, and the host revalidates the method at
+ * dispatch, so a verb that is expressible here but ungranted there is a runtime
+ * refusal no unit test would see.
+ */
+export type GitlabRequestMethod = 'GET' | 'POST' | 'PUT';
 
 /**
  * The narrow slice of the host Connected Accounts service this client consumes.
@@ -156,6 +168,17 @@ export function buildGitlabApiUrl(
   return url.toString();
 }
 
+/**
+ * The GraphQL endpoint of the exact configured deployment.
+ *
+ * It is NOT under `/api/v4`, so it cannot be built by `buildGitlabApiUrl`, and it
+ * is built here rather than in a mutation module so every URL this source sends a
+ * credential to is minted under one origin rule.
+ */
+export function buildGitlabGraphqlUrl(origin: GitlabConfiguredOrigin): string {
+  return new URL(`${origin.normalized}/api/graphql`).toString();
+}
+
 export type GitlabJsonResponse = Readonly<{
   body: unknown;
   headers: GitlabResponseHeaders;
@@ -165,12 +188,26 @@ export type GitlabJsonResponse = Readonly<{
 
 export type GitlabRequestResult =
   | Readonly<{ kind: 'ok'; response: GitlabJsonResponse }>
-  | Readonly<{ kind: 'failed'; failure: GitlabFailure }>;
+  /**
+   * `status` is present exactly when GitLab answered and the answer was not
+   * 2xx. A mutation branches on the provider's own documented codes — `405`
+   * cannot-merge, `409` head race and `422` merge-ran-and-failed are three
+   * different answers to the user — and reconstructing them from the mapped
+   * failure code would be a second classifier.
+   */
+  | Readonly<{ kind: 'failed'; failure: GitlabFailure; status?: number }>;
 
 export type GitlabRequestInput = Readonly<{
   invocation: GitlabAuthorizedInvocation;
   /** Absolute URL. A next-page URL is passed through byte-for-byte. */
   url: string;
+  /** Absent means `GET`, which is what every read of this source sends. */
+  method?: GitlabRequestMethod;
+  /**
+   * The request document, JSON-encoded here so a mutation never hand-builds a
+   * body or a content type. Absent on every read.
+   */
+  body?: unknown;
   fetcher: GitlabHttpFetcher;
   signal: AbortSignal;
   /** Injected clock. Reading the ambient clock here makes every deadline untestable. */
@@ -238,11 +275,29 @@ export async function requestGitlabJson(input: GitlabRequestInput): Promise<Gitl
     };
   }
 
+  const method = input.method ?? 'GET';
+  if (method === 'GET' && input.body !== undefined) {
+    // A read that carries a document is a mutation someone forgot to declare.
+    return {
+      kind: 'failed',
+      failure: {
+        class: 'unsupportedContract',
+        code: 'unexpected-request-body',
+        detail: 'A GitLab read may not carry a request document.',
+      },
+    };
+  }
+
   let response: GitlabHttpResponse;
   try {
     response = await input.fetcher(input.url, {
-      method: 'GET',
-      headers: input.invocation.headers,
+      method,
+      headers: input.body === undefined
+        ? input.invocation.headers
+        : { ...input.invocation.headers, 'Content-Type': 'application/json' },
+      ...(input.body === undefined
+        ? {}
+        : { body: new TextEncoder().encode(JSON.stringify(input.body)) }),
       // A redirect is refused rather than followed: following one would send the
       // binding's credential to whatever host the response named.
       redirect: 'error',
@@ -260,6 +315,7 @@ export async function requestGitlabJson(input: GitlabRequestInput): Promise<Gitl
   if (response.status < 200 || response.status >= 300) {
     return {
       kind: 'failed',
+      status: response.status,
       failure: classifyGitlabFailure(response.status, response.headers, input.nowMs),
     };
   }

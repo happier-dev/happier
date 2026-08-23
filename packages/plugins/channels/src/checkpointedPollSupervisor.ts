@@ -1,6 +1,9 @@
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT } from '@happier-dev/channels-protocol/v1';
+import {
+  MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
+  MIN_CONVERSATION_OBSERVATION_AGE_MS,
+} from '@happier-dev/channels-protocol/v1';
 
 import {
   CHANNEL_STATE_COLLECTION,
@@ -18,6 +21,17 @@ import {
 import type { ConversationPairingManager } from './management.js';
 
 const RECONCILIATION_INTERVAL_MS = 1_000;
+
+/**
+ * Retention deletes a retained ingress body once its frozen replay horizon has
+ * passed, and the shortest horizon an operator can configure is
+ * `MIN_CONVERSATION_OBSERVATION_AGE_MS`. Sweeping once per that floor therefore
+ * bounds an eligible body's extra lifetime by the tightest window the retention
+ * contract itself protects, without re-scanning the whole census collection on
+ * the one-second reconciliation wake that exists for polling, not for horizons
+ * measured in minutes and days.
+ */
+const RETENTION_SWEEP_INTERVAL_MS = MIN_CONVERSATION_OBSERVATION_AGE_MS;
 
 type Clock = Readonly<{
   now(): number;
@@ -124,7 +138,8 @@ async function readCurrentConnectionIds(context: BackgroundServiceContext): Prom
  * rows on each wake. It has no retained connection cache, queue, or poll
  * cursor: the ingress owner rereads and fences every actual poll effect. Its
  * only transient state is the existing Collection keyset cursor for bounded
- * retention fairness; it is not a durable queue or a second owner.
+ * retention fairness plus the generation-local deadline that paces the sweep;
+ * neither is a durable queue, a timer registry, or a second owner.
  */
 export function createIngressSupervisor(
   options: IngressSupervisorOptions = {},
@@ -161,6 +176,8 @@ export function createIngressSupervisor(
     if (context.signal.aborted) abortFromContext();
     else context.signal.addEventListener('abort', abortFromContext, { once: true });
     let retentionCursor: string | undefined;
+    // The first wake owns the startup pass: there is no earlier sweep to pace.
+    let nextRetentionSweepAt = 0;
     running = (async () => {
       try {
         while (!supervisorController.signal.aborted) {
@@ -169,16 +186,28 @@ export function createIngressSupervisor(
             signal: supervisorController.signal,
           } satisfies BackgroundServiceContext;
           const now = clock.now();
-          try {
-            const retention = await runRetention({
-              now,
-              limit: MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
-              ...(retentionCursor === undefined ? {} : { cursor: retentionCursor }),
-            }, workerContext);
-            retentionCursor = retention.nextCursor;
-          } catch {
-            if (supervisorController.signal.aborted) break;
-            logIngressSupervisorFailure(workerContext, 'retention');
+          if (now >= nextRetentionSweepAt) {
+            try {
+              const retention = await runRetention({
+                now,
+                limit: MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
+                ...(retentionCursor === undefined ? {} : { cursor: retentionCursor }),
+              }, workerContext);
+              retentionCursor = retention.nextCursor;
+              // A live cursor means this sweep is still mid-collection, so the
+              // next wake takes its next page. A finished sweep has nothing to
+              // do until the next coarse deadline.
+              nextRetentionSweepAt = retentionCursor === undefined
+                ? now + RETENTION_SWEEP_INTERVAL_MS
+                : now;
+            } catch {
+              if (supervisorController.signal.aborted) break;
+              logIngressSupervisorFailure(workerContext, 'retention');
+              // A failed page keeps its cursor but loses its urgency: retrying
+              // it on the next wake would re-fail and re-log once a second for
+              // the whole generation.
+              nextRetentionSweepAt = now + RETENTION_SWEEP_INTERVAL_MS;
+            }
           }
           try {
             await runDueWork({ now, limit: MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT }, workerContext);

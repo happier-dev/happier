@@ -23,7 +23,7 @@ function setup(respond: (call: number) => Response) {
     const client = createPosthogApiClient({
         origin: ORIGIN,
         now: () => Date.UTC(2026, 7, 14, 12, 0, 0),
-        materializeHeaders: async () => ({ authorization: 'Bearer test-personal-api-key' }),
+        materializeHeaders: async () => ({ ok: true, authorization: 'Bearer test-personal-api-key' }),
         transport: async (url: string, request: PosthogTransportRequest) => {
             calls.push({
                 url,
@@ -170,7 +170,7 @@ describe('readPosthogSampledIssueEvents', () => {
         expect(outcome.value.events.length + outcome.value.omittedRowCount).toBeLessThanOrEqual(3);
     });
 
-    it('claims a following page only when the provider offset actually advances', async () => {
+    it('claims a following page only when the provider offset actually advances, and says so when it did not', async () => {
         const advancing = await (async () => {
             const { client } = setup(() => json(queryIssueEventsPage));
             return readPosthogSampledIssueEvents(client, {
@@ -183,7 +183,7 @@ describe('readPosthogSampledIssueEvents', () => {
         })();
         expect(advancing.ok).toBe(true);
         if (!advancing.ok) return;
-        expect(advancing.value.nextOffset).toBe(3);
+        expect(advancing.value.walk).toEqual({ kind: 'continues', position: 3 });
 
         const stuck = await (async () => {
             const { client } = setup(() => json({ ...queryIssueEventsPage, nextOffset: 0 }));
@@ -198,8 +198,30 @@ describe('readPosthogSampledIssueEvents', () => {
         expect(stuck.ok).toBe(true);
         if (!stuck.ok) return;
         // A provider that says "more" without moving cannot be paged; the sample ends
-        // here rather than looping on the same offset.
-        expect(stuck.value.nextOffset).toBeNull();
+        // here rather than looping on the same offset — but it ends SHORT. It said
+        // there were more occurrences, so calling this the end of the sample is a
+        // claim about the provider that this page never established.
+        expect(stuck.value.walk).toEqual({ kind: 'stoppedShort' });
+
+        const finished = await (async () => {
+            const { client } = setup(() => json({
+                ...queryIssueEventsPage,
+                hasMore: false,
+                nextOffset: null,
+            }));
+            return readPosthogSampledIssueEvents(client, {
+                teamRouteId: 4821,
+                issueId: ISSUE_ID,
+                detailWindow: DETAIL_WINDOW,
+                limit: 3,
+                offset: 0,
+            }, {});
+        })();
+        expect(finished.ok).toBe(true);
+        if (!finished.ok) return;
+        // The provider itself said there is nothing further. That, and only that, ends
+        // the sample without a gap.
+        expect(finished.value.walk).toEqual({ kind: 'exhausted' });
     });
 
     it('returns one typed failure for an unreadable envelope and publishes no partial page', async () => {

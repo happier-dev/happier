@@ -54,7 +54,6 @@ export type XaiWebSocketDriverInput = Readonly<{
   createWebSocket?: CreateXaiWebSocket;
   endpoint?: string;
   onAudioDelta?: (base64Pcm16: string) => boolean;
-  onOutputDone?: () => void;
   onConversationId?: (conversationId: string) => void | Promise<void>;
   maxBufferedAmountBytes?: number;
   maxEarlyAudioBytes?: number;
@@ -170,7 +169,6 @@ export function createXaiWebSocketDriver(input: XaiWebSocketDriverInput) {
               if (!closing) handlers.onRemoteClose('xai_output_audio_invalid');
             }
           }
-          if (parsed.type === 'response.output_audio.done') input.onOutputDone?.();
         });
       });
     },

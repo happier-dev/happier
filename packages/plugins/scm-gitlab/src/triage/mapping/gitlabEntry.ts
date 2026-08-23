@@ -29,6 +29,7 @@ import {
   summarizeGitlabLabels,
 } from './bounded.js';
 import { readGitlabSubscribedFact } from './gitlabInvolvement.js';
+import { readGitlabMergeRequestHeadSha } from './mergeRequestHead.js';
 
 /** Bounded native label for a state GitLab added after this client shipped. */
 const MAX_NATIVE_LABEL_UTF8_BYTES = 64;
@@ -212,6 +213,15 @@ export function decodeGitlabRow(input: GitlabRowDecodeInput): GitlabRowDecodeRes
     : projectGitlabIssueState(row);
   const detailedMergeStatus = isMergeRequest ? readString(row.detailed_merge_status) : null;
   const sourceUpdatedAtMs = readTimestampMs(row.updated_at);
+  // The revision the read observed, per kind. A merge request publishes its head
+  // commit, because that is the value `sources/SCM.md` §2.6 requires a merge and
+  // a mark-ready to carry and the one GitLab's merge endpoint consumes as its own
+  // `sha` precondition. An issue has no head, so it publishes GitLab's
+  // `updated_at` byte — unparsed, because the pin is compared for equality and a
+  // parsed clock would make two spellings of one instant compare equal.
+  const nativeRevision = isMergeRequest
+    ? readGitlabMergeRequestHeadSha(row)
+    : readString(row.updated_at);
   const commentCount = typeof row.user_notes_count === 'number' ? row.user_notes_count : null;
 
   const involvement: GitlabInvolvementFact[] = input.laneInvolvement
@@ -267,6 +277,7 @@ export function decodeGitlabRow(input: GitlabRowDecodeInput): GitlabRowDecodeRes
         title: title.text,
         state,
         sourceUpdatedAtMs,
+        nativeRevision,
         sourceCreatedAtMs: readTimestampMs(row.created_at),
         author,
         assignees: readActors(row.assignees),

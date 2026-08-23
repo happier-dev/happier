@@ -67,12 +67,19 @@ class FakeWebSocket {
   }
 }
 
-function createAccountOperations(responseBody: unknown = { value: 'short-lived' }) {
+function createAccountOperations(responseBody?: unknown) {
+  // xAI's client-secret contract makes `expires_at` a required integer
+  // unix-seconds field, and the broker no longer invents one when it is absent,
+  // so the default fixture states the documented response shape.
+  const body = responseBody ?? Object.freeze({
+    value: 'short-lived',
+    expires_at: Math.floor(Date.now() / 1_000) + 300,
+  });
   const request = vi.fn(async () => Object.freeze({
     status: 200,
     finalUrl: 'https://api.x.ai/v1/realtime/client_secrets',
     headers: Object.freeze({ 'content-type': 'application/json' }),
-    body: new TextEncoder().encode(JSON.stringify(responseBody)),
+    body: new TextEncoder().encode(JSON.stringify(body)),
   }));
   return { accountOperations: Object.freeze({ request }), request };
 }
@@ -293,6 +300,18 @@ describe('xAI Realtime public runtime contribution', () => {
         tools: [{ type: 'function', ...SENTINEL_TOOL }],
       }),
     }]);
+
+    // Provider semantic completion means the server stopped sending audio, not
+    // that the host finished rendering the buffered tail. The measured playback
+    // meter belongs to the host audio scheduler alone.
+    FakeWebSocket.instances.at(-1)?.emit('message', {
+      data: JSON.stringify({
+        type: 'response.output_audio.done',
+        response_id: 'response-1',
+        item_id: 'assistant-1',
+      }),
+    });
+    expect(onOutputLevel).not.toHaveBeenCalled();
 
     const signal = new AbortController().signal;
     await runtime.beforeToolContinuation?.('response-1', signal);

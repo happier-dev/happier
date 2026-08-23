@@ -219,11 +219,18 @@ describe('GitLab scan', () => {
       if (page.kind !== 'page') throw new Error('expected page arms before the settlement');
       expect(page.evidence.kind).not.toBe('walkFinished');
     }
-    const encoded = JSON.stringify(pages);
-    expect(encoded).not.toContain('absent');
+    expect(JSON.stringify(pages)).not.toContain('absent');
     // Advisory totals are absent above 10,000 records by GitLab's own
-    // statement, so no completeness claim may read them.
-    expect(encoded).not.toContain('9999999');
+    // statement, so no completeness claim may read them. The check is scoped to
+    // the two places a completeness claim can live — the evidence arm and the
+    // continuation the walk resumes from — rather than to the whole encoded
+    // result: an observation legitimately carries provider commit ids, and a
+    // whole-output substring match would pass or fail on a fixture's `sha`.
+    const claims = JSON.stringify(pages.map((page) => ({
+      evidence: page.evidence,
+      continuation: page.kind === 'page' ? page.continuation : undefined,
+    })));
+    expect(claims).not.toContain('9999999');
   });
 
   it('still reports a row it skipped on the first page when the last page settles', async () => {

@@ -209,6 +209,34 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
         outputKey: 'codexBackendMode',
         values: ['acp', 'appServer'],
       },
+      backendTransport: {
+        providerId: 'codex',
+        runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
+        legacyModeOutputKey: 'codexBackendMode',
+        backendMode: {
+          values: ['acp', 'appServer'],
+          // Retired setting spellings still reach spawn/resume from persisted UI state.
+          aliases: {
+            mcp: 'appServer',
+            mcp_resume: 'acp',
+          },
+          legacyExperimentalValue: 'acp',
+        },
+        runtimeHandleFields: [
+          'backendMode',
+          'providerSessionId',
+          'home',
+          'connectedServiceId',
+          'connectedServiceProfileId',
+          'connectedServiceGroupId',
+          'homePath',
+        ],
+        agentExtra: {
+          owner: 'codex',
+          schemaId: 'codex.agentRuntimeDescriptorExtra',
+          v: 1,
+        },
+      },
     },
   },
   session: {},

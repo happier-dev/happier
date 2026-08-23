@@ -7,6 +7,7 @@ import type {
   PluginAccountCollectionForDefinition,
 } from '@happier-dev/plugin-sdk/collections';
 import {
+  CONVERSATION_BINDING_INPUT_MODES_V1,
   ConversationBindingV1Schema,
   ConversationConnectionIdV1Schema,
   ConversationProviderConnectionStopInputV1Schema,
@@ -45,7 +46,7 @@ import {
 } from './connectionPollFailure.js';
 import { readPersistedConversationConnectionPollFailure } from './connectionPollFailurePersistence.js';
 import {
-  hasConversationApprovalPolicyEnabled,
+  revokeConversationBindingPrincipals,
   transitionConversationBinding,
   type ConversationBindingStateV1,
 } from './bindingTransition.js';
@@ -102,14 +103,15 @@ export type ConversationBindingManagementRow = Readonly<{
   inputMode: 'directMentionsOnly' | 'addressedMessages' | 'allAllowedMessages';
   deliveryMode: 'repliesOnly' | 'mirrorSession' | 'finalResult' | 'none';
   /**
-   * The configured policy is presentation-only until the generic mediation
-   * producer is source-green; it cannot grant chat authority by itself.
+   * The owner-configured chat-approval policy. `enabled` is the only control:
+   * an enabled binding admits `/allow` and `/deny` from its admitted approver
+   * set through the canonical Session permission mediation owner.
    */
   approval:
     | Readonly<{ kind: 'notApplicable' }>
     | Readonly<{ kind: 'off' }>
     | Readonly<{
-      kind: 'unavailable';
+      kind: 'enabled';
       maximumScope: 'request' | 'session';
     }>;
   enabled: boolean;
@@ -138,6 +140,11 @@ export type ConversationConnectionManagementRow = Readonly<{
   selectedMachineId: string;
   selectedTransport: 'checkpointedPull' | 'socket' | 'durablePush';
   integrationPrincipalLabel?: string;
+  /**
+   * The input modes this connection's provider proved it can deliver on a
+   * shared endpoint. Absent means the provider declared no restriction.
+   */
+  sharedEndpointInputModes?: readonly ConversationBindingInputModeV1[];
   authorityEpoch: number;
   enabled: boolean;
   deletionState: 'none' | 'pendingStopReconciliation' | 'finalizingDelete';
@@ -201,18 +208,6 @@ export type ConversationBindingEnablementResult = Readonly<{
 
 function policyError(code: string, message: string, retryable = false): PluginError {
   return new PluginError({ code, message, retryable });
-}
-
-/**
- * C5's feature-local persistence gate. Until generic Permission mediation is
- * source-green, a retained target may be read as unavailable but cannot be
- * written by Channels management or direct Account binding-policy mutation.
- */
-export function assertConversationApprovalPolicyCanPersist(
-  target: ConversationBindingTargetV1 | ConversationBindingTargetMutationV1,
-): void {
-  if (!hasConversationApprovalPolicyEnabled(target)) return;
-  throw policyError('plugin_action_unavailable', 'Conversation approval mediation is unavailable.');
 }
 
 export function isChannelStateJsonRecord(value: unknown): value is ChannelStateJsonRecord {
@@ -502,6 +497,32 @@ export function withConversationConnectionLifecycle(input: Readonly<{
   } satisfies ChannelStateJsonRecord;
 }
 
+/**
+ * The provider-authenticated shared-endpoint delivery truth, as persisted.
+ * A row that carries none leaves the capability absent, which the binding
+ * policy owner reads as "the provider declared no restriction".
+ */
+export function readConversationConnectionSharedEndpointInputModes(
+  payload: ChannelStateJsonRecord,
+): readonly ConversationBindingInputModeV1[] | undefined {
+  const declared = ownChannelStateValue(payload, 'sharedEndpointInputModes');
+  if (declared === undefined) return undefined;
+  if (!Array.isArray(declared)) {
+    throw policyError(
+      'channels_connection_management_row_invalid',
+      'The Channels connection index received an invalid shared-endpoint input-mode capability.',
+    );
+  }
+  const modes = CONVERSATION_BINDING_INPUT_MODES_V1.filter((mode) => declared.includes(mode));
+  if (modes.length !== declared.length) {
+    throw policyError(
+      'channels_connection_management_row_invalid',
+      'The Channels connection index received an invalid shared-endpoint input-mode capability.',
+    );
+  }
+  return modes;
+}
+
 function projectConversationConnectionManagementRow(
   row: ChannelStateRow,
 ): ConversationConnectionManagementRow {
@@ -517,6 +538,7 @@ function projectConversationConnectionManagementRow(
   const transport = ownChannelStateValue(current.payload, 'transport');
   const replayContinuity = ownChannelStateValue(current.payload, 'replayContinuity');
   const integrationPrincipal = ownChannelStateValue(current.payload, 'integrationPrincipal');
+  const sharedEndpointInputModes = readConversationConnectionSharedEndpointInputModes(current.payload);
   const selectedTransport = isChannelStateJsonRecord(transport)
     ? ownChannelStateValue(transport, 'kind')
     : undefined;
@@ -557,6 +579,7 @@ function projectConversationConnectionManagementRow(
     selectedMachineId: current.transportOrigin.materializationRef.machineId,
     selectedTransport,
     ...(integrationPrincipalLabel === undefined ? {} : { integrationPrincipalLabel }),
+    ...(sharedEndpointInputModes === undefined ? {} : { sharedEndpointInputModes }),
     authorityEpoch: current.lifecycle.authorityEpoch,
     enabled: current.lifecycle.enabled,
     deletionState: current.lifecycle.deletionState,
@@ -825,7 +848,7 @@ function projectConversationBindingManagementRow(row: ChannelStateRow): Conversa
     : current.binding.target.policy.approvals.kind === 'off'
       ? { kind: 'off' }
       : {
-        kind: 'unavailable',
+        kind: 'enabled',
         maximumScope: current.binding.target.policy.approvals.maximumScope,
       };
   return {
@@ -1237,6 +1260,21 @@ export type ConversationBindingPolicyUpdateInput = Readonly<{
   collection: ChannelStateBindingCollection;
   bindingId: string;
   expectedRevision: number;
+  /**
+   * A Session target is decided entirely from the Account: `management.ts`'s
+   * own persistence resolver returns it unchanged after the approval gate and
+   * reaches no provider or Automation owner. An Automation target is the one
+   * arm that needs the Automation owner's live template verification, so it is
+   * refused here rather than persisted unverified.
+   */
+  target?: ConversationBindingTargetMutationV1;
+  /**
+   * Senders to withdraw from the retained audience. Revocation is decidable
+   * from the retained binding alone, so it stays available while the selected
+   * machine is unreachable; admitting a sender is not, because only the
+   * provider resolver can prove one exists on the endpoint.
+   */
+  revokedPrincipalIds?: readonly string[];
   allowBotSenders?: boolean;
   inputMode?: ConversationBindingInputModeV1;
   inboundDebounceMs?: number;
@@ -1249,9 +1287,71 @@ export type ConversationBindingPolicyUpdateInput = Readonly<{
 }>;
 
 /**
- * The one Account-local binding-policy writer. It deliberately accepts only
- * fields decided from the retained binding itself: resolver-backed audience
- * changes and target verification remain online-only at management.ts.
+ * Narrows a requested target to the arm an unreachable machine can decide.
+ *
+ * `management.ts`'s persistence resolver is the reference: it returns a Session
+ * target unchanged after the shared approval gate, and calls the Automation
+ * owner only for an Automation target. Offline editing therefore admits the
+ * Session arm in full and refuses the Automation arm with a typed reason,
+ * rather than silently dropping a target the caller asked for.
+ */
+function readAccountResolvableConversationBindingTarget(input: Readonly<{
+  requested: ConversationBindingTargetMutationV1 | undefined;
+  current: ConversationBindingTargetV1;
+  operation: 'channels_binding_set_enabled' | 'channels_binding_update';
+}>): ConversationBindingTargetV1 {
+  const { requested } = input;
+  if (requested === undefined) return input.current;
+  if (requested.kind !== 'session') {
+    throw policyError(
+      `${input.operation}_target_not_account_resolvable`,
+      'An Automation binding target can only be changed while its Automation owner is reachable.',
+    );
+  }
+  return requested;
+}
+
+/**
+ * Applies a present-user revocation through the shared allow-list owner.
+ *
+ * The projection itself lives with `transitionConversationBinding` because it
+ * upholds that owner's cross-field invariant; this only turns its two typed
+ * refusals into the operation's own error vocabulary.
+ */
+function readAccountResolvableConversationBindingAudience(input: Readonly<{
+  allowedPrincipalIds: readonly string[];
+  target: ConversationBindingTargetV1;
+  revokedPrincipalIds: readonly string[] | undefined;
+  operation: 'channels_binding_set_enabled' | 'channels_binding_update';
+}>): Readonly<{ allowedPrincipalIds: readonly string[]; target: ConversationBindingTargetV1 }> {
+  const { revokedPrincipalIds } = input;
+  if (revokedPrincipalIds === undefined || revokedPrincipalIds.length === 0) {
+    return { allowedPrincipalIds: input.allowedPrincipalIds, target: input.target };
+  }
+  const revocation = revokeConversationBindingPrincipals({
+    allowedPrincipalIds: input.allowedPrincipalIds,
+    target: input.target,
+    revokedPrincipalIds,
+  });
+  if (revocation.kind === 'rejected') {
+    throw revocation.code === 'audienceWouldBeEmpty'
+      ? policyError(
+        `${input.operation}_audience_would_be_empty`,
+        'A conversation binding must keep at least one allowed sender; disable or delete it instead.',
+      )
+      : policyError(
+        `${input.operation}_principal_not_allowed`,
+        'Only a sender this binding already allows can be revoked.',
+      );
+  }
+  return { allowedPrincipalIds: revocation.allowedPrincipalIds, target: revocation.target };
+}
+
+/**
+ * The one Account-local binding-policy writer. It accepts exactly the fields an
+ * unreachable machine can decide from the retained binding itself, including a
+ * Session target change; resolver-backed audience changes and Automation target
+ * verification remain online-only at management.ts.
  */
 async function mutateConversationBindingPolicyInAccountCollection(input: ConversationBindingPolicyUpdateInput & Readonly<{
   operation: 'channels_binding_set_enabled' | 'channels_binding_update';
@@ -1297,10 +1397,23 @@ async function mutateConversationBindingPolicyInAccountCollection(input: Convers
     );
   }
 
+  const requestedTarget = readAccountResolvableConversationBindingTarget({
+    requested: input.target,
+    current: current.binding.target,
+    operation: input.operation,
+  });
+  const audience = readAccountResolvableConversationBindingAudience({
+    allowedPrincipalIds: current.binding.allowedPrincipalIds,
+    target: requestedTarget,
+    revokedPrincipalIds: input.revokedPrincipalIds,
+    operation: input.operation,
+  });
   const transition = transitionConversationBinding({
     current: current.binding,
     requested: {
       ...current.binding,
+      target: audience.target,
+      allowedPrincipalIds: audience.allowedPrincipalIds,
       allowBotSenders: input.allowBotSenders ?? current.binding.allowBotSenders,
       inputMode: input.inputMode ?? current.binding.inputMode,
       inboundDebounceMs: input.inboundDebounceMs ?? current.binding.inboundDebounceMs,
@@ -1323,8 +1436,6 @@ async function mutateConversationBindingPolicyInAccountCollection(input: Convers
       authorityEpoch: transition.binding.authorityEpoch,
     };
   }
-
-  assertConversationApprovalPolicyCanPersist(transition.binding.target);
 
   const result = await input.collection.batch([
     {

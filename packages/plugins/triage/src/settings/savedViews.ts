@@ -23,6 +23,8 @@ import type {
     TriageListOrderV1,
 } from '../projection/listWindow.js';
 
+import { readExactKeys } from './storedValue.js';
+
 /**
  * The sole `triage.savedViews` owner: one typed Account Settings value, read,
  * validated and written in one place.
@@ -161,14 +163,6 @@ function readBoundedString(value: unknown, maxUtf8Bytes: number): string | null 
     const normalized = normalizeTriageSingleLineV1(value);
     if (normalized.length === 0) return null;
     return utf8ByteLength(normalized) > maxUtf8Bytes ? null : normalized;
-}
-
-function readExactKeys(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> | null {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-    const candidate = value as Readonly<Record<string, unknown>>;
-    const present = Object.keys(candidate);
-    if (present.length !== keys.length) return null;
-    return present.every((key) => keys.includes(key)) ? candidate : null;
 }
 
 function readSource(value: unknown): PluginContributionIdentity | null {

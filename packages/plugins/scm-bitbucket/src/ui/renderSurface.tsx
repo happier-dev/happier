@@ -78,6 +78,10 @@ import {
 } from '../triage/source/detail.js';
 
 import {
+  BitbucketCommentResolutionControls,
+  BitbucketMutationControls,
+} from './detail/mutations.js';
+import {
   useBitbucketActivity,
   useBitbucketBuilds,
   useBitbucketComments,
@@ -171,10 +175,12 @@ function PagedFooter({
 /* -------------------------------------------------------------------- Overview */
 
 function OverviewPanel({
+  input,
   overview,
   locale,
   nowMs,
 }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
   overview: BitbucketDetailOverviewV1;
   locale: string;
   nowMs: number;
@@ -224,6 +230,12 @@ function OverviewPanel({
             </Row>
           </Stack>
         )}
+        {/*
+          * The writes live on Overview because it is the tab a detail opens on and the one that
+          * already states what this pull request currently is. A tab of their own would put a
+          * destructive control behind a click that says nothing about what is behind it.
+          */}
+        <BitbucketMutationControls input={input} overview={overview} />
         <Divider />
         <Metadata
           title="Observation"
@@ -556,7 +568,15 @@ function CommentsPanel({
                 />
               ),
             })}
-        />
+        >
+          {/*
+            * The resolve and reopen controls live in the row body rather than the trailing
+            * accessory, because they are two buttons plus whatever the write settled into and the
+            * accessory is one trailing slot. The row carries no `onPress`, so it is not a
+            * Pressable and these are not buttons inside a button.
+            */}
+          <BitbucketCommentResolutionControls input={input} comment={row} />
+        </Item>
       )}
     />
   );
@@ -608,7 +628,7 @@ function BitbucketDetailBody({
   const overview = React.useMemo(() => projectBitbucketDetailOverview(input), [input]);
 
   const panels: Readonly<Record<BitbucketDetailTabIdV1, React.ReactNode>> = {
-    overview: <OverviewPanel overview={overview} locale={locale} nowMs={nowMs} />,
+    overview: <OverviewPanel input={input} overview={overview} locale={locale} nowMs={nowMs} />,
     activity: <ActivityPanel input={input} locale={locale} nowMs={nowMs} />,
     builds: <BuildsPanel input={input} locale={locale} nowMs={nowMs} />,
     comments: <CommentsPanel input={input} locale={locale} nowMs={nowMs} />,

@@ -24,7 +24,7 @@ function setup(respond: (call: number, url: string) => Response) {
     const client = createPosthogApiClient({
         origin: ORIGIN,
         now: () => Date.UTC(2026, 7, 14, 12, 0, 0),
-        materializeHeaders: async () => ({ authorization: 'Bearer test-personal-api-key' }),
+        materializeHeaders: async () => ({ ok: true, authorization: 'Bearer test-personal-api-key' }),
         transport: async (url: string, request: PosthogTransportRequest) => {
             calls.push({
                 url,
@@ -116,7 +116,10 @@ describe('getPosthogIssue', () => {
         expect(calls).toHaveLength(1);
         expect(outcome).toEqual({
             kind: 'unresolved',
-            resolution: { kind: 'unresolved', because: 'plainNotFound' },
+            resolution: {
+                kind: 'unresolved',
+                failure: { kind: 'notFound', status: 404 },
+            },
         });
         expect(JSON.stringify(outcome)).not.toContain('absent');
         expect(JSON.stringify(outcome)).not.toContain('merged');
@@ -142,7 +145,10 @@ describe('getPosthogIssue', () => {
         expect(calls[0]?.url).toContain(ISSUE_ID);
         expect(outcome).toEqual({
             kind: 'unresolved',
-            resolution: { kind: 'unresolved', because: 'redirected' },
+            resolution: {
+                kind: 'unresolved',
+                failure: { kind: 'redirected', status: 308 },
+            },
         });
     });
 
@@ -177,7 +183,10 @@ describe('getPosthogIssue', () => {
         expect(calls).toHaveLength(0);
         expect(outcome).toEqual({
             kind: 'unresolved',
-            resolution: { kind: 'unresolved', because: 'configuration' },
+            resolution: {
+                kind: 'unresolved',
+                failure: { kind: 'requestInvalid', at: 'teamRouteId' },
+            },
         });
     });
 });
@@ -205,6 +214,13 @@ describe('resolvePosthogCrudFailure', () => {
             expect(resolution.kind).toBe('unresolved');
             expect(JSON.stringify(resolution)).not.toContain('absent');
             expect(JSON.stringify(resolution)).not.toContain('merged');
+            // The provider's own classified failure travels WHOLE. Anything this
+            // reduced to first — a reason word, a class, a code — would be a
+            // second classification of the same response, and the last one
+            // dropped the `Retry-After` deadline `scan` reports for the identical
+            // condition.
+            expect(resolution.failure).toEqual(failure);
+            expect(Object.keys(resolution).sort()).toEqual(['failure', 'kind']);
         }
     });
 });

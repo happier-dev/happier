@@ -29,6 +29,7 @@ import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-acco
 import {
   createGithubApiClient,
   decodeGithubJsonResponse,
+  readGithubContentCreationThrottleRetryAfterMs,
   readGithubRateLimitRetryAfterMs,
   type GithubApiClientV1,
   type GithubApiResponseV1,
@@ -107,6 +108,31 @@ function commentUrl(repository: GithubRepositorySourceConfigV1, issueNumber: num
   ).toString();
 }
 
+/** The repository issue-comment collection this Channel observes, read once. */
+function repositoryIssueCommentsProbeUrl(repository: GithubRepositorySourceConfigV1): string {
+  const url = new URL(
+    `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/issues/comments`,
+    'https://api.github.com',
+  );
+  url.searchParams.set('per_page', '1');
+  return url.toString();
+}
+
+/**
+ * A PAT that authenticates is not a PAT that can reach this repository's issue
+ * comments: the account can hold repository access while the token withholds
+ * the Issues permission. Readiness therefore exercises the exact collection the
+ * Channel polls, so a credential that cannot observe the conversation is
+ * refused at connection time instead of at the first silent poll failure.
+ */
+async function assertRepositoryIssueCommentsReadable(
+  client: GithubApiClientV1,
+  repository: GithubRepositorySourceConfigV1,
+): Promise<void> {
+  const response = await client.request({ url: repositoryIssueCommentsProbeUrl(repository) });
+  if (response.status !== 200) throw new GithubApiResponseError(response);
+}
+
 function parseGithubUser(value: unknown): Readonly<{ id: string; label: string }> {
   if (!isRecord(value)) throw new RangeError('GitHub user response must be an object');
   return Object.freeze({
@@ -121,14 +147,6 @@ async function readConfiguredIdentityWithClient(
   const response = await client.request({ url: userUrl() });
   if (response.status !== 200) throw new GithubApiResponseError(response);
   return parseGithubUser(decodeGithubJsonResponse(response));
-}
-
-async function readConfiguredIdentity(
-  context: PluginInvocationContext,
-  credentialRef: ConnectedAccountRef,
-): Promise<Readonly<{ id: string; label: string }>> {
-  const client = await createGithubApiClient(context, credentialRef);
-  return readConfiguredIdentityWithClient(client);
 }
 
 function providerFailureForGithubResponse(response: GithubApiResponseV1): ConversationProviderFailureV1 {
@@ -148,8 +166,15 @@ function providerFailureForGithubResponse(response: GithubApiResponseV1): Conver
   return { kind: 'notReady', reason: 'network' };
 }
 
+/**
+ * Every Channels throttle bound, whichever GitHub limit family reported it. A
+ * content-creation `422` is a throttle here for the same reason a `403`
+ * secondary limit is: GitHub says to retry it, so it must not settle as a
+ * permanent Channel failure.
+ */
 function readBoundedGithubRateLimitRetryAfterMs(response: GithubApiResponseV1): number | null {
-  const retryAfterMs = readGithubRateLimitRetryAfterMs(response);
+  const retryAfterMs = readGithubRateLimitRetryAfterMs(response)
+    ?? readGithubContentCreationThrottleRetryAfterMs(response);
   if (retryAfterMs === null) return null;
   // The shared GitHub classifier decides whether this is rate-limited. C8
   // owns only the Channels-result bound, including defensively normalizing an
@@ -330,7 +355,8 @@ export async function testGithubChannelConnection(
       });
     }
     const connection = readGithubChannelConnection(request, context.plugin.id);
-    const identity = await readConfiguredIdentity(context, connection.credentialRef);
+    const client = await createGithubApiClient(context, connection.credentialRef);
+    const identity = await readConfiguredIdentityWithClient(client);
     if (identity.id !== connection.config.integrationPrincipal.id) {
       return ConversationConnectionTestResultV1Schema.parse({
         kind: 'notReady',
@@ -338,6 +364,8 @@ export async function testGithubChannelConnection(
         diagnostic: 'The selected GitHub account no longer matches this Channel connection.',
       });
     }
+    context.signal.throwIfAborted();
+    await assertRepositoryIssueCommentsReadable(client, connection.config.repository);
     return ConversationConnectionTestResultV1Schema.parse({
       kind: 'ready',
       integrationPrincipal: identity,

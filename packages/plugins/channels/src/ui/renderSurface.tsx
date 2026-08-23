@@ -57,10 +57,12 @@ import {
   ConversationBindingReadResultV1Schema,
   ConversationBindingResolveInputV1Schema,
   ConversationBindingResolveResultV1Schema,
+  ConversationBindingTargetMutationV1Schema,
   ConversationBindingUpdateInputV1Schema,
   ConversationConnectionCreateResultV1Schema,
   isConversationConnectionSelectableTransportV1,
   ConversationConnectionPrepareResultV1Schema,
+  ConversationConnectionRetestResultV1Schema,
   ConversationProviderSetupRemediationResultV1Schema,
   ConversationConnectionTransferInputV1Schema,
   ConversationConnectionTransferResultV1Schema,
@@ -71,11 +73,13 @@ import {
   ConversationPairingFinalizeInputV1Schema,
   ConversationPairingFinalizeResultV1Schema,
   ConversationPairingResourceV1Schema,
+  conversationBindingInputModesForEndpointV1,
   conversationBindingPolicyForOmittedFieldsV1,
   MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
   MAX_CONVERSATION_INBOUND_DEBOUNCE_MS,
   MAX_CONVERSATION_OBSERVATION_AGE_MS,
   MIN_CONVERSATION_OBSERVATION_AGE_MS,
+  type ConversationBindingTargetMutationV1,
   type ConversationBindingV1,
   type ConversationConnectionCreateInputV1,
   type ConversationPairingResourceV1,
@@ -157,6 +161,11 @@ type ChannelsConnection = Readonly<{
   selectedMachineId: string;
   selectedTransport: ConnectionTransport;
   integrationPrincipalLabel?: string;
+  /**
+   * The incoming message policies this connection's provider proved it can
+   * deliver on a shared conversation. Absent means no declared restriction.
+   */
+  sharedEndpointInputModes?: readonly BindingInputMode[];
   enabled: boolean;
   deletionState: ConnectionDeletionState;
   maximumObservationAgeMs: number;
@@ -183,7 +192,7 @@ type BindingDeletionState = 'none' | 'finalizingDelete';
 type BindingApproval =
   | Readonly<{ kind: 'notApplicable' }>
   | Readonly<{ kind: 'off' }>
-  | Readonly<{ kind: 'unavailable'; maximumScope: 'request' | 'session' }>;
+  | Readonly<{ kind: 'enabled'; maximumScope: 'request' | 'session' }>;
 
 type ChannelsBinding = Readonly<{
   bindingId: string;
@@ -363,6 +372,10 @@ type BindingEnablementOperation = Readonly<{
 type BindingPolicyInput = Readonly<{
   bindingId: string;
   expectedRevision: number;
+  /** Session only: the one target arm an unreachable machine can still decide. */
+  target?: ConversationBindingTargetMutationV1;
+  /** Senders withdrawn from the retained audience; admitting one stays online-only. */
+  revokedPrincipalIds?: readonly string[];
   allowBotSenders: boolean;
   inputMode: BindingInputMode;
   inboundDebounceMs: number;
@@ -555,6 +568,20 @@ function parseOutwardDeliveryAttention(value: unknown): ConnectionOutwardDeliver
   };
 }
 
+/**
+ * The provider-authenticated shared-endpoint delivery truth, as projected.
+ * `undefined` means the provider declared no restriction; an unrecognized
+ * value fails the connection closed rather than silently widening the offer.
+ */
+function parseSharedEndpointInputModes(
+  value: unknown,
+): readonly BindingInputMode[] | undefined | 'invalid' {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0) return 'invalid';
+  if (!value.every(isBindingInputMode)) return 'invalid';
+  return value;
+}
+
 function parseConnection(value: unknown): ChannelsConnection | undefined {
   if (!isRecord(value) || !isRecord(value.attention)) return undefined;
   const historyGap = parseHistoryGap(value.attention.historyGap);
@@ -572,6 +599,7 @@ function parseConnection(value: unknown): ChannelsConnection | undefined {
   const enabled = value.enabled;
   const deletionState = value.deletionState;
   const maximumObservationAgeMs = value.maximumObservationAgeMs;
+  const sharedEndpointInputModes = parseSharedEndpointInputModes(value.sharedEndpointInputModes);
   const bestEffortBeforeDurableAdmission = value.attention.bestEffortBeforeDurableAdmission;
   const oldTransportStopUnconfirmed = value.attention.oldTransportStopUnconfirmed;
   const acceptedPossibleLoss = value.attention.acceptedPossibleLoss;
@@ -593,6 +621,7 @@ function parseConnection(value: unknown): ChannelsConnection | undefined {
     || typeof oldTransportStopUnconfirmed !== 'boolean'
     || typeof acceptedPossibleLoss !== 'boolean'
     || (acceptedPossibleLoss && !oldTransportStopUnconfirmed)
+    || sharedEndpointInputModes === 'invalid'
     || (integrationPrincipalLabel !== undefined && !isNonEmptyString(integrationPrincipalLabel))) {
     return undefined;
   }
@@ -604,6 +633,7 @@ function parseConnection(value: unknown): ChannelsConnection | undefined {
     selectedMachineId,
     selectedTransport,
     ...(integrationPrincipalLabel === undefined ? {} : { integrationPrincipalLabel }),
+    ...(sharedEndpointInputModes === undefined ? {} : { sharedEndpointInputModes }),
     enabled,
     deletionState,
     maximumObservationAgeMs,
@@ -686,9 +716,9 @@ function parseBindingApproval(
     return value.kind === 'notApplicable' ? { kind: 'notApplicable' } : undefined;
   }
   if (value.kind === 'off') return { kind: 'off' };
-  if (value.kind === 'unavailable'
+  if (value.kind === 'enabled'
     && (value.maximumScope === 'request' || value.maximumScope === 'session')) {
-    return { kind: 'unavailable', maximumScope: value.maximumScope };
+    return { kind: 'enabled', maximumScope: value.maximumScope };
   }
   return undefined;
 }
@@ -784,6 +814,29 @@ function parsePairingResource(resource: ResourceContent): ParsedPairing {
 }
 
 /**
+ * Report that the exact Account Collection handles a direct reader is bound to
+ * have been replaced.
+ *
+ * The host rebuilds this surface's Data client — and with it every Collection
+ * handle — when its Account lifetime is replaced, so a replacement handle names
+ * a different Account scope. Last-known-good rows, cursors, and freshness
+ * belong to the handle they were read from and must be dropped synchronously
+ * during render rather than presented as the successor's stale answer while its
+ * first read is pending or failing.
+ *
+ * This is a render-phase reset of state the readers already own. It is not a
+ * second Collection reader, cache, epoch, or Account authority: the Data client
+ * remains the sole owner of admission, Account lifetime, and cancellation.
+ */
+function useReplacedAccountCollectionScope(scope: readonly object[]): boolean {
+  const [boundScope, setBoundScope] = React.useState(scope);
+  const replaced = boundScope.length !== scope.length
+    || boundScope.some((handle, index) => handle !== scope[index]);
+  if (replaced) setBoundScope(scope);
+  return replaced;
+}
+
+/**
  * The direct Account client retains collection admission, Account lifetime,
  * cancellation, and the authenticated transport. This surface retains only
  * presentation-local last-known-good rows while a requested reread is in
@@ -797,6 +850,9 @@ function useAccountLocalBindingRows(
   const [state, setState] = React.useState<AccountLocalBindingReadState>(
     ACCOUNT_LOCAL_BINDING_INITIAL_STATE,
   );
+  if (useReplacedAccountCollectionScope([collection])) {
+    setState(ACCOUNT_LOCAL_BINDING_INITIAL_STATE);
+  }
 
   React.useEffect(() => {
     let retired = false;
@@ -868,6 +924,9 @@ function useAccountLocalConnectionRows(input: Readonly<{
   const [state, setState] = React.useState<AccountLocalConnectionReadState>(
     ACCOUNT_LOCAL_CONNECTION_INITIAL_STATE,
   );
+  if (useReplacedAccountCollectionScope([input.stateCollection, input.deliveriesCollection])) {
+    setState(ACCOUNT_LOCAL_CONNECTION_INITIAL_STATE);
+  }
 
   React.useEffect(() => {
     let retired = false;
@@ -971,6 +1030,12 @@ function useDeliveryResolutionRows(input: Readonly<{
   const [state, setState] = React.useState<DeliveryResolutionReadState>(
     DELIVERY_RESOLUTION_INITIAL_STATE,
   );
+  if (useReplacedAccountCollectionScope([input.collection])) {
+    // The retained cursor addresses the replaced Collection, so the successor
+    // is read from its first page rather than continued mid-scan.
+    setRequest({ append: false, sequence: 0 });
+    setState(DELIVERY_RESOLUTION_INITIAL_STATE);
+  }
 
   React.useEffect(() => {
     let retired = false;
@@ -1078,6 +1143,12 @@ function useIngressAttentionRows(input: Readonly<{
   const [state, setState] = React.useState<IngressAttentionReadState>(
     INGRESS_ATTENTION_INITIAL_STATE,
   );
+  if (useReplacedAccountCollectionScope([input.collection])) {
+    // The retained cursor addresses the replaced Collection, so the successor
+    // is read from its first page rather than continued mid-scan.
+    setRequest({ append: false, sequence: 0 });
+    setState(INGRESS_ATTENTION_INITIAL_STATE);
+  }
 
   React.useEffect(() => {
     let retired = false;
@@ -1617,15 +1688,15 @@ function bindingEnabledLabel(enabled: boolean, t: Translate): string {
 }
 
 function bindingApprovalDescription(binding: ChannelsBinding, t: Translate): string | undefined {
-  if (binding.approval.kind !== 'unavailable') return undefined;
+  if (binding.approval.kind !== 'enabled') return undefined;
   return binding.approval.maximumScope === 'request'
     ? t(
-      'plugins.channels.surface.bindingApprovalUnavailableRequest',
-      'Approval requests are unavailable for request scope. This saved policy does not authorize messages.',
+      'plugins.channels.surface.bindingApprovalEnabledRequest',
+      'Approvers in this conversation can answer one permission request at a time with /allow or /deny.',
     )
     : t(
-      'plugins.channels.surface.bindingApprovalUnavailableSession',
-      'Approval requests are unavailable for session scope. This saved policy does not authorize messages.',
+      'plugins.channels.surface.bindingApprovalEnabledSession',
+      'Approvers in this conversation can answer permission requests with /allow or /deny, up to Session scope.',
     );
 }
 
@@ -2220,9 +2291,7 @@ function BindingRow(props: Readonly<{
     || enablementOutcomeUnknown
     || deleteExecution?.status === 'pending'
     || deleteOutcomeUnknown;
-  const enablementUnavailable = binding.approval.kind === 'unavailable'
-    || binding.deletionState !== 'none'
-    || mutationLocked;
+  const enablementUnavailable = binding.deletionState !== 'none' || mutationLocked;
   const deleteUnavailable = binding.deletionState !== 'none' || mutationLocked;
   const needsUnknownEnablementRefresh = enablementOutcomeUnknown
     && props.outcomeUnknownBindingId === binding.bindingId;
@@ -2547,6 +2616,202 @@ function bindingEditorTargetFromBinding(binding: ConversationBindingV1): Binding
   };
 }
 
+/**
+ * The one owner of the host round trip that turns "configure a new Session"
+ * into a concrete spawn recipe. Every binding surface that offers the policy —
+ * create, the daemon-backed editor, and the cold-offline editor — consumes this
+ * instead of repeating the availability probe, in-flight fence, and failure
+ * classification. It reaches only the host projection, never a provider.
+ */
+function useBindingNewSessionRecipeSelection(input: Readonly<{
+  signal: AbortSignal;
+  /**
+   * Read at press time, not at declaration time, so the one owner can sit above
+   * the caller's own `actionLocked` computation while still refusing to start
+   * while any other in-flight action holds the surface.
+   */
+  isLocked: () => boolean;
+  onSelected: (draft: Extract<SelectActionInputResult, Readonly<{ kind: 'serverStartDraft' }>>['draft']) => void;
+  onUnavailable: () => void;
+  onStarted?: () => void;
+}>): Readonly<{ available: boolean; pending: boolean; select: () => void }> {
+  const hostApi = usePluginHostApi();
+  const [pending, setPending] = React.useState(false);
+  const inFlightRef = React.useRef(false);
+  const mountedRef = React.useRef(true);
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  const callbacksRef = React.useRef(input);
+  callbacksRef.current = input;
+
+  const select = React.useCallback(() => {
+    const current = callbacksRef.current;
+    if (current.isLocked() || current.signal.aborted || inFlightRef.current) return;
+    if (!hostApi.version().methods.includes('selectActionInput')) {
+      current.onUnavailable();
+      return;
+    }
+    inFlightRef.current = true;
+    setPending(true);
+    current.onStarted?.();
+    void (async () => {
+      try {
+        const selected = await hostApi.selectActionInput({
+          hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+        }, { signal: current.signal });
+        if (!mountedRef.current || current.signal.aborted || selected.kind === 'cancelled') return;
+        if (selected.kind !== 'serverStartDraft') {
+          callbacksRef.current.onUnavailable();
+          return;
+        }
+        callbacksRef.current.onSelected(selected.draft);
+      } catch {
+        if (mountedRef.current && !current.signal.aborted) callbacksRef.current.onUnavailable();
+      } finally {
+        inFlightRef.current = false;
+        if (mountedRef.current && !current.signal.aborted) setPending(false);
+      }
+    })();
+  }, [hostApi]);
+
+  // The host installs `selectActionInput` only while its daemon-owned selection
+  // path is actually available, so the FACTUAL installed set is the truthful
+  // pre-press signal. Reading it here keeps one owner for both the offer and
+  // the press; the surface does not build a local Session form or catalog.
+  const available = hostApi.version().methods.includes('selectActionInput');
+
+  return { available, pending, select };
+}
+
+/**
+ * The Session-target policy an Account can decide on its own. It is one
+ * component because the daemon-backed editor and the cold-offline editor offer
+ * exactly the same set: `management.ts` returns a Session target from its
+ * persistence resolver unchanged, so nothing here needs a reachable machine.
+ */
+function BindingSessionTargetPolicyControls(props: Readonly<{
+  target: BindingEditorSessionTarget;
+  disabled: boolean;
+  /** Whether the host can currently run its own new-Session selection. */
+  configureNewSessionAvailable: boolean;
+  onChange: (transform: (target: BindingEditorSessionTarget) => BindingEditorSessionTarget) => void;
+  onConfigureNewSession: () => void;
+  t: Translate;
+}>): React.ReactElement {
+  return (
+    <Stack gap="small">
+      <Heading level={3} value={props.t('plugins.channels.surface.bindingEditTargetPolicy', 'Session target policy')} />
+      <Form.Select
+        testID="channels-binding-target-delivery-mode"
+        label={props.t('plugins.channels.surface.bindingCreateDeliveryMode', 'Session delivery')}
+        options={[
+          { value: 'repliesOnly', label: props.t('plugins.channels.surface.bindingCreateRepliesOnly', 'Replies only') },
+          { value: 'mirrorSession', label: props.t('plugins.channels.surface.bindingCreateMirrorSession', 'Mirror Session') },
+        ]}
+        value={props.target.policy.deliveryMode}
+        disabled={props.disabled}
+        onChange={(deliveryMode) => {
+          if (deliveryMode !== 'repliesOnly' && deliveryMode !== 'mirrorSession') return;
+          props.onChange((target) => ({
+            ...target,
+            policy: { ...target.policy, deliveryMode },
+          }));
+        }}
+      />
+      <Form.Select
+        testID="channels-binding-target-permission-ceiling"
+        label={props.t('plugins.channels.surface.bindingCreatePermissionCeiling', 'Permission ceiling')}
+        options={[
+          { value: 'default', label: props.t('plugins.channels.surface.bindingCreatePermissionDefault', 'Default') },
+          { value: 'read-only', label: props.t('plugins.channels.surface.bindingCreatePermissionReadOnly', 'Read only') },
+          { value: 'safe-yolo', label: props.t('plugins.channels.surface.bindingCreatePermissionSafeYolo', 'Safe yolo') },
+          { value: 'yolo', label: props.t('plugins.channels.surface.bindingCreatePermissionYolo', 'Yolo') },
+          { value: 'plan', label: props.t('plugins.channels.surface.bindingCreatePermissionPlan', 'Plan') },
+        ]}
+        value={props.target.policy.permissionCeiling}
+        disabled={props.disabled}
+        onChange={(permissionCeiling) => {
+          if (typeof permissionCeiling !== 'string') return;
+          props.onChange((target) => ({
+            ...target,
+            policy: { ...target.policy, permissionCeiling },
+          }));
+        }}
+      />
+      <Form.Toggle
+        testID="channels-binding-target-approvals"
+        label={props.t('plugins.channels.surface.bindingCreateApprovals', 'Approvals')}
+        value={props.target.policy.approvals.kind === 'enabled'}
+        disabled={props.disabled}
+        onChange={(enabled) => {
+          props.onChange((target) => ({
+            ...target,
+            policy: {
+              ...target.policy,
+              // Turning approvals on defaults to the narrower request scope;
+              // Session scope stays an explicit second choice below.
+              approvals: enabled ? { kind: 'enabled', maximumScope: 'request' } : { kind: 'off' },
+            },
+          }));
+        }}
+      />
+      {props.target.policy.approvals.kind === 'enabled'
+        ? (
+          <Form.Select
+            testID="channels-binding-target-approvals-scope"
+            label={props.t('plugins.channels.surface.bindingCreateApprovalsScope', 'Maximum approval scope')}
+            options={[
+              {
+                value: 'request',
+                label: props.t('plugins.channels.surface.bindingCreateApprovalsScopeRequest', 'This request'),
+              },
+              {
+                value: 'session',
+                label: props.t('plugins.channels.surface.bindingCreateApprovalsScopeSession', 'This Session'),
+              },
+            ]}
+            value={props.target.policy.approvals.maximumScope}
+            disabled={props.disabled}
+            onChange={(maximumScope) => {
+              if (maximumScope !== 'request' && maximumScope !== 'session') return;
+              props.onChange((target) => ({
+                ...target,
+                policy: {
+                  ...target.policy,
+                  approvals: { ...target.policy.approvals, kind: 'enabled', maximumScope },
+                },
+              }));
+            }}
+          />
+        )
+        : null}
+      <Form.Toggle
+        testID="channels-binding-target-configure-new-session"
+        label={props.t('plugins.channels.surface.bindingCreateConfigureNewSession', 'Configure a new Session')}
+        value={props.target.policy.newSession.kind === 'enabled'}
+        // Turning an already-enabled recipe OFF is an Account-local policy edit
+        // that needs nothing from the host, so only the ENABLE direction waits
+        // on the host's own new-Session selection being available. Offering it
+        // otherwise presents a control whose press can only report failure.
+        disabled={props.disabled
+          || (!props.configureNewSessionAvailable && props.target.policy.newSession.kind !== 'enabled')}
+        onChange={(enabled) => {
+          if (!enabled) {
+            props.onChange((target) => ({
+              ...target,
+              policy: { ...target.policy, newSession: { kind: 'off' } },
+            }));
+            return;
+          }
+          props.onConfigureNewSession();
+        }}
+      />
+    </Stack>
+  );
+}
+
 /** The one draft projection of an exact retained binding, online or offline. */
 function bindingEditorDraftFromBinding(binding: ConversationBindingV1): BindingEditorDraft {
   return {
@@ -2593,16 +2858,6 @@ function bindingEditorHasObservedPolicyClamp(
   if (requested?.kind !== 'session' || actual.target.kind !== 'session') return false;
   return requested.policy.permissionCeiling !== actual.target.policy.permissionCeiling
     || requested.policy.approvals.kind !== actual.target.policy.approvals.kind;
-}
-
-function bindingEditorApprovalsLabel(
-  approvals: BindingEditorSessionTarget['policy']['approvals'],
-  t: Translate,
-): string {
-  if (approvals.kind === 'off') {
-    return t('plugins.channels.surface.bindingCreateApprovalsOff', 'Off');
-  }
-  return `${t('plugins.channels.surface.bindingEditApprovalsEnabled', 'Enabled')} (${approvals.maximumScope})`;
 }
 
 function isBindingEditorPrincipalCandidate(
@@ -2738,14 +2993,20 @@ function formatPairingCountdown(remainingMs: number): string {
 
 /**
  * Resource time is authoritative at read; this local timer only projects its
- * bounded remaining duration. It stops at expiry, state transition, or
- * unmount, and its rendered status never becomes a live-region announcement.
+ * bounded remaining duration and the moment it reaches zero. The rendered
+ * countdown never becomes a live-region announcement; the expiry transition it
+ * reports is presented through the existing pairing Banner, which is the one
+ * announcement owner for this surface.
+ *
+ * The daemon still owns real expiry. Reaching zero only stops offering a token,
+ * link, and deep link the provider will no longer honour, so the person is not
+ * left holding a challenge that silently cannot complete.
  */
 function usePairingExpiryCountdown(input: Readonly<{
   expiresAt?: number;
   observedAt?: number;
   active: boolean;
-}>): string | undefined {
+}>): Readonly<{ countdown?: string; expired: boolean }> {
   const [remainingMs, setRemainingMs] = React.useState<number | undefined>();
 
   React.useEffect(() => {
@@ -2767,7 +3028,9 @@ function usePairingExpiryCountdown(input: Readonly<{
     };
   }, [input.active, input.expiresAt, input.observedAt]);
 
-  return remainingMs === undefined ? undefined : formatPairingCountdown(remainingMs);
+  if (remainingMs === undefined) return { expired: false };
+  if (remainingMs <= 0) return { expired: true };
+  return { countdown: formatPairingCountdown(remainingMs), expired: false };
 }
 
 /**
@@ -2900,7 +3163,7 @@ function BindingCreatePairingHandoff(props: Readonly<{
   const actionLocked = outcomeUnknown
     || finalizeAction.execution.status === 'pending'
     || cancelAction.execution.status === 'pending';
-  const expiryCountdown = usePairingExpiryCountdown({
+  const challengeExpiry = usePairingExpiryCountdown({
     expiresAt: challenge?.expiresAt,
     observedAt: pairing?.observedAt,
     active: challenge !== undefined && feedback !== 'completed',
@@ -3161,17 +3424,20 @@ function BindingCreatePairingHandoff(props: Readonly<{
       </Stack>
     );
   }
-  if (challenge !== undefined) {
+  // A challenge whose bounded lifetime has run out is expired here, without
+  // waiting for a Resource reread: keeping the token, link, and deep link on
+  // screen would keep offering a completion the provider will refuse.
+  if (challenge !== undefined && !challengeExpiry.expired) {
     return (
       <Stack gap="small">
         {unknownOutcome}
         {feedbackContent}
         <Heading level={2} value={props.t('plugins.channels.surface.bindingCreatePairingChallengeTitle', 'Complete pairing')} />
-        {expiryCountdown === undefined ? null : (
+        {challengeExpiry.countdown === undefined ? null : (
           <Text
             testID="channels-binding-create-pairing-countdown"
             tone="info"
-            value={`${props.t('plugins.channels.surface.bindingCreatePairingExpiresIn', 'Expires in')} ${expiryCountdown}`}
+            value={`${props.t('plugins.channels.surface.bindingCreatePairingExpiresIn', 'Expires in')} ${challengeExpiry.countdown}`}
           />
         )}
         <Metadata
@@ -3223,11 +3489,16 @@ function BindingCreatePairingHandoff(props: Readonly<{
     );
   }
 
-  const expired = pairing !== undefined && pairing.observedAt >= props.pairing.expiresAt;
+  // The local transition and the observed Resource fact are the same expiry.
+  // One Banner presents it, so the surface's existing announcement owner
+  // announces the transition exactly once rather than on every countdown tick.
+  const expired = challengeExpiry.expired
+    || (pairing !== undefined && pairing.observedAt >= props.pairing.expiresAt);
   return (
     <Stack gap="small">
       {unknownOutcome}
       <Banner
+        testID="channels-binding-create-pairing-expired"
         tone="warning"
         title={expired
           ? props.t('plugins.channels.surface.bindingCreatePairingExpiredTitle', 'Pairing expired')
@@ -3286,7 +3557,6 @@ function BindingCreateJourney(props: Readonly<{
   const [automationNextCursor, setAutomationNextCursor] = React.useState<string | undefined>();
   const [target, setTarget] = React.useState<BindingCreateTarget | undefined>();
   const [newSessionDraft, setNewSessionDraft] = React.useState<unknown>();
-  const [newSessionSelectionPending, setNewSessionSelectionPending] = React.useState(false);
   const [allowBotSenders, setAllowBotSenders] = React.useState(false);
   const [inputModeOverride, setInputModeOverride] = React.useState<BindingInputMode | undefined>();
   const [deliveryMode, setDeliveryMode] = React.useState('repliesOnly');
@@ -3296,7 +3566,6 @@ function BindingCreateJourney(props: Readonly<{
   const [senderFeedback, setSenderFeedback] = React.useState('off');
   const [feedback, setFeedback] = React.useState<BindingCreateFeedback | undefined>();
   const mountedRef = React.useRef(true);
-  const selectingNewSessionRef = React.useRef(false);
   const restoreOpenerFocusRef = React.useRef(false);
   const availableConnections = React.useMemo(
     () => props.connections.filter((connection) => connection.deletionState === 'none'),
@@ -3308,10 +3577,21 @@ function BindingCreateJourney(props: Readonly<{
   // The surface previews the binding the create writer will persist, so the
   // omitted-field policy comes from that one contract owner rather than a
   // second copy of the same rule.
+  const endpointAudience: BindingEndpointAudience = endpointSelection?.selected.audience ?? 'shared';
   const defaultInputMode: BindingInputMode = conversationBindingPolicyForOmittedFieldsV1(
-    endpointSelection?.selected.audience ?? 'shared',
+    endpointAudience,
   ).inputMode;
-  const inputMode = inputModeOverride ?? defaultInputMode;
+  // The create writer rejects an incoming message policy the connection's
+  // integration cannot deliver, so the same protocol owner decides what this
+  // step is allowed to offer.
+  const deliverableInputModes = deliverableBindingInputModes({
+    audience: endpointAudience,
+    ...(currentConnection === undefined ? {} : { connection: currentConnection }),
+  });
+  const requestedInputMode = inputModeOverride ?? defaultInputMode;
+  const inputMode = deliverableInputModes.includes(requestedInputMode)
+    ? requestedInputMode
+    : deliverableInputModes[0]!;
   const selectedPrincipalSummary = principalSelection === undefined
     ? props.t('plugins.channels.surface.bindingCreatePrincipalFallback', 'Person')
     : principalSelection.selected.map((principal, index) => (
@@ -3321,6 +3601,13 @@ function BindingCreateJourney(props: Readonly<{
     )).join(', ');
   const bindingCreateOutcomeUnknown = createAction.execution.status === 'outcomeUnknown';
   const pairingCreateOutcomeUnknown = pairingAction.execution.status === 'outcomeUnknown';
+  const newSessionRecipeSelection = useBindingNewSessionRecipeSelection({
+    signal: props.signal,
+    isLocked: () => actionLocked,
+    onStarted: () => setFeedback(undefined),
+    onUnavailable: () => setFeedback('newSessionUnavailable'),
+    onSelected: (recipe) => setNewSessionDraft(recipe),
+  });
   const actionLocked = bindingCreateOutcomeUnknown
     || pairingCreateOutcomeUnknown
     || resolveAction.execution.status === 'pending'
@@ -3328,7 +3615,7 @@ function BindingCreateJourney(props: Readonly<{
     || pairingAction.execution.status === 'pending'
     || sessionsAction.execution.status === 'pending'
     || automationAction.execution.status === 'pending'
-    || newSessionSelectionPending;
+    || newSessionRecipeSelection.pending;
 
   React.useEffect(() => {
     mountedRef.current = true;
@@ -3608,34 +3895,7 @@ function BindingCreateJourney(props: Readonly<{
     }
   }, [loadSessions, pairingRequired, sessionCandidates.length, stage]);
 
-  const selectNewSessionRecipe = React.useCallback(async () => {
-    if (actionLocked
-      || props.signal.aborted
-      || selectingNewSessionRef.current
-      || !hostApi.version().methods.includes('selectActionInput')) {
-      if (!hostApi.version().methods.includes('selectActionInput')) setFeedback('newSessionUnavailable');
-      return;
-    }
-    selectingNewSessionRef.current = true;
-    setNewSessionSelectionPending(true);
-    setFeedback(undefined);
-    try {
-      const selected = await hostApi.selectActionInput({
-        hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
-      }, { signal: props.signal });
-      if (!mountedRef.current || props.signal.aborted || selected.kind === 'cancelled') return;
-      if (selected.kind !== 'serverStartDraft') {
-        setFeedback('newSessionUnavailable');
-        return;
-      }
-      setNewSessionDraft(selected.draft);
-    } catch {
-      if (mountedRef.current && !props.signal.aborted) setFeedback('newSessionUnavailable');
-    } finally {
-      selectingNewSessionRef.current = false;
-      if (mountedRef.current && !props.signal.aborted) setNewSessionSelectionPending(false);
-    }
-  }, [actionLocked, hostApi, props.signal]);
+  const selectNewSessionRecipe = newSessionRecipeSelection.select;
 
   const createTarget = React.useMemo(() => {
     if (target === undefined) return undefined;
@@ -4079,18 +4339,19 @@ function BindingCreateJourney(props: Readonly<{
                 value={props.t('plugins.channels.surface.bindingCreatePolicies', 'Policies')}
                 focusTarget={stageFocusTarget}
               />
+              <BindingInputModeCapabilityNotice
+                deliverableInputModes={deliverableInputModes}
+                testID="channels-binding-create-input-mode-capability"
+                t={props.t}
+              />
               <Form.Select
                 testID="channels-binding-create-input-mode"
                 label={props.t('plugins.channels.surface.bindingCreateInputMode', 'Incoming messages')}
-                options={[
-                  { value: 'directMentionsOnly', label: props.t('plugins.channels.surface.bindingCreateInputDirect', 'Direct mentions only') },
-                  { value: 'addressedMessages', label: props.t('plugins.channels.surface.bindingCreateInputAddressed', 'Addressed messages') },
-                  { value: 'allAllowedMessages', label: props.t('plugins.channels.surface.bindingCreateInputAll', 'All allowed messages') },
-                ]}
+                options={bindingInputModeOptions(deliverableInputModes, props.t)}
                 value={inputMode}
                 disabled={actionLocked}
                 onChange={(next) => {
-                  if (isBindingInputMode(next)) {
+                  if (isBindingInputMode(next) && deliverableInputModes.includes(next)) {
                     setInputModeOverride(next === defaultInputMode ? undefined : next);
                   }
                 }}
@@ -4126,7 +4387,11 @@ function BindingCreateJourney(props: Readonly<{
                     testID="channels-binding-create-new-session"
                     label={props.t('plugins.channels.surface.bindingCreateConfigureNewSession', 'Configure a new Session')}
                     value={newSessionDraft !== undefined}
-                    disabled={actionLocked}
+                    // Clearing a chosen recipe needs nothing from the host; only
+                    // choosing one waits on the host's own new-Session selection
+                    // being factually installed.
+                    disabled={actionLocked
+                      || (!newSessionRecipeSelection.available && newSessionDraft === undefined)}
                     onChange={(enabled) => {
                       if (!enabled) {
                         setNewSessionDraft(undefined);
@@ -4380,11 +4645,67 @@ type BindingPolicyFields = Readonly<{
   enabled: boolean;
 }>;
 
+const BINDING_INPUT_MODE_LABEL_KEY: Readonly<Record<BindingInputMode, Readonly<{ key: string; fallback: string }>>> = {
+  directMentionsOnly: { key: 'plugins.channels.surface.bindingCreateInputDirect', fallback: 'Direct mentions only' },
+  addressedMessages: { key: 'plugins.channels.surface.bindingCreateInputAddressed', fallback: 'Addressed messages' },
+  allAllowedMessages: { key: 'plugins.channels.surface.bindingCreateInputAll', fallback: 'All allowed messages' },
+};
+
+/** One option list for every incoming-message chooser on this surface. */
+function bindingInputModeOptions(
+  modes: readonly BindingInputMode[],
+  t: Translate,
+): readonly Readonly<{ value: string; label: string }>[] {
+  return modes.map((mode) => ({
+    value: mode,
+    label: t(BINDING_INPUT_MODE_LABEL_KEY[mode].key, BINDING_INPUT_MODE_LABEL_KEY[mode].fallback),
+  }));
+}
+
+/**
+ * What this connection's integration can actually deliver here, decided by the
+ * one protocol owner the create/update writer also uses.
+ */
+function deliverableBindingInputModes(input: Readonly<{
+  audience: BindingEndpointAudience;
+  connection?: ChannelsConnection;
+}>): readonly BindingInputMode[] {
+  return conversationBindingInputModesForEndpointV1({
+    audience: input.audience,
+    ...(input.connection?.sharedEndpointInputModes === undefined
+      ? {}
+      : { sharedEndpointInputModes: input.connection.sharedEndpointInputModes }),
+  });
+}
+
+/**
+ * Says out loud that the integration itself withholds the missing policies, so
+ * an absent option reads as a platform fact rather than a broken surface.
+ */
+function BindingInputModeCapabilityNotice(props: Readonly<{
+  deliverableInputModes: readonly BindingInputMode[];
+  testID?: string;
+  t: Translate;
+}>): React.ReactElement | null {
+  if (props.deliverableInputModes.length >= 3) return null;
+  return (
+    <Text
+      {...(props.testID === undefined ? {} : { testID: props.testID })}
+      tone="secondary"
+      value={props.t(
+        'plugins.channels.surface.bindingInputModeCapability',
+        'This integration only delivers messages that address it in a shared conversation, so broader incoming message policies are unavailable.',
+      )}
+    />
+  );
+}
+
 function BindingPolicyControls(props: Readonly<{
   fields: BindingPolicyFields;
   disabled: boolean;
   botSendersLocked: boolean;
   debounceValid: boolean;
+  deliverableInputModes: readonly BindingInputMode[];
   onChange: (update: (current: BindingPolicyFields) => BindingPolicyFields) => void;
   t: Translate;
 }>): React.ReactElement {
@@ -4403,13 +4724,14 @@ function BindingPolicyControls(props: Readonly<{
         disabled={props.disabled || props.botSendersLocked}
         onChange={(allowBotSenders) => onChange((current) => ({ ...current, allowBotSenders }))}
       />
+      <BindingInputModeCapabilityNotice
+        deliverableInputModes={props.deliverableInputModes}
+        testID="channels-binding-input-mode-capability"
+        t={props.t}
+      />
       <Form.Select
         label={props.t('plugins.channels.surface.bindingCreateInputMode', 'Incoming messages')}
-        options={[
-          { value: 'directMentionsOnly', label: props.t('plugins.channels.surface.bindingCreateInputDirect', 'Direct mentions only') },
-          { value: 'addressedMessages', label: props.t('plugins.channels.surface.bindingCreateInputAddressed', 'Addressed messages') },
-          { value: 'allAllowedMessages', label: props.t('plugins.channels.surface.bindingCreateInputAll', 'All allowed messages') },
-        ]}
+        options={bindingInputModeOptions(props.deliverableInputModes, props.t)}
         value={fields.inputMode}
         disabled={props.disabled}
         onChange={(inputMode) => {
@@ -4500,7 +4822,6 @@ function BindingEditJourney(props: Readonly<{
   const [sessionCandidates, setSessionCandidates] = React.useState<readonly BindingCreateSessionCandidate[]>([]);
   const [automationCandidates, setAutomationCandidates] = React.useState<readonly BindingCreateAutomationCandidate[]>([]);
   const [automationNextCursor, setAutomationNextCursor] = React.useState<string | undefined>();
-  const [newSessionSelectionPending, setNewSessionSelectionPending] = React.useState(false);
   const [reloadPhase, setReloadPhase] = React.useState<
     'waitingForExistingRead' | 'waitingForRequestedRead' | undefined
   >();
@@ -4509,7 +4830,6 @@ function BindingEditJourney(props: Readonly<{
   const initialReadStartedRef = React.useRef(false);
   const reloadSawResourceChangeRef = React.useRef(false);
   const submittingRef = React.useRef(false);
-  const selectingNewSessionRef = React.useRef(false);
 
   const currentConnectionId = detail?.binding.connectionId ?? props.presentation?.binding.connectionId;
   const currentConnection = props.connections.find((connection) => connection.connectionId === currentConnectionId);
@@ -4527,6 +4847,23 @@ function BindingEditJourney(props: Readonly<{
   const selectedAudienceIncludesBot = draft?.audienceSelection?.principalSelection.selected.some((principal) => (
     principal.kind === 'bot'
   )) === true;
+  const newSessionRecipeSelection = useBindingNewSessionRecipeSelection({
+    signal: props.signal,
+    isLocked: () => actionLocked || draft?.target.kind !== 'session',
+    onStarted: () => setFeedback(undefined),
+    onUnavailable: () => setFeedback('newSessionUnavailable'),
+    onSelected: (recipe) => setDraft((current) => (current?.target.kind !== 'session' ? current : {
+      ...current,
+      targetChanged: true,
+      target: {
+        ...current.target,
+        policy: {
+          ...current.target.policy,
+          newSession: { kind: 'enabled', recipe },
+        },
+      },
+    })),
+  });
   const actionLocked = detailPending
     || outcomeUnknown
     || updateAction.execution.status === 'pending'
@@ -4534,7 +4871,7 @@ function BindingEditJourney(props: Readonly<{
     || resolveAction.execution.status === 'pending'
     || sessionsAction.execution.status === 'pending'
     || automationAction.execution.status === 'pending'
-    || newSessionSelectionPending;
+    || newSessionRecipeSelection.pending;
   const saveLocked = actionLocked
     || detail === undefined
     || draft === undefined
@@ -4627,7 +4964,7 @@ function BindingEditJourney(props: Readonly<{
       || resolveAction.execution.status === 'pending'
       || sessionsAction.execution.status === 'pending'
       || automationAction.execution.status === 'pending'
-      || newSessionSelectionPending
+      || newSessionRecipeSelection.pending
       || props.signal.aborted) {
       return;
     }
@@ -4642,7 +4979,7 @@ function BindingEditJourney(props: Readonly<{
   }, [
     automationAction.execution.status,
     detailPending,
-    newSessionSelectionPending,
+    newSessionRecipeSelection.pending,
     props.onRefreshConnection,
     props.onRefresh,
     props.resource.pending,
@@ -4867,45 +5204,7 @@ function BindingEditJourney(props: Readonly<{
     setAutomationNextCursor(page.nextCursor);
   }, [actionLocked, automationAction, props.signal]);
 
-  const selectNewSessionRecipe = React.useCallback(async () => {
-    if (draft?.target.kind !== 'session'
-      || actionLocked
-      || props.signal.aborted
-      || selectingNewSessionRef.current
-      || !hostApi.version().methods.includes('selectActionInput')) {
-      if (!hostApi.version().methods.includes('selectActionInput')) setFeedback('newSessionUnavailable');
-      return;
-    }
-    selectingNewSessionRef.current = true;
-    setNewSessionSelectionPending(true);
-    setFeedback(undefined);
-    try {
-      const selected = await hostApi.selectActionInput({
-        hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
-      }, { signal: props.signal });
-      if (!mountedRef.current || props.signal.aborted || selected.kind === 'cancelled') return;
-      if (selected.kind !== 'serverStartDraft') {
-        setFeedback('newSessionUnavailable');
-        return;
-      }
-      setDraft((current) => current?.target.kind !== 'session' ? current : {
-        ...current,
-        targetChanged: true,
-        target: {
-          ...current.target,
-          policy: {
-            ...current.target.policy,
-            newSession: { kind: 'enabled', recipe: selected.draft },
-          },
-        },
-      });
-    } catch {
-      if (mountedRef.current && !props.signal.aborted) setFeedback('newSessionUnavailable');
-    } finally {
-      selectingNewSessionRef.current = false;
-      if (mountedRef.current && !props.signal.aborted) setNewSessionSelectionPending(false);
-    }
-  }, [actionLocked, draft?.target.kind, hostApi, props.signal]);
+  const selectNewSessionRecipe = newSessionRecipeSelection.select;
 
   const submit = React.useCallback(async () => {
     if (detail === undefined || draft === undefined || debounceMs === undefined || saveLocked || submittingRef.current) return;
@@ -5200,72 +5499,27 @@ function BindingEditJourney(props: Readonly<{
             disabled={actionLocked || finalizingDelete}
             botSendersLocked={selectedAudienceIncludesBot}
             debounceValid={debounceMs !== undefined}
+            deliverableInputModes={deliverableBindingInputModes({
+              audience: draft.audienceSelection?.endpointSelection.selected.audience
+                ?? detail?.binding.endpoint.audience
+                ?? props.presentation?.binding.endpoint.audience
+                ?? 'shared',
+              ...(currentConnection === undefined ? {} : { connection: currentConnection }),
+            })}
             onChange={(update) => setDraft((current) => (
               current === undefined ? current : { ...current, ...update(current) }
             ))}
             t={props.t}
           />
           {draft.target.kind === 'session' ? (
-            <Stack gap="small">
-              <Heading level={3} value={props.t('plugins.channels.surface.bindingEditTargetPolicy', 'Session target policy')} />
-              <Form.Select
-                label={props.t('plugins.channels.surface.bindingCreateDeliveryMode', 'Session delivery')}
-                options={[
-                  { value: 'repliesOnly', label: props.t('plugins.channels.surface.bindingCreateRepliesOnly', 'Replies only') },
-                  { value: 'mirrorSession', label: props.t('plugins.channels.surface.bindingCreateMirrorSession', 'Mirror Session') },
-                ]}
-                value={draft.target.policy.deliveryMode}
-                disabled={actionLocked || finalizingDelete}
-                onChange={(deliveryMode) => {
-                  if (deliveryMode !== 'repliesOnly' && deliveryMode !== 'mirrorSession') return;
-                  updateSessionTarget((target) => ({
-                    ...target,
-                    policy: { ...target.policy, deliveryMode },
-                  }));
-                }}
-              />
-              <Form.Select
-                label={props.t('plugins.channels.surface.bindingCreatePermissionCeiling', 'Permission ceiling')}
-                options={[
-                  { value: 'default', label: props.t('plugins.channels.surface.bindingCreatePermissionDefault', 'Default') },
-                  { value: 'read-only', label: props.t('plugins.channels.surface.bindingCreatePermissionReadOnly', 'Read only') },
-                  { value: 'safe-yolo', label: props.t('plugins.channels.surface.bindingCreatePermissionSafeYolo', 'Safe yolo') },
-                  { value: 'yolo', label: props.t('plugins.channels.surface.bindingCreatePermissionYolo', 'Yolo') },
-                  { value: 'plan', label: props.t('plugins.channels.surface.bindingCreatePermissionPlan', 'Plan') },
-                ]}
-                value={draft.target.policy.permissionCeiling}
-                disabled={actionLocked || finalizingDelete}
-                onChange={(permissionCeiling) => {
-                  if (typeof permissionCeiling !== 'string') return;
-                  updateSessionTarget((target) => ({
-                    ...target,
-                    policy: { ...target.policy, permissionCeiling },
-                  }));
-                }}
-              />
-              <Metadata
-                title={props.t('plugins.channels.surface.bindingCreateApprovals', 'Approvals')}
-                entries={[{
-                  label: props.t('plugins.channels.surface.bindingCreateApprovals', 'Approvals'),
-                  value: bindingEditorApprovalsLabel(draft.target.policy.approvals, props.t),
-                }]}
-              />
-              <Form.Toggle
-                label={props.t('plugins.channels.surface.bindingCreateConfigureNewSession', 'Configure a new Session')}
-                value={draft.target.policy.newSession.kind === 'enabled'}
-                disabled={actionLocked || finalizingDelete}
-                onChange={(enabled) => {
-                  if (!enabled) {
-                    updateSessionTarget((target) => ({
-                      ...target,
-                      policy: { ...target.policy, newSession: { kind: 'off' } },
-                    }));
-                    return;
-                  }
-                  void selectNewSessionRecipe();
-                }}
-              />
-            </Stack>
+            <BindingSessionTargetPolicyControls
+              target={draft.target}
+              disabled={actionLocked || finalizingDelete}
+              configureNewSessionAvailable={newSessionRecipeSelection.available}
+              onChange={updateSessionTarget}
+              onConfigureNewSession={selectNewSessionRecipe}
+              t={props.t}
+            />
           ) : (
             <Stack gap="small">
               <Heading
@@ -5538,6 +5792,18 @@ function BindingEditJourney(props: Readonly<{
   );
 }
 
+/**
+ * Bindings and connections are separate daemon Resources and therefore separate
+ * sections with independent availability. This is the binding section's own
+ * state; a failure here must never take the connection section down with it.
+ */
+type BindingsSectionState =
+  | Readonly<{ kind: 'ready' }>
+  | Readonly<{ kind: 'loading' }>
+  | Readonly<{ kind: 'error'; description: string }>;
+
+const BINDINGS_SECTION_READY: BindingsSectionState = Object.freeze({ kind: 'ready' });
+
 type BindingsContentProps = Readonly<{
   presentations: readonly BindingPresentation[];
   resource: ResourcePresentation;
@@ -5549,6 +5815,7 @@ type BindingsContentProps = Readonly<{
   onEdit?: (binding: ChannelsBinding, focusTarget: PluginUiFocusTarget) => void;
   connectionsContent?: React.ReactElement;
   savedPendingMachineReconciliation?: boolean;
+  sectionState?: BindingsSectionState;
   t: Translate;
 }>;
 
@@ -5580,6 +5847,8 @@ function BindingsContent(props: BindingsContentProps): React.ReactElement {
         presentation.connection?.providerPluginId === activeProviderFilter
       ))
   ), [activeProviderFilter, props.presentations]);
+  const sectionState = props.sectionState ?? BINDINGS_SECTION_READY;
+  const sectionAvailable = sectionState.kind === 'ready';
   const outcomeUnknownBindingIsVisible = outcomeUnknownBindingId !== undefined
     && visiblePresentations.some((presentation) => (
       presentation.binding.bindingId === outcomeUnknownBindingId
@@ -5788,8 +6057,8 @@ function BindingsContent(props: BindingsContentProps): React.ReactElement {
                   testID="channels-binding-enable-error"
                 />
               )}
-              {props.bindingCreateContent}
-              {props.bindingEditContent}
+              {sectionAvailable ? props.bindingCreateContent : null}
+              {sectionAvailable ? props.bindingEditContent : null}
               {execution.status === 'outcomeUnknown' && !outcomeUnknownBindingIsVisible ? (
                 <Banner
                   testID="channels-binding-outcome-unknown"
@@ -5840,7 +6109,29 @@ function BindingsContent(props: BindingsContentProps): React.ReactElement {
             ) : null}
           </Stack>
         )}
-        empty={(
+        empty={sectionState.kind === 'loading' ? (
+          <LoadingState
+            testID="channels-bindings-loading"
+            title={props.t('plugins.channels.surface.bindingsLoadingTitle', 'Loading conversation bindings')}
+            description={props.t(
+              'plugins.channels.surface.bindingsLoadingDescription',
+              'Reading the current binding policy from your Account.',
+            )}
+          />
+        ) : sectionState.kind === 'error' ? (
+          <ErrorState
+            testID="channels-bindings-error"
+            title={props.t('plugins.channels.surface.bindingsErrorTitle', 'Binding details are unavailable')}
+            description={sectionState.description}
+            action={(
+              <Action.Refresh
+                testID="channels-bindings-retry"
+                title={props.t('plugins.channels.surface.tryAgain', 'Try again')}
+                onRefresh={props.onRefresh}
+              />
+            )}
+          />
+        ) : (
           <EmptyState
             testID="channels-bindings-empty"
             title={props.t('plugins.channels.surface.bindingsEmptyTitle', 'No conversation bindings yet')}
@@ -5939,6 +6230,10 @@ function OnlineBindingsContent({
       )}
       bindingEditContent={editingBinding === undefined ? undefined : (
         <BindingEditJourney
+          // The editor reads its detail exactly once per opened binding. A
+          // different binding is a different read, so it must be a different
+          // editor rather than a retained draft aimed at the new row.
+          key={editingBinding.bindingId}
           bindingId={editingBinding.bindingId}
           presentation={editingPresentation}
           connections={connections}
@@ -5958,15 +6253,18 @@ function OnlineBindingsContent({
 type AccountLocalBindingEditorFeedback =
   | 'readUnavailable'
   | 'notFound'
+  | 'newSessionUnavailable'
   | 'saveUnavailable'
   | 'updated';
 
 /**
  * The cold-offline binding editor. It offers exactly the binding policy the
- * shared transition and CAS owner decides from the retained Account row, and
- * deliberately offers no endpoint or principal re-resolution, target change,
- * transport effect, custody resolution, or delete: each of those needs current
- * provider or Automation authority that an unreachable machine cannot supply.
+ * shared transition and CAS owner decides from the retained Account row —
+ * including a Session target, which `management.ts` also persists without
+ * reaching anyone — and deliberately offers no endpoint or principal
+ * re-resolution, Automation target change, transport effect, custody
+ * resolution, or delete: each of those needs current provider or Automation
+ * authority that an unreachable machine cannot supply.
  */
 function AccountLocalBindingPolicyEditor(props: Readonly<{
   collection: ChannelStateCollection;
@@ -6053,7 +6351,34 @@ function AccountLocalBindingPolicyEditor(props: Readonly<{
   const summaryChanged = detail !== undefined
     && props.presentation !== undefined
     && props.presentation.binding.revision !== detail.revision;
-  const actionLocked = detailPending || saving || outcomeUnknown;
+  const newSessionRecipeSelection = useBindingNewSessionRecipeSelection({
+    signal: props.signal,
+    isLocked: () => actionLocked || draft?.target.kind !== 'session',
+    onStarted: () => setFeedback(undefined),
+    onUnavailable: () => setFeedback('newSessionUnavailable'),
+    onSelected: (recipe) => setDraft((current) => (current?.target.kind !== 'session' ? current : {
+      ...current,
+      targetChanged: true,
+      target: {
+        ...current.target,
+        policy: {
+          ...current.target.policy,
+          newSession: { kind: 'enabled', recipe },
+        },
+      },
+    })),
+  });
+  const updateSessionTarget = (transform: (target: BindingEditorSessionTarget) => BindingEditorTarget) => {
+    setDraft((current) => (current?.target.kind !== 'session' ? current : {
+      ...current,
+      targetChanged: true,
+      target: transform(current.target),
+    }));
+  };
+  const actionLocked = detailPending
+    || saving
+    || outcomeUnknown
+    || newSessionRecipeSelection.pending;
   const saveLocked = actionLocked
     || detail === undefined
     || draft === undefined
@@ -6075,9 +6400,29 @@ function AccountLocalBindingPolicyEditor(props: Readonly<{
 
   const submit = React.useCallback(async () => {
     if (saveLocked || detail === undefined || draft === undefined || debounceMs === undefined) return;
+    // The protocol parser is the authority for the drafted target, exactly as
+    // it is for the daemon-backed editor. A draft this surface cannot admit is
+    // reported rather than silently dropped from the write.
+    let target: ConversationBindingTargetMutationV1 | undefined;
+    if (draft.targetChanged && draft.target.kind === 'session') {
+      const parsed = ConversationBindingTargetMutationV1Schema.safeParse(draft.target);
+      if (!parsed.success) {
+        setFeedback('saveUnavailable');
+        return;
+      }
+      target = parsed.data;
+    }
+    // Revocation is derived from the retained audience rather than tracked as a
+    // second draft field, so the request can never name a sender this binding
+    // did not already allow.
+    const revokedPrincipalIds = detail.binding.allowedPrincipalIds.filter(
+      (principalId) => !draft.allowedPrincipalIds.includes(principalId),
+    );
     const settled = await operation.execute({
       bindingId: props.bindingId,
       expectedRevision: detail.revision,
+      ...(target === undefined ? {} : { target }),
+      ...(revokedPrincipalIds.length === 0 ? {} : { revokedPrincipalIds }),
       allowBotSenders: draft.allowBotSenders,
       inputMode: draft.inputMode,
       inboundDebounceMs: debounceMs,
@@ -6132,6 +6477,10 @@ function AccountLocalBindingPolicyEditor(props: Readonly<{
       notFound: [
         props.t('plugins.channels.surface.bindingEditNotFoundTitle', 'This binding no longer exists'),
         props.t('plugins.channels.surface.bindingEditNotFoundDescription', 'Reload the bindings list before deciding what to do next.'),
+      ],
+      newSessionUnavailable: [
+        props.t('plugins.channels.surface.bindingEditNewSessionUnavailableTitle', 'Could not choose a new Session'),
+        props.t('plugins.channels.surface.bindingEditNewSessionUnavailableDescription', 'The new-Session recipe picker is unavailable here. The rest of this binding policy can still be saved.'),
       ],
       saveUnavailable: [
         props.t('plugins.channels.surface.bindingEditUnavailableTitle', 'Could not save the binding'),
@@ -6230,16 +6579,76 @@ function AccountLocalBindingPolicyEditor(props: Readonly<{
           },
         ]}
       />
+      {/*
+        Withdrawing a sender is decidable from the retained binding alone, so
+        it stays available while the machine is unreachable. Admitting one is
+        not: only the provider resolver can prove a sender exists on the
+        endpoint. The last remaining sender is never revocable — a binding with
+        no audience cannot persist.
+      */}
+      <Stack testID="channels-account-local-binding-revocation" gap="small">
+        {draft.allowedPrincipalIds.map((principalId) => (
+          <Button
+            key={principalId}
+            testID={`channels-account-local-binding-revoke-${principalId}`}
+            title={props.t('plugins.channels.surface.bindingEditRevokeSender', 'Revoke {principal}')
+              .replace('{principal}', principalId)}
+            variant="secondary"
+            disabled={actionLocked || finalizingDelete || draft.allowedPrincipalIds.length <= 1}
+            onPress={() => setDraft((current) => (current === undefined ? current : {
+              ...current,
+              allowedPrincipalIds: current.allowedPrincipalIds.filter((id) => id !== principalId),
+            }))}
+          />
+        ))}
+      </Stack>
       <BindingPolicyControls
         fields={draft}
         disabled={actionLocked || finalizingDelete}
         botSendersLocked={false}
         debounceValid={debounceMs !== undefined}
+        deliverableInputModes={deliverableBindingInputModes({
+          audience: detail?.binding.endpoint.audience
+            ?? props.presentation?.binding.endpoint.audience
+            ?? 'shared',
+          ...(props.presentation?.connection === undefined
+            ? {}
+            : { connection: props.presentation.connection }),
+        })}
         onChange={(update) => setDraft((current) => (
           current === undefined ? current : { ...current, ...update(current) }
         ))}
         t={props.t}
       />
+      {/*
+        A Session target is decided entirely from the Account, so the offline
+        editor offers the same control set the daemon-backed editor does. An
+        Automation target is intentionally absent here: only its Automation
+        owner can verify the template a rotation would persist.
+      */}
+      {draft.target.kind === 'session' ? (
+        <BindingSessionTargetPolicyControls
+          target={draft.target}
+          disabled={actionLocked || finalizingDelete}
+          configureNewSessionAvailable={newSessionRecipeSelection.available}
+          onChange={updateSessionTarget}
+          onConfigureNewSession={newSessionRecipeSelection.select}
+          t={props.t}
+        />
+      ) : (
+        <Banner
+          testID="channels-account-local-binding-automation-target-unavailable"
+          tone="info"
+          title={props.t(
+            'plugins.channels.surface.bindingEditAutomationTargetOfflineTitle',
+            'Automation target changes need your selected machine',
+          )}
+          description={props.t(
+            'plugins.channels.surface.bindingEditAutomationTargetOfflineDescription',
+            'Only the Automation owner can confirm the current template version, so this target stays read-only until the selected machine is reachable.',
+          )}
+        />
+      )}
       <Button
         testID="channels-account-local-binding-save"
         title={props.t('plugins.channels.surface.bindingEditSave', 'Save binding')}
@@ -6295,6 +6704,15 @@ function AccountLocalBindingsSurface(props: Readonly<{
     originFocusTarget: PluginUiFocusTarget;
   }> | undefined>();
   const restoreEditFocusRef = React.useRef<PluginUiFocusTarget | undefined>(undefined);
+  if (useReplacedAccountCollectionScope([collection, deliveriesCollection])) {
+    // An open editor, an expanded row, and a pending-reconciliation notice all
+    // name rows in the replaced Collection. Equal row IDs in the successor
+    // would otherwise aim a retained draft at a different Account's policy.
+    setEditingBinding(undefined);
+    setExpandedConnectionId(undefined);
+    setSavedPendingMachineReconciliation(false);
+    restoreEditFocusRef.current = undefined;
+  }
   const onCommitted = React.useCallback(() => {
     setSavedPendingMachineReconciliation(true);
   }, []);
@@ -6389,6 +6807,10 @@ function AccountLocalBindingsSurface(props: Readonly<{
       onEdit={openEditor}
       bindingEditContent={editingBinding === undefined ? undefined : (
         <AccountLocalBindingPolicyEditor
+          // The editor reads its detail exactly once per opened binding. A
+          // different binding is a different read, so it must be a different
+          // editor rather than a retained draft aimed at the new row.
+          key={editingBinding.bindingId}
           collection={collection}
           bindingId={editingBinding.bindingId}
           presentation={editingPresentation}
@@ -6675,6 +7097,20 @@ function ConnectionRow(props: Readonly<{
           ) : null}
           {providerDependentOperationsAvailable ? (
             <ConnectionPollRetryControls
+              connection={props.connection}
+              resource={props.resource}
+              onRefresh={requestRefresh}
+              t={props.t}
+            />
+          ) : null}
+          {/*
+            Re-probing needs the selected machine's provider, so it lives
+            inside the same provider-dependent gate every other provider
+            effect uses rather than inventing its own availability rule.
+          */}
+          {providerDependentOperationsAvailable ? (
+            <ConnectionRetestControls
+              key={props.connection.connectionId}
               connection={props.connection}
               resource={props.resource}
               onRefresh={requestRefresh}
@@ -7835,6 +8271,192 @@ function ConnectionPollRetryControls(props: Readonly<{
 }
 
 /**
+ * The one recovery for a saved connection whose provider side went wrong after
+ * creation. It re-runs the provider's own connection test through the
+ * management Action and shows what came back, so the exit from a failed
+ * connection is no longer delete-and-recreate. Eligibility, the probe, and the
+ * readiness settlement all belong to that Action; this surface adds no second
+ * health state of its own.
+ */
+function ConnectionRetestControls(props: Readonly<{
+  connection: ChannelsConnection;
+  resource: ResourcePresentation;
+  onRefresh: () => void;
+  t: Translate;
+}>): React.ReactElement | null {
+  const retestAction = useExecutePluginAction(
+    CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionRetest,
+  );
+  const outcomeUnknown = retestAction.execution.status === 'outcomeUnknown';
+  const requestRefresh = useExplicitFreshRereadAfterUnknownOutcome({
+    outcomeUnknown,
+    resource: props.resource,
+    onRefresh: props.onRefresh,
+    onReconciled: retestAction.reset,
+  });
+  const [verdict, setVerdict] = React.useState<
+    | Readonly<{ kind: 'ready' }>
+    | Readonly<{ kind: 'notReady'; reason: string; diagnostic?: string }>
+    | undefined
+  >();
+  const retestable = props.connection.enabled
+    && props.connection.deletionState === 'none'
+    && !props.connection.attention.oldTransportStopUnconfirmed;
+  const retest = React.useCallback(async () => {
+    if (!retestable
+      || retestAction.execution.status === 'pending'
+      || retestAction.execution.status === 'outcomeUnknown') {
+      return;
+    }
+    setVerdict(undefined);
+    const settled = await retestAction.execute({
+      connectionId: props.connection.connectionId,
+      expectedRevision: props.connection.revision,
+      authorityEpoch: props.connection.authorityEpoch,
+    });
+    if (settled.status === 'success') {
+      const parsed = ConversationConnectionRetestResultV1Schema.safeParse(settled.result);
+      setVerdict(parsed.success
+        ? (parsed.data.kind === 'ready'
+          ? { kind: 'ready' }
+          : {
+            kind: 'notReady',
+            reason: parsed.data.reason,
+            ...(parsed.data.diagnostic === undefined ? {} : { diagnostic: parsed.data.diagnostic }),
+          })
+        : undefined);
+    }
+    if (settled.status !== 'pending' && settled.status !== 'outcomeUnknown') {
+      props.onRefresh();
+    }
+  }, [
+    props.connection.authorityEpoch,
+    props.connection.connectionId,
+    props.connection.revision,
+    props.onRefresh,
+    retestable,
+    retestAction,
+  ]);
+
+  if (!retestable) return null;
+
+  const busy = retestAction.execution.status === 'pending';
+  return (
+    <Stack testID="channels-connection-retest-controls" gap="small">
+      <Button
+        testID="channels-connection-retest"
+        title={busy
+          ? props.t('plugins.channels.surface.connectionRetesting', 'Testing connection…')
+          : props.t('plugins.channels.surface.connectionRetest', 'Test connection')}
+        accessibilityLabel={props.t('plugins.channels.surface.connectionRetest', 'Test connection')}
+        busy={busy}
+        disabled={busy || outcomeUnknown}
+        onPress={retest}
+      />
+      {verdict?.kind === 'ready' ? (
+        <Banner
+          testID="channels-connection-retest-ready"
+          tone="success"
+          title={props.t('plugins.channels.surface.connectionRetestReadyTitle', 'The connection is working')}
+          description={props.t(
+            'plugins.channels.surface.connectionRetestReadyDescription',
+            'The integration provider answered this connection successfully.',
+          )}
+        />
+      ) : null}
+      {verdict?.kind === 'notReady' ? (
+        <Banner
+          testID="channels-connection-retest-not-ready"
+          tone="warning"
+          title={props.t('plugins.channels.surface.connectionRetestNotReadyTitle', 'The connection is still not working')}
+          description={verdict.diagnostic ?? providerFailureReasonDescription(verdict.reason, props.t)}
+        />
+      ) : null}
+      {retestAction.execution.status === 'error' ? (
+        <Banner
+          testID="channels-connection-retest-error"
+          tone="warning"
+          title={props.t('plugins.channels.surface.connectionRetestFailedTitle', 'Could not test the connection')}
+          description={props.t(
+            'plugins.channels.surface.connectionRetestFailedDescription',
+            'The saved connection may have changed. Refresh connection details before trying again.',
+          )}
+          action={(
+            <Action.Refresh
+              title={props.t('plugins.channels.surface.refresh', 'Refresh')}
+              onRefresh={props.onRefresh}
+            />
+          )}
+        />
+      ) : null}
+      {outcomeUnknown ? (
+        <Banner
+          testID="channels-connection-retest-outcome-unknown"
+          tone="warning"
+          title={props.t('plugins.channels.surface.connectionRetestUnknownTitle', 'Could not confirm the connection test')}
+          description={props.t(
+            'plugins.channels.surface.connectionRetestUnknownDescription',
+            'The test may already have run. Refresh connection details before trying again.',
+          )}
+          action={(
+            <Action.Refresh
+              testID="channels-connection-retest-outcome-unknown-reconcile"
+              title={props.t('plugins.channels.surface.refresh', 'Refresh')}
+              onRefresh={requestRefresh}
+            />
+          )}
+        />
+      ) : null}
+    </Stack>
+  );
+}
+
+/**
+ * The provider-neutral reason vocabulary the connection test already shares
+ * with every other provider failure. It is projected here, never re-derived
+ * into a Channels-local health verdict.
+ */
+function providerFailureReasonDescription(reason: string, t: Translate): string {
+  switch (reason) {
+    case 'credentialInvalid':
+      return t(
+        'plugins.channels.surface.providerFailureCredentialInvalid',
+        'The provider rejected the saved credential for this connection.',
+      );
+    case 'permissionMissing':
+      return t(
+        'plugins.channels.surface.providerFailurePermissionMissing',
+        'The provider reports that a required remote permission is unavailable.',
+      );
+    case 'rateLimited':
+      return t(
+        'plugins.channels.surface.providerFailureRateLimited',
+        'The provider is rate limiting this connection right now.',
+      );
+    case 'providerConflict':
+      return t(
+        'plugins.channels.surface.providerFailureProviderConflict',
+        'Another integration is already using this conversation on the provider.',
+      );
+    case 'unsupported':
+      return t(
+        'plugins.channels.surface.providerFailureUnsupported',
+        'The provider no longer supports the transport this connection saved.',
+      );
+    case 'invalidConfiguration':
+      return t(
+        'plugins.channels.surface.providerFailureInvalidConfiguration',
+        'The provider reports that its remote configuration is not valid for this connection.',
+      );
+    default:
+      return t(
+        'plugins.channels.surface.providerFailureNetwork',
+        'The provider could not be reached for this connection.',
+      );
+  }
+}
+
+/**
  * The direct Account page exposes only the retained blocked lifecycle fact and
  * its exact revision. Retrying remains the ingress Action's responsibility:
  * this UI never reconstructs, replays, or dispatches the saved input itself.
@@ -8881,7 +9503,48 @@ function ProviderSetupPicker(props: Readonly<{
     }
   }, [createAction, prepareAction.execution.status, prepareOutcomeUnknown, preparedConnection, props]);
 
-  if (!supportsActionInputSelection || operations.length === 0) return null;
+  // Zero admitted providers is a reachable Account state, not an error: a fresh
+  // Account, a machine with no integration plugin enabled, or a host that
+  // cannot present provider setup input all land here. Returning nothing left
+  // the person on an empty page with no next step, so the provider-neutral
+  // setup owner discloses which of those it is and what to do about it.
+  if (!supportsActionInputSelection) {
+    return (
+      <EmptyState
+        testID="channels-provider-setup-host-unsupported"
+        title={props.t(
+          'plugins.channels.surface.providerSetupHostUnsupportedTitle',
+          'Conversation providers cannot be set up here',
+        )}
+        description={props.t(
+          'plugins.channels.surface.providerSetupHostUnsupportedDescription',
+          'This app cannot collect provider setup details. Open Conversation Channels from an app version that supports guided setup to add a connection.',
+        )}
+      />
+    );
+  }
+  if (operations.length === 0) {
+    return (
+      <EmptyState
+        testID="channels-provider-setup-none-available"
+        title={props.t(
+          'plugins.channels.surface.providerSetupNoneTitle',
+          'No conversation providers are available',
+        )}
+        description={props.t(
+          'plugins.channels.surface.providerSetupNoneDescription',
+          'Install and enable a conversation integration plugin on your selected machine, then refresh to begin setup.',
+        )}
+        action={(
+          <Action.Refresh
+            testID="channels-provider-setup-none-refresh"
+            title={props.t('plugins.channels.surface.refresh', 'Refresh')}
+            onRefresh={props.onRefresh}
+          />
+        )}
+      />
+    );
+  }
 
   return (
     <Stack gap="small" testID="channels-provider-setup-picker">
@@ -9288,7 +9951,6 @@ function DaemonChannelsSurface(props: Readonly<{
   targetPluginId: string;
 }>): React.ReactElement {
   const t = usePluginTranslation();
-  const theme = usePluginTheme();
   const { resource: bindingsResource, refresh: refreshBindings } = useLivePluginResource(CHANNELS_BINDINGS_RESOURCE);
   const { resource, refresh } = useLivePluginResource(CHANNELS_CONNECTIONS_RESOURCE);
   const [expandedConnectionId, setExpandedConnectionId] = React.useState<string | undefined>();
@@ -9317,78 +9979,6 @@ function DaemonChannelsSurface(props: Readonly<{
     [connections, parsedBindings, t],
   );
 
-  if (bindingsResource.value === undefined) {
-    return (
-      <Screen testID="channels-surface">
-        <ScrollArea safeArea contentContainerStyle={{ flexGrow: 1 }}>
-          <Stack gap="large" style={{ padding: theme.spacing.large }}>
-            {bindingsResource.pending === 'initial' ? null : (
-              <IngressAttentionControls
-                signal={props.signal}
-                recoveryActionsAvailable
-                t={t}
-              />
-            )}
-            {bindingsResource.pending === 'initial' ? (
-              <LoadingState
-                testID="channels-bindings-loading"
-                title={t('plugins.channels.surface.bindingsLoadingTitle', 'Loading conversation bindings')}
-                description={t(
-                  'plugins.channels.surface.bindingsLoadingDescription',
-                  'Reading the current binding policy from your Account.',
-                )}
-              />
-            ) : (
-              <ErrorState
-                testID="channels-bindings-error"
-                title={t('plugins.channels.surface.bindingsErrorTitle', 'Binding details are unavailable')}
-                description={t(
-                  'plugins.channels.surface.bindingsErrorDescription',
-                  'Refresh to try reading the current Account binding policy again.',
-                )}
-                action={(
-                  <Action.Refresh
-                    testID="channels-bindings-retry"
-                    title={t('plugins.channels.surface.tryAgain', 'Try again')}
-                    onRefresh={refreshBindings}
-                  />
-                )}
-              />
-            )}
-          </Stack>
-        </ScrollArea>
-      </Screen>
-    );
-  }
-
-  if (parsedBindings?.kind === 'invalid') {
-    return (
-      <Screen testID="channels-surface">
-        <ScrollArea safeArea contentContainerStyle={{ flexGrow: 1 }}>
-          <Stack gap="large" style={{ padding: theme.spacing.large }}>
-            <IngressAttentionControls
-              signal={props.signal}
-              recoveryActionsAvailable
-              t={t}
-            />
-            <ErrorState
-              testID="channels-bindings-error"
-              title={t('plugins.channels.surface.bindingsErrorTitle', 'Binding details are unavailable')}
-              description={parseResourceErrorMessage(parsedBindings.reason, t, 'binding')}
-              action={(
-                <Action.Refresh
-                  testID="channels-bindings-retry"
-                  title={t('plugins.channels.surface.tryAgain', 'Try again')}
-                  onRefresh={refreshBindings}
-                />
-              )}
-            />
-          </Stack>
-        </ScrollArea>
-      </Screen>
-    );
-  }
-
   const resourcePresentation: ResourcePresentation = {
     pending: resource.pending,
     freshness: resource.freshness,
@@ -9404,11 +9994,27 @@ function DaemonChannelsSurface(props: Readonly<{
   const connectionState = resource.value === undefined || parsedConnections?.kind === 'invalid'
     ? resource.pending === 'initial' ? 'loading' : 'error'
     : 'ready';
+  // Each section owns its own availability. A binding Resource failure leaves
+  // connection management, provider setup, and ingress recovery reachable.
+  const bindingsSectionState: BindingsSectionState = parsedBindings?.kind === 'invalid'
+    ? { kind: 'error', description: parseResourceErrorMessage(parsedBindings.reason, t, 'binding') }
+    : bindingsResource.value !== undefined
+      ? BINDINGS_SECTION_READY
+      : bindingsResource.pending === 'initial'
+        ? { kind: 'loading' }
+        : {
+          kind: 'error',
+          description: t(
+            'plugins.channels.surface.bindingsErrorDescription',
+            'Refresh to try reading the current Account binding policy again.',
+          ),
+        };
 
   return (
     <OnlineBindingsContent
       presentations={bindings}
       resource={bindingsResourcePresentation}
+      sectionState={bindingsSectionState}
       onRefresh={refreshBindings}
       onRefreshConnections={refresh}
       connections={connections}

@@ -57,6 +57,23 @@ import {
   readAzureDevOpsThreads,
 } from './triage/detailActions.js';
 import {
+  AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS,
+  abandonAzureDevOpsPullRequest,
+  completeAzureDevOpsPullRequest,
+  reactivateAzureDevOpsPullRequest,
+  requestAzureDevOpsPullRequestReview,
+  setAzureDevOpsPullRequestThreadStatus,
+} from './triage/mutationActions.js';
+import {
+  AzureAbandonInputV1Schema,
+  AzureCompleteInputV1Schema,
+  AzureMutationResultV1Schema,
+  AzureReactivateInputV1Schema,
+  AzureRequestReviewInputV1Schema,
+  AzureThreadStatusInputV1Schema,
+  AzureThreadStatusResultV1Schema,
+} from './triage/mutations/contracts.js';
+import {
   AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
   AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID,
   AZURE_DEVOPS_TRIAGE_CONTRIBUTION_ID,
@@ -162,13 +179,15 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
           { kind: 'scmProviderOrigin', provider: 'azure-devops' },
           { kind: 'connectedAccountOrigin', service: AZURE_DEVOPS_CONNECTED_ACCOUNT_ID },
         ],
-        // Read-only. The Triage vertical reads through `triage/client.ts`, whose `method`
-        // defaults to `GET` and which no production caller overrides, and the incumbent
-        // hosting-provider pull-request operations run through the declared Azure CLI process
-        // capability below rather than through this grant — so the write verbs this scope used
-        // to carry were authority nothing exercised. One is added back only together with the
-        // exact human-confirmed mutation Action that needs it.
-        methods: ['GET'],
+        // `GET` serves every read and every confirming re-read. `PATCH` covers the four writes
+        // Azure expresses as an update of an existing resource — complete, abandon and reactivate
+        // on the pull request itself, plus one review thread's status — and `POST` covers exactly
+        // one: the documented bulk additive reviewer route behind `request-review`. The host
+        // revalidates origin AND method at dispatch, so an Action whose verb is missing here is
+        // rejected before it ever reaches Azure. `DELETE` stays absent: no declared Action removes
+        // anything — `request-review` adds identities and never removes one — and a verb granted
+        // for symmetry is authority the user approved for nothing.
+        methods: ['GET', 'PATCH', 'POST'],
       },
     }, {
       id: AZURE_DEVOPS_TRIAGE_PURPOSE,
@@ -351,6 +370,134 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: readAzureDevOpsThreads,
+    },
+    // The five enabled Azure DevOps pull-request writes.
+    //
+    // `surfaces: ['ui', 'plugin']` is the human gate, and the gate is reachability rather than a
+    // prompt: with no `agent` and no `mcp` surface not one of them is agent-reachable at all. A
+    // `danger` level plus `agent: true` would only floor an agent invocation to an approval
+    // prompt, which is a weaker guarantee — so there is no list of exempt callers here, and none
+    // may be added. `plugin` is the other half of that same reachability fact, and it is required
+    // rather than optional: this plugin's own mounted detail artifact dispatches as a plugin
+    // caller, so a write missing it is refused before it runs and no user can reach it either.
+    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.complete]: {
+      title: 'Complete an Azure DevOps pull request',
+      description: 'Completes one active pull request with the branch decision the user chose,'
+        + ' only while its merge source is still the commit they saw, and reports the polled'
+        + ' terminal state rather than the accepted request.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      // Irreversible on the forge, and it may delete the source branch.
+      dangerLevel: 'destructive',
+      // The body names the two things Azure will NOT do, because both are decisions a user could
+      // reasonably assume completion makes for them: it never moves Work Items and never bypasses
+      // branch policy, and both are sent as an explicit `false` rather than left to a default.
+      confirmation: {
+        title: 'Complete this pull request?',
+        body: 'Completing is permanent in Azure DevOps. Work items are not transitioned and branch'
+          + ' policy is not bypassed. The source branch is deleted only if you chose that, and'
+          + ' completion runs against the merge source shown here — if new commits arrive first,'
+          + ' nothing is completed and you are asked again.',
+        confirmLabel: 'Complete',
+      },
+      inputSchema: AzureCompleteInputV1Schema.jsonSchema,
+      resultSchema: AzureMutationResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: completeAzureDevOpsPullRequest,
+    },
+    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.abandon]: {
+      title: 'Abandon an Azure DevOps pull request',
+      description: 'Abandons one active pull request. Azure can reactivate an abandoned pull'
+        + ' request later.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: 'Abandon this pull request?',
+        body: 'The pull request stops being active and its reviewers stop being asked. Azure can'
+          + ' reactivate it later, so this is not permanent.',
+        confirmLabel: 'Abandon',
+      },
+      inputSchema: AzureAbandonInputV1Schema.jsonSchema,
+      resultSchema: AzureMutationResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: abandonAzureDevOpsPullRequest,
+    },
+    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.reactivate]: {
+      title: 'Reactivate an Azure DevOps pull request',
+      description: 'Reactivates one abandoned pull request, which is Azure’s reopen. A'
+        + ' completed pull request is refused rather than reactivated.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'writesRemote',
+      // The body says what comes back with it, because reactivating is not a private bookkeeping
+      // change: the pull request becomes active again and its reviewers are asked again.
+      confirmation: {
+        title: 'Reactivate this pull request?',
+        body: 'The pull request becomes active again and its reviewers are asked to look at it'
+          + ' again. You can abandon it once more afterwards.',
+        confirmLabel: 'Reactivate',
+      },
+      inputSchema: AzureReactivateInputV1Schema.jsonSchema,
+      resultSchema: AzureMutationResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: reactivateAzureDevOpsPullRequest,
+    },
+    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.requestReview]: {
+      title: 'Request review on an Azure DevOps pull request',
+      description: 'Adds the selected identities as reviewers of one active pull request through'
+        + ' one additive request, leaving every existing reviewer and vote untouched.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'writesRemote',
+      // The body states the one thing this write does NOT do, because the reviewer routes Azure
+      // publishes can do it: nobody is removed and no existing vote is reset.
+      confirmation: {
+        title: 'Request review from these people?',
+        body: 'They are added as reviewers and notified. Nobody currently reviewing is removed and'
+          + ' no existing vote is changed.',
+        confirmLabel: 'Request review',
+      },
+      inputSchema: AzureRequestReviewInputV1Schema.jsonSchema,
+      resultSchema: AzureMutationResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: requestAzureDevOpsPullRequestReview,
+    },
+    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadStatus]: {
+      title: 'Set the status of an Azure DevOps review thread',
+      description: 'Sets one review thread’s status and confirms it from the thread itself.'
+        + ' The conversation in the thread is never rewritten.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: 'Change this thread’s status?',
+        body: 'Everyone on the pull request sees the new status. Nothing in the conversation is'
+          + ' changed, and you can set the status again afterwards.',
+        confirmLabel: 'Set status',
+      },
+      inputSchema: AzureThreadStatusInputV1Schema.jsonSchema,
+      // A thread write settles into the thread's own vocabulary, not the pull request's: the
+      // entity it changed is the thread, and returning an entry observation would answer a
+      // question the caller did not ask.
+      resultSchema: AzureThreadStatusResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: setAzureDevOpsPullRequestThreadStatus,
     },
   },
   scmHostingProviders: {

@@ -12,7 +12,7 @@ export type CodexAppServerNativeForkClient = Readonly<{
       threadId: string;
       persistExtendedHistory: true;
     }>,
-    options?: Readonly<{ timeoutMs?: number | null }>,
+    options?: Readonly<{ signal?: AbortSignal; timeoutMs?: number | null }>,
   ): Promise<unknown>;
 }>;
 
@@ -66,6 +66,7 @@ function isDefinitiveNativeForkMethodUnsupported(
 async function attemptCodexNativeAppServerConversationFork(params: Readonly<{
   client: CodexAppServerNativeForkClient;
   parentCodexSessionId: string;
+  signal?: AbortSignal;
   onEvent?: (event: CodexAppServerNativeForkEvent) => void;
 }>): Promise<CodexAppServerNativeForkOutcome> {
   const parentCodexSessionId = typeof params.parentCodexSessionId === 'string'
@@ -78,6 +79,8 @@ async function attemptCodexNativeAppServerConversationFork(params: Readonly<{
     };
   }
 
+  params.signal?.throwIfAborted();
+
   for (const method of CODEX_APP_SERVER_NATIVE_FORK_METHODS) {
     params.onEvent?.({ type: 'methodAttempt', method });
     let response: unknown;
@@ -85,8 +88,18 @@ async function attemptCodexNativeAppServerConversationFork(params: Readonly<{
       response = await params.client.request(method, {
         threadId: parentCodexSessionId,
         persistExtendedHistory: true,
-      }, NATIVE_FORK_REQUEST_OPTIONS);
+      }, {
+        ...NATIVE_FORK_REQUEST_OPTIONS,
+        ...(params.signal ? { signal: params.signal } : {}),
+      });
     } catch (error) {
+      if (
+        params.signal?.aborted === true
+        && error instanceof Error
+        && error.name === 'AbortError'
+      ) {
+        throw error;
+      }
       if (isDefinitiveNativeForkMethodUnsupported(error, method)) {
         params.onEvent?.({ type: 'methodFailed', method, error });
         continue;
@@ -115,6 +128,7 @@ async function attemptCodexNativeAppServerConversationFork(params: Readonly<{
 export async function forkCodexNativeAppServerConversation(params: Readonly<{
   client: CodexAppServerNativeForkClient;
   parentCodexSessionId: string;
+  signal?: AbortSignal;
   onEvent?: (event: CodexAppServerNativeForkEvent) => void;
 }>): Promise<CodexAppServerNativeForkResult | null> {
   const outcome = await attemptCodexNativeAppServerConversationFork(params);

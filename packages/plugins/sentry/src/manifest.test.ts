@@ -258,7 +258,8 @@ describe('Sentry plugin manifest', () => {
     // Cloud is a closed named choice, never a typed URL: the user picks a region
     // and the descriptor — not this source, and not a response — declares the
     // exactly one origin that choice routes to.
-    expect(modes.get('auth-token')?.configuration?.fields).toEqual([expect.objectContaining({
+    const cloudFields = modes.get('auth-token')?.configuration?.fields ?? [];
+    expect(cloudFields).toEqual([expect.objectContaining({
       id: 'region',
       semantic: 'connectedAccountFixedOrigin',
       schema: expect.objectContaining({ type: 'string', enum: ['us', 'de'] }),
@@ -267,18 +268,28 @@ describe('Sentry plugin manifest', () => {
         de: SENTRY_CLOUD_REGION_ORIGINS.de,
       },
       required: true,
-      secret: false,
+      // The person choosing a region reads its name in their own language, so
+      // the label is a declared key rather than an English string the connect
+      // dialog would show every locale.
+      title: expect.objectContaining({ key: 'plugins.sentry.auth.region.title' }),
+      description: expect.objectContaining({ key: 'plugins.sentry.auth.region.description' }),
     })]);
 
     // A self-hosted deployment has no closed choice set, so it stays the exact
     // configured origin the host normalizes and republishes.
-    expect(modes.get('self-hosted-auth-token')?.configuration?.fields)
-      .toEqual([expect.objectContaining({
-        id: 'origin',
-        semantic: 'connectedAccountOrigin',
-        required: true,
-        secret: false,
-      })]);
+    const selfHostedFields = modes.get('self-hosted-auth-token')?.configuration?.fields ?? [];
+    expect(selfHostedFields).toEqual([expect.objectContaining({
+      id: 'origin',
+      semantic: 'connectedAccountOrigin',
+      required: true,
+      title: expect.objectContaining({ key: 'plugins.sentry.auth.origin.title' }),
+    })]);
+    // Neither is a credential. `secret` is asked for by absence-or-false rather
+    // than pinned to one spelling, because what must never happen is a
+    // deployment choice marked secret and hidden behind a credential control.
+    for (const field of [...cloudFields, ...selfHostedFields]) {
+      expect((field as Readonly<{ secret?: unknown }>).secret ?? false).toBe(false);
+    }
     // The bearer credential is the only secret, and it is never configuration.
     expect(JSON.stringify(descriptor)).not.toContain('Bearer');
   });

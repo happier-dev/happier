@@ -1,7 +1,8 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES,
   SentryIssueEventsResultV1Schema,
   SentryReadIssueResultV1Schema,
   SentryTagValuesResultV1Schema,
@@ -14,6 +15,7 @@ import {
 } from '../sentryContracts.js';
 
 import {
+  SENTRY_MOUNTED_DETAIL_DEADLINE_MS,
   listSentryIssueEvents,
   listSentryTagValues,
   readSentryIssue,
@@ -66,6 +68,81 @@ function host(responses: readonly RecordedResponse[]) {
   };
 }
 
+/**
+ * A Sentry that accepts the request and then neither answers nor fails.
+ *
+ * This is the case the bound exists for: nothing is wrong enough to reject, so
+ * without a deadline the panel waits until its mount is torn down. It settles
+ * only when the signal it was handed aborts — including straight away for one
+ * that already had, exactly as a real transport does — and rejects with that
+ * signal's own reason, so the classifier can tell a deadline from a cancel.
+ */
+function neverAnswers(signal: AbortSignal | undefined): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    if (signal === undefined) return;
+    const fail = (): void => { reject(signal.reason as Error); };
+    if (signal.aborted) {
+      fail();
+      return;
+    }
+    signal.addEventListener('abort', fail, { once: true });
+  });
+}
+
+function silentHost() {
+  const entered: (() => void)[] = [];
+  const request = vi.fn(
+    async (_input: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
+      for (const resolve of entered.splice(0)) resolve();
+      return await neverAnswers(options?.signal);
+    },
+  );
+  const materializeListedAccount = vi.fn(async () => ({
+    kind: 'httpHeaders' as const,
+    headers: { authorization: 'Bearer test-token-value' },
+  }));
+  const caller = new AbortController();
+  return {
+    caller,
+    request,
+    materializeListedAccount,
+    /** Resolves once the read is genuinely waiting on the provider. */
+    async waitForRequest(): Promise<void> {
+      if (request.mock.calls.length > 0) return;
+      await new Promise<void>((resolve) => { entered.push(resolve); });
+    },
+    context: {
+      signal: caller.signal,
+      services: {
+        connectedAccounts: { listAccounts: vi.fn(), materializeListedAccount },
+        http: { request },
+      },
+    } as unknown as PluginInvocationContext,
+  };
+}
+
+/** A host whose account materialization is what never answers. */
+function silentMaterializationHost() {
+  const request = vi.fn();
+  const materializeListedAccount = vi.fn(
+    async (_request: unknown, options?: Readonly<{ signal?: AbortSignal }>) =>
+      await neverAnswers(options?.signal),
+  );
+  const caller = new AbortController();
+  return {
+    caller,
+    request,
+    materializeListedAccount,
+    context: {
+      signal: caller.signal,
+      services: {
+        connectedAccounts: { listAccounts: vi.fn(), materializeListedAccount },
+        http: { request },
+      },
+    } as unknown as PluginInvocationContext,
+  };
+}
+
 function configuredInstance() {
   return {
     v: 1 as const,
@@ -114,6 +191,81 @@ const ISSUE_BODY = Object.freeze({
     dateCreated: '2026-01-02T00:00:00.000Z',
     user: { id: '9', name: 'Ada Lovelace', email: 'ada@example.com' },
   }],
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('Sentry mounted detail deadline', () => {
+  it('stops waiting on a deployment that never answers, and says so', async () => {
+    vi.useFakeTimers();
+    const harness = silentHost();
+    const pending = readSentryIssue({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: localRef(),
+      projection: 'overview',
+    }, harness.context);
+
+    // Nothing has settled: this is the outcome the reader cannot retry, report,
+    // or tell apart from a very slow provider.
+    await vi.advanceTimersByTimeAsync(SENTRY_MOUNTED_DETAIL_DEADLINE_MS - 1);
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(2);
+    const result = await pending;
+    expect(result).toMatchObject({
+      kind: 'unavailable',
+      // Nobody cancelled this read, and a reader told "cancelled" has no reason
+      // to try again.
+      failure: { class: 'transient', code: 'sentry-deadline-elapsed' },
+    });
+    // The bound is this source's own: the caller's signal is untouched.
+    expect(harness.caller.signal.aborted).toBe(false);
+  });
+
+  it('bounds the account materialization too, not only the fetch after it', async () => {
+    vi.useFakeTimers();
+    const harness = silentMaterializationHost();
+    const pending = listSentryIssueEvents({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: localRef(),
+      limit: 100,
+    }, harness.context);
+
+    await vi.advanceTimersByTimeAsync(SENTRY_MOUNTED_DETAIL_DEADLINE_MS + 1);
+    // A connection that hangs while the credential is being materialized
+    // strands the panel exactly as a hanging read does.
+    expect(await pending).toMatchObject({
+      kind: 'unavailable',
+      failure: { code: 'sentry-deadline-elapsed' },
+    });
+    expect(harness.request).not.toHaveBeenCalled();
+  });
+
+  it('still calls a caller cancellation what it is', async () => {
+    const harness = silentHost();
+    const pending = listSentryTagValues({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: localRef(),
+      tagKey: 'browser.name',
+      limit: 100,
+    }, harness.context);
+    await harness.waitForRequest();
+    harness.caller.abort();
+
+    // The bound adds a second way to stop; it must not rename the first one.
+    expect(await pending).toMatchObject({
+      kind: 'unavailable',
+      failure: { code: 'sentry-cancelled' },
+    });
+  });
 });
 
 describe('Sentry detail operations', () => {
@@ -218,6 +370,146 @@ describe('Sentry detail operations', () => {
     expect(new URL(String(second.request.mock.calls[0]?.[0]?.url)).searchParams.get('cursor'))
       .toBe('0:100:0');
     expect(page2).toMatchObject({ kind: 'events', rows: [] });
+  });
+
+  it('stops a walk whose provider alternates between two pages', async () => {
+    const eventsLink = (cursor: string): string =>
+      `<https://de.sentry.io/api/0/organizations/7701/issues/1234/events/?cursor=${cursor}>;`
+      + ` rel="next"; results="true"; cursor="${cursor}"`;
+    const row = (id: string) => ({
+      eventID: id,
+      title: 'boom',
+      dateCreated: '2026-01-02T00:00:00.000Z',
+    });
+
+    // Page one advertises A, page two advertises B, page three advertises A
+    // again. Every advertised cursor differs from the one that request used, so
+    // a walk that keeps only its current position never stops.
+    const request = async (
+      cursor: string | undefined,
+      advertise: string,
+      eventId: string,
+    ): Promise<ReturnType<typeof host>> => host([{
+      status: 200,
+      headers: { Link: eventsLink(advertise) },
+      body: [row(eventId)],
+    }]);
+
+    const first = await request(undefined, 'A', 'e1');
+    const page1 = await listSentryIssueEvents({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: localRef(),
+      limit: 100,
+    }, first.context);
+    expect(page1.kind).toBe('events');
+    if (page1.kind !== 'events') return;
+    expect(page1.continuation).toBeDefined();
+
+    const second = await request('A', 'B', 'e2');
+    const page2 = await listSentryIssueEvents({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: localRef(),
+      limit: 100,
+      continuation: page1.continuation,
+    }, second.context);
+    expect(page2.kind).toBe('events');
+    if (page2.kind !== 'events') return;
+    expect(page2.continuation).toBeDefined();
+
+    const third = await request('B', 'A', 'e3');
+    const page3 = await listSentryIssueEvents({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: localRef(),
+      limit: 100,
+      continuation: page2.continuation,
+    }, third.context);
+
+    expect(() => SentryIssueEventsResultV1Schema.parse(page3)).not.toThrow();
+    expect(page3).toMatchObject({
+      kind: 'events',
+      // The rows this page did read survive; a cycling provider is a stop, not
+      // a reason to discard what it answered.
+      rows: [{ eventId: 'e3' }],
+      incomplete: 'paginationCursorNotAdvancing',
+    });
+    if (page3.kind !== 'events') return;
+    // No continuation means the panel stops offering another page, and the
+    // stopped-short reason is what keeps it from reading as a finished list.
+    expect(page3.continuation).toBeUndefined();
+  });
+
+  it('keeps offering another page however many the reader has already loaded', async () => {
+    // The panel's non-progress evidence rides inside a BOUNDED token, so
+    // evidence that grows per page is an undeclared "Load more" ceiling. With
+    // Sentry's own keyset cursors the predecessor position history stopped
+    // fitting at the 23rd page — roughly 2,200 occurrences — and the panel
+    // settled `continuationUnavailable`, which no reader can get past.
+    let continuation: string | undefined;
+    for (let page = 0; page < 80; page += 1) {
+      const cursor = `${1_754_000_000_000 - page * 1_000}:0:0`;
+      const harness = host([{
+        status: 200,
+        headers: {
+          Link: `<https://de.sentry.io/api/0/organizations/7701/issues/1234/events/?cursor=${cursor}>;`
+            + ` rel="next"; results="true"; cursor="${cursor}"`,
+        },
+        body: [{ eventID: `e${page}`, title: 'boom', dateCreated: '2026-01-02T00:00:00.000Z' }],
+      }]);
+
+      const result = await listSentryIssueEvents({
+        v: 1,
+        instance: configuredInstance(),
+        localRef: localRef(),
+        limit: 100,
+        ...(continuation === undefined ? {} : { continuation }),
+      }, harness.context);
+
+      expect(() => SentryIssueEventsResultV1Schema.parse(result)).not.toThrow();
+      expect(result).toMatchObject({ kind: 'events' });
+      if (result.kind !== 'events') return;
+      // Never a stopped-short claim, and never a walk the reader cannot resume.
+      expect(result.incomplete).toBeUndefined();
+      expect(result.continuation).toBeDefined();
+      if (result.continuation === undefined) return;
+      expect(new TextEncoder().encode(result.continuation).byteLength)
+        .toBeLessThan(MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES / 2);
+      continuation = result.continuation;
+    }
+  });
+
+  it('blames its own bound, not the provider, when the frontier will not fit', async () => {
+    // The provider's cursor is intact and the walk is open; it simply does not
+    // fit the bounded token this side owns. Reporting that as a malformed
+    // cursor would accuse Sentry of something it did not do.
+    const cursor = 'c'.repeat(MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES);
+    const harness = host([{
+      status: 200,
+      headers: {
+        Link: `<https://de.sentry.io/api/0/organizations/7701/issues/1234/events/?cursor=${cursor}>;`
+          + ` rel="next"; results="true"; cursor="${cursor}"`,
+      },
+      body: [{ eventID: 'e1', title: 'boom', dateCreated: '2026-01-02T00:00:00.000Z' }],
+    }]);
+
+    const page = await listSentryIssueEvents({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: localRef(),
+      limit: 100,
+    }, harness.context);
+
+    expect(() => SentryIssueEventsResultV1Schema.parse(page)).not.toThrow();
+    expect(page).toMatchObject({
+      kind: 'events',
+      rows: [{ eventId: 'e1' }],
+      incomplete: 'continuationUnavailable',
+    });
+    if (page.kind !== 'events') return;
+    // Never an over-bound token that would discard the page it belongs to.
+    expect(page.continuation).toBeUndefined();
   });
 
   it('refuses a continuation it did not mint rather than requesting it', async () => {

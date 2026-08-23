@@ -20,8 +20,9 @@ export const TELEGRAM_CHANNEL_ACTION_IDS = Object.freeze({
  *
  * The declaration that would project these ids is WITHHELD (see `plugin.ts`):
  * the inline admission holds no durable obligation, so nothing arms a Telegram
- * chat source yet. The ids stay canonical here for the withheld declaration and
- * for the admission that is still exercised through `pollTelegramObservations`.
+ * chat source yet, and the poll therefore reaches no Automation authority. The
+ * ids stay canonical here for the withheld declaration and for the retained
+ * admission in `automationEvents.ts`.
  */
 export const TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID = 'automation/chat-message-v1';
 export const TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID = 'telegram/setup-chat-event-source';

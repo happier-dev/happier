@@ -106,7 +106,14 @@ describe('provider row decoding', () => {
     const draftRow = rowAt(authoredPage, 1);
     expect(draftRow.isDraft).toBe(true);
     expect(draftRow.autoCompleteSetBy?.id).toBe(VIEWER_ID);
-    expect(draftRow.hasStoredCompletionOptions).toBe(true);
+    // Values, not a presence flag: this fixture's stored options carry
+    // `transitionWorkItems: true`, which a completion path must overwrite
+    // explicitly rather than inherit, and can only see if the read carries it.
+    expect(draftRow.completionOptions).toEqual({
+      deleteSourceBranch: true,
+      transitionWorkItems: true,
+      bypassPolicy: null,
+    });
     expect(rowAt(authoredPage, 0).labels).toEqual(['infrastructure']);
     expect(rowAt(reviewerPage, 1).reviewers.map((reviewer) => reviewer.vote)).toEqual([10, -5]);
   });

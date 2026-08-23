@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Button, Row, Select } from '@happier-dev/plugin-ui';
+import { Button, Popover, Row, Select, Stack, usePluginTranslation } from '@happier-dev/plugin-ui';
 
 import {
   CORPUS_SMART_PRECEDENCE_TUPLES_V1,
@@ -7,7 +7,7 @@ import {
 } from '../../corpus/query/smartPolicy.js';
 import type { TriageFilterFacetValueV1, TriageSurfaceStateV1 } from '../state/surface.js';
 import type { TriageTextResolverV1 } from '../shell/windowState.js';
-import type { TriageFilterFacetPlanV1 } from './plan.js';
+import type { TriageFilterFacetPlanV1, TriageFilterOptionV1 } from './plan.js';
 
 /**
  * The one lens control group (`core/SURFACE.md` §6).
@@ -19,24 +19,39 @@ import type { TriageFilterFacetPlanV1 } from './plan.js';
  * which reducer action one press means — there is no Triage Pressable, chip
  * component, popover or focus handling in this file.
  *
- * **The facets are exposed individually rather than behind a Filters overlay.**
- * §6 permits either composition and the overlay is the compact one, but the
- * compact arm needs the measured fill region §2.1 owns — which the shell does
- * not have, because `plugin-ui` publishes no measurement seam — and the public
- * `Popover` renders its content only through the private presentation host. The
- * individually exposed facets are therefore the composition that works on every
- * mount today, and the one whose behaviour a mounted test can actually reach.
+ * **Both §6 compositions live here, chosen by one fact the caller passes in.**
+ * Wide exposes the five facet controls individually. Compact folds exactly
+ * those five into one labelled **Filters** trigger presented by the public
+ * `Popover`, so the portal, the initial focus, dismissal, focus return, Escape
+ * and Android Back are the host's — Triage supplies one grouped five-facet form
+ * and nothing else. `compact` is not measured here and is not a breakpoint:
+ * `ui/shell/root.tsx` reads it off the one fill-region measurement
+ * `ui/shell/layout.ts` already resolves the split composition from, so the page
+ * has one width authority rather than two.
  *
- * **There is no separate active-chip group.** §6 asks for removable chips
- * "outside the overlay", because inside the compact composition the selected
- * constraints are hidden behind a trigger. With the facets exposed, each
- * control already shows and removes its own selected values; a chip row beside
- * them would state the same constraint twice and give the reader two places to
+ * **Chips exist only in the compact arm, and that is not a preference.** §6
+ * asks for removable chips "outside the overlay" because the compact
+ * composition hides the selected constraints behind a trigger, leaving a
+ * narrowed list with no visible cause. With the facets exposed each control
+ * already shows and removes its own selected values, so a chip row beside them
+ * would state the same constraint twice and give the reader two places to
  * remove one thing.
+ *
+ * **Views and Order are never folded in.** They are separate lens questions —
+ * which saved lens this is, and which ladder ranks it — and a reader who has to
+ * open a Filters overlay to reorder the list has lost both.
  */
 
 export type TriageFilterRailPropsV1 = Readonly<{
   facets: readonly TriageFilterFacetPlanV1[];
+  /**
+   * Whether the measured fill region cannot carry the five facet controls
+   * individually (`core/SURFACE.md` §2.1, §6).
+   *
+   * The shell derives it from its own measurement; nothing here measures, asks
+   * the platform how big a device is, or keeps a breakpoint of its own.
+   */
+  compact: boolean;
   order: TriageSurfaceStateV1['order'];
   smartPolicy: CorpusSmartPolicyV1;
   /**
@@ -131,8 +146,102 @@ function TriageFilterFacetControl(props: Readonly<{
   );
 }
 
+/**
+ * One selected constraint, named and removable outside the overlay.
+ *
+ * The visible label qualifies the value with its facet, because two chips
+ * reading `Open` and `example/repository` say nothing about what each one
+ * constrains — the same "one name or the qualified one" rule `filters/plan.ts`
+ * applies to a value whose sources collide. `: ` is the punctuation the label
+ * and the value are joined with, not copy.
+ *
+ * `{label}` interpolation is why the accessible name cannot go through
+ * `accessibilityLabelKey`: that resolves through `resolveAuthorText` WITHOUT a
+ * values argument, so the placeholder would reach the reader verbatim. It is
+ * the same reason `ui/list/rows.tsx` resolves **Unpin {title}** through this
+ * hook rather than through the control's own key prop.
+ */
+function TriageActiveFilterChip(props: Readonly<{
+  facetLabel: string;
+  option: TriageFilterOptionV1;
+  onToggleFilterValue: (selection: TriageFilterFacetValueV1) => void;
+}>): React.ReactElement {
+  const { facetLabel, onToggleFilterValue, option } = props;
+  const translate = usePluginTranslation();
+  const label = `${facetLabel}: ${option.label}`;
+  const onPress = React.useCallback(() => {
+    onToggleFilterValue(option.selection);
+  }, [onToggleFilterValue, option.selection]);
+  return (
+    <Button
+      title={label}
+      accessibilityLabel={translate(
+        'plugins.triage.surface.filters.remove',
+        'Remove filter {label}',
+        { label },
+      )}
+      variant="secondary"
+      onPress={onPress}
+    />
+  );
+}
+
+/**
+ * The compact lens: one **Filters** trigger, and every selected constraint
+ * beside it.
+ *
+ * The open state belongs to this component rather than to the rail, so a
+ * region that grows back to the wide composition unmounts it and takes the
+ * open state with it. A retained one would reopen the overlay by itself the
+ * next time the reader narrowed the window.
+ */
+function TriageCompactFilters(props: Readonly<{
+  facets: readonly TriageFilterFacetPlanV1[];
+  text: TriageTextResolverV1;
+  onToggleFilterValue: (selection: TriageFilterFacetValueV1) => void;
+}>): React.ReactElement {
+  const { facets, onToggleFilterValue, text } = props;
+  const [open, setOpen] = React.useState(false);
+  const label = text('plugins.triage.surface.filters', 'Filters');
+  return (
+    <>
+      <Popover
+        open={open}
+        onOpenChange={setOpen}
+        trigger={label}
+        triggerAccessibilityLabel={label}
+      >
+        {/*
+          One grouped form, and only the five facets. The overlay's layer,
+          focus and dismissal are the host's; this is the content it presents.
+        */}
+        <Stack gap="small">
+          {facets.map((facet) => (
+            <TriageFilterFacetControl
+              key={facet.facet}
+              facet={facet}
+              onToggleFilterValue={onToggleFilterValue}
+            />
+          ))}
+        </Stack>
+      </Popover>
+      {facets.flatMap((facet) => facet.options
+        .filter((option) => option.selected)
+        .map((option) => (
+          <TriageActiveFilterChip
+            key={option.key}
+            facetLabel={facet.label}
+            option={option}
+            onToggleFilterValue={onToggleFilterValue}
+          />
+        )))}
+    </>
+  );
+}
+
 export function TriageFilterRail(props: TriageFilterRailPropsV1): React.ReactElement {
   const {
+    compact,
     facets,
     filtered,
     onChangeOrder,
@@ -156,7 +265,19 @@ export function TriageFilterRail(props: TriageFilterRailPropsV1): React.ReactEle
 
   return (
     <Row gap="small" wrap align="center">
-      {facets.map((facet) => (
+      {/*
+        Only the facet region has two arms. Order, Smart order and Clear
+        filters are written once and wrap in render order beside whichever one
+        is showing, because a second copy of them would be a second place they
+        could drift.
+      */}
+      {compact ? (
+        <TriageCompactFilters
+          facets={facets}
+          text={text}
+          onToggleFilterValue={onToggleFilterValue}
+        />
+      ) : facets.map((facet) => (
         <TriageFilterFacetControl
           key={facet.facet}
           facet={facet}

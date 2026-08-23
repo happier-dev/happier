@@ -32,6 +32,7 @@ import { POSTHOG_ISSUE_EVENTS_MAX_LIMIT } from '../../api/types/events.js';
 import { POSTHOG_ACTION_IDS, POSTHOG_PLUGIN_ID } from '../../posthogContracts.js';
 import {
     PosthogSampledEventsResultV1Schema,
+    type PosthogSampleIncompleteV1,
     type PosthogSampledEventsResultV1,
 } from '../../source/detail/issueEventsContract.js';
 import type { PosthogProjectedIssueEvent } from './issueEventProjection.js';
@@ -48,9 +49,11 @@ export const POSTHOG_DETAIL_SAMPLE_PAGE_SIZE = POSTHOG_ISSUE_EVENTS_MAX_LIMIT;
  * genuinely this controller's own is the reader's selection, which is carried
  * beside the reduced state rather than inside it.
  */
-export type PosthogSampleStateV1 =
-    TriagePagedPanelStateV1<PosthogProjectedIssueEvent, TriageSourceFailureV1>
-    & Readonly<{ selectedUuid: string | null }>;
+export type PosthogSampleStateV1 = TriagePagedPanelStateV1<
+    PosthogProjectedIssueEvent,
+    TriageSourceFailureV1,
+    PosthogSampleIncompleteV1
+> & Readonly<{ selectedUuid: string | null }>;
 
 export type PosthogSampleEventV1 =
     | Readonly<{ kind: 'requestStarted'; token: number }>
@@ -60,13 +63,22 @@ export type PosthogSampleEventV1 =
         events: readonly PosthogProjectedIssueEvent[];
         omittedRowCount: number;
         continuation: string | null;
+        /**
+         * Why the walk stopped short of what the provider offered, when it did. A page
+         * with neither this nor a continuation is the provider's own end of the sample.
+         */
+        incomplete: PosthogSampleIncompleteV1 | null;
     }>
     | Readonly<{ kind: 'pageFailed'; token: number; failure: TriageSourceFailureV1 }>
     | Readonly<{ kind: 'selected'; uuid: string }>
     | Readonly<{ kind: 'identityChanged' }>;
 
 const INITIAL: PosthogSampleStateV1 = Object.freeze({
-    ...triagePagedPanelInitialState<PosthogProjectedIssueEvent, TriageSourceFailureV1>(),
+    ...triagePagedPanelInitialState<
+        PosthogProjectedIssueEvent,
+        TriageSourceFailureV1,
+        PosthogSampleIncompleteV1
+    >(),
     selectedUuid: null,
 });
 
@@ -77,7 +89,11 @@ export function posthogSampleInitialState(): PosthogSampleStateV1 {
 /** Translates this controller's flat event into the shared reducer's page envelope. */
 function toPagedEvent(
     event: PosthogSampleEventV1,
-): TriagePagedPanelEventV1<PosthogProjectedIssueEvent, TriageSourceFailureV1> | null {
+): TriagePagedPanelEventV1<
+    PosthogProjectedIssueEvent,
+    TriageSourceFailureV1,
+    PosthogSampleIncompleteV1
+> | null {
     switch (event.kind) {
         case 'pageSettled':
             return {
@@ -89,7 +105,7 @@ function toPagedEvent(
                     // This controller shortens no content of its own.
                     projectionTruncated: false,
                     continuation: event.continuation,
-                    incomplete: null,
+                    incomplete: event.incomplete,
                 },
             };
         case 'identityChanged':
@@ -114,10 +130,12 @@ export function posthogSampleReducer(
     if (event.kind === 'identityChanged') return INITIAL;
     const paged = triagePagedPanelReducer<
         PosthogProjectedIssueEvent,
-        TriageSourceFailureV1
+        TriageSourceFailureV1,
+        PosthogSampleIncompleteV1
     >(state, toPagedEvent(event) as TriagePagedPanelEventV1<
         PosthogProjectedIssueEvent,
-        TriageSourceFailureV1
+        TriageSourceFailureV1,
+        PosthogSampleIncompleteV1
     >);
     if (paged === state) return state;
     // The reader's selection survives an append; only a first page supplies one.
@@ -225,6 +243,7 @@ export function usePosthogOccurrenceController(
             events: parsed.events,
             omittedRowCount: parsed.omittedRowCount,
             continuation: parsed.continuation ?? null,
+            incomplete: parsed.incomplete ?? null,
         });
     }, [execute, input.instance, input.observation.entryRef]);
 

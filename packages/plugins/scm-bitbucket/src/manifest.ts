@@ -59,6 +59,20 @@ import {
   BitbucketCommentsInputV1Schema,
   BitbucketCommentsResultV1Schema,
 } from './triage/source/detailContracts.js';
+import {
+  BITBUCKET_TRIAGE_MUTATION_ACTION_IDS,
+  declineBitbucketPullRequestAction,
+  mergeBitbucketPullRequestAction,
+  resolveBitbucketCommentAction,
+  unresolveBitbucketCommentAction,
+} from './triage/source/mutationActions.js';
+import {
+  BitbucketCommentResolutionInputV1Schema,
+  BitbucketCommentResolutionResultV1Schema,
+  BitbucketDeclineInputV1Schema,
+  BitbucketMergeInputV1Schema,
+  BitbucketMutationResultV1Schema,
+} from './triage/source/mutationContracts.js';
 
 /** The local id of this plugin's one Triage source contribution. */
 export const BITBUCKET_TRIAGE_CONTRIBUTION_ID = 'bitbucket-forge';
@@ -110,7 +124,14 @@ export const BITBUCKET_PLUGIN = definePlugin({
           { kind: 'scmProviderOrigin', provider: 'bitbucket' },
           { kind: 'connectedAccountOrigin', service: BITBUCKET_CONNECTED_ACCOUNT_SERVICE_ID },
         ],
-        methods: ['GET', 'POST'],
+        // `GET` serves every read and every confirming re-read. `POST` serves merge, decline and
+        // resolving a comment thread. `DELETE` serves exactly one Action: Bitbucket documents
+        // reopening a comment thread as `DELETE` on the resolve path, so the verb IS the write.
+        // The host revalidates origin AND method at dispatch, so an Action whose verb is missing
+        // here is rejected before it ever reaches Bitbucket. `PUT` stays absent: no declared
+        // Action uses it, and a verb granted for symmetry is authority the user approved for
+        // nothing.
+        methods: ['GET', 'POST', 'DELETE'],
       },
     }, {
       id: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE,
@@ -257,6 +278,116 @@ export const BITBUCKET_PLUGIN = definePlugin({
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: listBitbucketComments,
+    },
+    // The four enabled Bitbucket pull-request writes.
+    //
+    // `surfaces: ['ui', 'plugin']` is the human gate, and the gate is reachability rather than a
+    // prompt: with no `agent` and no `mcp` surface not one of them is agent-reachable at all. A
+    // `danger` level plus `agent: true` would only floor an agent invocation to an approval
+    // prompt, which is a weaker guarantee — so there is no list of exempt callers here, and none
+    // may be added. `plugin` is the other half of that same reachability fact, and it is required
+    // rather than optional: this plugin's own mounted detail artifact dispatches as a plugin
+    // caller, so a write missing it is refused before it runs and no user can reach it either.
+    //
+    // Every one reaches the provider and the exact configured account, and every one binds the
+    // account path its configured instance carries, exactly as `scan` and `get` do. A write Action
+    // declaring neither grant would be a manifest defect rather than a runtime one.
+    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.merge]: {
+      title: 'Merge a Bitbucket pull request',
+      description: 'Merges one pull request with the exact strategy and source-branch decision the'
+        + ' user chose, only while its head is still the commit they saw.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      // Irreversible on the forge, and it may delete the source branch.
+      dangerLevel: 'destructive',
+      // The host-owned confirmation a `destructive` UI Action must declare. The body names the two
+      // consequences a user cannot take back — the merge itself, and the branch decision they made
+      // — rather than asking "are you sure" about an unnamed effect.
+      confirmation: {
+        title: 'Merge this pull request?',
+        body: 'Merging is permanent on Bitbucket. The source branch is deleted only if you chose'
+          + ' that, and the merge runs against the commit shown here — if new commits arrive first,'
+          + ' nothing is merged and you are asked again.',
+        confirmLabel: 'Merge',
+      },
+      inputSchema: BitbucketMergeInputV1Schema.jsonSchema,
+      resultSchema: BitbucketMutationResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: mergeBitbucketPullRequestAction,
+    },
+    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.decline]: {
+      title: 'Decline a Bitbucket pull request',
+      description: 'Declines one open pull request. Bitbucket has no reopen, so this cannot be'
+        + ' undone through its API.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'writesRemote',
+      // Bitbucket has no reopen: the state enum is OPEN | MERGED | DECLINED | SUPERSEDED and no
+      // `/reopen` path exists. The confirmation says exactly that, because a user who expects the
+      // GitHub or GitLab affordance would otherwise assume they can undo this.
+      confirmation: {
+        title: 'Decline this pull request?',
+        body: 'Bitbucket cannot reopen a declined pull request through its API. To bring this work'
+          + ' back you would have to open a new pull request.',
+        confirmLabel: 'Decline',
+      },
+      inputSchema: BitbucketDeclineInputV1Schema.jsonSchema,
+      resultSchema: BitbucketMutationResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: declineBitbucketPullRequestAction,
+    },
+    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.resolveComment]: {
+      title: 'Resolve a Bitbucket comment thread',
+      description: 'Marks one comment thread on this pull request resolved, and confirms it from'
+        + ' the comment itself.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: 'Resolve this comment thread?',
+        body: 'Everyone on the pull request sees it as resolved. Nothing in the conversation is'
+          + ' changed, and it can be reopened afterwards.',
+        confirmLabel: 'Resolve',
+      },
+      // One input for both directions: the entry, and the comment. What separates resolve from
+      // reopen is the verb the handler sends, which is not a value a caller supplies.
+      inputSchema: BitbucketCommentResolutionInputV1Schema.jsonSchema,
+      // A comment write settles into the comment's own vocabulary, not the pull request's: what it
+      // changed is the thread, and returning an entry observation would answer a question the
+      // caller did not ask.
+      resultSchema: BitbucketCommentResolutionResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: resolveBitbucketCommentAction,
+    },
+    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.unresolveComment]: {
+      title: 'Reopen a Bitbucket comment thread',
+      description: 'Reopens one resolved comment thread on this pull request, and confirms it from'
+        + ' the comment itself.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: 'Reopen this comment thread?',
+        body: 'Everyone on the pull request sees it as open again. Nothing in the conversation is'
+          + ' changed, and it can be resolved again afterwards.',
+        confirmLabel: 'Reopen',
+      },
+      inputSchema: BitbucketCommentResolutionInputV1Schema.jsonSchema,
+      resultSchema: BitbucketCommentResolutionResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: unresolveBitbucketCommentAction,
     },
   },
   scmHostingProviders: {

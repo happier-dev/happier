@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { GITHUB_ADDITIONAL_UI_TRANSLATIONS } from '../additionalTranslations.js';
+
 import {
   GITHUB_DEFAULT_DETAIL_TAB_V1,
   GITHUB_DETAIL_TABS_V1,
@@ -20,13 +22,40 @@ describe('GitHub detail tab declarations', () => {
     }
   });
 
-  it('shows a pull request its files and checks, and an issue neither', () => {
+  it('shows a pull request its files, checks and feedback, and an issue none of them', () => {
     expect(githubVisibleDetailTabs('pull-request').map((tab) => tab.id))
-      .toEqual(['overview', 'timeline', 'files', 'checks', 'comments']);
+      .toEqual(['overview', 'timeline', 'files', 'checks', 'feedback']);
     // An issue changes no files and runs no checks. An empty Files list would
     // claim it changes nothing, so the tab is absent rather than empty.
     expect(githubVisibleDetailTabs('issue').map((tab) => tab.id))
       .toEqual(['overview', 'timeline', 'comments', 'work-sessions']);
+  });
+
+  it('gives a pull request one conversation tab, and it is Feedback', () => {
+    // A pull request whose comments sat in their own tab beside Feedback would
+    // read the same GitHub resource twice, once per tab, and split one
+    // conversation across two places a reviewer has to check.
+    const pullRequest = githubVisibleDetailTabs('pull-request').map((tab) => tab.id);
+    expect(pullRequest).toContain('feedback');
+    expect(pullRequest).not.toContain('comments');
+    // The issue composition keeps `Comments`: an issue has no reviews, checks
+    // or merge conflicts to unify, so a Feedback tab there would be a heading
+    // over one stream.
+    const issue = githubVisibleDetailTabs('issue').map((tab) => tab.id);
+    expect(issue).toContain('comments');
+    expect(issue).not.toContain('feedback');
+  });
+
+  it('names every tab through a catalog key, not a hardcoded English word', () => {
+    // A tab title reaches `Tabs.Item` as a plain string, so an untranslated
+    // declaration renders English on ten of the eleven locales this plugin
+    // ships and nothing fails.
+    for (const tab of GITHUB_DETAIL_TABS_V1) {
+      expect(tab.titleKey, tab.id).toMatch(/^plugins\.github\.ui\.tab\./u);
+      expect(GITHUB_ADDITIONAL_UI_TRANSLATIONS.en[
+        tab.titleKey as keyof typeof GITHUB_ADDITIONAL_UI_TRANSLATIONS.en
+      ], tab.id).toEqual(tab.title);
+    }
   });
 
   it('opens on a tab that exists for both kinds', () => {

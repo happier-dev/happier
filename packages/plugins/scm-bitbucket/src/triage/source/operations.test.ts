@@ -700,6 +700,36 @@ describe('Bitbucket get', () => {
     expect(result.failure).toMatchObject({ class: 'unknown', code: 'route-not-found' });
   });
 
+  it('refuses an entry id outside the provider grammar, exactly as the detail path does', async () => {
+    // `get` and the detail/mutation path admit the SAME invocation, so they must
+    // answer the same question the same way. `invocationAdmission.ts` gates on
+    // `isBitbucketEntryId`; `get` carried its own inline copy of the admission
+    // sequence that had never grown that gate, so a ref the detail path refused
+    // was accepted here and reached the provider as a malformed route.
+    const { connectedAccounts } = createConnectedAccountsStub({
+      accounts: [{ accountId: 'account-1' }],
+    });
+    const { http } = createHttpStub(routeBitbucket());
+
+    const result = await getBitbucketSourceEntry(
+      createRuntime(connectedAccounts, http),
+      {
+        v: 1,
+        instance: configuredInstance(),
+        localRef: {
+          kindId: 'pull-request',
+          collisionScope: `bitbucket:${REPOSITORY_UUID}`,
+          entryId: '0042',
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      kind: 'unresolved',
+      failure: { class: 'unsupportedContract', code: 'entry-id-invalid' },
+    });
+  });
+
   it('refuses a collision scope this source did not mint', async () => {
     const { connectedAccounts, materializations } = createConnectedAccountsStub({
       accounts: [{ accountId: 'account-1' }],

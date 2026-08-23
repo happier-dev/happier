@@ -19,6 +19,11 @@ import type { PosthogApiClient, PosthogRequestOptions, PosthogResult } from '../
 import { errorTrackingIssueActivityPath, resolvePosthogTeamRouteId } from '../../api/paths.js';
 import { parsePosthogIssueActivityEnvelope } from '../../api/types/activity.js';
 import {
+    POSTHOG_WALK_EXHAUSTED,
+    POSTHOG_WALK_STOPPED_SHORT,
+    type PosthogPageWalkV1,
+} from './pageWalk.js';
+import {
     POSTHOG_ACTIVITY_BOUNDS_V1,
     POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT,
     projectPosthogActivityRecords,
@@ -43,8 +48,8 @@ export type PosthogIssueActivityPage = Readonly<{
     omittedRowCount: number;
     /** The provider's stated total, or `null` when it stated none. */
     totalCount: number | null;
-    /** The verified next page, or `null` when this source will not walk further. */
-    nextPage: number | null;
+    /** Where the walk stands: exhausted, continuing at an exact page, or stopped short. */
+    walk: PosthogPageWalkV1;
 }>;
 
 /** `null` rejects a page size this source will not ask the provider for. */
@@ -58,28 +63,35 @@ export function resolvePosthogIssueActivityLimit(requested: number): number | nu
 }
 
 /**
- * Reads the provider's advertised next page number, or `null` when this source will not
- * follow it.
+ * Reads where the walk stands from the provider's advertised `next`.
+ *
+ * An absent or `null` `next` is the provider's own statement that this page is the last,
+ * and it is the ONLY exhaustion this source recognises. A `next` it did state but this
+ * source will not follow — an empty value, a URL that will not parse, one naming another
+ * route, or one that does not strictly advance — leaves the walk short: the provider
+ * never said there was nothing more, so neither may this page.
  */
-function verifyNextPage(next: string | null, path: string, page: number): number | null {
-    if (next === null || next.trim().length === 0) {
-        return null;
+function readWalk(next: string | null, path: string, page: number): PosthogPageWalkV1 {
+    if (next === null) {
+        return POSTHOG_WALK_EXHAUSTED;
     }
     let url: URL;
     try {
         url = new URL(next);
     } catch {
-        return null;
+        return POSTHOG_WALK_STOPPED_SHORT;
     }
     if (url.pathname !== path) {
-        return null;
+        return POSTHOG_WALK_STOPPED_SHORT;
     }
     const raw = url.searchParams.get('page');
     if (raw === null || !/^\d+$/u.test(raw)) {
-        return null;
+        return POSTHOG_WALK_STOPPED_SHORT;
     }
     const nextPage = Number.parseInt(raw, 10);
-    return Number.isSafeInteger(nextPage) && nextPage > page ? nextPage : null;
+    return Number.isSafeInteger(nextPage) && nextPage > page
+        ? { kind: 'continues', position: nextPage }
+        : POSTHOG_WALK_STOPPED_SHORT;
 }
 
 export async function readPosthogIssueActivity(
@@ -123,7 +135,7 @@ export async function readPosthogIssueActivity(
             ),
             omittedRowCount: envelope.skippedRowCount,
             totalCount: envelope.totalCount,
-            nextPage: verifyNextPage(envelope.next, path, input.page),
+            walk: readWalk(envelope.next, path, input.page),
         },
     };
 }

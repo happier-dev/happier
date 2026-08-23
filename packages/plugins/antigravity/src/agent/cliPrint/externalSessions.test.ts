@@ -1,4 +1,4 @@
-import { appendFile, mkdir, opendir, realpath, rename, stat, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, opendir, realpath, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -214,6 +214,124 @@ describe('Antigravity external-session pure leaf', () => {
       },
     });
     if (second.ok) expect(second.value).not.toHaveProperty('searchIncomplete');
+  });
+
+  // A full-search cursor is an ordering ANCHOR over a mutable recency key: a
+  // conversation the user is still driving keeps touching its transcript. If an
+  // unserved match overtakes the anchor between pages, `compare(candidate,
+  // anchor) <= 0` reads it as already served and the browse silently loses it.
+  it('rejects a full-search continuation whose unserved match overtook the anchor', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-external-search-reorder-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    const paths: Record<string, string> = {};
+    for (const [index, id] of ['alpha', 'bravo', 'charlie'].entries()) {
+      paths[id] = await createConversation(brainDir, `conversation-reorder-${id}`, [
+        `{"id":"${id}","type":"USER_INPUT","text":"reorder probe candidate ${index}"}`,
+      ]);
+    }
+    const at = (iso: string) => new Date(iso);
+    await Promise.all([
+      utimes(paths.alpha!, at('2026-07-20T10:00:00.000Z'), at('2026-07-22T10:00:00.000Z')),
+      utimes(paths.bravo!, at('2026-07-20T10:00:00.000Z'), at('2026-07-21T10:00:00.000Z')),
+      utimes(paths.charlie!, at('2026-07-20T10:00:00.000Z'), at('2026-07-20T10:00:00.000Z')),
+    ]);
+
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+    const source = { kind: 'antigravityCliPrint' as const };
+    const search = { searchTerm: 'reorder probe', searchMode: 'full' as const };
+
+    const first = await contribution.listCandidates({
+      ...invocation(),
+      source,
+      ...search,
+      maxItems: 1,
+    });
+    if (!first.ok || !first.value.nextCursor) throw new Error('expected full-search continuation');
+    expect(first.value.candidates[0]?.remoteSessionId).toBe('conversation-reorder-alpha');
+
+    // `charlie` was never served and is now the newest match: it overtakes the
+    // `alpha` anchor the cursor was cut at.
+    await utimes(paths.charlie!, at('2026-07-20T10:00:00.000Z'), at('2026-07-23T10:00:00.000Z'));
+
+    const second = await contribution.listCandidates({
+      ...invocation(),
+      source,
+      ...search,
+      cursor: first.value.nextCursor,
+      maxItems: 5,
+    });
+
+    // Either serve it or declare the cursor stale — never answer "these are the
+    // remaining matches" with the overtaking match dropped.
+    if (second.ok) {
+      expect(second.value.candidates.map((candidate) => candidate.remoteSessionId)).toContain(
+        'conversation-reorder-charlie',
+      );
+    } else {
+      expect(second).toMatchObject({ ok: false, code: 'source_invalid', retryable: true });
+    }
+  });
+
+  // Counting the matches at or before the anchor ALIASES: two compensating
+  // changes leave the count intact while the served prefix is no longer a
+  // prefix of the current ordering. Neither change touches a brain-dir entry,
+  // so the source generation cannot see them either.
+  it('rejects a full-search continuation whose anchor prefix changed without changing its size', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-external-search-alias-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    const paths: Record<string, string> = {};
+    for (const [index, id] of ['alpha', 'bravo', 'charlie', 'delta'].entries()) {
+      paths[id] = await createConversation(brainDir, `conversation-alias-${id}`, [
+        `{"id":"${id}","type":"USER_INPUT","text":"alias probe candidate ${index}"}`,
+      ]);
+    }
+    const at = (iso: string) => new Date(iso);
+    await Promise.all([
+      utimes(paths.alpha!, at('2026-07-20T10:00:00.000Z'), at('2026-07-24T10:00:00.000Z')),
+      utimes(paths.bravo!, at('2026-07-20T10:00:00.000Z'), at('2026-07-23T10:00:00.000Z')),
+      utimes(paths.charlie!, at('2026-07-20T10:00:00.000Z'), at('2026-07-22T10:00:00.000Z')),
+      utimes(paths.delta!, at('2026-07-20T10:00:00.000Z'), at('2026-07-21T10:00:00.000Z')),
+    ]);
+
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+    const source = { kind: 'antigravityCliPrint' as const };
+    const search = { searchTerm: 'alias probe', searchMode: 'full' as const };
+
+    const first = await contribution.listCandidates({
+      ...invocation(),
+      source,
+      ...search,
+      maxItems: 2,
+    });
+    if (!first.ok || !first.value.nextCursor) throw new Error('expected full-search continuation');
+    expect(first.value.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
+      'conversation-alias-alpha',
+      'conversation-alias-bravo',
+    ]);
+
+    // `charlie` was never served and overtakes the `bravo` anchor (+1 preceding
+    // match), while `alpha` — already served, and ordered before the anchor —
+    // loses its transcript file (-1). The conversation directory survives, so
+    // the brain-dir generation is unchanged and the counts cancel out.
+    await utimes(paths.charlie!, at('2026-07-20T10:00:00.000Z'), at('2026-07-25T10:00:00.000Z'));
+    await rm(paths.alpha!);
+
+    const second = await contribution.listCandidates({
+      ...invocation(),
+      source,
+      ...search,
+      cursor: first.value.nextCursor,
+      maxItems: 5,
+    });
+
+    // Never answer "these are the remaining matches" with `charlie` silently
+    // dropped: the served prefix changed, so the cursor is stale.
+    expect(second).toMatchObject({ ok: false, code: 'source_invalid', retryable: true });
+    if (second.ok) {
+      expect(second.value.candidates.map((candidate) => candidate.remoteSessionId)).toContain(
+        'conversation-alias-charlie',
+      );
+    }
   });
 
   it('marks a terminal full search complete instead of retaining its fast-preview state', async () => {
@@ -1119,6 +1237,118 @@ describe('Antigravity external-session pure leaf', () => {
     if (!idPage.ok) throw new Error('candidate id search unexpectedly failed');
     expect(idPage.value.candidates).toEqual([
       expect.objectContaining({ remoteSessionId: 'conversation-title' }),
+    ]);
+  });
+
+  // One valid planner record projects to assistant text PLUS one public item per
+  // tool call. Budgeting native records by the PUBLIC item limit and then
+  // refusing the flattened result makes that record permanently unreadable at a
+  // small page size: every retry reads the same record and fails the same way.
+  it('pages a one-to-many native record across item-budgeted pages instead of refusing it', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-external-intra-record-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    await createConversation(brainDir, 'conversation-intra', [
+      JSON.stringify({ step_index: 1, type: 'USER_MESSAGE', text: 'hi' }),
+      JSON.stringify({
+        step_index: 2,
+        type: 'PLANNER_RESPONSE',
+        text: 'planned answer',
+        tool_calls: [
+          { name: 'list_dir', args: { path: '.' } },
+          { name: 'read_file', args: { path: 'a.ts' } },
+        ],
+      }),
+    ]);
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+
+    const complete = await contribution.pageTranscript({
+      ...invocation(),
+      source: { kind: 'antigravityCliPrint' },
+      remoteSessionId: 'conversation-intra',
+      direction: 'older',
+      maxItems: 50,
+    });
+    if (!complete.ok) throw new Error('expected a complete page');
+    const expectedIds = complete.value.items.map((item) => item.id);
+    expect(expectedIds).toHaveLength(4);
+
+    const drainedNewestFirst: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 12; page += 1) {
+      const result = await contribution.pageTranscript({
+        ...invocation(),
+        source: { kind: 'antigravityCliPrint' },
+        remoteSessionId: 'conversation-intra',
+        direction: 'older',
+        ...(cursor ? { cursor } : {}),
+        maxItems: 1,
+      });
+      if (!result.ok) throw new Error(`page ${page} failed: ${result.code}`);
+      expect(result.value.items.length).toBeLessThanOrEqual(1);
+      drainedNewestFirst.unshift(...result.value.items.map((item) => item.id));
+      if (!result.value.hasMore) {
+        expect(result.value.nextCursor).toBeNull();
+        break;
+      }
+      expect(result.value.nextCursor).toBeTruthy();
+      cursor = result.value.nextCursor ?? undefined;
+    }
+
+    // Deterministic order, no duplication, eventual progress.
+    expect(drainedNewestFirst).toEqual(expectedIds);
+  });
+
+  it('drains a one-to-many native record across read-after item budgets without repeating an item', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-external-intra-after-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    const transcriptPath = await createConversation(brainDir, 'conversation-intra-after', [
+      JSON.stringify({ step_index: 1, type: 'USER_MESSAGE', text: 'hi' }),
+    ]);
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+
+    const head = await contribution.pageTranscript({
+      ...invocation(),
+      source: { kind: 'antigravityCliPrint' },
+      remoteSessionId: 'conversation-intra-after',
+      direction: 'older',
+      maxItems: 50,
+    });
+    if (!head.ok || !head.value.tailCursor) throw new Error('expected a tail cursor');
+
+    await appendFile(transcriptPath, `${JSON.stringify({
+      step_index: 2,
+      type: 'PLANNER_RESPONSE',
+      text: 'planned answer',
+      tool_calls: [
+        { name: 'list_dir', args: { path: '.' } },
+        { name: 'read_file', args: { path: 'a.ts' } },
+      ],
+    })}\n`);
+
+    const drained: string[] = [];
+    let cursor = head.value.tailCursor;
+    for (let read = 0; read < 12; read += 1) {
+      const result = await contribution.readAfterTranscript({
+        ...invocation(),
+        source: { kind: 'antigravityCliPrint' },
+        remoteSessionId: 'conversation-intra-after',
+        cursor,
+        maxItems: 1,
+      });
+      if (!result.ok) throw new Error(`read-after ${read} failed: ${result.code}`);
+      if (result.value.outcome === 'already_current') break;
+      if (result.value.outcome !== 'advanced') {
+        throw new Error(`unexpected read-after outcome ${result.value.outcome}`);
+      }
+      expect(result.value.items.length).toBeLessThanOrEqual(1);
+      drained.push(...result.value.items.map((item) => item.id));
+      cursor = result.value.nextCursor;
+    }
+
+    expect(drained).toEqual([
+      'antigravity-turn-conversation-intra-after-byte-51-step-2',
+      'antigravity-turn-conversation-intra-after-byte-51-step-2-tool-1',
+      'antigravity-turn-conversation-intra-after-byte-51-step-2-tool-2',
     ]);
   });
 

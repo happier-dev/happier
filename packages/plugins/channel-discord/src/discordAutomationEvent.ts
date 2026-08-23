@@ -42,15 +42,27 @@ export { DISCORD_PLUGIN_ID } from './discordPluginConstants.js';
  * supports one: `GET /channels/{id}/messages?after=` returns history, and
  * `createDiscordBotApi` (`discordApi.ts`) is the existing REST owner to extend.
  * Such an observer needs, at minimum:
- *   - a durable cursor per (applicationId, channelId) — the identity
- *     `createDiscordAutomationMessageSourceInstanceId` already forms;
- *   - reconnect backfill from that cursor, since Gateway RESUME covers only the
- *     in-process window;
+ *   - a durable checkpoint keyed by the DEFINITION-scoped identity approved as
+ *     `r0.39` — (automationId, eventRef, sourceSelectorId) — exactly as
+ *     `createGithubAutomationEventCheckpointRowId`
+ *     (`packages/plugins/scm-github/src/observations/githubAutomationEventCheckpoint.ts`)
+ *     already forms it. NOT a cursor per (applicationId, channelId): the
+ *     source-instance identity that
+ *     `createDiscordAutomationMessageSourceInstanceId` forms is shared by every
+ *     Automation watching the same channel, so one shared cursor would let each
+ *     of them advance past the others' unobserved messages;
+ *   - REST-verifiable history as the sole checkpoint authority. Gateway
+ *     dispatches are low-latency HINTS ONLY: a live event may advance nothing
+ *     the REST read has not confirmed, because the socket's session id and last
+ *     dispatch sequence are process-local and unrecoverable after a reload;
+ *   - reconnect backfill from that checkpoint, since Gateway RESUME covers only
+ *     the in-process window;
  *   - dedupe between backfilled and live messages (the stable `occurrenceId`
  *     the host already keys occurrences by is the join);
  *   - Discord REST rate-limit handling for the backfill reads;
- *   - explicit history-gap semantics when the cursor falls outside what Discord
- *     will still return, reported through the Event's history-gap reset Action.
+ *   - explicit history-gap semantics when the checkpoint falls outside what
+ *     Discord will still return, reported through the Event's history-gap reset
+ *     Action.
  *
  * To resume: re-add the `events` entry to `plugin.ts` using the ids and schemas
  * exported here, once that observer exists, then restore the two call sites

@@ -22,6 +22,7 @@ import {
   resolveDiscordEndpoint,
   setupDiscordChannels,
   testDiscordConnection,
+  DISCORD_SETUP_INPUT_PROTOCOL_SCHEMA,
 } from './discordActions.js';
 import {
   createDiscordGatewaySupervisor,
@@ -45,12 +46,11 @@ const endpointResolveOperation = discordProviderOperations.endpointResolve;
 const messageDeliverOperation = discordProviderOperations.messageDeliver;
 const connectionStopOperation = discordProviderOperations.connectionStop;
 
-const DISCORD_SETUP_INPUT_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: { credentialRef: QualifiedConnectedAccountRefJsonSchema },
-  required: ['credentialRef'],
-} satisfies PluginJsonSchema;
+/**
+ * The setup handler reads the same declaration, so the manifest the host
+ * enforces and the value that handler receives cannot drift apart.
+ */
+const DISCORD_SETUP_INPUT_SCHEMA: PluginJsonSchema = DISCORD_SETUP_INPUT_PROTOCOL_SCHEMA.jsonSchema;
 
 /**
  * The Gateway worker receives the canonical core reconciliation union. Its

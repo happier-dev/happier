@@ -113,6 +113,24 @@ export type GitlabEntrySnapshot = Readonly<{
   state: GitlabStateProjection;
   /** GitLab `updated_at`, parsed. Display and change evidence only. */
   sourceUpdatedAtMs: number | null;
+  /**
+   * The revision this read observed, and the pin a write carries back.
+   *
+   * A merge request carries GitLab's own `sha` — its head commit — because that
+   * is the value `sources/SCM.md` §2.6 requires a merge and a mark-ready to
+   * carry, and the one GitLab's merge endpoint consumes as its own `sha`
+   * precondition. An issue has no head and carries GitLab's `updated_at`
+   * **unparsed**, the token §4.7's issue Actions pin against.
+   *
+   * It is a separate member from `sourceUpdatedAtMs` on purpose. That one is a
+   * clock for display and ordering; this one is an opaque token compared only for
+   * equality. Reusing the parsed clock would make two spellings of one instant
+   * compare equal, which is a currentness refusal silently becoming a write.
+   *
+   * `null` means GitLab reported none. It is never invented, shortened or
+   * normalized: a shortened revision is a DIFFERENT revision.
+   */
+  nativeRevision: string | null;
   sourceCreatedAtMs: number | null;
   author: GitlabActor | null;
   assignees: readonly GitlabActor[];

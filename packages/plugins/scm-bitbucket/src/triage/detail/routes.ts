@@ -1,5 +1,5 @@
 import { BITBUCKET_CLOUD_API_BASE_URL } from '../apiClient.js';
-import { encodeBitbucketPathSegment } from '../identity.js';
+import { encodeBitbucketPathSegment, isBitbucketEntryId } from '../identity.js';
 
 /**
  * The three Bitbucket Cloud pull-request detail collections this vertical reads.
@@ -27,9 +27,6 @@ export const BITBUCKET_ACTIVITY_PAGE_LENGTH_V1 = 25;
 /** `Builds` mounts one page of the pull request's own status collection. */
 export const BITBUCKET_STATUSES_PAGE_LENGTH_V1 = 25;
 
-/** A pull-request id is an integer unique within its repository. */
-const ENTRY_ID_PATTERN = /^[1-9][0-9]*$/u;
-
 export type BitbucketDetailRouteInputV1 = Readonly<{
   workspaceUuid: string;
   repositoryUuid: string;
@@ -37,7 +34,9 @@ export type BitbucketDetailRouteInputV1 = Readonly<{
 }>;
 
 function pullRequestPath(input: BitbucketDetailRouteInputV1, suffix: string): string {
-  if (!ENTRY_ID_PATTERN.test(input.entryId)) {
+  // The entry-id grammar has one owner. A second copy here is a second answer to which segments
+  // may reach a Bitbucket URL, and the copy that drifted would be the one guarding a route.
+  if (!isBitbucketEntryId(input.entryId)) {
     throw new Error('bitbucket_detail_entry_id_invalid');
   }
   const workspace = encodeBitbucketPathSegment(input.workspaceUuid);

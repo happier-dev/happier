@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
+import { POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1 } from '../../source/detail/issueActivityContract.js';
 import type { PosthogProjectedActivityRecord } from './activityProjection.js';
 import {
     posthogActivityInitialState,
@@ -31,6 +32,7 @@ function settled(
     token: number,
     records: readonly PosthogProjectedActivityRecord[],
     continuation: string | null,
+    incomplete: typeof POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1 | null = null,
 ): PosthogActivityStateV1 {
     return posthogActivityReducer(state, {
         kind: 'pageSettled',
@@ -39,6 +41,7 @@ function settled(
         omittedRowCount: 0,
         totalCount: null,
         continuation,
+        incomplete,
     });
 }
 
@@ -117,6 +120,42 @@ describe('posthogActivityReducer', () => {
             token: 1,
             failure: FORBIDDEN,
         })).toBe(state);
+    });
+
+    it('keeps a walk that stopped short apart from one the provider exhausted', () => {
+        const exhausted = settled(started(posthogActivityInitialState(), 1), 1, [record('a')], null);
+
+        // Nothing further exists, and nothing on screen should suggest otherwise.
+        expect(exhausted.canLoadMore).toBe(false);
+        expect(exhausted.incomplete).toBeNull();
+
+        const short = settled(
+            started(posthogActivityInitialState(), 1),
+            1,
+            [record('a')],
+            null,
+            POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1,
+        );
+
+        // Same shape on the wire — no continuation — and a completely different
+        // statement to the reader: PostHog has more, and this build stopped.
+        expect(short.canLoadMore).toBe(false);
+        expect(short.incomplete).toBe(POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1);
+    });
+
+    it('does not let a later page retract a walk that already stopped short', () => {
+        let state = settled(
+            started(posthogActivityInitialState(), 1),
+            1,
+            [record('a')],
+            'p2',
+            POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1,
+        );
+        state = settled(started(state, 2), 2, [record('b')], null);
+
+        // The gap the first page left is still a gap; a second page cannot fill it.
+        expect(state.incomplete).toBe(POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1);
+        expect(state.rows.map((row) => row.id)).toEqual(['a', 'b']);
     });
 
     it('discards every byte of the plane when its panel is left', () => {

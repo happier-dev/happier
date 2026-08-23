@@ -23,6 +23,7 @@ export const AZURE_DEVOPS_API_VERSIONS = {
   iterations: '7.1',
   iterationChanges: '7.1',
   threads: '7.1',
+  reviewers: '7.1',
   commits: '7.1',
   statuses: '7.1',
   policyEvaluations: '7.1-preview.1',

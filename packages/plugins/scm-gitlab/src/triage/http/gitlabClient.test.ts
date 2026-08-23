@@ -172,6 +172,7 @@ describe('requestGitlabJson', () => {
     expect(fetcher.mock.calls[0]?.[1].redirect).toBe('error');
     expect(result).toEqual({
       kind: 'failed',
+      status: 302,
       failure: { class: 'unsupportedContract', code: 'unexpected-redirect' },
     });
   });
@@ -216,6 +217,7 @@ describe('requestGitlabJson', () => {
       expect(vi.getTimerCount()).toBe(0);
       expect(result).toEqual({
         kind: 'failed',
+        status: 429,
         failure: {
           class: 'rateLimit',
           code: 'too-many-requests',
@@ -242,6 +244,7 @@ describe('requestGitlabJson', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       kind: 'failed',
+      status: 429,
       failure: {
         class: 'rateLimit',
         code: 'too-many-requests',

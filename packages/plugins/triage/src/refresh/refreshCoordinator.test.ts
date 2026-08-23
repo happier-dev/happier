@@ -22,8 +22,6 @@ type Harness = Readonly<{
     coordinator: TriageRefreshCoordinatorV1;
     passes: readonly PendingPass[];
     advanceMs(deltaMs: number): void;
-    /** Let queued microtasks (scheduler follow-ups) run. */
-    settleMicrotasks(): Promise<void>;
 }>;
 
 function createHarness(options: Readonly<{ random?: () => number }> = {}): Harness {
@@ -41,9 +39,6 @@ function createHarness(options: Readonly<{ random?: () => number }> = {}): Harne
         passes,
         advanceMs(deltaMs) {
             nowMs += deltaMs;
-        },
-        async settleMicrotasks() {
-            for (let tick = 0; tick < 8; tick += 1) await Promise.resolve();
         },
     };
 }
@@ -72,14 +67,50 @@ describe('triage refresh coordinator', () => {
         await request.settled;
     });
 
-    it('joins mount focus visibility and recent-activity triggers inside the shared minimum interval', async () => {
+    it('settles a request only when its own provider pass has finished', async () => {
+        const harness = createHarness();
+        const request = harness.coordinator.request({ sourceInstanceId: INSTANCE_A, trigger: 'manual' });
+        let settled = false;
+        void request.settled.then(() => { settled = true; });
+
+        // Drain every microtask an early resolution could have hidden behind.
+        for (let tick = 0; tick < 8; tick += 1) await Promise.resolve();
+
+        // This is what keeps one pass per instance in flight. The sole producer
+        // of `request` is the list-window store's refresh cycle, which awaits
+        // this promise for every configured instance before it returns; the
+        // store's own coalesced scheduler then cannot start the next cycle
+        // until it does. A promise that resolved before the provider answered
+        // would let the next cycle re-enter this slot while its pass is still
+        // running — reintroducing exactly the concurrency this coordinator no
+        // longer arbitrates, and leaving the second pass to overwrite the first
+        // one's abort controller and pacing state.
+        expect(settled).toBe(false);
+        expect(harness.passes).toHaveLength(1);
+
+        harness.passes[0]!.settle({ kind: 'completed' });
+        await request.settled;
+        expect(settled).toBe(true);
+    });
+
+    it('collapses a mount focus visibility and recent-activity burst into one provider read', async () => {
         const harness = createHarness();
         const first = harness.coordinator.request({ sourceInstanceId: INSTANCE_A, trigger: 'view' });
         expect(first.disposition).toBe('started');
 
+        // The interval is measured from the read *start*, so it is already
+        // running while the first pass is in flight: a burst is refused by the
+        // one pacing rule rather than by a second single-flight mechanism.
         for (let burst = 0; burst < 3; burst += 1) {
-            const joined = harness.coordinator.request({ sourceInstanceId: INSTANCE_A, trigger: 'view' });
-            expect(joined.disposition).toBe('joined');
+            const suppressedDuringPass = harness.coordinator.request({
+                sourceInstanceId: INSTANCE_A,
+                trigger: 'view',
+            });
+            expect(suppressedDuringPass.disposition).toBe('blocked');
+            expect(suppressedDuringPass.blocked).toEqual({
+                reason: 'minimumInterval',
+                nextEligibleAtMs: NOW_MS + TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS,
+            });
         }
         expect(harness.passes).toHaveLength(1);
 
@@ -109,31 +140,9 @@ describe('triage refresh coordinator', () => {
         expect(harness.passes.map((pass) => pass.input.sourceInstanceId)).toEqual([INSTANCE_A, INSTANCE_B]);
     });
 
-    it('coalesces repeated manual Refresh during an active scan into at most one follow-up', async () => {
+    it('honours a source-stated retry deadline against a later manual Refresh', async () => {
         const harness = createHarness();
         const view = harness.coordinator.request({ sourceInstanceId: INSTANCE_A, trigger: 'view' });
-        expect(view.disposition).toBe('started');
-
-        for (let click = 0; click < 3; click += 1) {
-            const manual = harness.coordinator.request({ sourceInstanceId: INSTANCE_A, trigger: 'manual' });
-            expect(manual.disposition).toBe('followUpQueued');
-        }
-        expect(harness.passes).toHaveLength(1);
-
-        harness.passes[0]!.settle({ kind: 'completed' });
-        await harness.settleMicrotasks();
-        expect(harness.passes).toHaveLength(2);
-
-        harness.passes[1]!.settle({ kind: 'completed' });
-        await harness.settleMicrotasks();
-        expect(harness.passes).toHaveLength(2);
-    });
-
-    it('honours a source-stated retry deadline instead of running the queued follow-up', async () => {
-        const harness = createHarness();
-        const view = harness.coordinator.request({ sourceInstanceId: INSTANCE_A, trigger: 'view' });
-        const manual = harness.coordinator.request({ sourceInstanceId: INSTANCE_A, trigger: 'manual' });
-        expect(manual.disposition).toBe('followUpQueued');
 
         harness.passes[0]!.settle(transientFailure({
             class: 'rateLimit',
@@ -141,14 +150,17 @@ describe('triage refresh coordinator', () => {
             retryNotBeforeMs: NOW_MS + 60_000,
         }));
         await view.settled;
-        await harness.settleMicrotasks();
         expect(harness.passes).toHaveLength(1);
 
+        // Manual Refresh bypasses our own minimum interval but never the
+        // provider's own deadline.
         const blocked = harness.coordinator.request({ sourceInstanceId: INSTANCE_A, trigger: 'manual' });
+        expect(blocked.disposition).toBe('blocked');
         expect(blocked.blocked).toEqual({
             reason: 'sourceRetryDeadline',
             nextEligibleAtMs: NOW_MS + 60_000,
         });
+        expect(harness.passes).toHaveLength(1);
 
         harness.advanceMs(60_000);
         expect(harness.coordinator.request({ sourceInstanceId: INSTANCE_A, trigger: 'manual' }).disposition)
@@ -201,7 +213,6 @@ describe('triage refresh coordinator', () => {
 
         harness.passes[0]!.settle(transientFailure());
         await view.settled;
-        await harness.settleMicrotasks();
 
         // The retired instance's late failure cannot pace a later explicit
         // refresh of the same id. `manual` is the discriminating trigger here:

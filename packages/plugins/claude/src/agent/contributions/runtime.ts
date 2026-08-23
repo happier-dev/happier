@@ -392,13 +392,12 @@ export async function verifyClaudeResumeReachability(input: Readonly<{
   };
 }
 
+// Runtime Activity is declared through the public
+// `capabilities.sessions.runtimeActivitySnapshots` manifest capability, the
+// same seam an external Agent uses; the host projects it into the catalog
+// entry's `runtimeActivityApplicability`.
 export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'claude',
-  runtimeActivityApplicability: 'supported',
-  builtInAcpCatalog: true,
-  agentCliSystemTool: {
-    toolId: 'claude-cli',
-  },
   cliAuth: {
     detectAuthStatus: ({ env }: Readonly<{ env: NodeJS.ProcessEnv }>) =>
       detectClaudeCliAuthStatus({ env }),

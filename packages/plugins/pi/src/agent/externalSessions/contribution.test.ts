@@ -243,6 +243,103 @@ describe('Pi pure External Sessions contribution leaf', () => {
     })).resolves.toMatchObject({ ok: true });
   });
 
+  it('fails an orphaned branch at physical source start instead of publishing its reachable suffix', async () => {
+    const { agentDir, sessionRoot } = await createAgentDir();
+    const sessionId = 'pi-orphan';
+    const sessionFile = join(sessionRoot, `2026-08-16T10-00-00.000Z_${sessionId}.jsonl`);
+    await writeFile(sessionFile, [
+      line({
+        type: 'session',
+        version: 3,
+        id: sessionId,
+        timestamp: '2026-08-16T10:00:00.000Z',
+        cwd: '/workspace',
+      }),
+      // The oldest surviving entry names a parent no byte of this file carries.
+      ...[0, 1, 2].map((index) => line({
+        type: 'message',
+        id: `pi-orphan-${index}`,
+        parentId: index === 0 ? 'pi-orphan-missing-root' : `pi-orphan-${index - 1}`,
+        timestamp: `2026-08-16T10:00:0${index}.000Z`,
+        message: { role: 'user', content: `prompt ${index}` },
+      })),
+    ].join(''), 'utf8');
+
+    const contribution = createPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+
+    // While older bytes remain, an unresolved parent is the ordinary paging
+    // handoff and must keep the continuation alive.
+    const first = await contribution.pageTranscript({
+      ...invocation(),
+      source: { kind: 'piAgentDir' as const, agentDir, sessionFile },
+      remoteSessionId: sessionId,
+      direction: 'older',
+      maxItems: 1,
+    });
+    expect(first).toMatchObject({ ok: true, value: { hasMore: true } });
+    if (!first.ok || !first.value.nextCursor) throw new Error('expected a continuation');
+
+    // At physical source start the parent is still absent, so the reachable
+    // suffix is NOT the whole branch. Reporting ordinary completion publishes a
+    // partial transcript as authoritative.
+    let cursor: string | null = first.value.nextCursor;
+    for (let page = 0; page < 8; page += 1) {
+      const next = await contribution.pageTranscript({
+        ...invocation(),
+        source: { kind: 'piAgentDir' as const, agentDir, sessionFile },
+        remoteSessionId: sessionId,
+        direction: 'older',
+        cursor,
+        maxItems: 1,
+      });
+      if (!next.ok) {
+        expect(next).toMatchObject({ ok: false, code: 'agent_error' });
+        return;
+      }
+      expect(next.value.hasMore).toBe(true);
+      cursor = next.value.nextCursor;
+      expect(cursor).not.toBeNull();
+      if (cursor === null) throw new Error('expected a continuation');
+    }
+    throw new Error('expected the orphaned branch to fail at physical source start');
+  });
+
+  it('fails a whole-file orphaned branch instead of reporting ordinary completion', async () => {
+    const { agentDir, sessionRoot } = await createAgentDir();
+    const sessionId = 'pi-orphan-whole';
+    const sessionFile = join(sessionRoot, `2026-08-16T10-00-00.000Z_${sessionId}.jsonl`);
+    await writeFile(sessionFile, [
+      line({
+        type: 'session',
+        version: 3,
+        id: sessionId,
+        timestamp: '2026-08-16T10:00:00.000Z',
+        cwd: '/workspace',
+      }),
+      line({
+        type: 'message',
+        id: 'pi-orphan-whole-leaf',
+        parentId: 'pi-orphan-whole-missing',
+        timestamp: '2026-08-16T10:00:01.000Z',
+        message: { role: 'user', content: 'only surviving prompt' },
+      }),
+    ].join(''), 'utf8');
+
+    const contribution = createPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+
+    await expect(contribution.pageTranscript({
+      ...invocation(),
+      source: { kind: 'piAgentDir' as const, agentDir, sessionFile },
+      remoteSessionId: sessionId,
+      direction: 'older',
+      maxItems: 50,
+    })).resolves.toMatchObject({ ok: false, code: 'agent_error' });
+  });
+
   it('lists only the explicitly configured source when ambient Pi storage points elsewhere', async () => {
     const configured = await createAgentDir();
     const ambient = await createAgentDir();

@@ -40,6 +40,13 @@ describe('createElevenLabsConversationHandle event surface', () => {
 
     callbacks.onConnect();
     callbacks.onMessage({ source: 'ai', message: 'hello' });
+    // A corrected agent turn arrives on its own SDK callback, never as a second
+    // `onMessage`, so the handle has to carry it or the correction is lost.
+    callbacks.onAgentResponseCorrection({
+      original_agent_response: 'hello',
+      corrected_agent_response: 'hello there',
+      event_id: 3,
+    });
     callbacks.onStatusChange({ status: 'connected' });
     callbacks.onModeChange({ mode: 'speaking' });
     callbacks.onDebug('safe-debug');
@@ -47,11 +54,19 @@ describe('createElevenLabsConversationHandle event surface', () => {
     callbacks.onDisconnect();
 
     expect(events.map((event) => (event as { type: string }).type)).toEqual([
-      'connect', 'message', 'status', 'mode', 'debug', 'error', 'disconnect',
+      'connect', 'message', 'agent_response_correction', 'status', 'mode', 'debug', 'error', 'disconnect',
     ]);
+    expect(events[2]).toEqual({
+      type: 'agent_response_correction',
+      data: {
+        original_agent_response: 'hello',
+        corrected_agent_response: 'hello there',
+        event_id: 3,
+      },
+    });
     unsubscribe();
     callbacks.onMessage({ message: 'late' });
-    expect(events).toHaveLength(7);
+    expect(events).toHaveLength(8);
   });
 
   it('does not start after disposal and notifies active subscribers of handle teardown once', async () => {

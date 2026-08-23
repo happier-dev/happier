@@ -98,6 +98,7 @@ import {
   type GitlabPagedControllerV1,
 } from './detail/panelReaders.js';
 import type { GitlabPagedStateV1, GitlabReadStateV1 } from './detail/panelState.js';
+import { GitlabMutationControls } from './detail/mutationControls.js';
 import {
   GITLAB_DEFAULT_DETAIL_TAB_V1,
   gitlabResolveSelectedTab,
@@ -227,10 +228,18 @@ function PagedFooter({
 
 function OverviewPanel({
   body,
+  input,
   locale,
   nowMs,
 }: Readonly<{
   body: GitlabDetailBodyV1;
+  /**
+   * The mounted input, carried alongside the projected body for one reason: the
+   * write controls dispatch against the exact observation the user is reading —
+   * its instance, its entry ref and its revision pin — and the display projection
+   * deliberately drops all three.
+   */
+  input: TriageDetailSurfaceInputV1;
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
@@ -270,6 +279,7 @@ function OverviewPanel({
             </Row>
           </Stack>
         )}
+        <GitlabMutationControls input={input} />
       </Stack>
     </ScrollArea>
   );
@@ -983,7 +993,7 @@ function GitlabDetailBody({
   const tab = gitlabResolveSelectedTab(selected, visible);
 
   const panels: Readonly<Record<GitlabDetailTabIdV1, React.ReactNode>> = {
-    overview: <OverviewPanel body={body} locale={locale} nowMs={nowMs} />,
+    overview: <OverviewPanel body={body} input={input} locale={locale} nowMs={nowMs} />,
     activity: <ActivityPanel input={input} locale={locale} nowMs={nowMs} />,
     changes: <ChangesPanel input={input} />,
     pipelines: <PipelinesPanel input={input} locale={locale} nowMs={nowMs} />,

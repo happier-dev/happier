@@ -1,4 +1,4 @@
-import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { isPluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { SessionId } from '@happier-dev/plugin-sdk/sessions';
 import type { TriageEntryLocatorV1, TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -9,12 +9,13 @@ import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
 import { deriveSessionLinkEntryTag, deriveSessionLinkTag } from '../corpus/identity/tags.js';
 
 /**
- * The one writer that creates a `session-links` row.
+ * The one writer that creates a `session-links` row, and the one writer that
+ * removes one at the user's explicit request.
  *
  * The only other writer of this collection is `reconcileMergedSuccessor.ts`,
- * and it never creates a relationship: it moves a row this module committed onto
- * an authoritative successor, or collapses it into one. So a link still comes
- * into existence in exactly one place.
+ * and it never creates or removes a relationship: it moves a row this module
+ * committed onto an authoritative successor, or collapses it into one. So a
+ * link still comes into existence — and still ends — in exactly one place.
  *
  * The link is the sole authority for "this entry is being worked on in that
  * Session". It is Account Collection data, so it survives client and daemon
@@ -31,7 +32,9 @@ import { deriveSessionLinkEntryTag, deriveSessionLinkTag } from '../corpus/ident
  *
  * The row is never evicted, and it copies nothing provider-derived beyond the
  * one display path a linked row is rendered from until live materialization
- * supplies fresher facts.
+ * supplies fresher facts. `INV-13` is structural: no Triage mechanism deletes a
+ * live link, and the only thing that does is the explicit user operation below
+ * (`core/CORPUS.md` §5.3).
  */
 
 export type TriageLinkEntryToSessionResultV1 =
@@ -142,4 +145,83 @@ async function writeEntrySessionLink(
     // Another writer won the same row. The relationship it committed is the one
     // this call wanted, so a live row is success rather than a forced overwrite.
     return written.status === 'conflict' ? { status: 'failed' } : { status: 'linked', linkTag };
+}
+
+/**
+ * The one store code that means a competing writer, not a broken write.
+ *
+ * It is the same distinction `corpus/marks/setPinned.ts` makes for Unpin, and
+ * for the same reason: folding every refusal into `conflict` would tell the
+ * reader their link changed somewhere else and to retry, when the write is in
+ * fact refused for a reason retrying cannot resolve.
+ */
+const COLLECTION_CONFLICT_CODE = 'plugin_collection_conflict';
+
+export type TriageUnlinkEntryFromSessionResultV1 =
+    /** The relationship is gone, including when it already was. */
+    | Readonly<{ status: 'unlinked'; linkTag: string }>
+    /** Another writer moved the row's revision; the surface re-reads. */
+    | Readonly<{ status: 'conflict'; linkTag: string }>
+    /** The storage boundary refused or lost the delete; the caller retries. */
+    | Readonly<{ status: 'failed' }>;
+
+export type TriageUnlinkEntryFromSessionInputV1 = Readonly<{
+    collections: LinkCollections;
+    entryRef: TriageEntryRefV1;
+    sessionId: SessionId;
+    signal?: AbortSignal;
+}>;
+
+/**
+ * The explicit user operation that ends one entry-to-Session relationship.
+ *
+ * It names an entry **and** a Session, because the link's address is derived
+ * from exactly that pair: an unlink addressed by the entry alone would drop the
+ * same entry's link to a Session the user never touched, and one addressed by
+ * the Session alone would drop every other entry's.
+ *
+ * It carries no display facts and needs none — the same asymmetry Unpin has.
+ * A user who linked the wrong entry must be able to undo it from a row no
+ * current pass materialized, so requiring a projection here would make the
+ * mistake permanent exactly when the source stops reporting the entry.
+ *
+ * Removing a link is a tombstone, not an erasure (`core/CORPUS.md` §2.5): the
+ * content, projections and index entries go, and the row id survives with its
+ * revision. That is what lets the user link the same entry to the same Session
+ * again — `putCorpusRowOnce` writes the resurrection put against that exact
+ * revision — so nothing here caches, remembers or works around the tombstone.
+ */
+export async function unlinkEntryFromSession(
+    input: TriageUnlinkEntryFromSessionInputV1,
+): Promise<TriageUnlinkEntryFromSessionResultV1> {
+    const { collections, entryRef, sessionId } = input;
+    const options = input.signal ? { signal: input.signal } : undefined;
+    try {
+        const linkTag = await deriveSessionLinkTag(
+            collections.sessionLinks,
+            entryRef,
+            sessionId,
+            options,
+        );
+        const existing = await readLiveLink(collections, linkTag, options);
+        // An already absent link is an idempotent success: a second press, or a
+        // link another device removed first, leaves nothing different to say.
+        if (!existing) return { status: 'unlinked', linkTag };
+        try {
+            await collections.sessionLinks.delete(linkTag, {
+                expectedRevision: existing.revision,
+                ...(input.signal ? { signal: input.signal } : {}),
+            });
+        } catch (error) {
+            if (isPluginError(error) && error.code === COLLECTION_CONFLICT_CODE) {
+                return { status: 'conflict', linkTag };
+            }
+            throw error;
+        }
+        return { status: 'unlinked', linkTag };
+    } catch {
+        // The Collection store is a network-backed boundary. A refused or lost
+        // delete leaves the relationship exactly as it was.
+        return { status: 'failed' };
+    }
 }

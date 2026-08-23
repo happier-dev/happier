@@ -17,7 +17,10 @@ export type CodexAppServerNativeForkRunner = (params: Readonly<{
   directory: string;
   parentCodexSessionId: string;
   processEnv?: CodexAppServerForkProcessEnv;
+  signal?: AbortSignal;
 }>) => Promise<CodexAppServerNativeForkResult | null>;
+
+type CodexForkRequest = ForkRequestV1 & Readonly<{ signal?: AbortSignal }>;
 
 export type CodexAppServerForkDiagnosticBase = Readonly<{
   agentId: 'codex';
@@ -73,7 +76,7 @@ export function createCodexForkSurface(deps: Readonly<{
 }
 
 async function forkCodexAppServerLatest(
-  params: ForkRequestV1,
+  params: CodexForkRequest,
   deps: Readonly<{
     forkNative: CodexAppServerNativeForkRunner;
     baseProcessEnv?: CodexAppServerForkProcessEnv;
@@ -118,6 +121,7 @@ async function forkCodexAppServerLatest(
       directory: params.directory,
       parentCodexSessionId: providerSessionIdRaw,
       ...(processEnv ? { processEnv } : {}),
+      ...(params.signal ? { signal: params.signal } : {}),
     });
   } catch (error) {
     deps.onDiagnostic?.({

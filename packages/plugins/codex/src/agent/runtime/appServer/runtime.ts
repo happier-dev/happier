@@ -169,9 +169,30 @@ export type CodexAppServerStartOrLoadOptions = Readonly<{
   resumeId?: string | null;
   existingSessionId?: string | null;
   importHistory?: boolean;
+  /** An exact machine-local native return requires the provider's same id. */
+  strictNativeResumeIdentity?: boolean;
   preserveRequestedThreadId?: boolean;
   developerInstructions?: string;
 }>;
+
+/**
+ * The app-server explicitly named a different native thread for a strict
+ * native return. The host uses this provider-owned fact to retire only the
+ * matching machine-local return record; ordinary transport errors are not an
+ * identity decision.
+ */
+export class CodexAppServerResumeIdentityMismatchError extends Error {
+  readonly code = 'codex_app_server_resume_identity_mismatch';
+  readonly happierNativeResumeIdentityMismatch = true;
+
+  constructor(
+    readonly requestedThreadId: string,
+    readonly observedThreadId: string,
+  ) {
+    super('Codex resumed a different provider thread than requested.');
+    this.name = 'CodexAppServerResumeIdentityMismatchError';
+  }
+}
 
 type CodexAppServerStartSession = (
   options?: CodexAppServerStartOrLoadOptions,
@@ -2036,7 +2057,12 @@ export function createCodexAppServerRuntime(
     const resumeId = readResumeId(options);
     const existingSessionId = trimStringValue(options?.existingSessionId);
     const requestedThreadId = resumeId ?? existingSessionId;
-    if (requestedThreadId) {
+    const preserveRequestedThreadId = options?.preserveRequestedThreadId === true;
+    const strictRequestedThreadId = requestedThreadId
+      && options?.strictNativeResumeIdentity === true
+      ? requestedThreadId
+      : null;
+    if (requestedThreadId && !preserveRequestedThreadId && !strictRequestedThreadId) {
       publishThreadIdentity(requestedThreadId);
     }
     const policy = resolveCurrentPolicy();
@@ -2140,9 +2166,20 @@ export function createCodexAppServerRuntime(
         experimentalRawEvents: true,
         persistExtendedHistory: true,
         }, 'thread');
-    const nextThreadId = requestedThreadId && options?.preserveRequestedThreadId === true
+    const observedThreadId = readThreadId(response);
+    if (
+      strictRequestedThreadId
+      && observedThreadId
+      && observedThreadId !== strictRequestedThreadId
+    ) {
+      throw new CodexAppServerResumeIdentityMismatchError(
+        strictRequestedThreadId,
+        observedThreadId,
+      );
+    }
+    const nextThreadId = strictRequestedThreadId || preserveRequestedThreadId
       ? requestedThreadId
-      : readThreadId(response) ?? requestedThreadId;
+      : observedThreadId ?? requestedThreadId;
     if (!nextThreadId) {
       throw new Error('Codex app-server thread/start returned no thread id');
     }

@@ -36,17 +36,25 @@ export const AUGGIE_UI_DESCRIPTOR = Object.freeze({
   },
   behavior: {
     descriptorId: 'auggie.uiBehavior.v1',
+    newSession: {
+      agentOptions: [
+        { key: 'allowIndexing', kind: 'boolean', spawnConfigOption: true },
+      ],
+    },
   },
   session: {},
   message: {},
   components: {
     slots: [
       {
-        id: 'auggie.allowIndexingChip',
+        id: 'auggie-allow-indexing',
         slot: 'newSession.agentInputExtraActionChips',
-        componentId: 'firstParty.auggie.allowIndexingChip',
-        props: {
+        chip: {
+          kind: 'booleanOption',
           optionStateKey: 'allowIndexing',
+          iconName: 'magnifying-glass',
+          onLabelKey: 'agentInput.auggieIndexingChip.on',
+          offLabelKey: 'agentInput.auggieIndexingChip.off',
         },
       },
     ],

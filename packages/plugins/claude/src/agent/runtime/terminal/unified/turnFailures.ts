@@ -45,6 +45,7 @@ export class ClaudeUnifiedTerminalHookActivationError extends Error {
 
 export class ClaudeUnifiedResumeIdentityMismatchError extends Error {
   readonly code = 'claude_unified_resume_identity_mismatch';
+  readonly happierNativeResumeIdentityMismatch = true;
 
   constructor() {
     super(

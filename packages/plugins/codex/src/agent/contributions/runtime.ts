@@ -250,7 +250,6 @@ export async function materializeCodexAuthEnvironment(input: Readonly<Record<str
 
 export const CODEX_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'codex',
-  builtInAcpCatalog: true,
   agentCliSystemTool: {
     toolId: 'codex-cli',
   },

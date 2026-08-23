@@ -62,6 +62,11 @@ export const AZURE_DEVOPS_TRIAGE_SETTINGS_ARTIFACT_ID = 'azure-devops-triage-sou
 export const AZURE_DEVOPS_TRIAGE_DESCRIPTOR = {
   v: 1,
   purpose: AZURE_DEVOPS_TRIAGE_PURPOSE,
+  // The page this source's own Settings contribution ships, so the PRs & Issues
+  // surface can offer a working Configure action rather than naming Settings and
+  // leaving the reader to find it. A BARE local id: the target qualifies it with the
+  // contributor identity the host already admitted.
+  settingsPageId: AZURE_DEVOPS_TRIAGE_SETTINGS_PAGE_ID,
   displayName: 'Azure DevOps',
   kinds: [{
     id: AZURE_DEVOPS_TRIAGE_KIND_ID,

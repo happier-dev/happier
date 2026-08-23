@@ -10,7 +10,9 @@ import {
   GITLAB_TRIAGE_ACTION_IDS,
   GITLAB_TRIAGE_DETAIL_ACTION_IDS,
   GITLAB_TRIAGE_DETAIL_RENDERER_ID,
+  GITLAB_TRIAGE_MUTATION_ACTION_IDS,
 } from './triage/contribution.js';
+import { GITLAB_ADDITIONAL_UI_TRANSLATIONS } from './ui/additionalTranslations.js';
 
 const INSTANCE_ACCOUNT_BINDING = {
   path: 'instance.binding.account',
@@ -150,16 +152,100 @@ describe('GitLab plugin manifest', () => {
 });
 
 describe('GitLab network authority', () => {
-  it('requests read-only verbs, because nothing in this plugin writes over the host network', () => {
+  it('grants exactly the verbs the declared Actions consume, in the one existing scope', () => {
     const network = PLUGIN_MANIFEST.hostAccess.required
-      .find((entry) => entry.id === GITLAB_NETWORK_HOST_ACCESS_ID);
+      .filter((entry) => entry.capability === 'network');
 
-    // Every host-network call this plugin makes hard-codes `GET`
-    // (`triage/invocation.ts` and `auth/connectedAccountRuntime.ts`); its only
-    // merge-request write runs through the declared `glab` process capability.
-    // A granted verb nothing exercises is authority the user approved for
-    // nothing, so a write verb may only appear here together with the exact
-    // human-confirmed mutation that needs it.
-    expect(network?.scope).toMatchObject({ methods: ['GET'] });
+    // One scope, widened in place. A second network grant, or an
+    // Action-specific bypass, would be a second authority over the same origin.
+    expect(network.map(({ id }) => id)).toEqual([GITLAB_NETWORK_HOST_ACCESS_ID]);
+    // `PUT` is the merge and the close transition, `POST` the GraphQL draft
+    // transition, `GET` every read. The host revalidates the origin AND the
+    // method at dispatch, so a write missing here is refused before it reaches
+    // GitLab — and no unit test would see it.
+    expect(network[0]?.scope).toMatchObject({ methods: ['GET', 'POST', 'PUT'] });
+    // A verb with no declaring Action is not granted for symmetry: nothing in
+    // this plugin deletes or patches over the host network.
+    const methods = (network[0]?.scope as { methods?: readonly string[] }).methods ?? [];
+    expect(methods).not.toContain('DELETE');
+    expect(methods).not.toContain('PATCH');
+  });
+});
+
+describe('GitLab merge-request mutation Actions', () => {
+  const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
+
+  it('declares each write with the danger level and confirmation its effect earns', () => {
+    // Row-for-row with the forge mutation contract: merge is irreversible on the
+    // forge, mark-ready's reviewer notification fan-out IS the write, and close
+    // is an ordinary remote write.
+    const expected = [
+      [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMerge, 'destructive'],
+      [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMarkReady, 'externalSideEffect'],
+      [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestClose, 'writesRemote'],
+    ] as const;
+
+    for (const [id, dangerLevel] of expected) {
+      const action = actions.get(id);
+      expect(action, `${id} must be declared`).toBeDefined();
+      expect(action?.dangerLevel).toBe(dangerLevel);
+      // The manifest grammar refuses a non-safe human-surfaced Action without
+      // it, and the copy is per Action because the fact worth confirming is.
+      expect(action?.confirmation?.title).toBeDefined();
+      expect(action?.hostAccess)
+        .toEqual([GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE]);
+      expect(action?.connectedAccountPurposeBindings).toEqual([INSTANCE_ACCOUNT_BINDING]);
+    }
+  });
+
+  it('never exposes a forge mutation on agent or mcp', () => {
+    const ids = Object.values(GITLAB_TRIAGE_MUTATION_ACTION_IDS);
+    // Enumerated, not sampled. The OMISSIONS are the gate: with no `agent` and no
+    // `mcp` surface the Action is not agent-reachable at all, where a danger level
+    // plus `agent: true` would only floor it to a prompt.
+    //
+    // Asserted as omissions rather than as an exact array. The exact-array form
+    // this replaces read as the stricter check and was in fact the weaker one: it
+    // pinned `['ui']`, and `['ui']` alone makes these writes reachable by NOBODY.
+    // The only thing that renders them is this source's own mounted detail
+    // artifact, which dispatches as a `plugin` caller, so the host's
+    // `evaluateTargetActionPolicy` refused every press with
+    // `plugin_action_surface_unavailable` before the handler ran. `plugin` is
+    // therefore required, and it grants an agent nothing.
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) {
+      const surfaces = actions.get(id)?.surfaces;
+      expect(surfaces, id).toContain('ui');
+      expect(surfaces, id).toContain('plugin');
+      expect(surfaces, id).not.toContain('agent');
+      expect(surfaces, id).not.toContain('mcp');
+      expect(surfaces, id).not.toContain('cli');
+      expect(surfaces, id).not.toContain('voice');
+    }
+  });
+
+  it('resolves every confirmation key in every locale the plugin ships', () => {
+    const locales = PLUGIN_MANIFEST.contributes.ui.translations.map(({ locale }) => locale);
+    expect(locales.length).toBeGreaterThan(1);
+
+    const keys = Object.values(GITLAB_TRIAGE_MUTATION_ACTION_IDS).flatMap((id) => {
+      const confirmation = actions.get(id)?.confirmation;
+      return [confirmation?.title, confirmation?.body, confirmation?.confirmLabel]
+        .filter((value): value is { key: string; fallback: string } =>
+          typeof value === 'object' && value !== null && 'key' in value)
+        .map(({ key }) => key);
+    });
+    expect(keys).toHaveLength(9);
+
+    for (const locale of locales) {
+      const messages = GITLAB_ADDITIONAL_UI_TRANSLATIONS[
+        locale as keyof typeof GITLAB_ADDITIONAL_UI_TRANSLATIONS
+      ];
+      for (const key of keys) {
+        // A referenced-but-undefined key renders the fallback in one language
+        // for everybody, which is the silent half of a missing translation.
+        expect(messages?.[key as keyof typeof messages], `${locale}/${key}`).toBeTruthy();
+      }
+    }
   });
 });

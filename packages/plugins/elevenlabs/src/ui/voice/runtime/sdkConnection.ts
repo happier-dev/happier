@@ -78,6 +78,18 @@ export function createElevenLabsSdkConnection(input: Readonly<{
             case 'message':
               onControl(event.data);
               return;
+            case 'agent_response_correction':
+              // Forwarded in ElevenLabs' own client-event envelope so the leaf
+              // transcript mapper reads the provider wire, not a local shape.
+              onControl({
+                type: 'agent_response_correction',
+                agent_response_correction_event: {
+                  original_agent_response: event.data.original_agent_response,
+                  corrected_agent_response: event.data.corrected_agent_response,
+                  event_id: event.data.event_id,
+                },
+              });
+              return;
             case 'error':
               signalRemoteClose('sdk_error');
               return;

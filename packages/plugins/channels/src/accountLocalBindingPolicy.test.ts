@@ -5,6 +5,7 @@ import {
   readConversationConnectionManagementRows,
   readConversationConnectionUpdateRow,
   readConversationIngressAttentionPage,
+  updateConversationBindingPolicyInAccountCollection,
   type ChannelStateRow,
 } from './accountLocalBindingPolicy.js';
 import {
@@ -17,6 +18,7 @@ import {
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 const CONNECTION_ID = 'connection-frozen-old-selection';
 
 const replacementAuthority = {
@@ -211,7 +213,9 @@ describe('Channels ingress conflict Account projections', () => {
         async query(request: Readonly<{
           index: string;
           prefix?: readonly unknown[];
+          limit?: number;
         }>) {
+          assertChannelsTestCollectionQueryLimit(request.limit);
           queries.push({ index: request.index, prefix: request.prefix });
           if (request.index === CHANNEL_STATE_INDEX_ID.byKind) {
             return { rows: [connection], changeCursor: 1 };
@@ -267,5 +271,331 @@ describe('Channels ingress conflict Account projections', () => {
         connectionId: CONNECTION_ID,
       }],
     });
+  });
+});
+
+describe('updateConversationBindingPolicyInAccountCollection Account-resolvable target', () => {
+  const BINDING_ID = 'binding-account-local-target';
+  const BINDING_CONNECTION_ID = 'connection-account-local-target';
+
+  const sessionTarget = {
+    kind: 'session',
+    sessionId: 'session-1',
+    policy: {
+      deliveryMode: 'repliesOnly',
+      permissionCeiling: 'read-only',
+      approvals: { kind: 'off' },
+      newSession: { kind: 'off' },
+    },
+  } as const;
+
+  function bindingRow(): ChannelStateRow {
+    return {
+      rowId: BINDING_ID,
+      revision: 5,
+      value: {
+        id: BINDING_ID,
+        'record-kind': CHANNEL_STATE_RECORD_KIND.binding,
+        v: 1,
+        'connection-id': BINDING_CONNECTION_ID,
+        'binding-id': BINDING_ID,
+        'created-at': 1_000,
+        'updated-at': 1_000,
+        payload: {
+          endpoint: { kind: 'direct', audience: 'direct', id: 'chat-1', label: 'Example conversation' },
+          target: sessionTarget,
+          allowedPrincipalIds: ['person-1'],
+          allowBotSenders: false,
+          inputMode: 'allAllowedMessages',
+          inboundDebounceMs: 750,
+          linkPreviewPolicy: 'suppress',
+          senderFeedback: 'off',
+          authorityEpoch: 1,
+          enabled: false,
+          deletionState: 'none',
+        },
+      },
+    } as unknown as ChannelStateRow;
+  }
+
+  function ownerConnectionRow(): ChannelStateRow {
+    const connection = createCurrentConversationConnectionFixture({
+      connectionId: BINDING_CONNECTION_ID,
+      authority: { ...replacementAuthority, authorityEpoch: 1 },
+      transport: { kind: 'socket' },
+      overlapSafety: 'safe',
+      replayContinuity: 'none',
+    });
+    return {
+      rowId: BINDING_CONNECTION_ID,
+      revision: 4,
+      value: connection,
+    } as unknown as ChannelStateRow;
+  }
+
+  /** The Account Collection is the only boundary this canonical writer crosses. */
+  function accountCollection() {
+    const rows = new Map<string, ChannelStateRow>([
+      [BINDING_ID, bindingRow()],
+      [BINDING_CONNECTION_ID, ownerConnectionRow()],
+    ]);
+    const batches: unknown[][] = [];
+    return {
+      rows,
+      batches,
+      async get(rowId: string) { return rows.get(rowId) ?? null; },
+      async query(request: Readonly<{ limit?: number }>) {
+        assertChannelsTestCollectionQueryLimit(request.limit);
+        return { rows: [], changeCursor: 1 };
+      },
+      async batch(operations: readonly Readonly<{
+        kind: string;
+        rowId?: string;
+        value?: ChannelStateRow['value'];
+        expectedRevision?: number | 'absent';
+      }>[]) {
+        batches.push([...operations]);
+        for (const operation of operations) {
+          const rowId = operation.kind === 'put'
+            ? (operation.value as unknown as Readonly<{ id: string }>).id
+            : operation.rowId!;
+          if (rows.get(rowId)?.revision !== operation.expectedRevision) {
+            return { status: 'conflict' as const, results: [] };
+          }
+        }
+        const results = operations.flatMap((operation) => {
+          if (operation.kind !== 'put' || operation.value === undefined) return [];
+          const id = (operation.value as unknown as Readonly<{ id: string }>).id;
+          const revision = (rows.get(id)?.revision ?? 0) + 1;
+          rows.set(id, { rowId: id, revision, value: operation.value });
+          return [{ rowId: id, revision, deleted: false as const }];
+        });
+        return { status: 'updated' as const, results };
+      },
+    };
+  }
+
+  it('persists a Session target policy change offline through the one binding transition and CAS owner', async () => {
+    const collection = accountCollection();
+
+    await expect(updateConversationBindingPolicyInAccountCollection({
+      collection: collection as never,
+      bindingId: BINDING_ID,
+      expectedRevision: 5,
+      target: {
+        ...sessionTarget,
+        policy: { ...sessionTarget.policy, deliveryMode: 'mirrorSession' },
+      },
+    })).resolves.toMatchObject({ kind: 'updated', bindingId: BINDING_ID, revision: 6 });
+
+    expect(collection.rows.get(BINDING_ID)?.value).toMatchObject({
+      payload: {
+        target: {
+          kind: 'session',
+          sessionId: 'session-1',
+          policy: { deliveryMode: 'mirrorSession', permissionCeiling: 'read-only' },
+        },
+        // The remaining policy is carried, not reset, by a target-only edit.
+        inputMode: 'allAllowedMessages',
+        inboundDebounceMs: 750,
+      },
+    });
+  });
+
+  it('refuses an Automation target offline because only the Automation owner can verify its template', async () => {
+    const collection = accountCollection();
+
+    await expect(updateConversationBindingPolicyInAccountCollection({
+      collection: collection as never,
+      bindingId: BINDING_ID,
+      expectedRevision: 5,
+      target: {
+        kind: 'automation',
+        automationId: 'automation-1',
+        expectedTemplateVersion: 3,
+        policy: { resultDelivery: 'finalResult' },
+      },
+    })).rejects.toMatchObject({ code: 'channels_binding_update_target_not_account_resolvable' });
+    expect(collection.batches).toHaveLength(0);
+    expect(collection.rows.get(BINDING_ID)?.value).toMatchObject({
+      payload: { target: { kind: 'session' } },
+    });
+  });
+
+  it('persists an owner-enabled approval policy offline, exactly as the online writer does', async () => {
+    const collection = accountCollection();
+
+    await expect(updateConversationBindingPolicyInAccountCollection({
+      collection: collection as never,
+      bindingId: BINDING_ID,
+      expectedRevision: 5,
+      target: {
+        ...sessionTarget,
+        policy: {
+          ...sessionTarget.policy,
+          approvals: { kind: 'enabled', maximumScope: 'session' },
+        },
+      },
+    })).resolves.toMatchObject({ kind: 'updated', bindingId: BINDING_ID, revision: 6 });
+
+    // The persisted binding policy is the only chat-approval control: an
+    // offline Account writer stores exactly the owner's chosen ceiling.
+    expect(collection.rows.get(BINDING_ID)?.value).toMatchObject({
+      payload: {
+        target: {
+          kind: 'session',
+          policy: { approvals: { kind: 'enabled', maximumScope: 'session' } },
+        },
+      },
+    });
+  });
+});
+
+describe('updateConversationBindingPolicyInAccountCollection Account-resolvable revocation', () => {
+  const BINDING_ID = 'binding-account-local-revoke';
+  const BINDING_CONNECTION_ID = 'connection-account-local-revoke';
+
+  /**
+   * A retained binding whose `/new` authority names exactly the sender under
+   * revocation, which is what makes a revocation that only subtracts from the
+   * audience observably wrong rather than merely incomplete.
+   */
+  const sessionTarget = {
+    kind: 'session',
+    sessionId: 'session-1',
+    policy: {
+      deliveryMode: 'repliesOnly',
+      permissionCeiling: 'read-only',
+      approvals: { kind: 'off' },
+      newSession: { kind: 'enabled', principalIds: ['person-2'], recipe: {} },
+    },
+  } as const;
+
+  function bindingRow(): ChannelStateRow {
+    return {
+      rowId: BINDING_ID,
+      revision: 5,
+      value: {
+        id: BINDING_ID,
+        'record-kind': CHANNEL_STATE_RECORD_KIND.binding,
+        v: 1,
+        'connection-id': BINDING_CONNECTION_ID,
+        'binding-id': BINDING_ID,
+        'created-at': 1_000,
+        'updated-at': 1_000,
+        payload: {
+          endpoint: { kind: 'shared', audience: 'shared', id: 'chat-1', label: 'Example conversation' },
+          target: sessionTarget,
+          allowedPrincipalIds: ['person-1', 'person-2'],
+          allowBotSenders: false,
+          inputMode: 'directMentionsOnly',
+          inboundDebounceMs: 750,
+          linkPreviewPolicy: 'suppress',
+          senderFeedback: 'off',
+          authorityEpoch: 1,
+          enabled: true,
+          deletionState: 'none',
+        },
+      },
+    } as unknown as ChannelStateRow;
+  }
+
+  function accountCollection() {
+    const connection = createCurrentConversationConnectionFixture({
+      connectionId: BINDING_CONNECTION_ID,
+      authority: { ...replacementAuthority, authorityEpoch: 1 },
+      transport: { kind: 'socket' },
+      overlapSafety: 'safe',
+      replayContinuity: 'none',
+    });
+    const rows = new Map<string, ChannelStateRow>([
+      [BINDING_ID, bindingRow()],
+      [BINDING_CONNECTION_ID, { rowId: BINDING_CONNECTION_ID, revision: 4, value: connection } as unknown as ChannelStateRow],
+    ]);
+    const batches: unknown[][] = [];
+    return {
+      rows,
+      batches,
+      async get(rowId: string) { return rows.get(rowId) ?? null; },
+      async query(request: Readonly<{ limit?: number }>) {
+        assertChannelsTestCollectionQueryLimit(request.limit);
+        return { rows: [], changeCursor: 1 };
+      },
+      async batch(operations: readonly Readonly<{
+        kind: string;
+        rowId?: string;
+        value?: ChannelStateRow['value'];
+        expectedRevision?: number | 'absent';
+      }>[]) {
+        batches.push([...operations]);
+        for (const operation of operations) {
+          const rowId = operation.kind === 'put'
+            ? (operation.value as unknown as Readonly<{ id: string }>).id
+            : operation.rowId!;
+          if (rows.get(rowId)?.revision !== operation.expectedRevision) {
+            return { status: 'conflict' as const, results: [] };
+          }
+        }
+        const results = operations.flatMap((operation) => {
+          if (operation.kind !== 'put' || operation.value === undefined) return [];
+          const id = (operation.value as unknown as Readonly<{ id: string }>).id;
+          const revision = (rows.get(id)?.revision ?? 0) + 1;
+          rows.set(id, { rowId: id, revision, value: operation.value });
+          return [{ rowId: id, revision, deleted: false as const }];
+        });
+        return { status: 'updated' as const, results };
+      },
+    };
+  }
+
+  it('revokes a retained sender offline and withdraws the authority that named them', async () => {
+    const collection = accountCollection();
+
+    await expect(updateConversationBindingPolicyInAccountCollection({
+      collection: collection as never,
+      bindingId: BINDING_ID,
+      expectedRevision: 5,
+      revokedPrincipalIds: ['person-2'],
+    })).resolves.toMatchObject({ kind: 'updated', bindingId: BINDING_ID, revision: 6 });
+
+    expect(collection.rows.get(BINDING_ID)?.value).toMatchObject({
+      payload: {
+        allowedPrincipalIds: ['person-1'],
+        // Revoking a sender withdraws every authority that named them; leaving
+        // the `/new` allow-list behind would keep a revoked sender able to
+        // start Sessions, and the shared transition owner would refuse the
+        // write outright.
+        target: { policy: { newSession: { kind: 'off' } } },
+        // Membership changed, so in-flight authority is superseded.
+        authorityEpoch: 2,
+      },
+    });
+  });
+
+  it('refuses to revoke the last remaining sender because a binding with no audience cannot persist', async () => {
+    const collection = accountCollection();
+
+    await expect(updateConversationBindingPolicyInAccountCollection({
+      collection: collection as never,
+      bindingId: BINDING_ID,
+      expectedRevision: 5,
+      revokedPrincipalIds: ['person-1', 'person-2'],
+    })).rejects.toMatchObject({ code: 'channels_binding_update_audience_would_be_empty' });
+    expect(collection.batches).toHaveLength(0);
+    expect(collection.rows.get(BINDING_ID)?.value).toMatchObject({
+      payload: { allowedPrincipalIds: ['person-1', 'person-2'] },
+    });
+  });
+
+  it('refuses a sender the binding does not already allow, so revocation can never add one', async () => {
+    const collection = accountCollection();
+
+    await expect(updateConversationBindingPolicyInAccountCollection({
+      collection: collection as never,
+      bindingId: BINDING_ID,
+      expectedRevision: 5,
+      revokedPrincipalIds: ['person-3'],
+    })).rejects.toMatchObject({ code: 'channels_binding_update_principal_not_allowed' });
+    expect(collection.batches).toHaveLength(0);
   });
 });

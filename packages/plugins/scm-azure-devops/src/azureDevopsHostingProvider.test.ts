@@ -78,7 +78,12 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
     // carries a non-enumerable `Symbol.for(...)` brand. Ingest therefore reads the serialized form.
     expect(ingestPluginManifestV2(JSON.parse(JSON.stringify(mod.PLUGIN_MANIFEST))))
       .toMatchObject({ ok: true });
-  });
+    // The wall time here is the on-demand transform of the manifest's whole transitive graph —
+    // every contributed Action's handler and schema — paid inside the test body by the dynamic
+    // import. It is a build cost, not an assertion cost, and it grows with each contributed
+    // Action, so the bound is stated rather than left at a default that turns a slow transform
+    // into a red suite.
+  }, 60_000);
 
   it('registers exactly the manifest-declared local provider id', async () => {
     const [{ activate }, { PLUGIN_MANIFEST }] = await Promise.all([
@@ -93,7 +98,7 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
       .filter(({ family }) => family === 'scmHostingProviders')
       .map(({ localId }) => localId))
       .toEqual(PLUGIN_MANIFEST.contributes.scmHostingProviders.map(({ id }) => id));
-  });
+  }, 60_000);
 
   it('detects current and legacy Azure DevOps remotes with HTTPS URL safety metadata', async () => {
     const mod = await import('./detection/adapter.js').catch(() => null);

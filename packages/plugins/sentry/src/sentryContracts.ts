@@ -153,6 +153,12 @@ export const SENTRY_FAILURE_CODES = Object.freeze({
   notFoundUnverified: 'sentry-not-found-unverified',
   upstreamUnavailable: 'sentry-upstream-unavailable',
   cancelled: 'sentry-cancelled',
+  /**
+   * Sentry accepted the request and did not answer inside this source's own
+   * invocation deadline. It is deliberately not `cancelled`: nobody abandoned
+   * this read, and a reader told "cancelled" has no reason to try again.
+   */
+  deadlineElapsed: 'sentry-deadline-elapsed',
   responseUnparseable: 'sentry-response-unparseable',
   unexpectedStatus: 'sentry-unexpected-status',
   paginationHeaderAbsent: 'sentry-pagination-header-absent',

@@ -17,6 +17,12 @@ const INSTANCE: SentryInvokedInstanceV1 = Object.freeze({
 
 const EVENTS_PATH = '/api/0/organizations/42/issues/1234/events/';
 
+/**
+ * A walk one step past `0:0:0`: the probe still watches it while its wait runs
+ * down, which is what makes the `A → B → A` return below visible at all.
+ */
+const PROBE_AT_FIRST = Object.freeze({ cursor: '0:0:0', stepsSince: 1, interval: 2 });
+
 function respond(
   body: unknown,
   headers: Readonly<Record<string, string>> = {},
@@ -139,13 +145,13 @@ describe('Sentry issue events page', () => {
       instance: INSTANCE,
       entryId: '1234',
       limit: 100,
-      cursor: null,
+      position: null,
       nowMs: 0,
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.rows).toHaveLength(1);
-    expect(result.value.nextPage).toEqual({ kind: 'next', cursor: '0:100:0' });
+    expect(result.value.nextPage).toMatchObject({ kind: 'next', walk: { cursor: '0:100:0' } });
   });
 
   it('reports an ABSENT Link header as a walk that stopped short, not as a finished one', async () => {
@@ -161,7 +167,7 @@ describe('Sentry issue events page', () => {
       instance: INSTANCE,
       entryId: '1234',
       limit: 100,
-      cursor: null,
+      position: null,
       nowMs: 0,
     });
 
@@ -183,7 +189,7 @@ describe('Sentry issue events page', () => {
       instance: INSTANCE,
       entryId: '1234',
       limit: 100,
-      cursor: null,
+      position: null,
       nowMs: 0,
     });
     expect(result.ok).toBe(true);
@@ -202,7 +208,7 @@ describe('Sentry issue events page', () => {
       instance: INSTANCE,
       entryId: '1234',
       limit: 100,
-      cursor: null,
+      position: null,
       nowMs: 0,
     });
     expect(result.ok).toBe(true);
@@ -214,13 +220,74 @@ describe('Sentry issue events page', () => {
     expect(result.value.rows).toEqual([]);
   });
 
+  it('stops short when the next cursor names a position this walk already requested', async () => {
+    // `A → B → A`. A comparison that can only see the cursor THIS request used
+    // never sees it: `A` is not `B`, so the panel keeps being offered another
+    // page and the walk never ends. The saved position the probe still watches
+    // is what makes the alternation visible.
+    const harness = client(respond(
+      [{ eventID: 'e3', title: 'boom', dateCreated: '2026-01-02T00:00:00.000Z' }],
+      { Link: nextLink('0:0:0') },
+    ));
+    const result = await readSentryIssueEventsPage(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      limit: 100,
+      position: { cursor: '0:100:0', probe: PROBE_AT_FIRST },
+      nowMs: 0,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.nextPage).toEqual({
+      kind: 'stoppedShort',
+      reason: 'paginationCursorNotAdvancing',
+    });
+    // A cycling provider is a stop, not a reason to discard what it answered.
+    expect(result.value.rows).toHaveLength(1);
+  });
+
+  it('still catches the one-step repeat against the position that produced the page', async () => {
+    const harness = client(respond([], { Link: nextLink('0:100:0') }));
+    const result = await readSentryIssueEventsPage(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      limit: 100,
+      position: { cursor: '0:100:0', probe: { cursor: '0:100:0', stepsSince: 0, interval: 2 } },
+      nowMs: 0,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.nextPage).toEqual({
+      kind: 'stoppedShort',
+      reason: 'paginationCursorNotAdvancing',
+    });
+  });
+
+  it('follows a cursor this walk has not requested before', async () => {
+    // The guard must not stop a walk that is genuinely advancing: a new position
+    // that is neither the one this page came from nor the one being watched is a
+    // page to read, not a cycle.
+    const harness = client(respond([], { Link: nextLink('0:200:0') }));
+    const result = await readSentryIssueEventsPage(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      limit: 100,
+      position: { cursor: '0:100:0', probe: PROBE_AT_FIRST },
+      nowMs: 0,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.nextPage).toMatchObject({ kind: 'next', walk: { cursor: '0:200:0' } });
+  });
+
   it('sends the cursor it was given and never a provider URL', async () => {
     const harness = client(respond([], {}));
     await readSentryIssueEventsPage(harness.client, {
       instance: INSTANCE,
       entryId: '1234',
       limit: 50,
-      cursor: '100:1:0',
+      position: { cursor: '100:1:0', probe: { cursor: '100:1:0', stepsSince: 0, interval: 2 } },
       nowMs: 0,
     });
     const url = new URL(String(harness.request.mock.calls[0]?.[0]?.url));
@@ -235,7 +302,7 @@ describe('Sentry issue events page', () => {
       instance: INSTANCE,
       entryId: 'not-numeric',
       limit: 100,
-      cursor: null,
+      position: null,
       nowMs: 0,
     });
     expect(result.ok).toBe(false);
@@ -260,13 +327,13 @@ describe('Sentry tag values page', () => {
       entryId: '1234',
       tagKey: 'browser.name',
       limit: 100,
-      cursor: null,
+      position: null,
       nowMs: 0,
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.rows[0]?.value).toBe('Chrome');
-    expect(result.value.nextPage).toEqual({ kind: 'next', cursor: '0:100:0' });
+    expect(result.value.nextPage).toMatchObject({ kind: 'next', walk: { cursor: '0:100:0' } });
   });
 
   it('refuses a tag key it could not address as one path segment', async () => {
@@ -276,7 +343,7 @@ describe('Sentry tag values page', () => {
       entryId: '1234',
       tagKey: '../../projects',
       limit: 100,
-      cursor: null,
+      position: null,
       nowMs: 0,
     });
     expect(result.ok).toBe(false);

@@ -36,6 +36,12 @@ export type RecordedGitlabRequest = Readonly<{
   url: string;
   method: string;
   headers: Readonly<Record<string, string>>;
+  /**
+   * The decoded request document, present exactly when one was sent. A mutation
+   * test that could not read what left the process could not tell a pinned
+   * conditional write from an unpinned one.
+   */
+  body?: string;
   redirect: 'error' | 'follow' | 'manual';
 }>;
 
@@ -86,6 +92,7 @@ export function createStubGitlabTransport(input: Readonly<{
         url: string;
         method?: string;
         headers?: Readonly<Record<string, string>>;
+        body?: Uint8Array;
         redirect: 'error' | 'follow' | 'manual';
       }>,
     ): Promise<Readonly<{
@@ -98,6 +105,9 @@ export function createStubGitlabTransport(input: Readonly<{
         url: request.url,
         method: request.method ?? 'GET',
         headers: Object.freeze({ ...(request.headers ?? {}) }),
+        ...(request.body === undefined
+          ? {}
+          : { body: new TextDecoder().decode(request.body) }),
         redirect: request.redirect,
       });
       requests.push(recorded);

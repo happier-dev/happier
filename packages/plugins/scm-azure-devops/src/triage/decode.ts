@@ -5,6 +5,7 @@ import {
 
 import { isAzureGuid } from './identity.js';
 import type {
+  AzureCompletionOptionsRow,
   AzureConnectionData,
   AzureIdentityRow,
   AzureProjectRow,
@@ -197,9 +198,26 @@ export function decodeAzurePullRequestRow(raw: unknown): AzurePullRequestRow | n
     supportsIterations: readBoolean(record.supportsIterations),
     autoCompleteSetBy: decodeAzureIdentityRow(record.autoCompleteSetBy),
     // Stored completion options can carry `transitionWorkItems: true` set elsewhere, so their
-    // presence is a fact a later completion path must disclose rather than silently inherit.
-    hasStoredCompletionOptions: readRecord(record.completionOptions) !== null,
+    // VALUES are a fact a later completion path must disclose, overwrite explicitly, and compare
+    // against after the write — a `PATCH` Azure silently ignored is otherwise a reported success.
+    completionOptions: decodeCompletionOptions(record.completionOptions),
     url: readAbsoluteUrl(record.url),
+  };
+}
+
+/**
+ * Azure omits a completion option it holds no value for, and `undefined` is not `false`: reporting
+ * an absent `bypassPolicy` as `false` would claim this pull request is policy-gated when nothing
+ * said so.
+ */
+function decodeCompletionOptions(raw: unknown): AzureCompletionOptionsRow | null {
+  const record = readRecord(raw);
+  if (record === null) return null;
+  const flag = (value: unknown): boolean | null => (typeof value === 'boolean' ? value : null);
+  return {
+    deleteSourceBranch: flag(record.deleteSourceBranch),
+    transitionWorkItems: flag(record.transitionWorkItems),
+    bypassPolicy: flag(record.bypassPolicy),
   };
 }
 

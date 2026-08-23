@@ -39,7 +39,6 @@
   },
   "dependencies": {
     "@elevenlabs/client": "1.18.0",
-    "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
     "zod": "4.3.6"
   },

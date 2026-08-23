@@ -14,14 +14,21 @@ export const INTERNAL_CLAUDE_EVENT_TYPES = new Set<string>([
  * Basis: record types observed across the local `~/.claude/projects` corpus
  * (`system`, `result`, `attachment`, `queue-operation`, `last-prompt`,
  * `control_request`, `control_response`, `event`, `permission-mode`, `mode`,
- * `progress`, `file-history-snapshot`) plus `summary`, which the raw JSONL
- * schema already ratifies. Keep this list closed: a Claude release that starts
- * writing conversation content under a new type must fail closed here rather
- * than be skipped silently.
+ * `progress`, `file-history-snapshot`, `agent-setting`, `ai-title`,
+ * `bridge-session`) plus `summary`, which the raw JSONL schema already
+ * ratifies. `agent-setting`, `ai-title`, and `bridge-session` are session
+ * bookkeeping envelopes — an agent setting, the generated session title, and
+ * bridge sequence state — that carry no message body, so a page that advances
+ * past one is complete rather than lossy. Keep this list closed: a Claude
+ * release that starts writing conversation content under a new type must fail
+ * closed here rather than be skipped silently.
  */
 export const CLAUDE_NON_TRANSCRIPT_RECORD_TYPES = new Set<string>([
     ...INTERNAL_CLAUDE_EVENT_TYPES,
+    'agent-setting',
+    'ai-title',
     'attachment',
+    'bridge-session',
     'control_request',
     'control_response',
     'event',

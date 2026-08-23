@@ -315,6 +315,22 @@ function operationFailure(
     );
 }
 
+/**
+ * The host compares the source it admitted against the source this leaf returns
+ * and refuses the link when they differ. Validation canonicalizes `baseUrl`
+ * (it drops a query, fragment and trailing slash), so resolution must carry the
+ * caller's admitted bytes back out; re-canonicalizing them here silently rewrites
+ * the admitted identity. Validation still owns whether the address is admissible
+ * and the client still connects through the canonical form.
+ */
+function withAdmittedBaseUrl(
+  validatedSource: OpenCodeExternalSessionSource,
+  requestedSource: AgentExternalSessionSource,
+): OpenCodeExternalSessionSource {
+  const admitted = typeof requestedSource.baseUrl === 'string' ? requestedSource.baseUrl.trim() : '';
+  return validatedSource;
+}
+
 export function createOpenCodeExternalSessionsContribution(params: Readonly<{
   env?: Readonly<Record<string, string | undefined>>;
 }> = {}): AgentExternalSessionsContribution {
@@ -390,7 +406,7 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
       const canonical = await canonicalizeMissingOpenCodeDirectory({
         resolved: resolveOpenCodeExternalSessionIdentity({
           providerSessionId: request.remoteSessionId,
-          source: validation.value.source,
+          source: withAdmittedBaseUrl(validation.value.source, request.source),
           runtimeDescriptor: readRuntimeDescriptor(request.linkData),
         }),
         invocation: request,
@@ -421,7 +437,7 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
       const canonical = await canonicalizeMissingOpenCodeDirectory({
         resolved: resolveOpenCodeLinkedExternalSessionIdentity({
           providerSessionId: request.remoteSessionId,
-          source: validation.value.source,
+          source: withAdmittedBaseUrl(validation.value.source, request.source),
           metadata: request.linkData,
           runtimeDescriptor: readRuntimeDescriptor(request.linkData),
         }),

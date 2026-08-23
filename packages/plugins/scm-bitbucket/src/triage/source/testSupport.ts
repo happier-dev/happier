@@ -19,16 +19,38 @@ export type StubReply = Readonly<{
   headers?: Readonly<Record<string, string>>;
 }>;
 
-export type StubRequest = Readonly<{ url: string; headers: Readonly<Record<string, string>> }>;
+export type StubRequest = Readonly<{
+  url: string;
+  /** The verb the client actually sent. A read is expected to be a `GET` and a write to say so. */
+  method: string;
+  headers: Readonly<Record<string, string>>;
+  /** The decoded request body, or `undefined` when the client sent none. */
+  body: unknown;
+}>;
+
+function decodeStubBody(raw: unknown): unknown {
+  if (raw === undefined || raw === null) return undefined;
+  const text = raw instanceof Uint8Array ? new TextDecoder().decode(raw) : String(raw);
+  if (text.length === 0) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
 
 export function createHttpStub(
-  route: (url: string) => StubReply | undefined,
+  route: (url: string, request?: Readonly<{ method: string; body: unknown }>) =>
+  StubReply | undefined,
 ): Readonly<{ http: HttpService; requests: StubRequest[] }> {
   const requests: StubRequest[] = [];
   const http = {
     async request(input: Parameters<HttpService['request']>[0]) {
-      requests.push({ url: input.url, headers: { ...input.headers } });
-      const reply = route(input.url) ?? { status: 404, body: { error: { message: 'not routed' } } };
+      const method = input.method ?? 'GET';
+      const body = decodeStubBody((input as { body?: unknown }).body);
+      requests.push({ url: input.url, method, headers: { ...input.headers }, body });
+      const reply = route(input.url, { method, body })
+        ?? { status: 404, body: { error: { message: 'not routed' } } };
       return {
         status: reply.status ?? 200,
         finalUrl: input.url,

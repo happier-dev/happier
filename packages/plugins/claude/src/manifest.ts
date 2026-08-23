@@ -246,6 +246,13 @@ export const CLAUDE_PLUGIN = definePlugin({
           },
         },
         primary: 'sessions',
+        catalog: {
+          // Binds Claude's own CLI to the declared `claude-cli` system tool so
+          // `exec.systemTools.resolve` reaches the canonical Agent CLI launch
+          // resolution. This is the public declaration every Agent uses; the
+          // host projects it through the one catalog-entry hook owner.
+          agentCliSystemTool: { toolId: 'claude-cli' },
+        },
         connectedAccounts: [{
           purpose: 'model_upstream',
           service: 'claude-subscription',

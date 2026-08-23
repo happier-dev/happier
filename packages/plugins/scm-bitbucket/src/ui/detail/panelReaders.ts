@@ -59,7 +59,13 @@ function dispatchFailure(status: string, code: string): TriageSourceFailureV1 {
 
 type ExecuteResult = Readonly<{ status: string; result?: unknown; code?: string }>;
 
-function useLocalRef(input: TriageDetailSurfaceInputV1) {
+/**
+ * The entry the mounted surface is about, as the three fields every source Action addresses it by.
+ *
+ * Exported because the writes address the same entry the reads do. A second derivation beside this
+ * one is how a mutation could end up addressing a different pull request than the panel showing it.
+ */
+export function useBitbucketEntryLocalRef(input: TriageDetailSurfaceInputV1) {
   const { entryRef } = input.observation;
   return useMemo(() => ({
     kindId: entryRef.kindId,
@@ -201,7 +207,7 @@ export function useBitbucketActivity(
     [],
   );
   const { execute } = useExecutePluginAction(action);
-  const localRef = useLocalRef(input);
+  const localRef = useBitbucketEntryLocalRef(input);
   const { instance } = input;
   const routingToken = input.observation.locator.routingToken;
 
@@ -264,7 +270,7 @@ export function useBitbucketBuilds(
     [],
   );
   const { execute } = useExecutePluginAction(action);
-  const localRef = useLocalRef(input);
+  const localRef = useBitbucketEntryLocalRef(input);
   const { instance } = input;
   const routingToken = input.observation.locator.routingToken;
   const [rollup, setRollup] = useState<BitbucketBuildRollupViewV1>({});
@@ -320,7 +326,7 @@ export function useBitbucketComments(
     [],
   );
   const { execute } = useExecutePluginAction(action);
-  const localRef = useLocalRef(input);
+  const localRef = useBitbucketEntryLocalRef(input);
   const { instance } = input;
   const routingToken = input.observation.locator.routingToken;
 

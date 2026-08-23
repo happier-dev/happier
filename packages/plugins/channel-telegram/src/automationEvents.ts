@@ -16,9 +16,21 @@ import type { TelegramBotIdentity, TelegramUpdate } from './telegramBotApi.js';
 /**
  * Telegram Automation Event admission — retained implementation for a WITHHELD
  * declaration. `plugin.ts` declares no Event, so nothing can arm a Telegram
- * chat source and this module admits nothing today; it is still exercised end
- * to end through `pollTelegramObservations`, which calls
- * `admitTelegramAutomationOccurrences` on every observed batch.
+ * chat source and this module admits nothing today.
+ *
+ * It is deliberately NOT called from the live poll. The host builds an
+ * adopted-definition owner only for a manifest-declared automation-eligible
+ * Event, so while this Event is withheld every `automation.event.sources.list`
+ * fails with `automation_event_adopted_definitions_unavailable` — once per
+ * observed batch, on every Machine, forever. The Discord provider already
+ * withdraws its own call sites for the same reason
+ * (`discordGatewaySupervisor.ts`, `discordAutomationEvent.ts`); this module
+ * follows that same canonical treatment rather than adding a second one.
+ *
+ * To resume: re-add the `events` entry to `plugin.ts` using the ids and schemas
+ * exported here, then restore the one call site `pollTelegramObservations`
+ * gives up while the Event is withheld — `admitTelegramAutomationOccurrences`
+ * over the observed batch, before the shared `getUpdates` offset advances.
  *
  * What a future lane must build before the Event is declared: make the
  * occurrence a DURABLE OBLIGATION in the SAME ingress store the canonical

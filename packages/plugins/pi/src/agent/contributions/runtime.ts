@@ -20,7 +20,6 @@ import {
 
 export const PI_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'pi',
-  builtInAcpCatalog: true,
   agentCliSystemTool: {
     toolId: 'pi-cli',
   },

@@ -25,6 +25,20 @@ export const CLAUDE_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
   'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
 ] as const);
 
+const CLAUDE_PROVIDER_OWNED_ENV_IDENTITIES: ReadonlySet<string> = new Set(
+  CLAUDE_PROVIDER_OWNED_ENV_KEYS.map((name) => name.toUpperCase()),
+);
+
+/**
+ * Whether the Provider binding owns this environment name. Environment-variable
+ * identity is case-insensitive on Windows, where a mixed-case settings entry
+ * reaches the launched process as the same variable, so the binding decides by
+ * the same case-folded identity the host uses for unset/overlay keys.
+ */
+export function isClaudeProviderOwnedEnvName(name: string): boolean {
+  return CLAUDE_PROVIDER_OWNED_ENV_IDENTITIES.has(name.toUpperCase());
+}
+
 function prepareClaudeProviderBindingV1(): AgentProviderBindingPrepared {
   return { v: 1, materialization: 'spawnEnv' };
 }

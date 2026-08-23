@@ -1,46 +1,20 @@
-import {
-  buildCodexAgentRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptor,
-  normalizeCodexBackendMode,
-  readCodexAgentRuntimeDescriptorV1,
-} from '../protocol/runtimeDescriptorV1.js';
-export const CODEX_UI_BEHAVIOR_OVERRIDE = {
-  payload: {
-    buildBackendTransportFields: ({
-      providerMode,
-      legacyExperimentalMode,
-      runtimeDescriptorV1,
-      providerSessionId,
-    }: {
-      providerMode?: unknown;
-      legacyExperimentalMode?: boolean;
-      runtimeDescriptorV1?: unknown;
-      providerSessionId?: string;
-    }) => {
-      const runtimeDescriptor = readCodexAgentRuntimeDescriptorV1(runtimeDescriptorV1);
-      const resolvedBackendMode =
-        normalizeCodexBackendMode(runtimeDescriptor?.agent.backendMode)
-        ?? normalizeCodexBackendMode(providerMode)
-        ?? (legacyExperimentalMode === true ? 'acp' : undefined);
-
-      if (!resolvedBackendMode) {
-        return {};
-      }
-
-      if (runtimeDescriptor) {
-        const runtimeBackendMode = normalizeCodexBackendMode(runtimeDescriptor.agent.backendMode);
-        return {
-          ...(runtimeBackendMode ? { codexBackendMode: runtimeBackendMode } : {}),
-          runtimeDescriptorV1: runtimeDescriptor,
-        };
-      }
-
-      return {
-        codexBackendMode: resolvedBackendMode,
-        runtimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
-          backendMode: resolvedBackendMode,
-          providerSessionId,
-        }),
-      };
-    },
-  },
-} as const;
+/**
+ * STAGED REMOVAL — this module has no behavior left.
+ *
+ * Codex's spawn/resume transport projection moved onto the public declarative
+ * path (`behavior.payload.backendTransport` in `./descriptor.ts`), which is the
+ * same seam an externally installed Agent reaches.
+ *
+ * The constant stays only because the checked-in bundled projection
+ * (`apps/ui/sources/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides.ts`)
+ * still imports it, and that file has a single producer: the bundled-plugin
+ * publisher. Its descriptor half is already current with `./descriptor.ts`, so
+ * emptying this override is behavior-preserving.
+ *
+ * Removal condition: delete this file and the `./ui/behavior` export from
+ * `package.json`, then run
+ * `node --experimental-strip-types scripts/migrations/extensions/generateBundledPluginEntries.ts --mode write`.
+ * The generator only emits the override import when `src/ui/uiBehavior.ts`
+ * exists, so that run drops the import.
+ */
+export const CODEX_UI_BEHAVIOR_OVERRIDE = {} as const;

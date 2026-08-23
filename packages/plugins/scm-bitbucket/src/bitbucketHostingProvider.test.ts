@@ -5,6 +5,7 @@ import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@
 import { encodeBitbucketBasicAuthorization } from './auth/basicCredentials.js';
 import { BITBUCKET_TRIAGE_ACTION_IDS } from './triage/source/actions.js';
 import { BITBUCKET_TRIAGE_DETAIL_ACTION_IDS } from './triage/source/detailActions.js';
+import { BITBUCKET_TRIAGE_MUTATION_ACTION_IDS } from './triage/source/mutationActions.js';
 
 type DetectionResult = Readonly<{
   id: string;
@@ -51,7 +52,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
           { kind: 'fixedOrigin', origin: 'https://api.bitbucket.org' },
           { kind: 'scmProviderOrigin', provider: 'bitbucket' },
           { kind: 'connectedAccountOrigin', service: 'bitbucket-account' },
-        ]), methods: ['GET', 'POST'] } }),
+        ]), methods: ['GET', 'POST', 'DELETE'] } }),
         expect.objectContaining({
           id: 'bitbucket-connected-account',
           capability: 'connectedAccounts',
@@ -282,14 +283,17 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
       },
     } as Parameters<typeof mod.activate>[0]);
 
-    // The three source roles PLUS the three source-native detail planes. The
-    // list is exhaustive on purpose: a declared Action with no registered
-    // handler passes conformance and then fails at invocation, and a registered
-    // handler with no declaration is a path the host never admits.
+    // The three source roles, the three source-native detail planes AND the two
+    // pull-request writes. The list is exhaustive on purpose: a declared Action
+    // with no registered handler passes conformance and then fails at
+    // invocation, and a registered handler with no declaration is a path the
+    // host never admits — which for a write would be an external effect
+    // reachable through an owner the manifest never described.
     expect(actionRegistrations.map(({ id }) => id).sort())
       .toEqual([
         ...Object.values(BITBUCKET_TRIAGE_ACTION_IDS),
         ...Object.values(BITBUCKET_TRIAGE_DETAIL_ACTION_IDS),
+        ...Object.values(BITBUCKET_TRIAGE_MUTATION_ACTION_IDS),
       ].sort());
 
     expect(registrations).toHaveLength(1);
@@ -459,6 +463,12 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
       getRepository: expect.any(Function),
     });
   });
+
+  // Write-declaration conformance — surfaces, danger level, confirmation, grants and the granted
+  // verb set — is owned by `triage/source/mutationActions.test.ts`, colocated with the writes it
+  // describes. A second copy here had already DIVERGED from it: this one pinned the `plugin`
+  // reachability surface and that one did not, so the weaker copy was the one a reader
+  // strengthening the writes would have found. One owner, so there is no weaker copy to find.
 
   it('encodes Unicode Bitbucket credentials without the retired SCM materializer', () => {
     expect(decodeBasicAuthorization(encodeBitbucketBasicAuthorization({

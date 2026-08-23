@@ -202,14 +202,6 @@ describe('Channels collection declarations', () => {
         ],
       },
       {
-        id: 'by-connection-binding',
-        fields: [
-          { field: 'connection-id', direction: 'asc' },
-          { field: 'binding-id', direction: 'asc' },
-          { field: 'id', direction: 'asc' },
-        ],
-      },
-      {
         id: 'by-connection-binding-v2',
         fields: [
           { field: 'connection-id', direction: 'asc' },
@@ -426,18 +418,46 @@ describe('Channels collection declarations', () => {
     )?.properties?.target;
 
     const frozenTarget = ingressTarget?.anyOf?.find((branch) => branch.oneOf !== undefined);
+    // `additionalProperties: false` means the declared property set is the
+    // writer's contract: a frozen field the ingress owner writes but does not
+    // declare here is rejected by the real Account Collection, which an
+    // in-memory harness cannot observe. Pin the names, not just the required
+    // subset.
     expect(frozenTarget?.oneOf?.map((branch) => ({
       kind: branch.properties?.kind?.const,
+      properties: Object.keys(branch.properties ?? {}),
       required: branch.required,
       additionalProperties: branch.additionalProperties,
     }))).toEqual([
       {
         kind: 'session',
-        required: ['kind', 'sessionId', 'idempotencyKey', 'requestedPermissionCeiling'],
+        properties: [
+          'kind',
+          'sessionId',
+          'idempotencyKey',
+          'requestedPermissionCeiling',
+          'remoteApprovalMaxScope',
+          'approval',
+          'newSession',
+        ],
+        required: [
+          'kind',
+          'sessionId',
+          'idempotencyKey',
+          'requestedPermissionCeiling',
+          'remoteApprovalMaxScope',
+        ],
         additionalProperties: false,
       },
       {
         kind: 'automation',
+        properties: [
+          'kind',
+          'automationId',
+          'templateVersion',
+          'occurrenceKey',
+          'resultDelivery',
+        ],
         required: ['kind', 'automationId', 'templateVersion', 'occurrenceKey', 'resultDelivery'],
         additionalProperties: false,
       },

@@ -1,5 +1,4 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import type {
   TriageConfiguredSourceInstanceV1,
   TriageSourceEntryLocalRefV1,
@@ -29,13 +28,10 @@ import {
   type AzureDetailReadDependenciesV1,
 } from './detail/reads.js';
 import { createAzureSourceFailure, projectAzureSourceFailure } from './failureProjection.js';
+import { boundAzureInvocation, toAzureTransport } from './invocation.js';
 import { parseAzureEntryLocalRef, type AzureEntryAddress } from './localRef.js';
 import { authorizeClient, readPullRequestScope } from './operations.js';
-import type {
-  AzureDevOpsApiClient,
-  AzureDevOpsHttpRequest,
-  AzureDevOpsHttpResponse,
-} from './types.js';
+import type { AzureDevOpsApiClient } from './types.js';
 
 /**
  * The five bound source-native Azure DevOps detail operations.
@@ -63,8 +59,6 @@ export const AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS = Object.freeze({
   readThreads: 'triage-read-threads',
 });
 
-const TEXT_DECODER = new TextDecoder('utf-8', { fatal: false });
-
 /**
  * How long one mounted detail read may take before this source stops waiting.
  *
@@ -82,54 +76,6 @@ const TEXT_DECODER = new TextDecoder('utf-8', { fatal: false });
  * long as the number here.
  */
 export const AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS = 20_000;
-
-/**
- * The caller's signal, additionally bounded by this source's own deadline.
- *
- * The deadline aborts with a `TimeoutError` so the failure owner can tell it
- * apart from a caller cancellation (`failures.ts`); `AbortSignal.any` carries
- * whichever reason fired first through to every provider boundary below.
- *
- * The timer is dropped as soon as the caller's own signal aborts — the common
- * exit, since a detail read is cancelled with its mount — and is unreferenced so
- * a read nobody is waiting for cannot hold the daemon open.
- */
-function boundDetailRead(callerSignal: AbortSignal, deadlineMs: number): AbortSignal {
-  const deadline = new AbortController();
-  const timer = setTimeout(() => {
-    deadline.abort(new DOMException(
-      'Azure DevOps did not answer this detail read within its deadline.',
-      'TimeoutError',
-    ));
-  }, deadlineMs);
-  (timer as unknown as Readonly<{ unref?: () => void }>).unref?.();
-  callerSignal.addEventListener('abort', () => { clearTimeout(timer); }, { once: true });
-  return AbortSignal.any([callerSignal, deadline.signal]);
-}
-
-/**
- * Adapt the host HTTP service to this source's one transport seam.
- *
- * `redirect: 'error'` is deliberate: Azure answers an unusable credential with a
- * redirect to a sign-in host, and a followed redirect would deliver that page's
- * HTML as if it were an API response.
- */
-function toTransport(http: HttpService, signal: AbortSignal) {
-  return async (request: AzureDevOpsHttpRequest): Promise<AzureDevOpsHttpResponse> => {
-    const response = await http.request({
-      url: request.url,
-      method: request.method,
-      headers: request.headers,
-      ...(request.body === undefined ? {} : { body: new TextEncoder().encode(request.body) }),
-      redirect: 'error',
-    }, { signal });
-    return {
-      status: response.status,
-      headers: response.headers,
-      bodyText: TEXT_DECODER.decode(response.body),
-    };
-  };
-}
 
 function invalidInput(): TriageSourceFailureV1 {
   return createAzureSourceFailure({
@@ -208,12 +154,12 @@ async function admitAzureDetailInvocation(
   // boundary so account materialization is inside it too: a connection that
   // hangs while the credential is being materialized strands the panel exactly
   // as a hanging read does.
-  const signal = boundDetailRead(context.signal, AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS);
+  const signal = boundAzureInvocation(context.signal, AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS);
 
   const authorized = await authorizeClient({
     services: {
       connectedAccounts: context.services.connectedAccounts,
-      transport: toTransport(context.services.http, signal),
+      transport: toAzureTransport(context.services.http, signal),
       now: () => Date.now(),
     },
     instance: request.instance,

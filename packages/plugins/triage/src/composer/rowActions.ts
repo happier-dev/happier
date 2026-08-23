@@ -13,83 +13,9 @@ import type { TriagePickerRowV1 } from './pickerModel.js';
 
 export type TriageRowActionIdV1 = 'attachment' | 'viewDetails';
 
-export type TriageRowActionLayoutInputV1 = Readonly<{
-    /** Inline space the row has, after its own padding. */
-    availableWidth: number;
-    /** Already-scaled measured widths of the two action labels, in logical order. */
-    actionWidths: readonly [number, number];
-    /** Inline space the title/context must retain before an action may share its line. */
-    titleMinimumWidth: number;
-    /**
-     * The host-resolved minimum interactive target size — 44 pt on iOS, 48 dp on
-     * Android. It is a public platform contract, not a visual preference, so it
-     * is the floor of both target dimensions rather than a nice-to-have.
-     */
-    minimumInteractiveTargetSize: number;
-    gap: number;
-    direction: 'ltr' | 'rtl';
-}>;
-
-export type TriageRowActionPlacementV1 = Readonly<{
-    actionId: TriageRowActionIdV1;
-    /** Logical/keyboard/screen-reader position. Never mirrored. */
-    order: 0 | 1;
-    width: number;
-    height: number;
-}>;
-
-export type TriageRowActionLayoutV1 = Readonly<{
-    /**
-     * `inline` keeps both actions on the title's trailing line, `wrapped` moves
-     * them to their own line beneath it, and `stacked` gives each its own line
-     * when one line cannot hold both.
-     */
-    arrangement: 'inline' | 'wrapped' | 'stacked';
-    /** Where the action line hangs physically; the only thing RTL mirrors. */
-    physicalAlignment: 'left' | 'right';
-    actions: readonly [TriageRowActionPlacementV1, TriageRowActionPlacementV1];
-    titleWidth: number;
-}>;
-
 export type TriageRowActionDescriptorV1 =
     | Readonly<{ actionId: 'attachment'; intent: 'attach' | 'remove' | null; enabled: boolean }>
     | Readonly<{ actionId: 'viewDetails'; intent: 'open' | null; enabled: boolean }>;
-
-export function resolveTriageRowActionLayout(
-    input: TriageRowActionLayoutInputV1,
-): TriageRowActionLayoutV1 {
-    const { availableWidth, gap, minimumInteractiveTargetSize: floor } = input;
-    const measured = [
-        Math.max(input.actionWidths[0], floor),
-        Math.max(input.actionWidths[1], floor),
-    ] as const;
-    const actionsLineWidth = measured[0] + gap + measured[1];
-
-    const fitsBesideTitle = input.titleMinimumWidth + gap + actionsLineWidth <= availableWidth;
-    const fitsOnOneLine = actionsLineWidth <= availableWidth;
-
-    const arrangement: TriageRowActionLayoutV1['arrangement'] = fitsBesideTitle
-        ? 'inline'
-        : fitsOnOneLine ? 'wrapped' : 'stacked';
-
-    // A stacked action owns its whole line; anything narrower than the platform
-    // floor is raised to it in both dimensions.
-    const widths = arrangement === 'stacked'
-        ? [Math.max(availableWidth, floor), Math.max(availableWidth, floor)] as const
-        : measured;
-
-    return {
-        arrangement,
-        physicalAlignment: input.direction === 'rtl' ? 'left' : 'right',
-        actions: [
-            { actionId: 'attachment', order: 0, width: widths[0], height: floor },
-            { actionId: 'viewDetails', order: 1, width: widths[1], height: floor },
-        ],
-        // The title has first claim: inline it keeps everything the actions do
-        // not need, and otherwise it keeps the whole row rather than shrinking.
-        titleWidth: arrangement === 'inline' ? availableWidth - gap - actionsLineWidth : availableWidth,
-    };
-}
 
 /**
  * What each control commits, and whether it can run at all.

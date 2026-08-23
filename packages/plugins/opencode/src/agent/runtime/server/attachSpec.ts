@@ -28,9 +28,14 @@ export const OPENCODE_SERVER_BASIC_USERNAME = 'opencode';
  * is recorded the host resolves nothing and the attach is unauthenticated,
  * which is the pre-existing behavior for an unsecured server.
  *
- * `baseUrl` is whatever address the user declared — any host, `http:` or
- * `https:`. Only the loopback endpoints Happier allocates for servers it spawns
- * itself are pinned to this machine.
+ * `baseUrl` is the address the user declared, already admitted by the shared
+ * managed-service endpoint policy (`readManagedServiceEndpointUrl` with
+ * `userDeclaredAttach`, which the managed-services owner re-applies before it
+ * dials): `https:` reaches any host, plain `http:` stays on the same loopback
+ * names as a server Happier spawns itself, and a URL carrying embedded
+ * credentials is refused outright so the secret never rides the address into a
+ * service id, a snapshot or a log. That policy has ONE owner; this builder does
+ * not restate it.
  */
 export function buildOpenCodeManagedServerAttachSpec(params: Readonly<{
   id: string;

@@ -318,14 +318,6 @@ describe('Channels core manifest', () => {
           ],
         },
         {
-          id: CHANNEL_STATE_INDEX_ID.byConnectionBinding,
-          fields: [
-            { field: CHANNEL_STATE_FIELD.connectionId, direction: 'asc' },
-            { field: CHANNEL_STATE_FIELD.bindingId, direction: 'asc' },
-            { field: CHANNEL_STATE_FIELD.id, direction: 'asc' },
-          ],
-        },
-        {
           id: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
           fields: [
             { field: CHANNEL_STATE_FIELD.connectionId, direction: 'asc' },
@@ -513,6 +505,17 @@ describe('Channels core manifest', () => {
         placementBindings: ['primary'],
         dangerLevel: 'safe',
         execution: { target: 'daemon' },
+      },
+      {
+        id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionRetest,
+        ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionRetest,
+        title: 'Retest conversation connection',
+        scopes: ['global'],
+        surfaces: ['cli', 'ui'],
+        placementBindings: ['secondary'],
+        dangerLevel: 'safe',
+        execution: { target: 'daemon' },
+        hostAccess: ['account-storage'],
       },
       {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate,
@@ -1162,6 +1165,7 @@ describe('Channels core manifest', () => {
           sessionId: 'session-1',
           idempotencyKey: `channels:input:v1:${'C'.repeat(43)}`,
           requestedPermissionCeiling: 'default',
+          remoteApprovalMaxScope: 'off',
         },
         censusId: 'D'.repeat(43),
         sourceAuthority: {
@@ -1278,6 +1282,49 @@ describe('Channels core manifest', () => {
       'session-rotation',
     ]);
     expect(isValidPluginJsonSchemaValue(validate, ingress)).toBe(true);
+    // The frozen chat-approval command and its owner ceiling ride the same
+    // closed Session-target branch, so the real Account Collection accepts a
+    // mediating obligation and rejects one whose ceiling is missing or unknown.
+    expect(isValidPluginJsonSchemaValue(validate, {
+      ...ingress,
+      payload: {
+        ...ingress.payload,
+        target: {
+          ...ingress.payload.target,
+          remoteApprovalMaxScope: 'session',
+          approval: { requestId: 'permission-request-1', decision: 'allow', scope: 'session' },
+        },
+      },
+    })).toBe(true);
+    expect(isValidPluginJsonSchemaValue(validate, {
+      ...ingress,
+      payload: {
+        ...ingress.payload,
+        target: {
+          kind: 'session',
+          sessionId: 'session-1',
+          idempotencyKey: `channels:input:v1:${'C'.repeat(43)}`,
+          requestedPermissionCeiling: 'default',
+        },
+      },
+    })).toBe(false);
+    expect(isValidPluginJsonSchemaValue(validate, {
+      ...ingress,
+      payload: {
+        ...ingress.payload,
+        target: { ...ingress.payload.target, remoteApprovalMaxScope: 'always' },
+      },
+    })).toBe(false);
+    expect(isValidPluginJsonSchemaValue(validate, {
+      ...ingress,
+      payload: {
+        ...ingress.payload,
+        target: {
+          ...ingress.payload.target,
+          approval: { requestId: 'permission-request-1', decision: 'allow' },
+        },
+      },
+    })).toBe(false);
     expect(isValidPluginJsonSchemaValue(validate, ingressCensus)).toBe(true);
     expect(isValidPluginJsonSchemaValue(validate, {
       ...ingressCensus,

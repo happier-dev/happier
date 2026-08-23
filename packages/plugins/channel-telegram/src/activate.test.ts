@@ -158,10 +158,14 @@ describe('Telegram Channel plugin activation', () => {
       expect(setup?.resultSchema).toEqual(
         ConversationProvidersContributionProtocolV1.operations.setup.declaration.resultSchema.jsonSchema,
       );
+      // The declared document carries the JSON Schema dialect once, at its
+      // root; the composed account-ref subschema contributes only its shape.
+      const { $schema: _accountRefDialect, ...credentialRefSchema } = QualifiedConnectedAccountRefJsonSchema;
       expect(setup?.inputSchema).toEqual({
+        $schema: 'http://json-schema.org/draft-07/schema#',
         type: 'object',
         properties: {
-          credentialRef: QualifiedConnectedAccountRefJsonSchema,
+          credentialRef: credentialRefSchema,
         },
         required: ['credentialRef'],
         additionalProperties: false,
@@ -207,9 +211,10 @@ describe('Telegram Channel plugin activation', () => {
       );
       expect(setupRemediation).toMatchObject({
         inputSchema: {
+          $schema: 'http://json-schema.org/draft-07/schema#',
           type: 'object',
           properties: {
-            credentialRef: QualifiedConnectedAccountRefJsonSchema,
+            credentialRef: credentialRefSchema,
           },
           required: ['credentialRef'],
           additionalProperties: false,
@@ -317,6 +322,10 @@ describe('Telegram Channel plugin activation', () => {
         overlapSafety: 'providerExclusive',
         replayContinuity: 'checkpointed',
         outboundTextLimit: { maximum: 4096, unit: 'unicodeCodePoints' },
+        // This bot has group privacy enabled, so Telegram withholds ordinary
+        // group and supergroup messages. Setup carries that authenticated
+        // truth so no binding can promise `allAllowedMessages` there.
+        sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
         pairingDeepLinkTemplate: 'https://t.me/HappierBot?start={{token}}',
       });
       expect(connectedAccounts.materialize).toHaveBeenCalledWith(

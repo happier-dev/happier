@@ -166,7 +166,12 @@ function hasPolicyPrincipalOutsideAllowlist(
     || (newSession?.some((principalId) => !allowed.has(principalId)) ?? false);
 }
 
-/** Shared persisted/mutation-policy predicate for the feature-local C5 persistence gate. */
+/**
+ * The one predicate for "this binding's owner enabled chat approval". The
+ * persisted policy is the sole approval control, so both the outward
+ * permission-wait eligibility reader and the inbound command policy answer
+ * this question here rather than re-deriving it.
+ */
 export function hasConversationApprovalPolicyEnabled(
   target: ConversationBindingTargetV1 | ConversationBindingTargetMutationV1,
 ): boolean {
@@ -264,4 +269,78 @@ export function transitionConversationBinding(input: Readonly<{
     return { kind: 'unchanged', binding: current };
   }
   return { kind: 'updated', binding: next, authorityChanged, policyClamped };
+}
+
+export type ConversationBindingPrincipalRevocationV1 =
+  | Readonly<{
+    kind: 'revoked';
+    allowedPrincipalIds: readonly string[];
+    target: ConversationBindingTargetV1;
+  }>
+  | Readonly<{
+    kind: 'rejected';
+    code: 'principalNotAllowed' | 'audienceWouldBeEmpty';
+  }>;
+
+/**
+ * Narrows a Session policy allow-list that named revoked senders.
+ *
+ * An enabled arm with no `principalIds` already means "every allowed sender",
+ * so the audience subtraction alone narrows it. An arm that named senders is
+ * turned off rather than left with an empty or omitted list: an empty list is
+ * not a persistable allow-list, and omitting it would silently widen the
+ * authority to everyone still allowed.
+ */
+function withoutRevokedPolicyPrincipals<TPolicy extends Readonly<{ kind: 'off' }> | Readonly<{ kind: 'enabled'; principalIds?: readonly string[] }>>(
+  policy: TPolicy,
+  revoked: ReadonlySet<string>,
+): TPolicy | Readonly<{ kind: 'off' }> {
+  if (policy.kind !== 'enabled' || policy.principalIds === undefined) return policy;
+  const retained = policy.principalIds.filter((principalId) => !revoked.has(principalId));
+  if (retained.length === policy.principalIds.length) return policy;
+  if (retained.length === 0) return { kind: 'off' };
+  return { ...policy, principalIds: retained };
+}
+
+/**
+ * Projects the requested audience and target of a present-user revocation.
+ *
+ * Revocation is deliberately subtraction-only: it is decidable from the
+ * retained binding alone, which is what lets a cold-offline Account run it,
+ * whereas admitting a sender requires the provider resolver to prove they
+ * exist on the endpoint. It lives with the allow-list invariant it upholds so
+ * a caller cannot revoke an audience member while leaving the Session policy
+ * that named them — the state {@link transitionConversationBinding} refuses.
+ */
+export function revokeConversationBindingPrincipals(input: Readonly<{
+  allowedPrincipalIds: readonly string[];
+  target: ConversationBindingTargetV1;
+  revokedPrincipalIds: readonly string[];
+}>): ConversationBindingPrincipalRevocationV1 {
+  const allowed = new Set(input.allowedPrincipalIds);
+  if (input.revokedPrincipalIds.some((principalId) => !allowed.has(principalId))) {
+    return { kind: 'rejected', code: 'principalNotAllowed' };
+  }
+  const revoked = new Set(input.revokedPrincipalIds);
+  const allowedPrincipalIds = input.allowedPrincipalIds.filter(
+    (principalId) => !revoked.has(principalId),
+  );
+  if (allowedPrincipalIds.length === 0) {
+    return { kind: 'rejected', code: 'audienceWouldBeEmpty' };
+  }
+  if (input.target.kind !== 'session') {
+    return { kind: 'revoked', allowedPrincipalIds, target: input.target };
+  }
+  return {
+    kind: 'revoked',
+    allowedPrincipalIds,
+    target: {
+      ...input.target,
+      policy: {
+        ...input.target.policy,
+        approvals: withoutRevokedPolicyPrincipals(input.target.policy.approvals, revoked),
+        newSession: withoutRevokedPolicyPrincipals(input.target.policy.newSession, revoked),
+      },
+    },
+  };
 }

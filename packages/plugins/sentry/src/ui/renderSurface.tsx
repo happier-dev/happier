@@ -708,17 +708,33 @@ function OverviewPanel({
  * The sentence a walk owes its reader when it stopped without finishing.
  *
  * Sentry advertises its next page in a `Link` header. When that header is absent,
- * carries a cursor this build will not follow, or repeats the cursor just
- * requested, the walk ends WITHOUT reaching the end of the collection — and
- * saying nothing would present a truncated list as a complete one.
+ * carries a cursor this build will not follow, or names a position this walk has
+ * already requested, the walk ends WITHOUT reaching the end of the collection —
+ * and saying nothing would present a truncated list as a complete one.
+ *
+ * The fourth reason is this side's own: the provider's cursor is intact and the
+ * walk is open, but the position itself is wider than the bounded page token can
+ * carry. Blaming Sentry for that would be a different and false claim, so it gets
+ * its own sentence. It says the POSITION is too long rather than that the walk
+ * grew too long, because the walk's own cycle evidence is a fixed two cursors
+ * (`api/sentryCursorCycle.ts`) and no amount of paging can widen it — the
+ * sentence that said otherwise described a ceiling this build no longer has.
  */
 function incompleteDescription(
   incomplete: SentryDetailIncompleteReasonV1 | null,
-): string | null {
-  return incomplete === null
-    ? null
-    : 'Sentry offered the next page in a form this build will not follow, so this list'
-      + ' stops here.';
+): Readonly<{ key: string; fallback: string }> | null {
+  if (incomplete === null) return null;
+  return incomplete === 'continuationUnavailable'
+    ? {
+      key: 'plugins.sentry.ui.walkStoppedShort.continuation',
+      fallback: 'This list stops here: Sentry’s next page position is longer than this'
+        + ' build can carry forward.',
+    }
+    : {
+      key: 'plugins.sentry.ui.walkStoppedShort',
+      fallback: 'Sentry offered the next page in a form this build will not follow, so this'
+        + ' list stops here.',
+    };
 }
 
 
@@ -731,12 +747,13 @@ function IncompleteWalkNotice({
   if (description === null) return null;
   return (
     <Text variant="caption" tone="neutral">
-      {text('plugins.sentry.ui.walkStoppedShort', description)}
+      {text(description.key, description.fallback)}
     </Text>
   );
 }
 
 /** The one sentence this list owes its reader, every time it is shown. */
+const RETENTION_DISCLOSURE_KEY = 'plugins.sentry.ui.retentionDisclosure';
 const RETENTION_DISCLOSURE
   = 'These are the events Sentry retained in the queried window, not every occurrence.';
 
@@ -908,7 +925,12 @@ function OccurrencesPanel({
       keyForItem={(row) => row.eventId}
       header={(
         <Stack gap="small">
-          <Text variant="caption" tone="neutral">{RETENTION_DISCLOSURE}</Text>
+          <Text
+            variant="caption"
+            tone="neutral"
+            valueKey={RETENTION_DISCLOSURE_KEY}
+            fallback={RETENTION_DISCLOSURE}
+          />
           {state.failure === null
             ? null
             : (
@@ -930,6 +952,7 @@ function OccurrencesPanel({
           title="No retained events"
           titleKey="plugins.sentry.ui.noEvents"
           description={RETENTION_DISCLOSURE}
+          descriptionKey={RETENTION_DISCLOSURE_KEY}
         />
       )}
       footer={<OccurrencesFooter controller={controller} />}
@@ -1264,6 +1287,7 @@ function SentryDetailBody({
   signal,
 }: Readonly<{ input: TriageDetailSurfaceInputV1; signal: AbortSignal }>): React.ReactElement {
   const { locale } = useSurfaceContext();
+  const text = usePluginTranslation();
   const [selected, setSelected] = React.useState<SentryDetailTabIdV1>(
     SENTRY_DEFAULT_DETAIL_TAB_V1,
   );
@@ -1329,13 +1353,17 @@ function SentryDetailBody({
           const declared = visible.find((candidate) => candidate.id === next);
           if (declared !== undefined) setSelected(declared.id);
         }}
-        ariaLabel="Sentry issue detail sections"
+        // The strip's own name, and each tab's, reach the shared primitive as plain
+        // strings — it takes no key — so this body resolves them itself. An unresolved
+        // one would name the sections in English on ten of the eleven locales this
+        // plugin ships, and a screen reader is where that is least recoverable.
+        ariaLabel={text('plugins.sentry.ui.tabsLabel', 'Sentry issue detail sections')}
       >
         {visible.map((declaration) => (
           <Tabs.Item
             key={declaration.id}
             value={declaration.id}
-            title={declaration.title}
+            title={text(declaration.titleKey, declaration.title)}
             // Stated, never inherited: the shared primitive would otherwise discard a panel
             // this source means to keep, or keep one it means to discard.
             retention={declaration.retention}

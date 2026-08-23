@@ -23,6 +23,7 @@ import type {
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
+import { boundSentryInvocation } from '../api/sentryInvocationDeadline.js';
 import {
   SENTRY_CLOUD_REGION_ORIGINS,
   SENTRY_FAILURE_CODES,
@@ -62,6 +63,19 @@ export const SENTRY_TOKEN_CREDENTIAL_KEY = 'token';
 export const SENTRY_CONFIRMED_ORIGIN_CREDENTIAL_KEY = 'confirmed-origin';
 /** `[SCHEMA]` the documented maximum-bounded page parameter of this listing. */
 const SENTRY_CONFIRMATION_PATH = '/api/0/organizations/?per_page=1';
+/**
+ * How long a connect, refresh or health confirmation may take before this
+ * runtime stops waiting.
+ *
+ * The host supplies a cancellation signal, not a deadline: it ends this work
+ * when the person walks away, and never because Sentry went quiet. A mistyped
+ * self-hosted origin that resolves and accepts a connection but never answers
+ * therefore leaves the connect dialog spinning with nothing to act on, which is
+ * exactly the case the field exists to catch. It is shorter than a mounted
+ * detail read's bound because the whole invocation is one small `GET` a person
+ * is watching.
+ */
+export const SENTRY_ACCOUNT_CONFIRMATION_DEADLINE_MS = 15_000;
 const EMPTY_HTTP_HEADERS: Readonly<Record<string, string>> = Object.freeze({});
 
 type SentryReadContext = Parameters<PluginConnectedAccountRuntime['status']>[0];
@@ -149,7 +163,11 @@ async function confirmSentryIdentity(
   context: Pick<PluginConnectedAccountAuthenticationContext, 'services' | 'signal'>,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<SentryConfirmation> {
-  const signal = options?.signal ?? context.signal;
+  const callerSignal = options?.signal ?? context.signal;
+  // One bound for the whole confirmation, so a deployment that accepts the
+  // connection and then goes silent settles as an answer rather than as no
+  // answer at all.
+  const signal = boundSentryInvocation(callerSignal, SENTRY_ACCOUNT_CONFIRMATION_DEADLINE_MS);
   let response: Awaited<ReturnType<typeof context.services.http.request>>;
   try {
     response = await context.services.http.request({
@@ -159,7 +177,11 @@ async function confirmSentryIdentity(
       redirect: 'error',
     }, { signal });
   } catch (error) {
-    if (signal.aborted) throw error;
+    // Only the CALLER abandoning this work is a cancellation to propagate. Our
+    // own deadline elapsing aborts a signal the caller does not hold, so it
+    // falls through to the stated answer below rather than being rethrown as if
+    // the person had walked away.
+    if (callerSignal.aborted) throw error;
     return {
       status: 'unavailable',
       diagnostic: diagnostic(

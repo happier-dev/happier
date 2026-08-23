@@ -35,6 +35,7 @@ func TestPinnedSDKMixedServingUsesFinalLeaseAfterExecutorShaping(t *testing.T) {
 			testAuthEntry("claude", ProviderClaude, "anthropic-upstream"),
 		},
 		Protocols: []ProviderProtocol{
+			ProtocolOpenAIChat,
 			ProtocolOpenAIResponses,
 			ProtocolAnthropic,
 		},
@@ -43,6 +44,7 @@ func TestPinnedSDKMixedServingUsesFinalLeaseAfterExecutorShaping(t *testing.T) {
 	broker := &sequenceBroker{leases: []OAuthBearerLease{
 		validLease("codex-current", map[string]string{"Chatgpt-Account-Id": "account-current"}),
 		validLease("claude-current", nil),
+		validLease("codex-chat-current", map[string]string{"Chatgpt-Account-Id": "account-chat-current"}),
 	}}
 	upstream := &protocolFixtureRoundTripper{}
 	gateway, err := newGatewayForConformance(cfg, testRuntimeIdentity(), broker, upstream, func(auth *coreauth.Auth) {
@@ -59,14 +61,15 @@ func TestPinnedSDKMixedServingUsesFinalLeaseAfterExecutorShaping(t *testing.T) {
 	if healthIdentity.ContractVersion != WrapperContractVersion || healthIdentity.SDKVersion != PinnedSDKVersion {
 		t.Fatalf("health identity versions = %#v", healthIdentity)
 	}
-	if len(healthIdentity.Protocols) != 2 ||
-		healthIdentity.Protocols[0] != ProtocolOpenAIResponses ||
-		healthIdentity.Protocols[1] != ProtocolAnthropic {
+	if len(healthIdentity.Protocols) != 3 ||
+		healthIdentity.Protocols[0] != ProtocolOpenAIChat ||
+		healthIdentity.Protocols[1] != ProtocolOpenAIResponses ||
+		healthIdentity.Protocols[2] != ProtocolAnthropic {
 		t.Fatalf("health identity protocols = %#v", healthIdentity.Protocols)
 	}
 	if healthIdentity.WrapperBuildVersion != testRuntimeIdentity().WrapperBuildVersion ||
 		!healthIdentity.ModelListEnabled ||
-		len(healthIdentity.Protocols) != 2 ||
+		len(healthIdentity.Protocols) != 3 ||
 		len(healthIdentity.Purposes) != 2 {
 		t.Fatalf("managed health identity = %#v", healthIdentity)
 	}
@@ -103,9 +106,22 @@ func TestPinnedSDKMixedServingUsesFinalLeaseAfterExecutorShaping(t *testing.T) {
 	}
 	_ = claudeResponse.Body.Close()
 
+	// OpenAI Chat is a distinct downstream protocol served by the same Codex executor:
+	// the wrapper accepts a chat-completions request, shapes it onto the Codex Responses
+	// upstream, and answers in chat-completions form. Without this leg the harness proves
+	// the contract only for the Responses and Anthropic surfaces.
+	chatResponse := postJSON(t, cfg, "/v1/chat/completions", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}]}`)
+	if chatResponse.StatusCode != http.StatusOK {
+		t.Fatalf("OpenAI Chat downstream status = %d, body=%s", chatResponse.StatusCode, readResponse(t, chatResponse))
+	}
+	chatBody := readResponse(t, chatResponse)
+	if !strings.Contains(chatBody, `"object":"chat.completion"`) || !strings.Contains(chatBody, `"choices"`) {
+		t.Fatalf("OpenAI Chat downstream body did not keep the chat-completions protocol: %s", chatBody)
+	}
+
 	requests := upstream.requests()
-	if len(requests) != 2 {
-		t.Fatalf("upstream requests = %d, want 2", len(requests))
+	if len(requests) != 3 {
+		t.Fatalf("upstream requests = %d, want 3", len(requests))
 	}
 	if got := requests[0].Header.Get("Authorization"); got != "Bearer codex-current" {
 		t.Fatalf("Codex final Authorization = %q", got)
@@ -130,6 +146,18 @@ func TestPinnedSDKMixedServingUsesFinalLeaseAfterExecutorShaping(t *testing.T) {
 	}
 	if got := requests[1].Header.Get("Chatgpt-Account-Id"); got != "" {
 		t.Fatalf("Claude inherited stale Codex account identity = %q", got)
+	}
+	if got := requests[2].URL.String(); got != "https://chatgpt.com/backend-api/codex/responses" {
+		t.Fatalf("OpenAI Chat final upstream URL = %q", got)
+	}
+	if got := requests[2].Header.Get("Authorization"); got != "Bearer codex-chat-current" {
+		t.Fatalf("OpenAI Chat final Authorization = %q", got)
+	}
+	if got := requests[2].Header.Get("Chatgpt-Account-Id"); got != "account-chat-current" {
+		t.Fatalf("OpenAI Chat final account header = %q", got)
+	}
+	if strings.Contains(requests[2].Header.Get("Authorization"), "stale") {
+		t.Fatal("OpenAI Chat registration-time token survived final transport")
 	}
 
 	assertStrictSurface(t, cfg, http.MethodGet, "/v0/management/config")

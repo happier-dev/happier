@@ -31,6 +31,10 @@ import type {
   SentryApiClientV1,
   SentryApiResponseV1,
 } from '../api/sentryApiClient.js';
+import {
+  advanceSentryCursorWalk,
+  type SentryCursorWalkV1,
+} from '../api/sentryCursorCycle.js';
 import { classifySentryFailure } from '../api/sentryFailure.js';
 import { parseSentryLinkHeader } from '../api/sentryLinkHeader.js';
 import {
@@ -120,7 +124,7 @@ function decodeBody(
  * the same thing on both planes.
  */
 export type SentryNextPageV1 =
-  | Readonly<{ kind: 'next'; cursor: string }>
+  | Readonly<{ kind: 'next'; walk: SentryCursorWalkV1 }>
   | Readonly<{ kind: 'end' }>
   | Readonly<{ kind: 'stoppedShort'; reason: SentryDetailIncompleteReasonV1 }>;
 
@@ -137,7 +141,7 @@ function stoppedShort(reason: SentryDetailIncompleteReasonV1): SentryNextPageV1 
 function verifyNextCursor(
   headers: Readonly<Record<string, string>>,
   expectedPath: string,
-  requestedCursor: string | null,
+  position: SentryCursorWalkV1 | null,
 ): SentryNextPageV1 {
   const link = parseSentryLinkHeader(headers);
   // An absent header is not a finished walk, and it is also not a reason to
@@ -150,9 +154,16 @@ function verifyNextCursor(
   if (next.cursor === null || next.cursor === '') {
     return stoppedShort('paginationCursorMalformed');
   }
-  // A next cursor equal to the one just requested does not advance; following
-  // it would walk the same page forever.
-  if (next.cursor === requestedCursor) return stoppedShort('paginationCursorNotAdvancing');
+  // Non-progress is "this walk has been here already", not merely "this page
+  // pointed at itself". The shared cycle owner watches the position that
+  // produced this response AND one earlier saved position, so the one-step
+  // repeat stays caught and an `A → B → A` alternation — invisible to a
+  // comparison that can only see the current request — is caught with it,
+  // without evidence whose width grows with every "Load more".
+  const advanced = advanceSentryCursorWalk(position, next.cursor);
+  if (advanced.kind === 'revisited') {
+    return stoppedShort('paginationCursorNotAdvancing');
+  }
   let url: URL;
   try {
     url = new URL(next.url);
@@ -160,7 +171,7 @@ function verifyNextCursor(
     return stoppedShort('paginationCursorMalformed');
   }
   return url.pathname === expectedPath
-    ? Object.freeze({ kind: 'next' as const, cursor: next.cursor })
+    ? Object.freeze({ kind: 'next' as const, walk: advanced.walk })
     : stoppedShort('paginationCursorMalformed');
 }
 
@@ -312,7 +323,11 @@ export type SentryEventsPageInputV1 = Readonly<{
   instance: SentryInvokedInstanceV1;
   entryId: string;
   limit: number;
-  cursor: string | null;
+  /**
+   * Where this walk stands: the position to request and the earlier one its
+   * cycle probe is watching. `null` on the first page, which has requested none.
+   */
+  position: SentryCursorWalkV1 | null;
   nowMs: number;
 }>;
 
@@ -326,7 +341,7 @@ export async function readSentryIssueEventsPage(
       instance: input.instance,
       entryId: input.entryId,
       perPage: input.limit,
-      ...(input.cursor === null ? {} : { cursor: input.cursor }),
+      ...(input.position === null ? {} : { cursor: input.position.cursor }),
     });
   } catch {
     return requestInvalid();
@@ -347,7 +362,11 @@ export async function readSentryIssueEventsPage(
       rows: projected.rows,
       omittedRowCount: projected.omittedRowCount,
       projectionTruncated: projected.projectionTruncated,
-      nextPage: verifyNextCursor(outcome.response.headers, new URL(url).pathname, input.cursor),
+      nextPage: verifyNextCursor(
+        outcome.response.headers,
+        new URL(url).pathname,
+        input.position,
+      ),
     }),
   });
 }
@@ -367,7 +386,11 @@ export type SentryTagValuesPageInputV1 = Readonly<{
   entryId: string;
   tagKey: string;
   limit: number;
-  cursor: string | null;
+  /**
+   * Where this walk stands: the position to request and the earlier one its
+   * cycle probe is watching. `null` on the first page, which has requested none.
+   */
+  position: SentryCursorWalkV1 | null;
   nowMs: number;
 }>;
 
@@ -382,7 +405,7 @@ export async function readSentryTagValuesPage(
       entryId: input.entryId,
       tagKey: input.tagKey,
       perPage: input.limit,
-      ...(input.cursor === null ? {} : { cursor: input.cursor }),
+      ...(input.position === null ? {} : { cursor: input.position.cursor }),
     });
   } catch {
     return requestInvalid();
@@ -403,7 +426,11 @@ export async function readSentryTagValuesPage(
       rows: projected.rows,
       omittedRowCount: projected.omittedRowCount,
       projectionTruncated: projected.projectionTruncated,
-      nextPage: verifyNextCursor(outcome.response.headers, new URL(url).pathname, input.cursor),
+      nextPage: verifyNextCursor(
+        outcome.response.headers,
+        new URL(url).pathname,
+        input.position,
+      ),
     }),
   });
 }

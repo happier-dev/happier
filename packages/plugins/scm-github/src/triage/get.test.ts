@@ -177,6 +177,34 @@ describe('GitHub triage get', () => {
     expect(goneUnreadable.observation.kind).toBe('unresolved');
   });
 
+  it('never concludes absent when the route path now holds a DIFFERENT repository', async () => {
+    // A repository can be renamed, deleted and recreated at the same `owner/name`
+    // path. The confirming read then answers `200` for an occupant that is not the
+    // repository this entry belongs to, so a bare readability proof turns a stale
+    // locator into an authoritative "this pull request no longer exists".
+    const reoccupied = { ...GITHUB_REPOSITORY_RESPONSE, id: 99001 };
+
+    const pullRequest = await runGet({
+      localRef: PULL_REQUEST_REF,
+      respond: (request) => (request.url.includes('/pulls/')
+        ? { status: 404, body: { message: 'Not Found' } }
+        : { status: 200, body: reoccupied }),
+    });
+    const issue = await runGet({
+      localRef: ISSUE_REF,
+      respond: (request) => (request.url.includes('/issues/')
+        ? { status: 410, body: { message: 'Gone' } }
+        : { status: 200, body: reoccupied }),
+    });
+
+    expect(pullRequest.observation.kind).toBe('unresolved');
+    expect(pullRequest.observation.kind === 'unresolved'
+      && pullRequest.observation.failure.code).toBe('route-body-mismatch');
+    expect(issue.observation.kind).toBe('unresolved');
+    expect(issue.observation.kind === 'unresolved'
+      && issue.observation.failure.code).toBe('route-body-mismatch');
+  });
+
   it('follows one validated same-origin issue 301 and accepts the destination route own number', async () => {
     const { observation, transport } = await runGet({
       localRef: ISSUE_REF,

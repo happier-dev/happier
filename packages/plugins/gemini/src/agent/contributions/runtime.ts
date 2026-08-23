@@ -12,7 +12,6 @@ import { createGeminiConnectedServiceRuntimeAuthAdapter } from '../connectedServ
 
 export const GEMINI_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'gemini',
-  builtInAcpCatalog: true,
   cliSessionCommand: {
     backendIdForSessionRuntime: 'gemini',
     agentIdForAccountSettings: 'gemini',

@@ -36,7 +36,17 @@ import {
 const RECONCILIATION_INTERVAL_MS = 1_000;
 const STALE_ATTEMPT_AFTER_MS = 30_000;
 const OUTWARD_DELIVERY_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
-const MAX_DELIVERIES_PER_WAKE = MAX_CONVERSATION_BINDINGS_PER_ACCOUNT;
+/**
+ * One outward wake reads exactly one Account Collection page of durable work.
+ *
+ * The query page bound is the real ceiling here, not the binding quota: a wake
+ * budget above it produces a page size the canonical Collection wire rejects,
+ * which silently turned every recovery and retention scan into
+ * `storageUnavailable`. The existing generation-local cursor carries whatever
+ * this page did not cover into the next wake, so no second scan loop, worker,
+ * or queue is needed to drain a backlog.
+ */
+const MAX_DELIVERIES_PER_WAKE = MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE;
 
 type Clock = Readonly<{
   now(): number;
@@ -226,6 +236,13 @@ function isUnattemptedPermissionWait(record: ConversationOutwardDeliveryRecord):
 async function readCurrentBindingIds(context: BackgroundServiceContext): Promise<readonly string[]> {
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   const bindingIds: string[] = [];
+  // Connection currentness is a per-connection fact, and the Account holds at
+  // most 32 connections against 256 bindings. Reading it once per binding cost
+  // up to 256 serial gets for the same ≤32 answers, on the wake that also owns
+  // permission-wait redrive. The enumeration is one consistent read anyway: a
+  // connection that changes mid-enumeration is re-read at every effect, which
+  // is where currentness is actually enforced.
+  const connectionCurrentness = new Map<string, boolean>();
   let cursor: string | undefined;
   do {
     const page = await collection.query({
@@ -239,10 +256,13 @@ async function readCurrentBindingIds(context: BackgroundServiceContext): Promise
       const bindingId = bindingIdFromRow(row.value, row.rowId);
       const connectionId = bindingConnectionIdFromRow(row.value, row.rowId);
       if (bindingId === undefined || connectionId === undefined) continue;
-      const connection = await collection.get(connectionId, { signal: context.signal });
-      if (connection !== null && isProjectionConnectionCurrent(connection.value, connectionId)) {
-        bindingIds.push(bindingId);
+      let current = connectionCurrentness.get(connectionId);
+      if (current === undefined) {
+        const connection = await collection.get(connectionId, { signal: context.signal });
+        current = connection !== null && isProjectionConnectionCurrent(connection.value, connectionId);
+        connectionCurrentness.set(connectionId, current);
       }
+      if (current) bindingIds.push(bindingId);
     }
     if (bindingIds.length >= MAX_CONVERSATION_BINDINGS_PER_ACCOUNT) return bindingIds;
     cursor = page.nextCursor;
@@ -360,41 +380,6 @@ export async function runConversationOutwardDeliveryCycle(
   } catch {
     // Storage/action availability is re-evaluated next wake from durable rows.
     logOutwardDeliverySupervisorWorkFailure(context, 'delivery-scan');
-  }
-
-  if (context.signal.aborted) return cycleResult();
-
-  const retentionNow = now();
-  if (retentionNow >= OUTWARD_DELIVERY_RETENTION_MS) {
-    try {
-      const scanned = await scanner.scanRetention({
-        cutoff: retentionNow - OUTWARD_DELIVERY_RETENTION_MS,
-        limit: MAX_DELIVERIES_PER_WAKE,
-        ...(input.retentionCursor === undefined ? {} : { cursor: input.retentionCursor }),
-      });
-      if (scanned.kind === 'unavailable') {
-        if (scanned.reason !== 'cancelled') {
-          logOutwardDeliverySupervisorWorkFailure(context, 'delivery-retention');
-        }
-      } else {
-        nextRetentionCursor = scanned.nextCursor;
-        for (const record of scanned.records) {
-          if (context.signal.aborted) return cycleResult();
-          const retired = await deliveryStore.retire({
-            custodyId: record.custodyId,
-            expectedRevision: record.revision,
-          });
-          if (retired.kind === 'unavailable' && retired.reason !== 'cancelled') {
-            logOutwardDeliverySupervisorWorkFailure(context, 'delivery-retention', {
-              connectionId: record.obligation.connectionId,
-              ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }),
-            });
-          }
-        }
-      }
-    } catch {
-      logOutwardDeliverySupervisorWorkFailure(context, 'delivery-retention');
-    }
   }
 
   if (context.signal.aborted) return cycleResult();
@@ -551,6 +536,47 @@ export async function runConversationOutwardDeliveryCycle(
       // Projection never receives a local replacement owner; its unchanged
       // frontier causes the canonical page to be re-read on the next wake.
       logOutwardDeliverySupervisorWorkFailure(context, 'transcript-projection', { bindingId });
+    }
+  }
+
+  if (context.signal.aborted) return cycleResult();
+
+  // Coarse retention runs last in the wake, behind every live obligation.
+  // Redrive, permission-wait mediation, and transcript projection are what a
+  // person is waiting on; a retention page is a whole page of storage calls
+  // that only reclaims rows already past their thirty-day window, so nothing it
+  // does is worth delaying an approval prompt by. Its own keyset cursor carries
+  // the remainder to the next wake either way.
+  const retentionNow = now();
+  if (retentionNow >= OUTWARD_DELIVERY_RETENTION_MS) {
+    try {
+      const scanned = await scanner.scanRetention({
+        cutoff: retentionNow - OUTWARD_DELIVERY_RETENTION_MS,
+        limit: MAX_DELIVERIES_PER_WAKE,
+        ...(input.retentionCursor === undefined ? {} : { cursor: input.retentionCursor }),
+      });
+      if (scanned.kind === 'unavailable') {
+        if (scanned.reason !== 'cancelled') {
+          logOutwardDeliverySupervisorWorkFailure(context, 'delivery-retention');
+        }
+      } else {
+        nextRetentionCursor = scanned.nextCursor;
+        for (const record of scanned.records) {
+          if (context.signal.aborted) return cycleResult();
+          const retired = await deliveryStore.retire({
+            custodyId: record.custodyId,
+            expectedRevision: record.revision,
+          });
+          if (retired.kind === 'unavailable' && retired.reason !== 'cancelled') {
+            logOutwardDeliverySupervisorWorkFailure(context, 'delivery-retention', {
+              connectionId: record.obligation.connectionId,
+              ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }),
+            });
+          }
+        }
+      }
+    } catch {
+      logOutwardDeliverySupervisorWorkFailure(context, 'delivery-retention');
     }
   }
   return cycleResult();

@@ -279,6 +279,52 @@ describe('OpenAI-compatible public batch speech runtimes', () => {
     })))).rejects.toMatchObject({ code: 'provider_response_invalid' });
   });
 
+  it('rejects a transcription body that is not valid UTF-8 instead of substituting replacement characters', async () => {
+    const stt = createOpenAiCompatSttRuntime();
+    // A lone 0x80 continuation byte cannot begin a UTF-8 sequence. A non-fatal
+    // decode would silently turn it into U+FFFD and publish a corrupted
+    // transcript as if the provider had returned it.
+    const malformed = new Uint8Array([
+      ...new TextEncoder().encode('{"text":"hallo '),
+      0x80,
+      ...new TextEncoder().encode(' welt"}'),
+    ]);
+    await expect(stt.transcribe!(STT_REQUEST, context({
+      settings: Object.freeze({ baseUrl: 'https://speech.example.test/v1' }),
+      request: vi.fn(async () => response({
+        headers: { 'content-type': 'application/json' },
+        body: malformed,
+      })),
+      secret: 'registered-secret',
+    }))).rejects.toMatchObject({ code: 'provider_response_invalid' });
+  });
+
+  it('labels each supported transcription container with its own filename extension', async () => {
+    const stt = createOpenAiCompatSttRuntime();
+    const filenameFor = async (mimeType: 'audio/wav' | 'audio/mpeg' | 'audio/mp4' | 'audio/webm' | 'audio/ogg') => {
+      let filename: string | null = null;
+      await stt.transcribe!({ ...STT_REQUEST, mimeType }, context({
+        settings: Object.freeze({ baseUrl: 'https://speech.example.test/v1' }),
+        request: vi.fn(async (input: HttpRequest) => {
+          filename = new TextDecoder().decode(input.body ?? new Uint8Array())
+            .match(/filename="([^"]+)"/u)?.[1] ?? null;
+          return response({
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text: 'ok' }),
+          });
+        }),
+        secret: 'registered-secret',
+      }));
+      return filename;
+    };
+
+    expect(await filenameFor('audio/wav')).toBe('speech.wav');
+    expect(await filenameFor('audio/mpeg')).toBe('speech.mp3');
+    expect(await filenameFor('audio/mp4')).toBe('speech.m4a');
+    expect(await filenameFor('audio/webm')).toBe('speech.webm');
+    expect(await filenameFor('audio/ogg')).toBe('speech.ogg');
+  });
+
   it('passes the exact host cancellation signal through credential and HTTP boundaries', async () => {
     const controller = new AbortController();
     const request = vi.fn(async (_input: HttpRequest, options?: Readonly<{ signal?: AbortSignal }>) => {

@@ -13,9 +13,25 @@ export function createCodexRolloutSemanticTracker() {
     }>>();
     const startedThreadIds = new Set<string>();
     const completedThreadIds = new Set<string>();
+    /**
+     * Pre-frontier Codex recorders write one assistant turn twice: first as
+     * `event_msg`/`agent_message`, then as the `response_item` message the model
+     * API returned, with nothing publishable in between. The pinned recorder
+     * writes only the first. Keeping the last emitted assistant text lets both
+     * eras publish the turn exactly once without the reader needing to know
+     * which recorder produced the file.
+     */
+    let lastEmittedAssistantText: string | null = null;
 
     return {
         consume(action: CodexRolloutAction): NormalizedCodexRolloutAction[] {
+            if (action.type === 'assistant-text') {
+                if (action.text === lastEmittedAssistantText) return [];
+                lastEmittedAssistantText = action.text;
+                return [action];
+            }
+            if (action.type !== 'debug') lastEmittedAssistantText = null;
+
             if (action.type === 'collaboration-tool-call') {
                 if (action.name === 'spawn_agent') {
                     pendingSpawnByCallId.set(action.callId, {

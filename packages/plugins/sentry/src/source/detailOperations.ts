@@ -20,6 +20,8 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 
 import { createSentryApiClient } from '../api/sentryApiClient.js';
+import type { SentryCursorWalkV1 } from '../api/sentryCursorCycle.js';
+import { boundSentryInvocation } from '../api/sentryInvocationDeadline.js';
 import { SENTRY_FAILURE_CODES } from '../sentryContracts.js';
 import {
   SentryIssueEventsInputV1Schema,
@@ -51,19 +53,38 @@ const CONTINUATION_UNREADABLE = Object.freeze({
 });
 
 /**
+ * How long one mounted detail read may take before this source stops waiting.
+ *
+ * The resource it protects is a panel a person is looking at. `CONTRACT.md` §5.2
+ * puts that bound on the source: Triage owns deadlines only for the
+ * `listInstances`, `scan` and `get` invocations it starts, and it neither
+ * supplies nor decides this one. Without it a Sentry that accepts the connection
+ * and never answers leaves the tab in its loading state until the mount is torn
+ * down, which the reader cannot retry, report, or tell apart from a slow read.
+ */
+export const SENTRY_MOUNTED_DETAIL_DEADLINE_MS = 20_000;
+
+/**
  * Resolves the position one paged detail read starts from.
  *
- * `null` rejects a token this source did not mint, which restarts the walk at
- * the first page rather than requesting a position nobody can vouch for.
+ * A rejected token restarts the walk at the first page rather than requesting a
+ * position nobody can vouch for — and because the token carries the walk's own
+ * cycle evidence, restarting also restarts that evidence rather than resuming a
+ * walk with a probe it cannot vouch for either.
  */
-function resolveCursor(
+function resolveWalkPosition(
   continuation: string | undefined,
   limit: number,
-): Readonly<{ ok: true; cursor: string | null }> | Readonly<{ ok: false }> {
-  if (continuation === undefined) return Object.freeze({ ok: true as const, cursor: null });
+): Readonly<{ ok: true; position: SentryCursorWalkV1 | null }> | Readonly<{ ok: false }> {
+  if (continuation === undefined) {
+    return Object.freeze({ ok: true as const, position: null });
+  }
   const frontier = decodeSentryDetailContinuation(continuation);
   if (frontier === null || frontier.limit !== limit) return Object.freeze({ ok: false as const });
-  return Object.freeze({ ok: true as const, cursor: frontier.cursor });
+  return Object.freeze({
+    ok: true as const,
+    position: Object.freeze({ cursor: frontier.cursor, probe: frontier.probe }),
+  });
 }
 
 /**
@@ -82,13 +103,16 @@ function projectWalkPosition(
   if (nextPage.kind === 'end') return {};
   const continuation = encodeSentryDetailContinuation({
     v: 1,
-    cursor: nextPage.cursor,
+    cursor: nextPage.walk.cursor,
     limit,
+    probe: nextPage.walk.probe,
   });
-  // A position this source cannot mint within its own bound is a walk that
-  // stopped short, not a finished one.
+  // The walk is open and the provider's cursor is intact; the frontier simply
+  // does not fit the bounded token, so this page is the last one this panel can
+  // ask for. Calling that a malformed cursor would blame the provider for a
+  // bound this side owns.
   return continuation === null
-    ? { incomplete: 'paginationCursorMalformed' as const }
+    ? { incomplete: 'continuationUnavailable' as const }
     : { continuation };
 }
 
@@ -118,6 +142,7 @@ export async function readSentryIssue(
     account: parsed.instance.binding.account,
     deployment: routed.deployment,
     nowMs: () => Date.now(),
+    signal: boundSentryInvocation(context.signal, SENTRY_MOUNTED_DETAIL_DEADLINE_MS),
   });
   const read = await readSentryIssueProjection(client, {
     instance: routed.instance,
@@ -150,8 +175,8 @@ export async function listSentryIssueEvents(
     return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
   }
 
-  const position = resolveCursor(parsed.continuation, parsed.limit);
-  if (!position.ok) {
+  const walk = resolveWalkPosition(parsed.continuation, parsed.limit);
+  if (!walk.ok) {
     return Object.freeze({
       kind: 'unavailable' as const,
       failure: toTriageFailure(CONTINUATION_UNREADABLE),
@@ -162,12 +187,13 @@ export async function listSentryIssueEvents(
     account: parsed.instance.binding.account,
     deployment: routed.deployment,
     nowMs: () => Date.now(),
+    signal: boundSentryInvocation(context.signal, SENTRY_MOUNTED_DETAIL_DEADLINE_MS),
   });
   const page = await readSentryIssueEventsPage(client, {
     instance: routed.instance,
     entryId: parsed.localRef.entryId,
     limit: parsed.limit,
-    cursor: position.cursor,
+    position: walk.position,
     nowMs: Date.now(),
   });
   if (!page.ok) {
@@ -202,8 +228,8 @@ export async function listSentryTagValues(
     return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
   }
 
-  const position = resolveCursor(parsed.continuation, parsed.limit);
-  if (!position.ok) {
+  const walk = resolveWalkPosition(parsed.continuation, parsed.limit);
+  if (!walk.ok) {
     return Object.freeze({
       kind: 'unavailable' as const,
       failure: toTriageFailure(CONTINUATION_UNREADABLE),
@@ -214,13 +240,14 @@ export async function listSentryTagValues(
     account: parsed.instance.binding.account,
     deployment: routed.deployment,
     nowMs: () => Date.now(),
+    signal: boundSentryInvocation(context.signal, SENTRY_MOUNTED_DETAIL_DEADLINE_MS),
   });
   const page = await readSentryTagValuesPage(client, {
     instance: routed.instance,
     entryId: parsed.localRef.entryId,
     tagKey: parsed.tagKey,
     limit: parsed.limit,
-    cursor: position.cursor,
+    position: walk.position,
     nowMs: Date.now(),
   });
   if (!page.ok) {
@@ -268,6 +295,7 @@ export async function readSentryEvent(
     account: parsed.instance.binding.account,
     deployment: routed.deployment,
     nowMs: () => Date.now(),
+    signal: boundSentryInvocation(context.signal, SENTRY_MOUNTED_DETAIL_DEADLINE_MS),
   });
   const read = await readSentryEventProjection(client, {
     instance: routed.instance,

@@ -1,4 +1,3 @@
-import { createCoalescedScheduler, type CoalescedScheduler } from '@happier-dev/plugin-sdk/async';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -15,21 +14,30 @@ import {
  *
  * Provider-derived Triage data is not an Account-persisted corpus: rich detail
  * and mutations always require a live source materialization. So the only thing
- * that needs coordinating is *provider work* — one live pass per configured
- * source instance at a time, paced so an interaction burst cannot multiply into
- * provider calls.
+ * that needs coordinating is *provider work* — each configured source instance
+ * paced independently, so an interaction burst cannot multiply into provider
+ * calls and a failing source cannot be hammered.
  *
- * This owner is deliberately thin. Single-flight with at most one queued
- * follow-up is the SDK's `createCoalescedScheduler`, unchanged. Pacing is
- * `refreshEligibility`. Presentation continuity — last-known-good retention,
- * stale-while-revalidate, and a refresh failure never erasing an admitted value
- * — belongs to the mounted Plugin UI Resource store (`usePluginResource` /
- * `useLivePluginResource`) on the client side of the host boundary, and is not
- * reimplemented here.
+ * This owner is deliberately thin. Pacing is `refreshEligibility`. Presentation
+ * continuity — last-known-good retention, stale-while-revalidate, and a refresh
+ * failure never erasing an admitted value — belongs to the mounted Plugin UI
+ * Resource store (`usePluginResource` / `useLivePluginResource`) on the client
+ * side of the host boundary, and is not reimplemented here.
  *
- * What is genuinely Triage's own: keying by configured source instance, the
- * producer vocabulary, and the rule that only manual **Refresh** may queue a
- * follow-up while a pass is running.
+ * Single-flight is *not* owned here either, and deliberately no longer
+ * reimplemented here. The one producer of `request` is the list-window store's
+ * refresh cycle, which is itself the `drain` of the store's
+ * `createCoalescedScheduler`: that scheduler already collapses an interaction
+ * burst into one cycle and never overlaps a cycle with itself, and the
+ * coordinator is created and disposed with that one store, so no second
+ * producer can contend for a slot. A second per-source scheduler underneath it
+ * could only ever coalesce a request that the cycle above had already
+ * coalesced. What would invalidate this: a second caller of `request` for the
+ * same coordinator — then single-flight belongs at that new producer's own
+ * choke point, not as a duplicate scheduler here.
+ *
+ * What is genuinely Triage's own: keying by configured source instance and the
+ * producer vocabulary.
  *
  * Nothing here survives the process. There is no durable scan state, no
  * continuation custody, no checkpoint, and no cross-machine coordination: two
@@ -69,14 +77,15 @@ export function triageRefreshPacingBlock(
 }
 
 export type TriageRefreshRequestResultV1 = Readonly<{
+    /** Whether this request read the provider at all. */
+    disposition: 'started' | 'blocked';
     /**
-     * `joined` attaches to the running pass; `followUpQueued` records the one
-     * manual follow-up. A caller that stops awaiting `settled` detaches itself
-     * and never cancels work another caller is still waiting on — there is
-     * deliberately no per-caller abort.
+     * Settles when the pass this request started reaches idle, immediately when
+     * it was refused. A caller that stops awaiting it detaches itself and never
+     * cancels the work — there is deliberately no per-caller abort. A pass
+     * runner that rejects is reported through `onUnexpectedError` and folded
+     * into an `interrupted` outcome rather than rejecting this promise.
      */
-    disposition: 'started' | 'joined' | 'followUpQueued' | 'blocked';
-    /** Settles when the pass this request attached to reaches idle. */
     settled: Promise<void>;
     blocked?: TriageRefreshBlockedV1;
 }>;
@@ -104,14 +113,11 @@ export type TriageRefreshCoordinatorV1 = Readonly<{
     dispose(): void;
 }>;
 
+/** Process-local pacing state for one configured source instance. */
 type RefreshSlot = {
     readonly sourceInstanceId: string;
-    readonly scheduler: CoalescedScheduler;
-    /** Non-null exactly while a provider pass is running. */
-    activePass: Promise<void> | null;
+    /** Non-null exactly while a provider pass is running, so retirement can cancel it. */
     abortController: AbortController | null;
-    /** The trigger the next pass is running for; re-evaluated at pass start. */
-    pendingTrigger: TriageRefreshTriggerV1;
     lastReadStartedAtMs: number | null;
     backoff: TriageRefreshBackoffStateV1;
     retired: boolean;
@@ -171,42 +177,12 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
         }
     }
 
-    function drainSlot(slot: RefreshSlot): Promise<void> {
-        if (slot.retired || disposed) return Promise.resolve();
-        // The queued follow-up runs after the failure that may have created a
-        // deadline, so pacing is decided at pass start, not only at request
-        // time. Both decisions come from the one evaluator.
-        const eligibility = evaluateRefreshEligibility({
-            trigger: slot.pendingTrigger,
-            nowMs: deps.nowMs(),
-            lastReadStartedAtMs: slot.lastReadStartedAtMs,
-            backoff: slot.backoff,
-        });
-        if (eligibility.kind === 'blocked') return Promise.resolve();
-        const pass = executePass(slot);
-        slot.activePass = pass;
-        return pass.finally(() => {
-            if (slot.activePass === pass) slot.activePass = null;
-        });
-    }
-
-    function openSlot(sourceInstanceId: string, trigger: TriageRefreshTriggerV1): RefreshSlot {
+    function openSlot(sourceInstanceId: string): RefreshSlot {
         const existing = slots.get(sourceInstanceId);
-        if (existing) {
-            existing.pendingTrigger = trigger;
-            return existing;
-        }
+        if (existing) return existing;
         const slot: RefreshSlot = {
             sourceInstanceId,
-            // The scheduler drains this exact slot; `drain` runs only after the
-            // slot exists, so the self-reference is resolved by then.
-            scheduler: createCoalescedScheduler({
-                drain: () => drainSlot(slot),
-                ...(deps.onUnexpectedError ? { onError: deps.onUnexpectedError } : {}),
-            }),
-            activePass: null,
             abortController: null,
-            pendingTrigger: trigger,
             lastReadStartedAtMs: null,
             backoff: TRIAGE_REFRESH_BACKOFF_IDLE_V1,
             retired: false,
@@ -219,7 +195,6 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
         slot.retired = true;
         slot.abortController?.abort();
         slot.abortController = null;
-        slot.scheduler.dispose();
         slots.delete(slot.sourceInstanceId);
     }
 
@@ -233,15 +208,6 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
                 };
             }
             const existing = slots.get(input.sourceInstanceId);
-            if (existing?.activePass) {
-                // Only the user's explicit Refresh earns a follow-up pass. View
-                // demand during an active pass is already being served by it.
-                if (input.trigger !== 'manual') {
-                    return { disposition: 'joined', settled: existing.activePass };
-                }
-                existing.pendingTrigger = 'manual';
-                return { disposition: 'followUpQueued', settled: existing.scheduler.flush() };
-            }
             const eligibility = evaluateRefreshEligibility({
                 trigger: input.trigger,
                 nowMs: deps.nowMs(),
@@ -258,8 +224,7 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
                     },
                 };
             }
-            const slot = openSlot(input.sourceInstanceId, input.trigger);
-            return { disposition: 'started', settled: slot.scheduler.flush() };
+            return { disposition: 'started', settled: executePass(openSlot(input.sourceInstanceId)) };
         },
         pacingBlock(input): TriageRefreshPacingBlockV1 | null {
             if (disposed) return null;

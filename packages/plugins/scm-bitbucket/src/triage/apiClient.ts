@@ -27,12 +27,52 @@ export const BITBUCKET_TRIAGE_REQUEST_TIMEOUT_MS = 20_000;
 
 export type BitbucketAuthorizationHeaders = Readonly<Record<string, string>>;
 
+/**
+ * The verbs this source's Bitbucket vertical issues.
+ *
+ * `GET` serves every read. `POST` serves the pull-request writes Bitbucket models as commands on a
+ * sub-resource — `/merge` and `/decline` — and `DELETE` is the documented spelling of reopening a
+ * comment thread. The set is closed here so a verb reaches Bitbucket only when the plugin manifest
+ * has already granted it: a method this client could send but the grant omits is rejected by the
+ * host at dispatch, not by Bitbucket.
+ */
+export type BitbucketRequestMethod = 'GET' | 'POST' | 'DELETE';
+
 export type BitbucketJsonResponse =
-  | Readonly<{ ok: true; status: number; body: unknown; telemetry: BitbucketRateLimitTelemetry }>
-  | Readonly<{ ok: false; failure: BitbucketTriageFailure; telemetry: BitbucketRateLimitTelemetry }>;
+  | Readonly<{
+    ok: true;
+    status: number;
+    /**
+     * Present so a caller can read a documented response header the body does not carry —
+     * Bitbucket's asynchronous merge answers `202` and puts the merge-status location here.
+     */
+    headers: Readonly<Record<string, string>>;
+    body: unknown;
+    telemetry: BitbucketRateLimitTelemetry;
+  }>
+  | Readonly<{
+    ok: false;
+    /**
+     * The exact status Bitbucket answered, or `null` when no response was received at all.
+     *
+     * The classified failure is deliberately coarse — it is what a reader renders — while a
+     * mutation must be able to tell Bitbucket's two documented terminal merge refusals apart from
+     * each other and from an ordinary error. That distinction is the status, so the status travels.
+     */
+    status: number | null;
+    failure: BitbucketTriageFailure;
+    telemetry: BitbucketRateLimitTelemetry;
+  }>;
 
 export type BitbucketTriageApiClient = Readonly<{
-  requestJson(input: Readonly<{ url: string; signal?: AbortSignal }>): Promise<BitbucketJsonResponse>;
+  requestJson(input: Readonly<{
+    url: string;
+    /** Absent means `GET`; every write names its verb explicitly. */
+    method?: BitbucketRequestMethod;
+    /** Serialized as JSON. A request with no body sends no `Content-Type` at all. */
+    body?: unknown;
+    signal?: AbortSignal;
+  }>): Promise<BitbucketJsonResponse>;
 }>;
 
 /**
@@ -62,6 +102,7 @@ export function createBitbucketTriageApiClient(
       if (url === null) {
         return {
           ok: false,
+          status: null,
           failure: createBitbucketFailure('unsupportedContract', 'untrusted-request-origin'),
           telemetry: EMPTY_BITBUCKET_RATE_LIMIT_TELEMETRY,
         };
@@ -70,6 +111,7 @@ export function createBitbucketTriageApiClient(
       if (request.signal?.aborted === true) {
         return {
           ok: false,
+          status: null,
           failure: createBitbucketFailure('cancelled', 'invocation-cancelled'),
           telemetry: EMPTY_BITBUCKET_RATE_LIMIT_TELEMETRY,
         };
@@ -81,18 +123,28 @@ export function createBitbucketTriageApiClient(
       } catch (error) {
         return {
           ok: false,
+          status: null,
           failure: classifyBitbucketTransportFailure(error),
           telemetry: EMPTY_BITBUCKET_RATE_LIMIT_TELEMETRY,
         };
       }
+
+      const encodedBody = request.body === undefined
+        ? undefined
+        : new TextEncoder().encode(JSON.stringify(request.body));
 
       let response: Awaited<ReturnType<HttpService['request']>>;
       try {
         response = await input.http.request(
           {
             url,
-            method: 'GET',
-            headers: { Accept: 'application/json', ...headers },
+            method: request.method ?? 'GET',
+            headers: {
+              Accept: 'application/json',
+              ...(encodedBody === undefined ? {} : { 'Content-Type': 'application/json' }),
+              ...headers,
+            },
+            ...(encodedBody === undefined ? {} : { body: encodedBody }),
             // A JSON route that redirects is not a route this client follows: the raw-diff
             // redirect is a separate, explicitly origin-checked reader.
             redirect: 'error',
@@ -103,6 +155,7 @@ export function createBitbucketTriageApiClient(
       } catch (error) {
         return {
           ok: false,
+          status: null,
           failure: classifyBitbucketTransportFailure(error),
           telemetry: EMPTY_BITBUCKET_RATE_LIMIT_TELEMETRY,
         };
@@ -124,15 +177,23 @@ export function createBitbucketTriageApiClient(
         if (!parsed) {
           return {
             ok: false,
+            status: response.status,
             failure: createBitbucketFailure('unsupportedContract', 'malformed-json'),
             telemetry,
           };
         }
-        return { ok: true, status: response.status, body, telemetry };
+        return {
+          ok: true,
+          status: response.status,
+          headers: response.headers,
+          body,
+          telemetry,
+        };
       }
 
       return {
         ok: false,
+        status: response.status,
         failure: classifyBitbucketHttpFailure({
           status: response.status,
           headers: response.headers,

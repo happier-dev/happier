@@ -96,12 +96,6 @@ function legacyClaudeTranscriptStart(sessionId: string): string {
 }
 
 describe('Claude runtime contribution CLI command options', () => {
-  it('binds the native runtime to the declared Claude CLI system tool', () => {
-    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.agentCliSystemTool).toEqual({
-      toolId: 'claude-cli',
-    });
-  });
-
   it.each([
     {
       name: 'fresh terminal-local start',
@@ -193,8 +187,11 @@ describe('Claude runtime contribution CLI command options', () => {
     expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.runtimeControl).toBeUndefined();
   });
 
-  it('declares truthful runtime Activity snapshots as supported', () => {
-    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.runtimeActivityApplicability).toBe('supported');
+  // The Agent manifest's `capabilities.sessions.runtimeActivitySnapshots` is the
+  // one Runtime Activity declaration seam (asserted in `manifest.test.ts`), so a
+  // private duplicate here would be a second decision-maker for the same fact.
+  it('leaves Runtime Activity to the public manifest capability', () => {
+    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('runtimeActivityApplicability');
   });
 
   it('uses the canonical current Claude OAuth endpoints', () => {

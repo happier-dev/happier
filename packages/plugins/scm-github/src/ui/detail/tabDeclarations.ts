@@ -27,6 +27,7 @@ export type GithubDetailTabIdV1 =
   | 'timeline'
   | 'files'
   | 'checks'
+  | 'feedback'
   | 'comments'
   | 'work-sessions';
 
@@ -42,12 +43,32 @@ export type GithubDetailTabReadPlaneV1 =
   | 'checks'
   /** The panel's own cursor-paged issue-level comment walk. */
   | 'comments'
+  /**
+   * The conversation and event walks this source already owns, composed with the
+   * applied observation.
+   *
+   * This plane opens no provider route of its own. Every fact it presents —
+   * what was said, who has reviewed, who is still being waited on, and what
+   * GitHub reports as wrong — is already carried by a read this surface owns, so
+   * a route of its own would spend GitHub's budget twice for facts already in
+   * hand.
+   */
+  | 'feedback'
   /** The bounded linked-Session projection the launch input carried. */
   | 'linkedSessions';
 
 export type GithubDetailTabDeclarationV1 = Readonly<{
   id: GithubDetailTabIdV1;
+  /**
+   * The English tab name, and the fallback for {@link GithubDetailTabDeclarationV1.titleKey}.
+   *
+   * `Tabs.Item` takes a plain string, so a title that reached it untranslated
+   * would render English on the ten non-English locales this plugin ships while
+   * nothing failed. Both halves are declared so the renderer resolves a key
+   * rather than reading a word.
+   */
   title: string;
+  titleKey: string;
   /** Stated on every concrete tab; never inherited from the shared default. */
   retention: 'retain' | 'discard';
   /** Exactly what survives a tab leave, in this panel and nothing else. */
@@ -67,6 +88,7 @@ export const GITHUB_DETAIL_TABS_V1: readonly GithubDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'overview' as const,
     title: 'Overview',
+    titleKey: 'plugins.github.ui.tab.overview',
     retention: 'retain' as const,
     retainedState: 'its one reader scroll anchor only; it holds no provider read to keep',
     readPlane: 'observation' as const,
@@ -76,6 +98,7 @@ export const GITHUB_DETAIL_TABS_V1: readonly GithubDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'timeline' as const,
     title: 'Timeline',
+    titleKey: 'plugins.github.ui.tab.timeline',
     retention: 'discard' as const,
     retainedState: 'nothing: rows, page position, scroll and errors remount at the first page',
     readPlane: 'timeline' as const,
@@ -85,6 +108,7 @@ export const GITHUB_DETAIL_TABS_V1: readonly GithubDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'files' as const,
     title: 'Files',
+    titleKey: 'plugins.github.ui.tab.files',
     retention: 'retain' as const,
     retainedState: 'its one vertical list viewport and scroll anchor only; the loaded'
       + ' changed-file rows, page position and errors are discarded when the panel'
@@ -96,6 +120,7 @@ export const GITHUB_DETAIL_TABS_V1: readonly GithubDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'checks' as const,
     title: 'Checks',
+    titleKey: 'plugins.github.ui.tab.checks',
     retention: 'discard' as const,
     retainedState: 'nothing: check rows and scroll remount from the source default',
     readPlane: 'checks' as const,
@@ -103,17 +128,39 @@ export const GITHUB_DETAIL_TABS_V1: readonly GithubDetailTabDeclarationV1[] = Ob
     kinds: PULL_REQUEST_ONLY,
   }),
   Object.freeze({
+    id: 'feedback' as const,
+    // Named `Feedback` and not `Reviews` because it unifies finding sources that
+    // are not all reviews: what people said about the pull request, who has
+    // signed off on it, who is still being waited on, and what GitHub itself
+    // reports as wrong with it.
+    title: 'Feedback',
+    titleKey: 'plugins.github.ui.tab.feedback',
+    retention: 'discard' as const,
+    retainedState: 'nothing: the conversation, the review people and the findings all'
+      + ' remount at their first page, and no comment or review draft survives a leave',
+    readPlane: 'feedback' as const,
+    scrollOwner: 'list' as const,
+    kinds: PULL_REQUEST_ONLY,
+  }),
+  Object.freeze({
     id: 'comments' as const,
     title: 'Comments',
+    titleKey: 'plugins.github.ui.tab.comments',
     retention: 'discard' as const,
     retainedState: 'nothing: rows, page position, scroll and errors remount at the first page',
     readPlane: 'comments' as const,
     scrollOwner: 'list' as const,
-    kinds: BOTH_KINDS,
+    // A pull request's conversation is one of the things `Feedback` unifies, so a
+    // second Comments tab beside it would read the same GitHub resource twice and
+    // split one conversation across two places a reviewer has to check. An issue
+    // has no reviews, checks or merge conflicts to unify, so its conversation
+    // keeps its own tab rather than acquiring a heading over a single stream.
+    kinds: ISSUE_ONLY,
   }),
   Object.freeze({
     id: 'work-sessions' as const,
     title: 'Work Sessions',
+    titleKey: 'plugins.github.ui.tab.workSessions',
     retention: 'discard' as const,
     retainedState: 'nothing; there is no provider or Session-store read to keep alive',
     readPlane: 'linkedSessions' as const,

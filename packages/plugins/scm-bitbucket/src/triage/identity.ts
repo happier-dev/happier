@@ -49,6 +49,32 @@ export function readBitbucketEntryId(rawId: unknown): string | null {
   return String(rawId);
 }
 
+/** The grammar `readBitbucketEntryId` produces, read back from an already-minted local ref. */
+/** Bitbucket numbers a pull request and a comment the same way: a positive integer, as text. */
+const BITBUCKET_POSITIVE_ID_PATTERN = /^[1-9][0-9]*$/u;
+
+/**
+ * Whether an id carried on a local ref is one this source could have minted.
+ *
+ * A read that is handed something else fails at the provider; a **write** must never reach the
+ * provider at all, because the path it would build addresses whatever that segment happens to
+ * encode. So the grammar is checked before the route exists rather than inside the request.
+ */
+export function isBitbucketEntryId(value: string): boolean {
+  return BITBUCKET_POSITIVE_ID_PATTERN.test(value);
+}
+
+/**
+ * Whether a comment id is one this source could have read.
+ *
+ * Same grammar and the same reason, stated separately because it guards a different segment: the
+ * resolve and reopen writes build a path from a comment id, and an id this source did not mint
+ * must not become part of a URL a credential is sent to.
+ */
+export function isBitbucketCommentId(value: string): boolean {
+  return BITBUCKET_POSITIVE_ID_PATTERN.test(value);
+}
+
 /**
  * `full_name` is "the concatenation of the repository owner's username and the slugified name".
  * Both halves are mutable, so this is a replaceable locator and never a join key.

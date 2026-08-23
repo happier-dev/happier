@@ -236,12 +236,53 @@ function applicationPermission(
   return permission.kind;
 }
 
+/**
+ * The one place Discord's four distinct Message Content facts become something
+ * a person can read.
+ *
+ * Channels owns exactly one provider-neutral readiness attention per
+ * connection, and its `diagnostic` is what the surface shows verbatim. Without
+ * this projection every Message Content failure reduces to the same
+ * "permission missing" sentence, and a person cannot tell an unset Developer
+ * Portal switch from an intent Discord refused after the Identify requested it.
+ * A second Discord-specific status row or UI branch would be a competing owner;
+ * this is the same fact travelling through the existing one.
+ */
+export function describeDiscordMessageContentIntentState(
+  state: DiscordGatewayMessageContentIntentState,
+): string {
+  const yesNo = (value: boolean): string => (value ? 'yes' : 'no');
+  return 'Message Content status:'
+    + ` required by this connection: ${yesNo(state.coreDemand)};`
+    + ` application permission: ${state.applicationPermission};`
+    + ` Gateway intent requested: ${yesNo(state.gatewayIntentRequested)};`
+    + ` Gateway intent active: ${yesNo(state.gatewayIntentActive)}.`;
+}
+
 function messageContentIntentRecovery(input: Readonly<{
   source: DiscordGatewayMessageContentIntentRecovery['source'];
   state: DiscordGatewayMessageContentIntentState;
   failure: ConversationProviderFailureV1;
 }>): DiscordGatewayMessageContentIntentRecovery {
-  return { kind: 'messageContentIntentRecoveryRequired', ...input.state, source: input.source, failure: input.failure };
+  // Every Message Content recovery is built here, so the four facts and the
+  // cause sentence can never disagree about the same connection.
+  const state: DiscordGatewayMessageContentIntentState = {
+    coreDemand: input.state.coreDemand,
+    applicationPermission: input.state.applicationPermission,
+    gatewayIntentRequested: input.state.gatewayIntentRequested,
+    gatewayIntentActive: input.state.gatewayIntentActive,
+  };
+  return {
+    kind: 'messageContentIntentRecoveryRequired',
+    ...state,
+    source: input.source,
+    failure: {
+      ...input.failure,
+      diagnostic: input.failure.diagnostic === undefined
+        ? describeDiscordMessageContentIntentState(state)
+        : `${input.failure.diagnostic} ${describeDiscordMessageContentIntentState(state)}`,
+    },
+  };
 }
 
 function preflightMessageContentIntent(input: Readonly<{

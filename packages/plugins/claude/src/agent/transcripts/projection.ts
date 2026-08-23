@@ -130,12 +130,14 @@ export function projectClaudeJsonlLineRecord(params: Readonly<{
     lineValue: unknown;
     maxItems?: number;
 }>): ClaudeJsonlLineRecordProjection {
-    const items = projectClaudeJsonlLineToDirectMessages(params);
-    if (items.length > 0) return { disposition: 'mapped', items };
+    const projected = projectClaudeJsonlLine(params);
+    if (projected.items.length > 0) return { disposition: 'mapped', items: projected.items };
     return {
-        disposition: classifyClaudeNativeTranscriptRow(params.lineValue).knownNonTranscriptRecord
-            ? 'known_non_transcript'
-            : 'unsupported',
+        disposition:
+            projected.withheldEveryPart
+            || classifyClaudeNativeTranscriptRow(params.lineValue).knownNonTranscriptRecord
+                ? 'known_non_transcript'
+                : 'unsupported',
         items: [],
     };
 }
@@ -151,6 +153,36 @@ export function projectClaudeJsonlLineToDirectMessages(params: Readonly<{
      */
     maxItems?: number;
 }>): AgentExternalSessionTranscriptItem[] {
+    return projectClaudeJsonlLine(params).items;
+}
+
+/**
+ * `withheldEveryPart` records that this projection understood the row and chose
+ * to publish nothing, rather than failing to understand it. A non-root `user`
+ * row — a sidechain prompt or an `isMeta` context row — has no admissible user
+ * projection in this vocabulary (`terminalFollowProjection` rejects a user item
+ * without one) and must not be relabelled as agent speech, so its text parts
+ * are withheld by design. Reporting that here is what keeps the paging owner
+ * from reading a deliberate withholding as lost user data and truncating every
+ * session that ever ran a subagent.
+ */
+type ClaudeJsonlLineProjection = Readonly<{
+    items: AgentExternalSessionTranscriptItem[];
+    withheldEveryPart: boolean;
+}>;
+
+function projectClaudeJsonlLine(params: Readonly<{
+    fileRelPath: string;
+    lineStartOffsetBytes: number;
+    lineValue: unknown;
+    /**
+     * A page can only advance after representing the complete source row. When
+     * its remaining item budget cannot admit every canonical part, the caller
+     * receives one explicit marker rather than a partial row.
+     */
+    maxItems?: number;
+}>): ClaudeJsonlLineProjection {
+    const noItems: ClaudeJsonlLineProjection = { items: [], withheldEveryPart: false };
     const createdAtMs = extractEnvelopeTimestampMs(params.lineValue);
     // File paths stay private paging state; transcript item ids are source-local and recipient-safe.
     const stableId = stableOffsetId('claude', params.lineStartOffsetBytes);
@@ -167,70 +199,83 @@ export function projectClaudeJsonlLineToDirectMessages(params: Readonly<{
         && classification.rawType !== 'user'
         && classification.rawType !== 'assistant'
     ) {
-        return [];
+        return noItems;
     }
 
-    if (classification.content.kind === 'opaque') return [];
+    if (classification.content.kind === 'opaque') return noItems;
 
     if (classification.content.kind === 'compact_summary') {
         const raw = createClaudeAgentMessageRaw(classification.content.text);
-        if (!raw) return [];
-        return [
-            {
-                id: stableId,
-                localId,
-                createdAtMs,
-                messageRole: 'agent',
-                raw,
-            },
-        ];
+        if (!raw) return noItems;
+        return {
+            items: [
+                {
+                    id: stableId,
+                    localId,
+                    createdAtMs,
+                    messageRole: 'agent',
+                    raw,
+                },
+            ],
+            withheldEveryPart: false,
+        };
     }
     if (classification.content.kind === 'slash_command') {
         const raw = createClaudeUserTextRaw(classification.content.text);
-        if (!raw) return [];
+        if (!raw) return noItems;
         const isSourceFact = classification.row !== null && isRootClaudeUserFact(classification.row);
-        return [
-            {
-                id: stableId,
-                localId,
-                createdAtMs,
-                messageRole: 'user',
-                ...(isSourceFact ? { userProjection: 'source_fact' as const } : {}),
-                raw,
-            },
-        ];
+        return {
+            items: [
+                {
+                    id: stableId,
+                    localId,
+                    createdAtMs,
+                    messageRole: 'user',
+                    ...(isSourceFact ? { userProjection: 'source_fact' as const } : {}),
+                    raw,
+                },
+            ],
+            withheldEveryPart: false,
+        };
     }
     if (classification.content.kind === 'local_command_output') {
         const raw = createClaudeAgentMessageRaw(classification.content.text);
-        if (!raw) return [];
-        return [
-            {
-                id: stableId,
-                localId,
-                createdAtMs,
-                messageRole: 'agent',
-                raw,
-            },
-        ];
+        if (!raw) return noItems;
+        return {
+            items: [
+                {
+                    id: stableId,
+                    localId,
+                    createdAtMs,
+                    messageRole: 'agent',
+                    raw,
+                },
+            ],
+            withheldEveryPart: false,
+        };
     }
-    if (classification.content.kind !== 'message' || !classification.row) return [];
+    if (classification.content.kind !== 'message' || !classification.row) return noItems;
 
     if (classification.lifecycle.kind === 'assistant_api_error') {
         const raw = createClaudeAgentEventRaw('turn_failed', localId ?? stableId);
-        if (!raw) return [];
-        return [
-            {
-                id: stableId,
-                localId,
-                createdAtMs,
-                messageRole: classification.messageRole,
-                raw,
-            },
-        ];
+        if (!raw) return noItems;
+        return {
+            items: [
+                {
+                    id: stableId,
+                    localId,
+                    createdAtMs,
+                    messageRole: classification.messageRole,
+                    raw,
+                },
+            ],
+            withheldEveryPart: false,
+        };
     }
 
     const items: AgentExternalSessionTranscriptItem[] = [];
     let preservedTextIdentity = false;
+    let withheldTextPart = false;
     for (const [index, part] of classification.semanticParts.entries()) {
         const preserveBaseIdentity = part.kind === 'text' && !preservedTextIdentity;
         if (part.kind === 'text') preservedTextIdentity = true;
@@ -258,7 +303,10 @@ export function projectClaudeJsonlLineToDirectMessages(params: Readonly<{
                 });
                 continue;
             }
-            if (classification.messageRole !== 'agent' && classification.messageRole !== 'event') continue;
+            if (classification.messageRole !== 'agent' && classification.messageRole !== 'event') {
+                withheldTextPart = true;
+                continue;
+            }
             const raw = createClaudeAgentMessageRaw(part.text);
             if (!raw) continue;
             items.push({
@@ -307,14 +355,19 @@ export function projectClaudeJsonlLineToDirectMessages(params: Readonly<{
     const maxItems = params.maxItems === undefined
         ? null
         : Math.max(1, Math.trunc(params.maxItems));
-    if (maxItems === null || items.length <= maxItems) return items;
+    if (maxItems === null || items.length <= maxItems) {
+        return { items, withheldEveryPart: items.length === 0 && withheldTextPart };
+    }
     const raw = createClaudeAgentMessageRaw(unsupportedContentMessage('content'));
-    if (!raw) return [];
-    return [{
-        id: stableId,
-        localId,
-        createdAtMs,
-        messageRole: 'event',
-        raw,
-    }];
+    if (!raw) return noItems;
+    return {
+        items: [{
+            id: stableId,
+            localId,
+            createdAtMs,
+            messageRole: 'event',
+            raw,
+        }],
+        withheldEveryPart: false,
+    };
 }

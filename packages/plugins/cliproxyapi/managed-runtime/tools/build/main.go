@@ -54,7 +54,7 @@ func main() {
 	}
 	goCommand, err := exec.LookPath("go")
 	if err != nil {
-		exitError(fmt.Errorf("Go 1.26.5 toolchain is required: %w", err))
+		exitError(fmt.Errorf("Go 1.26.6 toolchain is required: %w", err))
 	}
 	version := strings.TrimSpace(os.Getenv("HAPPIER_VERSION"))
 	if version == "" {

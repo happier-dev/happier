@@ -1,11 +1,21 @@
-import { buildElevenLabsVoiceAgentPrompt } from '@happier-dev/agents';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
-import type { VoiceClientToolDefinition } from '@happier-dev/plugin-sdk/voice/client';
+import {
+  buildVoiceClientToolAgentPrompt,
+  type VoiceClientToolDefinition,
+} from '@happier-dev/plugin-sdk/voice/client';
 
 import {
   ElevenLabsProvisionToolSchema,
   type ElevenLabsProvisionRequest,
 } from '../../protocol/voice/index.js';
+
+/**
+ * ElevenLabs substitutes `{{name}}` dynamic variables into the agent prompt at
+ * conversation start, so the template dialect belongs to this plugin rather than
+ * to the host prompt owner.
+ */
+const ELEVENLABS_INITIAL_CONVERSATION_CONTEXT_VARIABLE = '{{initialConversationContext}}';
+const ELEVENLABS_SESSION_ID_VARIABLE = '{{sessionId}}';
 
 export type ElevenLabsTtsConfigInput = Readonly<{
   voiceId?: string | null;
@@ -34,7 +44,10 @@ export function createElevenLabsAutoprovision(input: Readonly<{
     tts?: ElevenLabsTtsConfigInput | null,
   ) => {
     throwIfAborted(signal);
-    const prompt = buildElevenLabsVoiceAgentPrompt().replace(/Claude Code/giu, 'the coding assistant');
+    const prompt = buildVoiceClientToolAgentPrompt({
+      initialConversationContextPlaceholder: ELEVENLABS_INITIAL_CONVERSATION_CONTEXT_VARIABLE,
+      sessionIdPlaceholder: ELEVENLABS_SESSION_ID_VARIABLE,
+    });
     const tools = ElevenLabsProvisionToolSchema.array().parse(input.tools.map((tool) => Object.freeze({
       name: tool.name,
       description: tool.description,

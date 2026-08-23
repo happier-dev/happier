@@ -19,7 +19,11 @@ import type {
     ConnectedAccountMetadataList,
     ConnectedAccountRef,
 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
+import {
+    materializeTriageSourceAuthorizationV1,
+    readTriageSourceAccountListingV1,
+    type TriageSourceAuthorizationOutcomeV1,
+} from '@happier-dev/triage-sources/runtime';
 import {
     MAX_TRIAGE_INSTANCE_DRAFTS_V1,
     MAX_TRIAGE_ROW_FACTS_V1,
@@ -40,9 +44,9 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import {
-    POSTHOG_MATERIALIZED_HEADER_NAMES,
     createPosthogApiClient,
     type PosthogApiClient,
+    type PosthogMaterializationOutcome,
     type PosthogTransportRequest,
 } from '../api/client.js';
 import type { PosthogFailure } from '../api/errors.js';
@@ -61,6 +65,7 @@ import {
 } from '../connect/origin.js';
 import { POSTHOG_CONNECTED_ACCOUNT_PURPOSE } from '../posthogContracts.js';
 import {
+    POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1,
     PosthogSampledEventsInputV1Schema,
     decodePosthogSampledEventsContinuation,
     encodePosthogSampledEventsContinuation,
@@ -69,6 +74,7 @@ import {
 } from './detail/issueEventsContract.js';
 import { readPosthogIssueActivity } from './detail/issueActivity.js';
 import {
+    POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1,
     PosthogIssueActivityInputV1Schema,
     decodePosthogIssueActivityContinuation,
     encodePosthogIssueActivityContinuation,
@@ -77,7 +83,6 @@ import {
 } from './detail/issueActivityContract.js';
 import { readPosthogSampledIssueEvents } from './detail/issueEvents.js';
 import { getPosthogIssue } from './get.js';
-import type { PosthogUnresolvedReason } from './issueResolution.js';
 import {
     buildPosthogLocalInstanceKey,
     parsePosthogCollisionScope,
@@ -212,6 +217,26 @@ export function toTriageSourceFailure(failure: PosthogFailure): TriageSourceFail
 }
 
 /**
+ * Projects the shared authorization owner's neutral reason into this source's own
+ * request vocabulary.
+ *
+ * The three refusals are one condition for the reader — the account cannot authorize
+ * this request — while a withdrawn materialization is the invocation ending, which the
+ * client already keeps apart from a deadline. Wording the neutral reasons is exactly
+ * what the shared owner leaves to each source.
+ */
+function toMaterializationOutcome(
+    authorized: TriageSourceAuthorizationOutcomeV1,
+): PosthogMaterializationOutcome {
+    if (authorized.ok) {
+        return { ok: true, authorization: authorized.authorization };
+    }
+    return authorized.reason === 'cancelled'
+        ? { ok: false, failure: { kind: 'cancelled' } }
+        : { ok: false, failure: { kind: 'unauthorized', status: 0 } };
+}
+
+/**
  * Builds the one client an invocation may use against one exact account and origin.
  *
  * The credential is materialized inside the request closure and reaches nothing but the
@@ -227,20 +252,26 @@ function createInvocationClient(
 ): PosthogApiClient {
     return createPosthogApiClient({
         origin,
-        materializeHeaders: async (request) => {
-            const materialized = await context.services.connectedAccounts.materializeListedAccount(
-                {
-                    purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
-                    account,
-                    materialization: {
-                        kind: 'httpHeaders',
-                        origin: request.origin,
-                        headerNames: [...request.headerNames],
-                    },
-                },
-                { signal: context.signal },
-            );
-            return materialized.kind === 'httpHeaders' ? materialized.headers : {};
+        materializeHeaders: async (request, options) => {
+            // The admission rule — exact bound account, `httpHeaders`, a usable
+            // `authorization`, and a withdrawn call that is a cancellation rather than a
+            // refused account — is one owner for every first-party source. The local
+            // version this replaced admitted an empty header bag from a materialization
+            // of the wrong kind, so the read went out unauthenticated and came back as
+            // the provider's `401` about an account that had never been refused.
+            //
+            // It receives the request's own composed boundary, not the aggregate
+            // signal: a mounted-detail read has a private deadline, and a
+            // materialization handed the caller's signal alone kept running against the
+            // account after this source had already abandoned the request.
+            const authorized = await materializeTriageSourceAuthorizationV1({
+                connectedAccounts: context.services.connectedAccounts,
+                purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
+                account,
+                origin: request.origin,
+                signal: options.signal,
+            });
+            return toMaterializationOutcome(authorized);
         },
         transport: async (url: string, request: PosthogTransportRequest) => {
             const response = await context.services.http.request({
@@ -835,14 +866,12 @@ export async function getPosthogSourceEntry(
         // A plain CRUD 404 stays `unresolved`. V1 retains no fingerprint, so the
         // provider cannot name a successor and this source can conclude neither
         // absence nor a merge.
-        return unresolved(sourceFailure(
-            outcome.resolution.kind === 'unresolved'
-                ? triageFailureClassForReason(outcome.resolution.because)
-                : 'unknown',
-            outcome.resolution.kind === 'unresolved'
-                ? failureCodeForReason(outcome.resolution.because)
-                : POSTHOG_FAILURE_CODES.responseUnreadable,
-        ));
+        //
+        // The projection is the SAME one `scan` uses. A second switch over the
+        // resolution reason stood here and had already lost the provider's own
+        // `Retry-After` deadline, so one throttle response deferred a later scan and
+        // told the aggregate to retry the identical `get` immediately.
+        return unresolved(toTriageSourceFailure(outcome.resolution.failure));
     }
 
     // The query plane supplies the richer row when it answered; a failed enrichment
@@ -878,67 +907,6 @@ export async function getPosthogSourceEntry(
         }),
         ...(row.lastSeenMs === undefined ? {} : { sourceUpdatedAtMs: row.lastSeenMs }),
     });
-}
-
-/**
- * The `get` plane's half of the same projection, kept in step with
- * `toTriageSourceFailure` above: one provider condition has one class and one code
- * whichever operation observed it. Both switches are total, so a new reason fails to
- * compile here rather than silently falling through to a code that describes something
- * else.
- */
-function triageFailureClassForReason(
-    reason: PosthogUnresolvedReason,
-): TriageSourceFailureV1['class'] {
-    switch (reason) {
-        case 'authentication':
-            return 'authentication';
-        case 'permission':
-            return 'permission';
-        case 'rateLimited':
-            return 'rateLimit';
-        case 'server':
-        case 'timeout':
-        case 'transport':
-        case 'cancelled':
-            return 'transient';
-        case 'plainNotFound':
-        case 'unexpectedStatus':
-            return 'unknown';
-        case 'malformedResponse':
-        case 'redirected':
-        case 'configuration':
-            return 'unsupportedContract';
-    }
-}
-
-function failureCodeForReason(reason: PosthogUnresolvedReason): string {
-    switch (reason) {
-        case 'plainNotFound':
-            return POSTHOG_FAILURE_CODES.notFound;
-        case 'authentication':
-            return POSTHOG_FAILURE_CODES.unauthorized;
-        case 'permission':
-            return POSTHOG_FAILURE_CODES.forbidden;
-        case 'rateLimited':
-            return POSTHOG_FAILURE_CODES.throttled;
-        case 'redirected':
-            return POSTHOG_FAILURE_CODES.redirected;
-        case 'server':
-            return POSTHOG_FAILURE_CODES.serverError;
-        case 'timeout':
-            return POSTHOG_FAILURE_CODES.timedOut;
-        case 'unexpectedStatus':
-            return POSTHOG_FAILURE_CODES.unexpectedStatus;
-        case 'transport':
-            return POSTHOG_FAILURE_CODES.transport;
-        case 'cancelled':
-            return POSTHOG_FAILURE_CODES.cancelled;
-        case 'malformedResponse':
-            return POSTHOG_FAILURE_CODES.responseUnreadable;
-        case 'configuration':
-            return POSTHOG_FAILURE_CODES.requestInvalid;
-    }
 }
 
 /**
@@ -1045,17 +1013,21 @@ export function createPosthogSampledEventsReader(
             return unavailable(toTriageSourceFailure(page.failure));
         }
 
-        const continuation = page.value.nextOffset === null
-            ? null
-            : encodePosthogSampledEventsContinuation({
-                ...frontier,
-                offset: page.value.nextOffset,
-            });
+        const { walk } = page.value;
+        const continuation = walk.kind === 'continues'
+            ? encodePosthogSampledEventsContinuation({ ...frontier, offset: walk.position })
+            : null;
+        // The same two ways to have no next position the Activity page distinguishes: a
+        // verified offset whose token will not fit is as much a gap as an offset that
+        // refused to advance, and neither is the provider's end of the sample.
+        const stoppedShort = walk.kind === 'stoppedShort'
+            || (walk.kind === 'continues' && continuation === null);
         return Object.freeze({
             kind: 'sampled' as const,
             events: page.value.events,
             omittedRowCount: page.value.omittedRowCount,
             ...(continuation === null ? {} : { continuation }),
+            ...(stoppedShort ? { incomplete: POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1 } : {}),
         });
     };
 }
@@ -1153,18 +1125,23 @@ export function createPosthogIssueActivityReader(
             return unavailable(toTriageSourceFailure(page.failure));
         }
 
-        const continuation = page.value.nextPage === null
-            ? null
-            : encodePosthogIssueActivityContinuation({
-                ...frontier,
-                page: page.value.nextPage,
-            });
+        const { walk } = page.value;
+        const continuation = walk.kind === 'continues'
+            ? encodePosthogIssueActivityContinuation({ ...frontier, page: walk.position })
+            : null;
+        // Two different ways to have no next position, and only one of them is the end
+        // of the collection. A verified page whose token will not fit is the same fact
+        // as a `next` this source will not follow: the walk stops here, and the panel
+        // must not read that as exhaustion.
+        const stoppedShort = walk.kind === 'stoppedShort'
+            || (walk.kind === 'continues' && continuation === null);
         return Object.freeze({
             kind: 'activity' as const,
             records: page.value.records,
             omittedRowCount: page.value.omittedRowCount,
             ...(page.value.totalCount === null ? {} : { totalCount: page.value.totalCount }),
             ...(continuation === null ? {} : { continuation }),
+            ...(stoppedShort ? { incomplete: POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1 } : {}),
         });
     };
 }

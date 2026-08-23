@@ -25,11 +25,16 @@ import {
   type ConversationProviderFailureV1,
   type ConversationProviderSetupOutcomeV1,
   type ConversationProviderSetupRemediationResultV1,
+  type ConversationBindingInputModeV1,
   type ConversationResolvedEndpointV1,
 } from '@happier-dev/channels-protocol/v1';
 import { isPluginError, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import {
+  QualifiedConnectedAccountRefSchema,
+  type ConnectedAccountRef,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginEventAutomationSetupResultV1 } from '@happier-dev/plugin-sdk/events';
+import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 
 import {
   createTelegramBotApi,
@@ -44,7 +49,6 @@ import {
   TELEGRAM_MAX_MESSAGE_CODE_POINTS,
 } from './telegramBotApi.js';
 import {
-  admitTelegramAutomationOccurrences,
   buildTelegramChatEventSourceSetupResult,
   throwTelegramAutomationSetupInvalid,
 } from './automationEvents.js';
@@ -103,47 +107,17 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+/**
+ * The manifest declares this exact input and the host rejects anything else
+ * before the handler runs, so this is the typed read of an already-admitted
+ * value — not a second validator that can disagree with the declaration.
+ */
+export const TELEGRAM_SETUP_INPUT_PROTOCOL_SCHEMA = defineProtocolObject({
+  credentialRef: QualifiedConnectedAccountRefSchema,
+}, { policy: 'closed' });
+
 function readSetupInput(input: unknown): TelegramSetupInput {
-  if (
-    !isRecord(input)
-    || Object.keys(input).some((key) => key !== 'credentialRef')
-    || !Object.hasOwn(input, 'credentialRef')
-    || !isRecord(input.credentialRef)
-  ) {
-    throw new PluginError({
-      code: 'telegram_setup_input_invalid',
-      message: 'Telegram Channel setup requires one qualified Connected Account reference.',
-    });
-  }
-
-  const credentialRef = input.credentialRef;
-  if (
-    Object.keys(credentialRef).length !== 2
-    || !Object.hasOwn(credentialRef, 'service')
-    || !Object.hasOwn(credentialRef, 'accountId')
-    || !isRecord(credentialRef.service)
-    || Object.keys(credentialRef.service).length !== 2
-    || !Object.hasOwn(credentialRef.service, 'pluginId')
-    || !Object.hasOwn(credentialRef.service, 'localId')
-    || !isNonEmptyString(credentialRef.service.pluginId)
-    || !isNonEmptyString(credentialRef.service.localId)
-    || !isNonEmptyString(credentialRef.accountId)
-  ) {
-    throw new PluginError({
-      code: 'telegram_setup_input_invalid',
-      message: 'Telegram Channel setup requires one qualified Connected Account reference.',
-    });
-  }
-
-  return {
-    credentialRef: {
-      service: {
-        pluginId: credentialRef.service.pluginId,
-        localId: credentialRef.service.localId,
-      },
-      accountId: credentialRef.accountId,
-    },
-  };
+  return TELEGRAM_SETUP_INPUT_PROTOCOL_SCHEMA.parse(input);
 }
 
 function isTelegramCredential(credentialRef: ConnectedAccountRef | null): credentialRef is ConnectedAccountRef {
@@ -458,6 +432,25 @@ function retryResult(result: Extract<Awaited<ReturnType<TelegramBotApi['sendMess
   };
 }
 
+/**
+ * Telegram's group privacy mode is the platform's own delivery decision: with
+ * it enabled the Bot API withholds ordinary group and supergroup messages and
+ * delivers only commands, mentions, and replies to this bot.
+ * `allAllowedMessages` is therefore a promise Telegram will not keep.
+ *
+ * BotFather can flip that switch at any time, long after setup. Setup states
+ * this capability once and the connection test restates the CURRENT value, so
+ * both roles read it from this single owner and cannot disagree about what the
+ * same authenticated bot can deliver.
+ */
+function telegramSharedEndpointInputModes(
+  identity: TelegramBotIdentity,
+): readonly ConversationBindingInputModeV1[] {
+  return identity.canReadAllGroupMessages
+    ? ['directMentionsOnly', 'addressedMessages', 'allAllowedMessages']
+    : ['directMentionsOnly', 'addressedMessages'];
+}
+
 export async function setupTelegramChannels(
   input: unknown,
   context: PluginInvocationContext,
@@ -506,6 +499,9 @@ export async function setupTelegramChannels(
     overlapSafety: 'providerExclusive',
     replayContinuity: 'checkpointed',
     outboundTextLimit: { maximum: TELEGRAM_MAX_MESSAGE_CODE_POINTS, unit: 'unicodeCodePoints' },
+    // The authenticated delivery truth travels with the connection instead of
+    // being discarded into the opaque provider configuration.
+    sharedEndpointInputModes: telegramSharedEndpointInputModes(identity),
     pairingDeepLinkTemplate: `https://t.me/${identity.username}?start={{token}}`,
   });
 }
@@ -562,6 +558,10 @@ export async function testTelegramConnection(input: unknown, context: PluginInvo
     kind: 'ready',
     integrationPrincipal: { id: ready.identity.id, label: ready.identity.displayName },
     providerConnectionKey: `${TELEGRAM_CONNECTION_KEY_PREFIX}${ready.identity.id}`,
+    // Re-authenticated on every probe. Group privacy can be narrowed after
+    // setup, and a saved shared binding that promised ordinary messages would
+    // otherwise stay apparently ready while observing nothing at all.
+    sharedEndpointInputModes: telegramSharedEndpointInputModes(ready.identity),
   });
 }
 
@@ -647,43 +647,32 @@ export async function pollTelegramObservations(input: unknown, context: PluginIn
   }, { signal: context.signal });
   throwIfAborted(context.signal);
   if (poll.kind !== 'updates') return readFailure(poll);
-  // Automation Event occurrences are admitted from this same single-consumer
-  // cycle. Telegram's `offset` confirms and discards earlier updates for every
-  // reader of the bot, so a separate observer would silently steal Channel
-  // messages. Admission is idempotent by occurrence id, so running it before
-  // the Channel observations is safe under replay.
-  const automation = checkpoint === null
-    ? { stopBeforeUpdateId: null, admittedCount: 0 }
-    : await admitTelegramAutomationOccurrences({
-      context,
-      identity: ready.identity,
-      updates: poll.updates,
-      observationReceivedAt: Date.now(),
-    });
-  throwIfAborted(context.signal);
-  // The shared checkpoint must not advance past an occurrence that was not
-  // admitted checkpoint-safely, so the batch stops there and is retried.
-  const stopIndex = automation.stopBeforeUpdateId === null
-    ? -1
-    : poll.updates.findIndex((update) => update.updateId === automation.stopBeforeUpdateId);
-  const consumedUpdates = stopIndex < 0 ? poll.updates : poll.updates.slice(0, stopIndex);
+  // This poll reaches no Automation authority. The Telegram Automation Event
+  // is WITHHELD from the manifest (see `automationEvents.ts`), so the host
+  // builds no adopted-definition owner for this plugin and every
+  // `automation.event.sources.list` call fails with
+  // `automation_event_adopted_definitions_unavailable` — once per observed
+  // batch, on every Machine, forever. The admission capability is retained
+  // whole in `automationEvents.ts`; re-declaring the Event restores its one
+  // call site here, exactly as that module's resume note describes. This
+  // matches the canonical treatment the Discord provider already applies to
+  // its own withheld Event (`discordGatewaySupervisor.ts`).
   // An underfull page proves Telegram had no further update at this point. A
   // full page proves only forward progress, so it must retain the prior proof
-  // until a later underfull page catches up. A withheld tail is never caught up.
-  const caughtUpAtMs = checkpoint === null
-    || (stopIndex < 0 && poll.updates.length < request.limit)
+  // until a later underfull page catches up.
+  const caughtUpAtMs = checkpoint === null || poll.updates.length < request.limit
     ? Date.now()
     : checkpoint.caughtUpAtMs;
   const observations: ConversationNormalizedIngressV1[] = [];
   if (checkpoint !== null) {
-    for (const update of consumedUpdates) {
+    for (const update of poll.updates) {
       const observation = normalizedIngressFromUpdate(update, ready.identity);
       if (observation !== null) observations.push(observation);
     }
   }
   const checkpointAfterBatch = {
     v: 1,
-    offset: stopIndex < 0 ? poll.checkpointAfter : automation.stopBeforeUpdateId!,
+    offset: poll.checkpointAfter,
     caughtUpAtMs,
   };
   if (observations.length === 0) {

@@ -77,6 +77,7 @@ describe('forkCodexNativeAppServerConversation', () => {
   });
 
   it('treats a transport failure as indeterminate instead of replaying through the alias', async () => {
+    const controller = new AbortController();
     const request = vi.fn(async () => {
       throw new Error('transport interrupted after dispatch');
     });
@@ -84,12 +85,43 @@ describe('forkCodexNativeAppServerConversation', () => {
     await expect(forkCodexNativeAppServerConversation({
       client: { request },
       parentCodexSessionId: 'parent-thread',
+      signal: controller.signal,
     })).rejects.toMatchObject({
       name: 'CodexAppServerNativeForkFailure',
       outcome: 'indeterminate_after_dispatch',
     });
 
     expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith('thread/fork', {
+      threadId: 'parent-thread',
+      persistExtendedHistory: true,
+    }, { timeoutMs: null, signal: controller.signal });
+  });
+
+  it('passes the owner signal to the pending request and preserves its AbortError', async () => {
+    const controller = new AbortController();
+    const abortError = Object.assign(new Error('Action operation cancelled'), {
+      name: 'AbortError',
+    });
+    let rejectRequest!: (error: unknown) => void;
+    const request = vi.fn(() => new Promise<unknown>((_resolve, reject) => {
+      rejectRequest = reject;
+    }));
+
+    const fork = forkCodexNativeAppServerConversation({
+      client: { request },
+      parentCodexSessionId: 'parent-thread',
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+    controller.abort(abortError);
+    rejectRequest(abortError);
+
+    await expect(fork).rejects.toBe(abortError);
+    expect(request).toHaveBeenCalledWith('thread/fork', {
+      threadId: 'parent-thread',
+      persistExtendedHistory: true,
+    }, { timeoutMs: null, signal: controller.signal });
   });
 
   it('does not alias a method-not-found error correlated to another request', async () => {

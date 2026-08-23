@@ -58,12 +58,73 @@ describe('xAI Realtime credential broker', () => {
           status: 200,
           finalUrl: 'https://redirected.example/realtime/client_secrets',
           headers: Object.freeze({}),
-          body: new TextEncoder().encode(JSON.stringify({ value: 'short' })),
+          body: new TextEncoder().encode(JSON.stringify({ value: 'short', expires_at: 1_800_000_300 })),
         }),
       }),
       audience: '{"platform":"web"}',
       signal: new AbortController().signal,
     })).rejects.toMatchObject({ code: 'provider_response_invalid' });
+  });
+
+  it('requires the documented integer unix-seconds expires_at and rejects every off-contract expiry', async () => {
+    const now = 1_800_000_000_000;
+    const operations = createXaiRealtimeCredentialOperations({ now: () => now });
+    const mint = async (body: Readonly<Record<string, unknown>>) =>
+      await operations.mintClientAuthWithAccountOperations({
+        accountOperations: Object.freeze({
+          request: async () => Object.freeze({
+            status: 200,
+            finalUrl: 'https://api.x.ai/v1/realtime/client_secrets',
+            headers: Object.freeze({ 'content-type': 'application/json' }),
+            body: new TextEncoder().encode(JSON.stringify({ value: 'xai_ephemeral', ...body })),
+          }),
+        }),
+        audience: '{"platform":"web"}',
+        signal: new AbortController().signal,
+      });
+
+    // `expires_at` is required by the xAI contract; an omitted expiry is an
+    // off-contract response, not a licence to invent a five-minute lifetime.
+    await expect(mint({})).rejects.toMatchObject({ code: 'provider_response_invalid' });
+
+    // Already expired, about to expire, and implausibly far out are provider
+    // statements the broker cannot honour.
+    await expect(mint({ expires_at: 1_799_999_000 })).rejects
+      .toMatchObject({ code: 'provider_response_invalid' });
+    await expect(mint({ expires_at: 1_800_000_000 })).rejects
+      .toMatchObject({ code: 'provider_response_invalid' });
+    await expect(mint({ expires_at: 1_800_003_600 })).rejects
+      .toMatchObject({ code: 'provider_response_invalid' });
+    await expect(mint({ expires_at: 0 })).rejects
+      .toMatchObject({ code: 'provider_response_invalid' });
+    await expect(mint({ expires_at: -1 })).rejects
+      .toMatchObject({ code: 'provider_response_invalid' });
+
+    // The contract says integer unix SECONDS. A millisecond epoch that would
+    // otherwise land two minutes out is a different unit, not a fresh artifact.
+    await expect(mint({ expires_at: now + 120_000 })).rejects
+      .toMatchObject({ code: 'provider_response_invalid' });
+    // A fractional second, a non-finite number, and a numeric or ISO string are
+    // all off-contract shapes rather than timestamps to coerce.
+    await expect(mint({ expires_at: 1_800_000_300.5 })).rejects
+      .toMatchObject({ code: 'provider_response_invalid' });
+    await expect(mint({ expires_at: Number.MAX_SAFE_INTEGER + 2 })).rejects
+      .toMatchObject({ code: 'provider_response_invalid' });
+    await expect(mint({ expires_at: '1800000300' })).rejects
+      .toMatchObject({ code: 'provider_response_invalid' });
+    await expect(mint({ expires_at: new Date(now + 120_000).toISOString() })).rejects
+      .toMatchObject({ code: 'provider_response_invalid' });
+
+    // `expiresAt` is not a documented xAI field; it cannot satisfy the requirement.
+    await expect(mint({ expiresAt: 1_800_000_300 })).rejects
+      .toMatchObject({ code: 'provider_response_invalid' });
+    await expect(mint({ expiresAt: 'not-a-timestamp' })).rejects
+      .toMatchObject({ code: 'provider_response_invalid' });
+
+    // The documented shape is accepted, and unrelated extra response fields do
+    // not make an otherwise-valid response invalid.
+    await expect(mint({ expires_at: 1_800_000_300, request_id: 'req_1', usage: { tokens: 3 } }))
+      .resolves.toMatchObject({ expiresAtMs: 1_800_000_300_000 });
   });
 
   it('classifies a forbidden account operation as unavailable credentials', async () => {

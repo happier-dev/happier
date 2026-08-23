@@ -24,6 +24,10 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import {
+  readSentryCursorProbe,
+  type SentryCursorProbeV1,
+} from '../api/sentryCursorCycle.js';
+import {
   SENTRY_MAX_NATIVE_ISSUE_PAGE_LIMIT,
   SENTRY_MAX_SCAN_PAGE_ENTRIES,
   SENTRY_SCAN_STATS_PERIOD,
@@ -39,6 +43,28 @@ export type SentryScanContinuationV1 = Readonly<{
   nativeLimit: number;
   /** The `cursor` value taken verbatim from the validated `rel="next"` link. */
   cursor: string;
+  /**
+   * The earlier position this pass is watching for, and the schedule that moves
+   * it (`api/sentryCursorCycle.ts`).
+   *
+   * It is the walk's own non-progress evidence, and it lives here because that
+   * is the only place a pass whose pages are separate invocations can keep it.
+   * Comparing an advertised next cursor against the single cursor that produced
+   * it only sees `A → A`; a provider alternating `A → B → A` advertises a cursor
+   * that differs from the one just requested on every page, so the walk mints a
+   * frontier for a position it already read and keeps doing so for as long as
+   * the caller asks. The aggregate eventually stops that by exhausting its
+   * observation budget — and declares this source a non-progressing walk,
+   * discarding every row the lane produced. The walk seeing its own cycle
+   * settles a truthful partial instead and keeps the rows.
+   *
+   * It is a within-pass position, exactly like `cursor`: no route, no
+   * credential, no clock, and nothing that outlives the pass. It is one saved
+   * cursor rather than the whole requested-position history because this token
+   * is BOUNDED: evidence that grew per page turned the over-bound branch into
+   * the ordinary end of a long walk, at the 199th page.
+   */
+  probe: SentryCursorProbeV1;
   query: string;
   statsPeriod: '90d';
   sort: 'date';
@@ -89,6 +115,7 @@ export function encodeSentryScanContinuation(
   if (continuation.v !== 1) return null;
   if (!isValidGeometry(continuation.scanLimit, continuation.nativeLimit)) return null;
   if (continuation.cursor === '') return null;
+  if (readSentryCursorProbe(continuation.probe) === null) return null;
   if (
     continuation.query !== SENTRY_SCAN_QUERY
     || continuation.statsPeriod !== SENTRY_SCAN_STATS_PERIOD
@@ -101,6 +128,7 @@ export function encodeSentryScanContinuation(
     scanLimit: continuation.scanLimit,
     nativeLimit: continuation.nativeLimit,
     cursor: continuation.cursor,
+    probe: { ...continuation.probe },
     query: continuation.query,
     statsPeriod: continuation.statsPeriod,
     sort: continuation.sort,
@@ -113,6 +141,8 @@ export function decodeSentryScanContinuation(token: string): SentryScanContinuat
   const { scanLimit, nativeLimit, cursor, query, statsPeriod, sort } = record;
   if (!isValidGeometry(scanLimit, nativeLimit)) return REJECTED;
   if (typeof cursor !== 'string' || cursor === '') return REJECTED;
+  const probe = readSentryCursorProbe(record['probe']);
+  if (probe === null) return REJECTED;
   if (query !== SENTRY_SCAN_QUERY) return REJECTED;
   if (statsPeriod !== SENTRY_SCAN_STATS_PERIOD) return REJECTED;
   if (sort !== SENTRY_SCAN_SORT) return REJECTED;
@@ -123,6 +153,7 @@ export function decodeSentryScanContinuation(token: string): SentryScanContinuat
       scanLimit: scanLimit as number,
       nativeLimit: nativeLimit as number,
       cursor,
+      probe,
       query: SENTRY_SCAN_QUERY,
       statsPeriod: SENTRY_SCAN_STATS_PERIOD,
       sort: SENTRY_SCAN_SORT,

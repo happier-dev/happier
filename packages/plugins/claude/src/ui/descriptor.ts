@@ -56,6 +56,17 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
   },
   behavior: {
     descriptorId: 'claude.uiBehavior.v1',
+    // The attached-terminal viewer and the pending-input custody presentation are
+    // host-owned decisions over host-owned facts (`terminal.controlServiceabilityV1`
+    // and the `pendingInputInterruptAndRunLocalId` runtime capability). Claude only
+    // declares that its runner produces them, exactly as an installed Agent would.
+    attachedSessionTerminal: {
+      supported: true,
+    },
+    pendingDelivery: {
+      custodyLabelKey: 'session.pendingMessages.deliveryStatus.queuedInClaude',
+      interruptAndRun: true,
+    },
     // Capability-driven editable-goal gating. Active sessions use the runner's live session RPC
     // registry; a persisted goal item carrying `goalCapabilities.canEdit` is only the detached-session
     // semantic fallback. This keeps provider support and actual remote reachability separate.

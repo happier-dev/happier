@@ -303,65 +303,141 @@ async function buildRolloutCandidate(params: Readonly<{
   };
 }
 
-async function listRolloutCandidates(params: Readonly<{
+/**
+ * One row of the canonical merged candidate ordering. A rollout row carries the
+ * ordering key the corpus scan already produced and is built only if the page
+ * actually selects it; an app-server row arrives already built.
+ */
+type CodexMergedOrderingRow = Readonly<
+  | {
+    kind: 'rolloutEntry';
+    remoteSessionId: string;
+    updatedAtMs: number;
+    entry: CodexRolloutCandidateEntry;
+  }
+  | {
+    kind: 'candidate';
+    remoteSessionId: string;
+    updatedAtMs: number;
+    candidate: CodexExternalSessionCandidate;
+  }
+>;
+
+function compareCodexMergedOrderingRows(
+  left: CodexMergedOrderingRow,
+  right: CodexMergedOrderingRow,
+): number {
+  return right.updatedAtMs - left.updatedAtMs
+    || compareCodexRolloutCandidateCodeUnits(left.remoteSessionId, right.remoteSessionId);
+}
+
+function toCodexMergedOrderingCandidateRow(
+  candidate: CodexExternalSessionCandidate,
+): CodexMergedOrderingRow {
+  return {
+    kind: 'candidate',
+    remoteSessionId: candidate.remoteSessionId,
+    updatedAtMs: Math.trunc(candidate.updatedAtMs),
+    candidate,
+  };
+}
+
+/**
+ * The whole rollout ordering, not a page of it.
+ *
+ * The rollout corpus is enumerated and ordered in full before anything is
+ * paged — the per-row cost is the rollout read that turns an ordered row into a
+ * candidate, which is why only the selected page is built. Returning a prefix
+ * instead made the merged ordering a function of the requested depth: an
+ * app-server row that displaces its rollout twin toward the tail shortens the
+ * ordering as the prefix deepens, which serves the displaced identity again on
+ * the next page and drops the neighbour it shifted past.
+ */
+async function listRolloutCandidateOrdering(params: Readonly<{
   source: CodexExternalSessionSource;
   activeServerDir: string;
   env: NodeJS.ProcessEnv;
-  offset: number;
-  limit: number;
   searchTerm?: string;
   searchMode?: 'fast' | 'full';
-}> & CodexExternalSessionInvocationBounds): Promise<Readonly<{ candidates: CodexExternalSessionCandidate[]; totalCount: number; searchIncomplete?: boolean }>> {
+}> & CodexExternalSessionInvocationBounds): Promise<Readonly<{
+  rows: CodexMergedOrderingRow[];
+  searchIncomplete?: boolean;
+}>> {
   const selection = await selectCodexRolloutCandidateEntries({
     source: params.source,
     activeServerDir: params.activeServerDir,
     env: params.env,
-    offset: params.offset,
-    limit: params.limit,
+    offset: 0,
+    limit: Number.MAX_SAFE_INTEGER,
     searchTerm: params.searchTerm,
     searchMode: params.searchMode,
     signal: params.signal,
     deadlineAtMs: params.deadlineAtMs,
   });
 
-  const buildCandidates = async (entries: readonly CodexRolloutCandidateEntry[], includeTitle: boolean) =>
-    await mapCodexExternalSessionWorkWithConcurrency(
-      entries,
-      resolveCodexRolloutSearchBuildConcurrency(params.env),
-      ({ remoteSessionId, group, source }) => buildRolloutCandidate({
-        remoteSessionId,
-        group,
-        env: params.env,
-        source,
-        includeTitle,
-        signal: params.signal,
-        deadlineAtMs: params.deadlineAtMs,
-      }),
-      params,
-    );
-
   if (selection.kind === 'direct') {
-    // Exact-id lookups are the host candidate index's hydration route, so they
-    // must carry the title the indexed row deliberately does not persist. It is
-    // one bounded rollout read for one already-selected candidate.
-    const candidates = await buildCandidates(selection.entries, true);
     return {
-      candidates,
-      totalCount: selection.totalCount,
+      rows: selection.entries.map((entry) => ({
+        kind: 'rolloutEntry' as const,
+        remoteSessionId: entry.remoteSessionId,
+        updatedAtMs: Math.trunc(entry.group.updatedAtMs),
+        entry,
+      })),
       ...(selection.searchIncomplete ? { searchIncomplete: true } : {}),
     };
   }
 
-  const allCandidates = await buildCandidates(selection.entries, true);
+  // Candidate search matches on the title and cwd that only a built candidate
+  // carries, so this branch has to build every searched row before it can
+  // filter. The bounded searched window is what keeps that affordable, and
+  // `searchIncomplete` is how the host learns the window was not the corpus.
+  const built = await mapCodexExternalSessionWorkWithConcurrency(
+    selection.entries,
+    resolveCodexRolloutSearchBuildConcurrency(params.env),
+    ({ remoteSessionId, group, source }) => buildRolloutCandidate({
+      remoteSessionId,
+      group,
+      env: params.env,
+      source,
+      includeTitle: true,
+      signal: params.signal,
+      deadlineAtMs: params.deadlineAtMs,
+    }),
+    params,
+  );
   const filtered = filterCodexRolloutCandidatesBySearchTerm({
-    candidates: allCandidates,
+    candidates: built,
     searchTerm: params.searchTerm ?? '',
   });
   return {
-    candidates: filtered.slice(params.offset, params.offset + params.limit),
-    totalCount: filtered.length,
+    rows: filtered.map(toCodexMergedOrderingCandidateRow),
     ...(selection.searchIncomplete ? { searchIncomplete: true } : {}),
   };
+}
+
+async function buildCodexMergedOrderingPage(
+  rows: readonly CodexMergedOrderingRow[],
+  params: Readonly<{ env: NodeJS.ProcessEnv }> & CodexExternalSessionInvocationBounds,
+): Promise<CodexExternalSessionCandidate[]> {
+  return await mapCodexExternalSessionWorkWithConcurrency(
+    rows,
+    resolveCodexRolloutSearchBuildConcurrency(params.env),
+    async (row) => row.kind === 'candidate'
+      ? row.candidate
+      : await buildRolloutCandidate({
+        remoteSessionId: row.entry.remoteSessionId,
+        group: row.entry.group,
+        env: params.env,
+        source: row.entry.source,
+        // Exact-id lookups are the host candidate index's hydration route, so a
+        // selected row must carry the title the indexed row deliberately does
+        // not persist. It is one bounded rollout read per served row.
+        includeTitle: true,
+        signal: params.signal,
+        deadlineAtMs: params.deadlineAtMs,
+      }),
+    params,
+  );
 }
 
 /**
@@ -473,40 +549,34 @@ export async function listCodexSessionCandidates(params: Readonly<{
     });
   }
   const offset = decodeCodexExternalSessionIndexCursor(params.cursor);
-  // The index cursor has exactly ONE owner: the canonical merged ordering paged
-  // by `pageMergedCandidateOrdering` below. The app-server half of that ordering
-  // is unpaged, so the rollout half must supply the ordering PREFIX `[0, offset +
-  // limit)` rather than a page of its own. Applying the offset to both halves
-  // dropped the first `offset` merged rows and could answer a valid cursor with
-  // an empty page under that same cursor — a browse that reports "no more
-  // results" while candidates remain.
-  const rolloutListing = await listRolloutCandidates({
+  // The index cursor has exactly ONE owner: the canonical merged ordering built
+  // below. Both halves are resolved COMPLETE before the cursor is applied, so
+  // the ordering a page slices is the same ordering every other page slices —
+  // the only way an offset cursor can be sound.
+  const rolloutOrdering = await listRolloutCandidateOrdering({
     source: params.source,
     activeServerDir: params.activeServerDir,
     env: params.env,
-    offset: 0,
-    limit: offset + limit,
     searchTerm,
     searchMode: params.searchMode,
     signal: params.signal,
     deadlineAtMs: params.deadlineAtMs,
   });
-  const pageMergedCandidateOrdering = (
-    ordering: readonly CodexExternalSessionCandidate[],
-    totalCount: number,
-  ) => {
-    const candidates = ordering.slice(offset, offset + limit);
-    const nextOffset = offset + candidates.length;
+  const servePage = async (ordering: readonly CodexMergedOrderingRow[]) => {
+    const pageRows = ordering.slice(offset, offset + limit);
+    const nextOffset = offset + pageRows.length;
     return {
-      candidates: [...candidates],
-      nextCursor: nextOffset < totalCount ? encodeCodexExternalSessionIndexCursor(nextOffset) : null,
+      candidates: await buildCodexMergedOrderingPage(pageRows, params),
+      nextCursor: nextOffset < ordering.length
+        ? encodeCodexExternalSessionIndexCursor(nextOffset)
+        : null,
     };
   };
   const exactRolloutIdMatch = Boolean(searchTerm)
-    && rolloutListing.candidates.some((candidate) => candidate.remoteSessionId.toLowerCase() === searchTerm)
-    && rolloutListing.searchIncomplete !== true;
+    && rolloutOrdering.rows.some((row) => row.remoteSessionId.toLowerCase() === searchTerm)
+    && rolloutOrdering.searchIncomplete !== true;
   if (exactRolloutIdMatch) {
-    return pageMergedCandidateOrdering(rolloutListing.candidates, rolloutListing.totalCount);
+    return await servePage([...rolloutOrdering.rows].sort(compareCodexMergedOrderingRows));
   }
 
   const appServerListing = params.searchMode === 'fast'
@@ -524,26 +594,20 @@ export async function listCodexSessionCandidates(params: Readonly<{
       deadlineAtMs: params.deadlineAtMs,
     });
   throwIfCodexExternalSessionInvocationStopped(params);
-  const searchIncomplete = rolloutListing.searchIncomplete === true || appServerListing.incomplete === true;
-  if (appServerListing.candidates.length === 0) {
-    return {
-      ...pageMergedCandidateOrdering(rolloutListing.candidates, rolloutListing.totalCount),
-      ...(searchIncomplete ? { searchIncomplete: true } : {}),
-    };
+  const searchIncomplete = rolloutOrdering.searchIncomplete === true || appServerListing.incomplete === true;
+
+  // The app-server row owns the merged row for an identity both halves report:
+  // it is the more authoritative one, carrying the live thread's archive state
+  // and `runtimeDescriptorV1`, which takeover turns into link data.
+  const merged = new Map<string, CodexMergedOrderingRow>();
+  for (const row of rolloutOrdering.rows) merged.set(row.remoteSessionId, row);
+  for (const candidate of appServerListing.candidates) {
+    merged.set(candidate.remoteSessionId, toCodexMergedOrderingCandidateRow(candidate));
   }
-
-  const merged = new Map<string, CodexExternalSessionCandidate>();
-  for (const candidate of appServerListing.candidates) merged.set(candidate.remoteSessionId, candidate);
-  for (const candidate of rolloutListing.candidates) merged.set(candidate.remoteSessionId, candidate);
-
-  const ordering = Array.from(merged.values())
-    .sort((left, right) =>
-      right.updatedAtMs - left.updatedAtMs
-      || compareCodexRolloutCandidateCodeUnits(left.remoteSessionId, right.remoteSessionId),
-    );
+  const ordering = Array.from(merged.values()).sort(compareCodexMergedOrderingRows);
 
   return {
-    ...pageMergedCandidateOrdering(ordering, Math.max(rolloutListing.totalCount, merged.size)),
+    ...(await servePage(ordering)),
     ...(searchIncomplete ? { searchIncomplete: true } : {}),
   };
 }

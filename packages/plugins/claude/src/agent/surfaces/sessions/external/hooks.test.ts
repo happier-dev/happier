@@ -28,6 +28,7 @@ import {
     CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
     CLAUDE_EXTERNAL_SESSION_HOOK_STOP_EVENT_ID,
     CLAUDE_EXTERNAL_SESSION_HOOK_SUPPORTED_VERSION,
+    CLAUDE_EXTERNAL_SESSION_HOOK_WINDOWS_VARIANT_ID,
     claudeExternalSessionHooksContribution,
 } from './hooks.js';
 
@@ -54,6 +55,7 @@ function invocation(
 
 function resolveInstallationRequest(
     installedVersion = CLAUDE_EXTERNAL_SESSION_HOOK_SUPPORTED_VERSION,
+    platform: 'darwin' | 'linux' | 'win32' = 'darwin',
 ): AgentExternalSessionHookResolveInstallationRequest {
     return {
         ...invocation(),
@@ -61,7 +63,7 @@ function resolveInstallationRequest(
             installationIdentity: 'claude-installation-v1',
             executableIdentity: 'sha256:claude-binary',
             installedVersion,
-            platform: 'darwin',
+            platform,
             architecture: 'arm64',
         },
     };
@@ -80,39 +82,55 @@ function mapHookEventRequest(params: Readonly<{
     };
 }
 
+function variantShape(
+    variantId: string,
+    shellDialect: 'posix' | 'powershell_encoded',
+) {
+    return {
+        variantId,
+        targets: [{
+            targetId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
+            format: 'hook_event_json_arrays_v1',
+            collectionId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_COLLECTION_ID,
+        }],
+        events: [
+            {
+                eventId: CLAUDE_EXTERNAL_SESSION_HOOK_SESSION_START_EVENT_ID,
+                targetId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
+                nativeEventName: 'SessionStart',
+                command: {
+                    kind: 'happier_observation_v1',
+                    shellDialect,
+                    timeoutMs: 500,
+                },
+            },
+            {
+                eventId: CLAUDE_EXTERNAL_SESSION_HOOK_STOP_EVENT_ID,
+                targetId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
+                nativeEventName: 'Stop',
+                command: {
+                    kind: 'happier_observation_v1',
+                    shellDialect,
+                    timeoutMs: 500,
+                },
+            },
+        ],
+    };
+}
+
 describe('Claude External Session hooks', () => {
-    it('declares one immutable SessionStart/Stop installation variant and only two callbacks', () => {
+    it('declares one immutable SessionStart/Stop variant per supported shell dialect and only two callbacks', () => {
         expect(claudeExternalSessionHooksContribution).toEqual({
-            installationVariants: [{
-                variantId: CLAUDE_EXTERNAL_SESSION_HOOK_INSTALLATION_VARIANT_ID,
-                targets: [{
-                    targetId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
-                    format: 'hook_event_json_arrays_v1',
-                    collectionId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_COLLECTION_ID,
-                }],
-                events: [
-                    {
-                        eventId: CLAUDE_EXTERNAL_SESSION_HOOK_SESSION_START_EVENT_ID,
-                        targetId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
-                        nativeEventName: 'SessionStart',
-                        command: {
-                            kind: 'happier_observation_v1',
-                            shellDialect: 'posix',
-                            timeoutMs: 500,
-                        },
-                    },
-                    {
-                        eventId: CLAUDE_EXTERNAL_SESSION_HOOK_STOP_EVENT_ID,
-                        targetId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
-                        nativeEventName: 'Stop',
-                        command: {
-                            kind: 'happier_observation_v1',
-                            shellDialect: 'posix',
-                            timeoutMs: 500,
-                        },
-                    },
-                ],
-            }],
+            installationVariants: [
+                variantShape(
+                    CLAUDE_EXTERNAL_SESSION_HOOK_INSTALLATION_VARIANT_ID,
+                    'posix',
+                ),
+                variantShape(
+                    CLAUDE_EXTERNAL_SESSION_HOOK_WINDOWS_VARIANT_ID,
+                    'powershell_encoded',
+                ),
+            ],
             resolveInstallation: expect.any(Function),
             mapHookEvent: expect.any(Function),
         });
@@ -170,6 +188,69 @@ describe('Claude External Session hooks', () => {
                 },
             });
         }
+    });
+
+    it('selects the PowerShell-encoded variant on win32 and still maps its hook events', async () => {
+        vi.stubEnv('CLAUDE_CONFIG_DIR', '');
+        vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', '');
+
+        await expect(Promise.resolve(
+            claudeExternalSessionHooksContribution.resolveInstallation(
+                resolveInstallationRequest(
+                    CLAUDE_EXTERNAL_SESSION_HOOK_SUPPORTED_VERSION,
+                    'win32',
+                ),
+            ),
+        )).resolves.toMatchObject({
+            ok: true,
+            value: {
+                kind: 'supported',
+                variantId: CLAUDE_EXTERNAL_SESSION_HOOK_WINDOWS_VARIANT_ID,
+                readiness: { kind: 'ready' },
+            },
+        });
+
+        for (const platform of ['darwin', 'linux'] as const) {
+            await expect(Promise.resolve(
+                claudeExternalSessionHooksContribution.resolveInstallation(
+                    resolveInstallationRequest(
+                        CLAUDE_EXTERNAL_SESSION_HOOK_SUPPORTED_VERSION,
+                        platform,
+                    ),
+                ),
+            )).resolves.toMatchObject({
+                ok: true,
+                value: {
+                    variantId:
+                        CLAUDE_EXTERNAL_SESSION_HOOK_INSTALLATION_VARIANT_ID,
+                },
+            });
+        }
+
+        // A Windows installation whose events are never mapped would be a
+        // silently dead hook, so the Windows variant id must be admitted by
+        // `mapHookEvent` exactly like the POSIX one.
+        await expect(Promise.resolve(
+            claudeExternalSessionHooksContribution.mapHookEvent({
+                ...mapHookEventRequest({
+                    eventId:
+                        CLAUDE_EXTERNAL_SESSION_HOOK_SESSION_START_EVENT_ID,
+                    observedAtMs: 9_000,
+                    nativePayload: {
+                        hook_event_name: 'SessionStart',
+                        session_id: 'claude-session-win',
+                        source: 'startup',
+                    },
+                }),
+                variantId: CLAUDE_EXTERNAL_SESSION_HOOK_WINDOWS_VARIANT_ID,
+            }),
+        )).resolves.toMatchObject({
+            ok: true,
+            value: {
+                kind: 'mapped',
+                remoteSessionId: 'claude-session-win',
+            },
+        });
     });
 
     it('uses the official default config root without creating settings.json', async () => {

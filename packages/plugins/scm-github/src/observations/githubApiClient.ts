@@ -25,10 +25,19 @@ export type GithubApiResponseV1 = Readonly<{
   body: Uint8Array;
 }>;
 
+/**
+ * The verbs this client may send, and therefore the exact set the manifest's one
+ * `github-api` grant admits. The host revalidates origin AND method at dispatch,
+ * so a verb widened here without its grant fails at the host authority boundary
+ * where no unit test can see it — and a verb granted without a declaring Action
+ * is authority nothing consumes.
+ */
+export type GithubApiMethodV1 = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+
 export type GithubApiClientV1 = Readonly<{
   request(input: Readonly<{
     url: string;
-    method?: 'GET' | 'POST';
+    method?: GithubApiMethodV1;
     headers?: Readonly<Record<string, string>>;
     body?: Uint8Array;
   }>): Promise<GithubApiResponseV1>;
@@ -64,16 +73,62 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isGithubSecondaryRateLimitResponse(response: GithubApiResponseV1): boolean {
-  if (response.status !== 403 && response.status !== 429) return false;
+/**
+ * GitHub's own wording for a throttled request, wherever it places it. The
+ * secondary-limit family reports at the top level; content-creation throttling
+ * reports through the `errors` detail of a `422`.
+ */
+const GITHUB_THROTTLE_MESSAGE_PATTERN =
+  /\bsecondary\s+rate\s+limits?\b|\btoo\s+quickly\b|\babuse\s+detection\b|\bspam\b/iu;
+
+function readGithubResponseMessages(response: GithubApiResponseV1): readonly string[] {
   try {
     const value: unknown = JSON.parse(new TextDecoder().decode(response.body));
-    return isRecord(value)
-      && typeof value.message === 'string'
-      && /\bsecondary\s+rate\s+limits?\b/iu.test(value.message);
+    if (!isRecord(value)) return [];
+    const messages = typeof value.message === 'string' ? [value.message] : [];
+    if (!Array.isArray(value.errors)) return messages;
+    for (const detail of value.errors) {
+      if (isRecord(detail) && typeof detail.message === 'string') messages.push(detail.message);
+    }
+    return messages;
   } catch {
-    return false;
+    return [];
   }
+}
+
+function hasGithubThrottleMessage(response: GithubApiResponseV1): boolean {
+  return readGithubResponseMessages(response)
+    .some((message) => GITHUB_THROTTLE_MESSAGE_PATTERN.test(message));
+}
+
+function isGithubSecondaryRateLimitResponse(response: GithubApiResponseV1): boolean {
+  if (response.status !== 403 && response.status !== 429) return false;
+  return hasGithubThrottleMessage(response);
+}
+
+/**
+ * GitHub documents its content-creation endpoints' `422` as "Validation failed,
+ * OR the endpoint has been spammed", and warns that creating content too
+ * quickly results in secondary rate limiting. A throttled `422` is therefore a
+ * retryable limit, not the permanent contract failure a bare status implies.
+ * Only GitHub's own throttle wording admits one — a documented validation
+ * failure keeps its permanent classification, so this never widens the general
+ * `422` contract meaning relied on elsewhere.
+ */
+export function isGithubContentCreationThrottled(response: GithubApiResponseV1): boolean {
+  return response.status === 422 && hasGithubThrottleMessage(response);
+}
+
+/**
+ * The retry instruction for a throttled content-creation `422`, or `null` when
+ * the response is not one.
+ */
+export function readGithubContentCreationThrottleRetryAfterMs(
+  response: GithubApiResponseV1,
+  nowMs = Date.now(),
+): number | null {
+  if (!isGithubContentCreationThrottled(response)) return null;
+  return readGithubRetryAfterMs(response.headers, nowMs) ?? GITHUB_RATE_LIMIT_FALLBACK_MS;
 }
 
 function withoutReservedGithubHeaders(headers: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
@@ -138,7 +193,7 @@ function createGithubApiClientWithAuthorization(
 ): GithubApiClientV1 {
   async function send(input: Readonly<{
     url: string;
-    method?: 'GET' | 'POST';
+    method?: GithubApiMethodV1;
     headers?: Readonly<Record<string, string>>;
     body?: Uint8Array;
     redirect: 'error' | 'manual';

@@ -1266,7 +1266,14 @@ describe('Discord Gateway worker', () => {
       failure: {
         kind: 'notReady',
         reason: 'permissionMissing',
-        diagnostic: 'Discord Message Content must be enabled for this application in the Developer Portal.',
+        // The four Message Content facts C7 keeps distinct travel to the user
+        // through this one diagnostic. A bare sentence tells a person that
+        // something is wrong but not which of the four switches to flip.
+        diagnostic: 'Discord Message Content must be enabled for this application in the Developer Portal.'
+          + ' Message Content status: required by this connection: yes;'
+          + ' application permission: disabled;'
+          + ' Gateway intent requested: no;'
+          + ' Gateway intent active: no.',
       },
     });
     expect(getGatewayBot).not.toHaveBeenCalled();
@@ -1303,7 +1310,14 @@ describe('Discord Gateway worker', () => {
       failure: {
         kind: 'notReady',
         reason: 'permissionMissing',
-        diagnostic: 'Discord refused the requested Message Content intent (Gateway close 4014).',
+        // The Developer Portal says enabled and the Identify did request the
+        // intent, yet Discord refused it. Only the four distinct facts make
+        // that difference visible instead of looking like the case above.
+        diagnostic: 'Discord refused the requested Message Content intent (Gateway close 4014).'
+          + ' Message Content status: required by this connection: yes;'
+          + ' application permission: enabled;'
+          + ' Gateway intent requested: yes;'
+          + ' Gateway intent active: no.',
       },
     });
     expect(socket.sent).toHaveBeenCalledWith(

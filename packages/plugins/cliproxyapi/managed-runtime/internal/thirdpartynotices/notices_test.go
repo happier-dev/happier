@@ -69,13 +69,13 @@ func TestValidateGoDistributionRejectsToolchainVersionDifferentFromBinary(t *tes
 	t.Parallel()
 
 	err := validateGoDistribution(
-		"go1.26.4",
+		"go1.26.5",
 		goEnvironment{
-			Version: "go1.26.5",
+			Version: "go1.26.6",
 			Root:    "/opt/go",
 		},
 	)
-	const expected = "built binary Go version go1.26.4 does not match source toolchain go1.26.5"
+	const expected = "built binary Go version go1.26.5 does not match source toolchain go1.26.6"
 	if err == nil || err.Error() != expected {
 		t.Fatalf("validateGoDistribution() error = %v, want %q", err, expected)
 	}
@@ -110,7 +110,7 @@ func TestRenderNoticeIsDeterministicAndSourcePinned(t *testing.T) {
 	}
 
 	goDistribution := distributionEvidence{
-		Version: "go1.26.5",
+		Version: "go1.26.6",
 		Files: []evidenceFile{
 			{Path: "PATENTS", Content: []byte("Go patents\n")},
 			{Path: "LICENSE", Content: []byte("Go license\n")},
@@ -136,7 +136,7 @@ func TestRenderNoticeIsDeterministicAndSourcePinned(t *testing.T) {
 		t.Fatalf("module order is not deterministic:\n%s", rendered)
 	}
 	for _, expected := range []string{
-		"Go toolchain go1.26.5",
+		"Go toolchain go1.26.6",
 		"evidence file: LICENSE\n",
 		"evidence file: PATENTS\n",
 		"module checksum: h1:alpha-source",
@@ -162,7 +162,7 @@ func TestRenderNoticeNormalizesEvidenceWhitespace(t *testing.T) {
 
 	rendered, err := renderNotice(
 		distributionEvidence{
-			Version: "go1.26.5",
+			Version: "go1.26.6",
 			Files: []evidenceFile{{
 				Path:    "LICENSE",
 				Content: []byte("Go license with trailing spaces  \r\n\r\n"),

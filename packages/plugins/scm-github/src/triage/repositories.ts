@@ -21,8 +21,27 @@ import type { GithubTriageFailureV1 } from './types.js';
  * invocations, and no credential is captured: the client owns that, once.
  */
 
+/**
+ * The merge methods this repository's own settings permit.
+ *
+ * Each entry is present ONLY when GitHub explicitly stated it. GitHub omits
+ * `allow_*` from the repository object for some credentials and visibilities, and
+ * an omitted setting is unknown — never `false`. Treating silence as a
+ * prohibition would refuse a merge the repository actually allows, which is the
+ * reasonless refusal this vertical exists to avoid.
+ */
+export type GithubRepositoryMergeSettingsV1 = Readonly<{
+  merge: boolean | null;
+  squash: boolean | null;
+  rebase: boolean | null;
+}>;
+
 export type GithubRepositoryReadV1 =
-  | Readonly<{ kind: 'readable'; repositoryId: string }>
+  | Readonly<{
+    kind: 'readable';
+    repositoryId: string;
+    mergeSettings: GithubRepositoryMergeSettingsV1;
+  }>
   | Readonly<{ kind: 'unreadable'; failure: GithubTriageFailureV1 }>;
 
 export type GithubRepositoryReaderV1 = Readonly<{
@@ -31,6 +50,19 @@ export type GithubRepositoryReaderV1 = Readonly<{
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readDeclaredBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function readMergeSettings(body: unknown): GithubRepositoryMergeSettingsV1 {
+  const raw = isRecord(body) ? body : {};
+  return Object.freeze({
+    merge: readDeclaredBoolean(raw.allow_merge_commit),
+    squash: readDeclaredBoolean(raw.allow_squash_merge),
+    rebase: readDeclaredBoolean(raw.allow_rebase_merge),
+  });
 }
 
 function readPositiveDecimal(value: unknown): string | null {
@@ -79,7 +111,11 @@ export function createGithubRepositoryReader(input: Readonly<{
         }),
       });
     }
-    return Object.freeze({ kind: 'readable', repositoryId });
+    return Object.freeze({
+      kind: 'readable',
+      repositoryId,
+      mergeSettings: readMergeSettings(body),
+    });
   };
 
   return Object.freeze({

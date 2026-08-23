@@ -16,6 +16,7 @@ import { PLUGIN_MANIFEST } from './manifest.js';
 import { BINDINGS_RESOURCE_RUNTIME } from './bindingsResource.js';
 import { declaredResourceMaxBytes, resourceText } from './testkit/resourceContract.js';
 
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 class MemoryAccountCollection {
   readonly rows = new Map<string, Readonly<{
     rowId: string;
@@ -28,6 +29,7 @@ class MemoryAccountCollection {
     cursor?: string;
     limit?: number;
   }>) {
+    assertChannelsTestCollectionQueryLimit(request.limit);
     const recordKind = request.prefix?.[0];
     const matching = [...this.rows.values()]
       .filter((row) => row.value['record-kind'] === recordKind)
@@ -178,7 +180,7 @@ describe('Channels bindings Resource', () => {
           target: { kind: 'session', summary: 'session-support' },
           inputMode: 'addressedMessages',
           deliveryMode: 'mirrorSession',
-          approval: { kind: 'unavailable', maximumScope: 'session' },
+          approval: { kind: 'enabled', maximumScope: 'session' },
           enabled: true,
           deletionState: 'none',
         },
@@ -193,7 +195,8 @@ describe('Channels bindings Resource', () => {
 
   it('fails closed when a by-kind result is not a canonical binding row', async () => {
     const invalidStateCollection = {
-      async query() {
+      async query(request: Readonly<{ limit?: number }>) {
+        assertChannelsTestCollectionQueryLimit(request.limit);
         return {
           rows: [{
             rowId: 'connection-1',

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readFile, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type {
   AgentExecutionRunEvent,
   AgentRuntimeContext,
@@ -519,6 +521,11 @@ describe('createClaudeNativeRuntime', () => {
     const providerBinding: AgentSessionProviderBinding = {
       connectionId: ProviderConnectionIdSchema.parse('pc_provider_session_authority'),
       model: { id: 'claude-sonnet-4-6', name: 'Provider Sonnet' },
+      upstream: {
+        protocol: 'anthropic',
+        normalizedUrl: 'https://gateway.example/v1',
+        credential: 'apiKey',
+      },
       materialization: { v: 1, kind: 'spawnEnv' },
     };
     const providerLaunchEnvironment = Object.freeze({
@@ -554,6 +561,164 @@ describe('createClaudeNativeRuntime', () => {
     await session.dispose();
   });
 
+  it('pins an isolated shared-config root when a credential-less Provider binding redirects Claude Code', async () => {
+    const openSession = vi.fn<ClaudeNativeSessionFactory>(
+      ({ request }) => createNativeOperations(request.sessionId).runtime,
+    );
+    const connectedAccounts = {
+      getBinding: vi.fn(),
+      materialize: vi.fn(),
+      requestSelection: vi.fn(),
+      watch: vi.fn(() => ({ dispose() {} })),
+    };
+    const userConfigDir = await mkdtemp(join(tmpdir(), 'claude-user-config-'));
+    await mkdir(join(userConfigDir, 'skills'), { recursive: true });
+    await mkdir(join(userConfigDir, 'projects'), { recursive: true });
+    await writeFile(join(userConfigDir, 'projects', 'kept.jsonl'), '{}\n');
+    await writeFile(join(userConfigDir, 'CLAUDE.md'), '# user memory\n');
+    await writeFile(
+      join(userConfigDir, '.credentials.json'),
+      JSON.stringify({ claudeAiOauth: { accessToken: 'personal-oauth' } }),
+    );
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = userConfigDir;
+
+    const providerBinding: AgentSessionProviderBinding = {
+      connectionId: ProviderConnectionIdSchema.parse('pc_uncredentialed_gateway'),
+      model: { id: 'local-claude', name: 'Local Claude' },
+      upstream: {
+        protocol: 'anthropic',
+        normalizedUrl: 'http://localhost:1234',
+        credential: 'none',
+      },
+      materialization: { v: 1, kind: 'spawnEnv' },
+    };
+    const runtime = createTestClaudeNativeRuntime({
+      openSession,
+      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
+    });
+
+    let pinnedRootDir: string;
+    try {
+      const session = await runtime.sessions.open({
+        kind: 'create',
+        sessionId: 'uncredentialed-gateway',
+        cwd: '/repo',
+        providerBinding,
+        launchEnvironment: {
+          values: {
+            ANTHROPIC_BASE_URL: 'http://localhost:1234',
+            CLAUDE_CONFIG_DIR: userConfigDir,
+            KEEP: 'yes',
+          },
+          unset: [],
+        },
+      }, {
+        signal: new AbortController().signal,
+        services: { connectedAccounts },
+        session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
+      } as unknown as AgentSessionRuntimeContext);
+
+      const launched = openSession.mock.calls[0]?.[0].request.launchEnvironment;
+      pinnedRootDir = launched?.values.CLAUDE_CONFIG_DIR ?? '';
+      expect(pinnedRootDir).not.toBe('');
+      expect(pinnedRootDir).not.toBe(userConfigDir);
+      expect(launched?.values.ANTHROPIC_BASE_URL).toBe('http://localhost:1234');
+      expect(launched?.values.KEEP).toBe('yes');
+      // The pinned root carries no account identity...
+      await expect(stat(join(pinnedRootDir, '.credentials.json'))).rejects.toThrow();
+      // ...but still resolves the user's own Claude configuration.
+      expect(await readFile(join(pinnedRootDir, 'CLAUDE.md'), 'utf8')).toBe('# user memory\n');
+      expect((await stat(join(pinnedRootDir, 'skills'))).isDirectory()).toBe(true);
+      // A request that carries no resolved policy takes the mode the canonical
+      // settings owner itself defaults to: provider state stays shared.
+      expect(
+        await readFile(join(pinnedRootDir, 'projects', 'kept.jsonl'), 'utf8'),
+      ).toBe('{}\n');
+
+      await session.dispose();
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+      await rm(userConfigDir, { recursive: true, force: true });
+    }
+    await expect(stat(pinnedRootDir)).rejects.toThrow();
+  });
+
+  it('honours the account state-sharing choice the host resolved for the pinned root', async () => {
+    const openSession = vi.fn<ClaudeNativeSessionFactory>(
+      ({ request }) => createNativeOperations(request.sessionId).runtime,
+    );
+    const connectedAccounts = {
+      getBinding: vi.fn(),
+      materialize: vi.fn(),
+      requestSelection: vi.fn(),
+      watch: vi.fn(() => ({ dispose() {} })),
+    };
+    const userConfigDir = await mkdtemp(join(tmpdir(), 'claude-user-config-'));
+    await mkdir(join(userConfigDir, 'skills'), { recursive: true });
+    await mkdir(join(userConfigDir, 'projects'), { recursive: true });
+    await writeFile(join(userConfigDir, 'projects', 'private.jsonl'), '{}\n');
+    await writeFile(join(userConfigDir, 'settings.json'), JSON.stringify({
+      apiKeyHelper: '/usr/local/bin/print-my-anthropic-key',
+      env: { ANTHROPIC_BASE_URL: 'https://personal.example.test', EDITOR: 'vim' },
+    }));
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = userConfigDir;
+
+    const providerBinding: AgentSessionProviderBinding = {
+      connectionId: ProviderConnectionIdSchema.parse('pc_isolated_state_gateway'),
+      model: { id: 'local-claude', name: 'Local Claude' },
+      upstream: {
+        protocol: 'anthropic',
+        normalizedUrl: 'http://localhost:1234',
+        credential: 'none',
+      },
+      materialization: { v: 1, kind: 'spawnEnv' },
+    };
+    const runtime = createTestClaudeNativeRuntime({
+      openSession,
+      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
+    });
+
+    try {
+      const session = await runtime.sessions.open({
+        kind: 'create',
+        sessionId: 'isolated-state-gateway',
+        cwd: '/repo',
+        providerBinding,
+        stateSharing: { configMode: 'linked', stateMode: 'isolated' },
+        launchEnvironment: { values: { CLAUDE_CONFIG_DIR: userConfigDir }, unset: [] },
+      }, {
+        signal: new AbortController().signal,
+        services: { connectedAccounts },
+        session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
+      } as unknown as AgentSessionRuntimeContext);
+
+      const pinnedRootDir = openSession.mock.calls[0]?.[0].request
+        .launchEnvironment?.values.CLAUDE_CONFIG_DIR ?? '';
+      expect(pinnedRootDir).not.toBe('');
+      expect(pinnedRootDir).not.toBe(userConfigDir);
+      // The descriptor's state entry is the user's conversation history: an
+      // explicit `isolated` choice must reach this launch shape too.
+      await expect(stat(join(pinnedRootDir, 'projects'))).rejects.toThrow();
+      // Isolating history never isolates the workspace configuration...
+      expect((await stat(join(pinnedRootDir, 'skills'))).isDirectory()).toBe(true);
+      // ...and never re-admits the credential-resolving settings keys.
+      const settings = JSON.parse(
+        await readFile(join(pinnedRootDir, 'settings.json'), 'utf8'),
+      ) as Record<string, unknown>;
+      expect(settings.apiKeyHelper).toBeUndefined();
+      expect(settings.env).toEqual({ EDITOR: 'vim' });
+
+      await session.dispose();
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+      await rm(userConfigDir, { recursive: true, force: true });
+    }
+  });
+
   it('preserves Provider execution authority without consulting a selected Anthropic account', async () => {
     const openExecutionSession = vi.fn(
       () => createNativeOperations('provider-execution-authority').runtime,
@@ -579,6 +744,11 @@ describe('createClaudeNativeRuntime', () => {
     const providerBinding: AgentSessionProviderBinding = {
       connectionId: ProviderConnectionIdSchema.parse('pc_provider_execution_authority'),
       model: { id: 'gateway-claude', name: 'Gateway Claude' },
+      upstream: {
+        protocol: 'anthropic',
+        normalizedUrl: 'https://gateway.example/v1',
+        credential: 'apiKey',
+      },
       materialization: { v: 1, kind: 'spawnEnv' },
     };
     const providerLaunchEnvironment = Object.freeze({
@@ -619,9 +789,19 @@ describe('createClaudeNativeRuntime', () => {
   it('carries bounded Provider launch inputs into the execution session owner', async () => {
     const operations = createNativeOperations('provider-execution').runtime;
     const openExecutionSession = vi.fn(() => operations);
+    // The launch preparer is the only reader of the session-shaped request an
+    // execution run builds, and the resolved state-sharing policy is one of the
+    // bounded open inputs it has to see.
+    const prepareLaunchEnvironment = vi.fn(async ({ request }) => Object.freeze({
+      launchEnvironment: request.launchEnvironment
+        ?? Object.freeze({ values: Object.freeze({}), unset: Object.freeze([]) }),
+      armInvalidation() {},
+      async dispose() {},
+    }));
     const runtime = createTestClaudeNativeRuntime({
       openSession: vi.fn(),
       openExecutionSession,
+      prepareLaunchEnvironment,
     });
     const providerConnectionId = ProviderConnectionIdSchema.parse('pc_claude');
     const configuration = {
@@ -633,6 +813,11 @@ describe('createClaudeNativeRuntime', () => {
     const providerBinding: AgentSessionProviderBinding = {
       connectionId: providerConnectionId,
       model: { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+      upstream: {
+        protocol: 'anthropic',
+        normalizedUrl: 'https://gateway.example/v1',
+        credential: 'apiKey',
+      },
       materialization: { v: 1, kind: 'spawnEnv' },
     };
 
@@ -648,11 +833,14 @@ describe('createClaudeNativeRuntime', () => {
       },
       configuration,
       providerBinding,
+      stateSharing: { configMode: 'linked', stateMode: 'isolated' },
     }, {} as AgentRuntimeContext);
 
     expect(openExecutionSession).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({ configuration, providerBinding }),
     }));
+    expect(prepareLaunchEnvironment.mock.calls[0]?.[0].request.stateSharing)
+      .toEqual({ configMode: 'linked', stateMode: 'isolated' });
     await run?.dispose();
   });
 
@@ -1052,6 +1240,148 @@ describe('createClaudeNativeRuntime', () => {
     });
   });
 
+  it('uses the host delivery turn id and publishes lifecycle only after accepted transport', async () => {
+    const native = createNativeOperations('session-host-turn-id');
+    const begunTurnIds: Array<string | undefined> = [];
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: () => ({
+        ...native.runtime,
+        beginProviderTurn(turnId?: string) {
+          begunTurnIds.push(turnId);
+          native.publish({
+            kind: 'turn-start',
+            sessionId: 'session-host-turn-id',
+            turnId: turnId ?? 'unexpected-provider-turn-id',
+            emittedAtMs: 10,
+            startedBy: 'host',
+          });
+        },
+        async sendProviderTurnPrompt() {
+          const turnId = begunTurnIds.at(-1) ?? 'unexpected-provider-turn-id';
+          native.publish({
+            kind: 'message-delta',
+            sessionId: 'session-host-turn-id',
+            turnId,
+            emittedAtMs: 11,
+            delta: { text: 'provider output' },
+          });
+          native.publish({
+            kind: 'turn-complete',
+            sessionId: 'session-host-turn-id',
+            turnId,
+            emittedAtMs: 12,
+          });
+          return { kind: 'accepted' as const };
+        },
+      }),
+    });
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'session-host-turn-id',
+      cwd: '/repo',
+    }, context);
+    const events: AgentSessionRuntimeEvent[] = [];
+    session.watch((event) => events.push(event));
+
+    await expect(session.send({
+      inputIds: ['input-host-turn-id'],
+      input: { text: 'hello' },
+      delivery: { kind: 'newTurn', turnId: 'host-turn-ordered' },
+    })).resolves.toEqual({ status: 'admitted' });
+
+    expect(begunTurnIds).toEqual(['host-turn-ordered']);
+    const lifecycle = events.filter((event) => (
+      event.kind === 'input-accepted'
+      || event.kind === 'turn-start'
+      || event.kind === 'message-delta'
+      || event.kind === 'turn-complete'
+    ));
+    expect(lifecycle.map((event) => event.kind)).toEqual([
+      'input-accepted',
+      'turn-start',
+      'message-delta',
+      'turn-complete',
+    ]);
+    expect(lifecycle).toEqual([
+      expect.objectContaining({
+        kind: 'input-accepted',
+        delivery: { kind: 'newTurn', turnId: 'host-turn-ordered' },
+      }),
+      expect.objectContaining({ kind: 'turn-start', turnId: 'host-turn-ordered', startedBy: 'host' }),
+      expect.objectContaining({ kind: 'message-delta', turnId: 'host-turn-ordered' }),
+      expect.objectContaining({ kind: 'turn-complete', turnId: 'host-turn-ordered' }),
+    ]);
+    expect(events.filter((event) => event.kind === 'turn-start')).toHaveLength(1);
+    expect(events.filter((event) => event.kind === 'turn-complete')).toHaveLength(1);
+  });
+
+  it('keeps the host delivery turn id on an accepted Claude authentication failure', async () => {
+    const native = createNativeOperations('session-host-auth-failure');
+    let begunTurnId: string | undefined;
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: () => ({
+        ...native.runtime,
+        beginProviderTurn(turnId?: string) {
+          begunTurnId = turnId;
+          native.publish({
+            kind: 'turn-start',
+            sessionId: 'session-host-auth-failure',
+            turnId: turnId ?? 'unexpected-provider-turn-id',
+            emittedAtMs: 10,
+            startedBy: 'host',
+          });
+        },
+        async sendProviderTurnPrompt() {
+          native.publish({
+            kind: 'turn-failed',
+            sessionId: 'session-host-auth-failure',
+            turnId: begunTurnId ?? 'unexpected-provider-turn-id',
+            emittedAtMs: 11,
+            issue: {
+              code: 'claude_authentication_failed',
+              source: 'auth_error',
+              agentId: 'claude',
+              sanitizedPreview: 'Not logged in.',
+            },
+          });
+          return { kind: 'accepted' as const };
+        },
+      }),
+    });
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'session-host-auth-failure',
+      cwd: '/repo',
+    }, context);
+    const events: AgentSessionRuntimeEvent[] = [];
+    session.watch((event) => events.push(event));
+
+    await expect(session.send({
+      inputIds: ['input-host-auth-failure'],
+      input: { text: 'hello' },
+      delivery: { kind: 'newTurn', turnId: 'host-auth-failure-turn' },
+    })).resolves.toEqual({ status: 'admitted' });
+
+    const lifecycle = events.filter((event) => (
+      event.kind === 'input-accepted' || event.kind === 'turn-start' || event.kind === 'turn-failed'
+    ));
+    expect(lifecycle.map((event) => event.kind)).toEqual([
+      'input-accepted',
+      'turn-start',
+      'turn-failed',
+    ]);
+    expect(lifecycle).toEqual([
+      expect.objectContaining({
+        kind: 'input-accepted',
+        delivery: { kind: 'newTurn', turnId: 'host-auth-failure-turn' },
+      }),
+      expect.objectContaining({ kind: 'turn-start', turnId: 'host-auth-failure-turn', startedBy: 'host' }),
+      expect.objectContaining({ kind: 'turn-failed', turnId: 'host-auth-failure-turn' }),
+    ]);
+    expect(events.filter((event) => event.kind === 'turn-start')).toHaveLength(1);
+    expect(events.filter((event) => event.kind === 'turn-failed')).toHaveLength(1);
+  });
+
   it('binds Claude active-input controls through the native session service and retires them with the session', async () => {
     const native = createNativeOperations('session-active-input');
     const clearTerminalComposer = vi.fn(async () => ({ ok: true as const, status: 'cleared' as const }));
@@ -1243,6 +1573,11 @@ describe('createClaudeNativeRuntime', () => {
               reasoningControls: 'unknown',
             },
           },
+          upstream: {
+            protocol: 'anthropic',
+            normalizedUrl: 'https://api.deepseek.com/anthropic',
+            credential: 'apiKey',
+          },
           materialization: { v: 1, kind: 'spawnEnv' },
         },
       };
@@ -1302,6 +1637,11 @@ describe('createClaudeNativeRuntime', () => {
             { value: 'high', name: 'High' },
           ],
         }],
+      },
+      upstream: {
+        protocol: 'anthropic' as const,
+        normalizedUrl: 'https://api.deepseek.com/anthropic',
+        credential: 'apiKey' as const,
       },
       materialization: { v: 1 as const, kind: 'spawnEnv' as const },
     };
@@ -1937,16 +2277,27 @@ describe('createClaudeNativeRuntime', () => {
     }));
   });
 
-  it('does not synthesize provider acceptance from a turn failure before prompt transport', async () => {
+  it('does not leak buffered Claude lifecycle when prompt transport rejects before effect', async () => {
     const native = createNativeOperations('session-provider-evidence');
+    let begunTurnId: string | undefined;
     const runtime = createTestClaudeNativeRuntime({
       openSession: () => ({
         ...native.runtime,
+        beginProviderTurn(turnId?: string) {
+          begunTurnId = turnId;
+          native.publish({
+            kind: 'turn-start',
+            sessionId: 'session-provider-evidence',
+            turnId: turnId ?? 'unexpected-provider-turn-id',
+            emittedAtMs: 9,
+            startedBy: 'host',
+          });
+        },
         async sendProviderTurnPrompt() {
           native.publish({
             kind: 'turn-failed',
             sessionId: 'session-provider-evidence',
-            turnId: 'turn-provider-evidence',
+            turnId: begunTurnId ?? 'unexpected-provider-turn-id',
             emittedAtMs: 10,
             issue: {
               code: 'claude_failed_before_transport',
@@ -1980,11 +2331,17 @@ describe('createClaudeNativeRuntime', () => {
       kind: 'input-rejected',
       inputIds: ['input-provider-evidence'],
     }));
-
-    expect(events).toContainEqual(expect.objectContaining({
-      kind: 'turn-failed',
-      turnId: 'turn-provider-evidence',
-    }));
+    expect(events.some((event) => (
+      event.kind === 'turn-start'
+      || event.kind === 'turn-progress'
+      || event.kind === 'turn-complete'
+      || event.kind === 'turn-failed'
+      || event.kind === 'turn-cancelled'
+      || event.kind === 'message-delta'
+      || event.kind === 'tool-call'
+      || event.kind === 'tool-progress'
+      || event.kind === 'tool-result'
+    ))).toBe(false);
   });
 
   it('waits for exact prompt transport before accepting and publishes acceptance before buffered output', async () => {
@@ -2108,6 +2465,67 @@ describe('createClaudeNativeRuntime', () => {
       kind: 'input-accepted',
       inputIds: ['input-unified-provider-acceptance'],
     }));
+  });
+
+  it('does not leak a buffered lifecycle when Unified terminal rejects before provider custody', async () => {
+    const native = createNativeOperations('session-unified-provider-rejection');
+    let publishProviderRejection: (() => void) | null = null;
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: () => ({
+        ...native.runtime,
+        promptCustody: 'unified_terminal' as const,
+        beginProviderTurn(turnId?: string) {
+          native.publish({
+            kind: 'turn-start',
+            sessionId: 'session-unified-provider-rejection',
+            turnId: turnId ?? 'unexpected-provider-turn-id',
+            emittedAtMs: 10,
+            startedBy: 'host',
+          });
+        },
+        async sendProviderTurnPrompt() {
+          publishProviderRejection?.();
+          return { kind: 'custody_observed' as const };
+        },
+        setOnPromptAcceptedByProvider() {},
+        setOnPromptTerminallyRejectedBeforeProvider(handler) {
+          publishProviderRejection = () => handler({
+            localIds: ['input-unified-provider-rejection'],
+            userMessageSeq: null,
+          });
+        },
+        setOnPromptDeliveryOutcome() {},
+      }),
+    });
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'session-unified-provider-rejection',
+      cwd: '/repo',
+    }, context);
+    const events: AgentSessionRuntimeEvent[] = [];
+    session.watch((event) => events.push(event));
+
+    await expect(session.send({
+      inputIds: ['input-unified-provider-rejection'],
+      input: { text: 'rejected from terminal' },
+      delivery: { kind: 'newTurn', turnId: 'turn-unified-provider-rejection' },
+    })).resolves.toMatchObject({ status: 'rejected' });
+
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'input-rejected',
+      inputIds: ['input-unified-provider-rejection'],
+    }));
+    expect(events.some((event) => (
+      event.kind === 'turn-start'
+      || event.kind === 'turn-progress'
+      || event.kind === 'turn-complete'
+      || event.kind === 'turn-failed'
+      || event.kind === 'turn-cancelled'
+      || event.kind === 'message-delta'
+      || event.kind === 'tool-call'
+      || event.kind === 'tool-progress'
+      || event.kind === 'tool-result'
+    ))).toBe(false);
   });
 
   it('projects a provider session identity published after native session startup', async () => {
@@ -2323,12 +2741,35 @@ describe('createClaudeNativeRuntime', () => {
     await run?.dispose();
   });
 
-  it('publishes unknown custody when Claude send throws after delivery may have begun', async () => {
+  it('keeps ambiguous Claude delivery as custody-unknown without leaking a buffered lifecycle', async () => {
     const native = createNativeOperations('session-unknown');
+    let begunTurnId: string | undefined;
     const runtime = createTestClaudeNativeRuntime({
       openSession: () => ({
         ...native.runtime,
+        beginProviderTurn(turnId?: string) {
+          begunTurnId = turnId;
+          native.publish({
+            kind: 'turn-start',
+            sessionId: 'session-unknown',
+            turnId: turnId ?? 'unexpected-provider-turn-id',
+            emittedAtMs: 9,
+            startedBy: 'host',
+          });
+        },
         async sendProviderTurnPrompt() {
+          native.publish({
+            kind: 'turn-failed',
+            sessionId: 'session-unknown',
+            turnId: begunTurnId ?? 'unexpected-provider-turn-id',
+            emittedAtMs: 10,
+            issue: {
+              code: 'claude_transport_ambiguous',
+              source: 'transport_error',
+              agentId: 'claude',
+              sanitizedPreview: 'transport disconnected after write attempt',
+            },
+          });
           return {
             kind: 'effect_may_have_occurred',
             reason: 'transport disconnected after write attempt',
@@ -2353,6 +2794,18 @@ describe('createClaudeNativeRuntime', () => {
       kind: 'input-custody-unknown',
       inputIds: ['input-unknown'],
     }));
+    expect(events.some((event) => event.kind === 'input-accepted')).toBe(false);
+    expect(events.some((event) => (
+      event.kind === 'turn-start'
+      || event.kind === 'turn-progress'
+      || event.kind === 'turn-complete'
+      || event.kind === 'turn-failed'
+      || event.kind === 'turn-cancelled'
+      || event.kind === 'message-delta'
+      || event.kind === 'tool-call'
+      || event.kind === 'tool-progress'
+      || event.kind === 'tool-result'
+    ))).toBe(false);
   });
 
   it('preserves the ambient external sandbox assertion in the installed-effort probe', async () => {

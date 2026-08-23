@@ -31,4 +31,38 @@ describe('CODEX_UI_DESCRIPTOR context window fallback', () => {
     expect(JSON.stringify(CODEX_UI_DESCRIPTOR)).not.toContain('agentRuntimeDescriptorV1');
     expect(JSON.stringify(CODEX_UI_DESCRIPTOR)).not.toContain('providerExtra');
   });
+
+  it('declares the spawn/resume backend transport instead of relying on a host-side Codex override', () => {
+    expect(CODEX_UI_DESCRIPTOR.behavior.payload.backendTransport).toEqual({
+      providerId: 'codex',
+      runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
+      legacyModeOutputKey: 'codexBackendMode',
+      backendMode: {
+        values: ['acp', 'appServer'],
+        aliases: { mcp: 'appServer', mcp_resume: 'acp' },
+        legacyExperimentalValue: 'acp',
+      },
+      runtimeHandleFields: [
+        'backendMode',
+        'providerSessionId',
+        'home',
+        'connectedServiceId',
+        'connectedServiceProfileId',
+        'connectedServiceGroupId',
+        'homePath',
+      ],
+      agentExtra: {
+        owner: 'codex',
+        schemaId: 'codex.agentRuntimeDescriptorExtra',
+        v: 1,
+      },
+    });
+    // The declaration must cover every retired spelling the private override
+    // normalized, or a persisted `mcp`/`mcp_resume` setting stops resolving once
+    // the bundled projection is republished.
+    expect(CODEX_UI_DESCRIPTOR.behavior.payload.backendTransport.backendMode.aliases).toMatchObject({
+      mcp: 'appServer',
+      mcp_resume: 'acp',
+    });
+  });
 });

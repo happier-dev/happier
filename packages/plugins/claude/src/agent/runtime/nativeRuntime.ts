@@ -72,7 +72,13 @@ import {
   resolveClaudeEffortForModel,
 } from './reasoningEffort.js';
 import { CLAUDE_AUTH_ENV_KEYS } from '../auth/services/runtime/env.js';
-import { prepareClaudeQualifiedPurposeRoot } from '../auth/services/qualifiedPurposeRoot.js';
+import {
+  prepareClaudeQualifiedPurposeRoot,
+  shareClaudeUserConfigWithIsolatedRoot,
+} from '../auth/services/qualifiedPurposeRoot.js';
+import {
+  claudeProviderBindingExposesInheritedIdentity,
+} from '../providerBinding/inheritedIdentityExposure.js';
 import { probeClaudeSupportsEffortRaw } from '../preflight/models.js';
 
 export {
@@ -222,6 +228,7 @@ export type ClaudeNativeLaunchEnvironmentPreparer = (input: Readonly<{
     cwd: string;
     launchEnvironment?: AgentLaunchEnvironment;
     providerBinding?: AgentSessionProviderBinding;
+    stateSharing?: AgentSessionOpenRequest['stateSharing'];
   }>;
   context: AgentRuntimeContext;
 }>) => Promise<ClaudePreparedLaunchEnvironment>;
@@ -280,13 +287,53 @@ async function waitForClaudePurposeObservations(
 export const prepareClaudeQualifiedConnectedAccountLaunch:
   ClaudeNativeLaunchEnvironmentPreparer = async ({ request, context }) => {
     if (request.providerBinding !== undefined) {
+      if (!claudeProviderBindingExposesInheritedIdentity(request.providerBinding)) {
+        return Object.freeze({
+          launchEnvironment: request.launchEnvironment ?? Object.freeze({
+            values: Object.freeze({}),
+            unset: Object.freeze([]),
+          }),
+          armInvalidation() {},
+          async dispose() {},
+        });
+      }
+      // The binding sends Claude Code to another upstream and supplies no
+      // credential, so an inherited config root would answer for that route
+      // with the user's personal Anthropic login. Pin an isolated root that
+      // still shares their non-identity Claude configuration.
+      const isolatedRootDir = await mkdtemp(
+        join(tmpdir(), 'happier-claude-provider-binding-'),
+      );
+      try {
+        await prepareClaudeQualifiedPurposeRoot({
+          rootDir: isolatedRootDir,
+          processEnv: process.env,
+          sessionDirectory: request.cwd,
+        });
+        await shareClaudeUserConfigWithIsolatedRoot({
+          rootDir: isolatedRootDir,
+          processEnv: process.env,
+          // The host resolves the account's provider state-sharing policy and
+          // carries it here. Absent, the launch falls back to the mode
+          // `ConnectedServicesProviderStateSharingPolicyV1` itself defaults to:
+          // sharing history is the norm, and isolating it behind the user's
+          // back is the failure this path must not reintroduce.
+          stateMode: request.stateSharing?.stateMode ?? 'shared',
+        });
+      } catch (error) {
+        await rm(isolatedRootDir, { recursive: true, force: true });
+        throw error;
+      }
       return Object.freeze({
-        launchEnvironment: request.launchEnvironment ?? Object.freeze({
-          values: Object.freeze({}),
-          unset: Object.freeze([]),
+        launchEnvironment: mergeQualifiedAuthLaunchEnvironment({
+          ...(request.launchEnvironment ? { source: request.launchEnvironment } : {}),
+          rootDir: isolatedRootDir,
+          authEnv: Object.freeze({}),
         }),
         armInvalidation() {},
-        async dispose() {},
+        async dispose() {
+          await rm(isolatedRootDir, { recursive: true, force: true });
+        },
       });
     }
 
@@ -877,11 +924,13 @@ export function createClaudeNativeSessionRuntimeFromOperations(
         if (nativeRequest.delivery.kind === 'steer') {
           submissionOutcome = await operations.steerProviderTurn(nativeRequest.input.text, meta);
         } else {
-          operations.beginProviderTurn();
+          operations.beginProviderTurn(nativeRequest.delivery.turnId);
           submissionOutcome = await operations.sendProviderTurnPrompt(nativeRequest.input.text, meta);
         }
       } catch (error) {
-        const queued = bufferedEvents?.drain() ?? [];
+        const queued = terminalPromptDelivery?.decision?.kind === 'accepted'
+          ? bufferedEvents?.drain() ?? []
+          : [];
         bufferedEvents?.dispose();
         bufferedEvents = null;
         bufferedEventFailure = null;
@@ -897,11 +946,13 @@ export function createClaudeNativeSessionRuntimeFromOperations(
           error instanceof Error ? error.message : String(error),
         );
         emit({ kind: 'input-custody-unknown', inputIds: nativeRequest.inputIds, issue: failure.diagnostic });
-        for (const event of queued) emit(event);
         return failure;
       }
       const admissionFailure = readBufferedEventFailure();
-      const queued = admissionFailure === null ? (bufferedEvents?.drain() ?? []) : [];
+      const canPublishBufferedEvents = admissionFailure === null
+        && terminalPromptDelivery?.decision?.kind !== 'rejected_before_effect'
+        && terminalPromptDelivery?.decision?.kind !== 'effect_may_have_occurred';
+      const queued = canPublishBufferedEvents ? (bufferedEvents?.drain() ?? []) : [];
       bufferedEvents?.dispose();
       bufferedEvents = null;
       bufferedEventFailure = null;
@@ -927,7 +978,6 @@ export function createClaudeNativeSessionRuntimeFromOperations(
           diagnostic: failure.diagnostic,
           retryable: true,
         });
-        for (const event of queued) emit(event);
         return failure;
       } else if (submissionOutcome.kind === 'effect_may_have_occurred') {
         if (terminalPromptDelivery) clearTerminalPromptDelivery(terminalPromptDelivery);
@@ -937,7 +987,6 @@ export function createClaudeNativeSessionRuntimeFromOperations(
           inputIds: nativeRequest.inputIds,
           issue: failure.diagnostic,
         });
-        for (const event of queued) emit(event);
         return failure;
       }
       if (admissionFailure !== null && submissionOutcome.kind === 'custody_observed') {
@@ -1383,6 +1432,7 @@ export function createClaudeNativeRuntime(
           ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
           ...(request.configuration ? { configuration: request.configuration } : {}),
           ...(request.providerBinding ? { providerBinding: request.providerBinding } : {}),
+          ...(request.stateSharing ? { stateSharing: request.stateSharing } : {}),
         };
         const prepared = options.prepareLaunchEnvironment
           ? await options.prepareLaunchEnvironment({

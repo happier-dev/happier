@@ -70,7 +70,6 @@ export const CHANNEL_STATE_FIELD = {
 
 export const CHANNEL_STATE_INDEX_ID = {
   byKind: 'by-kind',
-  byConnectionBinding: 'by-connection-binding',
   byConnectionBindingV2: 'by-connection-binding-v2',
   byAttention: 'by-attention',
   byIngressDue: 'by-ingress-due',
@@ -507,6 +506,16 @@ const CONNECTION_PAYLOAD_SCHEMA = {
       required: ['maximum', 'unit'],
       additionalProperties: false,
     },
+    // The provider-authenticated shared-endpoint delivery truth. Optional
+    // because a provider that declares no restriction asserts every mode is
+    // deliverable; the binding policy owner reads that absence the same way.
+    sharedEndpointInputModes: {
+      type: 'array',
+      items: { type: 'string', enum: [...CONVERSATION_BINDING_INPUT_MODES_V1] },
+      minItems: 1,
+      maxItems: CONVERSATION_BINDING_INPUT_MODES_V1.length,
+      uniqueItems: true,
+    },
     pairingDeepLinkTemplate: {
       type: 'string',
       minLength: 9,
@@ -686,6 +695,31 @@ const FROZEN_SESSION_INGRESS_TARGET_SCHEMA: PluginJsonSchema = {
       type: 'string',
       enum: ['default', 'read-only', 'safe-yolo', 'yolo', 'plan'],
     },
+    // The owner's chat-approval ceiling is frozen with the rest of the target
+    // so a retry stamps the disclosure the admitted binding revision carried.
+    remoteApprovalMaxScope: {
+      type: 'string',
+      enum: ['off', 'request', 'session'],
+    },
+    // Absence deliberately means no frozen approval command. An admitted
+    // `/allow` or `/deny` freezes its exact request, decision, and requested
+    // scope before any mediation call, so a later policy edit cannot redirect
+    // or widen a replay.
+    approval: {
+      oneOf: [
+        { type: 'null' },
+        {
+          type: 'object',
+          properties: {
+            requestId: boundedString(MAX_PLUGIN_ID_LENGTH),
+            decision: { type: 'string', enum: ['allow', 'deny'] },
+            scope: { type: 'string', enum: ['request', 'session'] },
+          },
+          required: ['requestId', 'decision', 'scope'],
+          additionalProperties: false,
+        },
+      ],
+    },
     // Old obligations predate `/new`; absence deliberately means no frozen
     // rotation request. New obligations freeze the binding-owned recipe and
     // prompt before any Session effect so a later edit cannot redirect a
@@ -705,7 +739,13 @@ const FROZEN_SESSION_INGRESS_TARGET_SCHEMA: PluginJsonSchema = {
       ],
     },
   },
-  required: ['kind', 'sessionId', 'idempotencyKey', 'requestedPermissionCeiling'],
+  required: [
+    'kind',
+    'sessionId',
+    'idempotencyKey',
+    'requestedPermissionCeiling',
+    'remoteApprovalMaxScope',
+  ],
   additionalProperties: false,
 };
 
@@ -1350,16 +1390,13 @@ export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
       ],
     },
     {
-      id: CHANNEL_STATE_INDEX_ID.byConnectionBinding,
-      fields: [
-        { field: CHANNEL_STATE_FIELD.connectionId, direction: 'asc' },
-        { field: CHANNEL_STATE_FIELD.bindingId, direction: 'asc' },
-        { field: CHANNEL_STATE_FIELD.id, direction: 'asc' },
-      ],
-    },
-    {
-      // V1 index semantics are immutable after first Account use. Data appends
-      // the row-ID tiebreaker, so this declaration names only the V2 tuple.
+      // V1 index semantics are immutable after first Account use, so the
+      // refined tuple ships as a new index ID rather than an in-place rewrite.
+      // The retired `by-connection-binding` V1 index is absent from this V2
+      // target: it has no reader left, and declaring it would leave the feature
+      // paying for a seventh index Data could never contract.
+      // Data appends the row-ID tiebreaker, so this declaration names only the
+      // V2 tuple.
       id: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
       fields: [
         { field: CHANNEL_STATE_FIELD.connectionId, direction: 'asc' },
@@ -1441,7 +1478,7 @@ const DELIVERY_SOURCE_SCHEMA: PluginJsonSchema = {
         controlId: boundedString(MAX_PLUGIN_ID_LENGTH),
         controlKind: {
           type: 'string',
-          enum: ['pairing', 'newSession', 'refusal', 'recovery'],
+          enum: ['pairing', 'newSession', 'approval', 'refusal', 'recovery'],
         },
       },
       required: ['kind', 'controlId', 'controlKind'],

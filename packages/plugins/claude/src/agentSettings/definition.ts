@@ -439,7 +439,6 @@ export const CLAUDE_AGENT_SETTINGS_CONTRIBUTION = {
               key: 'subAgentGuidance.settings.agents.claude.openSubtitle',
               fallback: 'Manage Agent Teams and other Claude-specific subagent behavior.',
             },
-            route: '/(app)/settings/agents/claude',
             iconIonName: 'sparkles-outline',
           },
         ],

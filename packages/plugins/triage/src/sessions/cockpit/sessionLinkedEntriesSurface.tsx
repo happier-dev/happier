@@ -10,12 +10,14 @@ import {
     Screen,
     Stack,
     defineUiSurface,
+    usePluginHostApi,
     usePluginTranslation,
     useSurfaceContext,
 } from '@happier-dev/plugin-ui';
 
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
 import type { TriageSessionLinkedEntryRowV1 } from './linkedEntryRows.js';
+import { submitTriageUnlinkLinkedEntry } from './unlinkLinkedEntry.js';
 import { useTriageSessionLinkedEntries } from './useSessionLinkedEntries.js';
 
 /**
@@ -62,14 +64,76 @@ function rowTone(row: TriageSessionLinkedEntryRowV1): 'neutral' | 'muted' | 'war
     }
 }
 
-function LinkedEntryRow(props: Readonly<{ row: TriageSessionLinkedEntryRowV1 }>): React.ReactElement {
-    const { row } = props;
+/**
+ * One linked row, and the one write this whole surface can make.
+ *
+ * **Unlink** is the inverse the reader was missing: somebody who started a
+ * Session from the wrong entry had no way to undo it, and a link is durable
+ * Account state that nothing else removes. It is offered only on a row that
+ * actually resolved to a link, because that is the only state carrying the
+ * entry reference the removal is addressed by — a row still being read, already
+ * removed, or unreadable has nothing to name.
+ *
+ * The state here is transient and per row: no local removed set and no
+ * optimistic commitment. After a settled removal the pager re-reads, and what
+ * the reader sees is what the Account says.
+ */
+function LinkedEntryRow(props: Readonly<{
+    row: TriageSessionLinkedEntryRowV1;
+    sessionId: string;
+    onUnlinked: () => void;
+}>): React.ReactElement {
+    const { row, sessionId, onUnlinked } = props;
     const text = usePluginTranslation();
+    const host = usePluginHostApi();
+    const [phase, setPhase] = React.useState<'idle' | 'removing' | 'failed'>('idle');
+    const presentation = row.presentation;
+    const entryRef = presentation.kind === 'linked' ? presentation.entryRef : null;
+
+    const unlink = React.useCallback(() => {
+        if (entryRef === null) return;
+        setPhase('removing');
+        void (async () => {
+            try {
+                const result = await submitTriageUnlinkLinkedEntry(host, { sessionId, entryRef });
+                // `conflict` means another writer moved the row, so the honest
+                // next step is the same one a removal takes: re-read.
+                if (result.status === 'failed') {
+                    setPhase('failed');
+                    return;
+                }
+                setPhase('idle');
+                onUnlinked();
+            } catch {
+                // A mount with no Action transport, or a refused dispatch. The
+                // row says so instead of pretending the link is gone.
+                setPhase('failed');
+            }
+        })();
+    }, [entryRef, host, onUnlinked, sessionId]);
+
     return (
         <List.Item
             title={rowTitle(row, text)}
-            tone={rowTone(row)}
-            busy={row.presentation.kind === 'reading'}
+            tone={phase === 'failed' ? 'warning' : rowTone(row)}
+            busy={row.presentation.kind === 'reading' || phase === 'removing'}
+            {...(phase === 'failed'
+                ? {
+                    detail: text(
+                        'plugins.triage.sessionLinks.unlinkFailed',
+                        'This link could not be removed.',
+                    ),
+                }
+                : {})}
+            accessory={entryRef === null ? undefined : (
+                <Button
+                    titleKey="plugins.triage.sessionLinks.unlink"
+                    title={text('plugins.triage.sessionLinks.unlink', 'Unlink')}
+                    variant="secondary"
+                    disabled={phase === 'removing'}
+                    onPress={unlink}
+                />
+            )}
         />
     );
 }
@@ -81,8 +145,10 @@ function TriageSessionLinkedEntriesPanel(
     const { view, refresh } = useTriageSessionLinkedEntries(props.sessionId);
     const onRefresh = React.useCallback(() => { void refresh(); }, [refresh]);
     const renderRow = React.useCallback(
-        (row: TriageSessionLinkedEntryRowV1): React.ReactElement => <LinkedEntryRow row={row} />,
-        [],
+        (row: TriageSessionLinkedEntryRowV1): React.ReactElement => (
+            <LinkedEntryRow row={row} sessionId={props.sessionId} onUnlinked={onRefresh} />
+        ),
+        [onRefresh, props.sessionId],
     );
 
     if (view.kind === 'loading') {

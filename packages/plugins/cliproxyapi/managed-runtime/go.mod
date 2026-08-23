@@ -1,6 +1,6 @@
 module github.com/happier-dev/happier/packages/plugins/cliproxyapi/managed-runtime
 
-go 1.26.5
+go 1.26.6
 
 tool golang.org/x/vuln/cmd/govulncheck
 

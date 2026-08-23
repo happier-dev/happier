@@ -38,10 +38,13 @@ describe('the Triage UI catalog', () => {
                 if (entry.isDirectory()) { walk(path); continue; }
                 if (!/\.tsx?$/u.test(entry.name) || /\.test\.|\.test-support\./u.test(entry.name)) continue;
                 const source = readFileSync(path, 'utf8');
-                for (const match of source.matchAll(
-                    /\b(?:title|label|value|description|placeholder)Key\s*[:=]\s*['"]([^'"]+)['"]/gu,
-                )) {
-                    if (match[1] !== undefined && match[1].startsWith('plugins.triage.')) referenced.add(match[1]);
+                // Two shapes, because the surfaces use both and the narrower one
+                // alone missed a real defect: `titleKey="..."` props AND direct
+                // `text('plugins.triage...', 'fallback')` calls. Matching any
+                // catalog-key literal covers both and anything added later,
+                // rather than enumerating call shapes that keep growing.
+                for (const match of source.matchAll(/['"](plugins\.triage\.[A-Za-z0-9._]+)['"]/gu)) {
+                    if (match[1] !== undefined) referenced.add(match[1]);
                 }
             }
         };

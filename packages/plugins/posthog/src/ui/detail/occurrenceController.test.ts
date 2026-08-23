@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1 } from '../../source/detail/issueEventsContract.js';
 import type { PosthogProjectedIssueEvent } from './issueEventProjection.js';
 import {
     posthogSampleInitialState,
@@ -22,6 +23,7 @@ function settled(
     token: number,
     events: readonly PosthogProjectedIssueEvent[],
     continuation: string | null,
+    incomplete: typeof POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1 | null = null,
 ): PosthogSampleStateV1 {
     return posthogSampleReducer(state, {
         kind: 'pageSettled',
@@ -29,6 +31,7 @@ function settled(
         events,
         omittedRowCount: 0,
         continuation,
+        incomplete,
     });
 }
 
@@ -44,6 +47,25 @@ describe('posthogSampleReducer', () => {
         expect(inFlight.canLoadMore).toBe(true);
         expect(inFlight.pending).toBe(true);
         expect(inFlight.kind).toBe('ready');
+    });
+
+    it('keeps a sample that stopped short apart from one the provider finished', () => {
+        const finished = settled(started(posthogSampleInitialState(), 1), 1, [event('a')], null);
+        expect(finished.canLoadMore).toBe(false);
+        expect(finished.incomplete).toBeNull();
+
+        const short = settled(
+            started(posthogSampleInitialState(), 1),
+            1,
+            [event('a')],
+            null,
+            POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1,
+        );
+
+        // Identical on the wire — no continuation, so no Load more — and the opposite
+        // statement: PostHog said `hasMore` and named an offset this build refused.
+        expect(short.canLoadMore).toBe(false);
+        expect(short.incomplete).toBe(POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1);
     });
 
     it('selects the first sampled row of the first page and keeps it across an append', () => {

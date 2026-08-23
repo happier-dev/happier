@@ -143,7 +143,6 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
 
   it('declares the Pi CLI catalog residuals handled through projection', () => {
     expect(PI_AGENT_RUNTIME_CONTRIBUTION).toMatchObject({
-      builtInAcpCatalog: true,
       checklists: {},
       cliSessionCommand: {
         backendIdForSessionRuntime: 'pi',

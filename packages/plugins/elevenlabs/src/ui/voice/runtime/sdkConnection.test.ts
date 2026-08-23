@@ -90,11 +90,32 @@ describe('createElevenLabsSdkConnection', () => {
       message: 'provider message',
     };
     publish({ type: 'message', data: providerMessage });
+    publish({
+      type: 'agent_response_correction',
+      data: {
+        original_agent_response: 'provider message',
+        corrected_agent_response: 'corrected provider message',
+        event_id: 11,
+      },
+    });
     publish({ type: 'mode', data: { mode: 'speaking' as never } });
     const controls = connection.controlEvents(signal)[Symbol.asyncIterator]();
     await expect(controls.next()).resolves.toEqual({
       done: false,
       value: providerMessage,
+    });
+    // The correction reaches the transcript ladder on the same control channel
+    // as every other provider observation, in ElevenLabs' own wire envelope.
+    await expect(controls.next()).resolves.toEqual({
+      done: false,
+      value: {
+        type: 'agent_response_correction',
+        agent_response_correction_event: {
+          original_agent_response: 'provider message',
+          corrected_agent_response: 'corrected provider message',
+          event_id: 11,
+        },
+      },
     });
     await expect(controls.next()).resolves.toEqual({
       done: false,

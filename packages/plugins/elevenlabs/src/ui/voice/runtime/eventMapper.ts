@@ -23,8 +23,8 @@ function readRole(record: Readonly<Record<string, unknown>>): 'user' | 'assistan
   return null;
 }
 
-function readText(record: Readonly<Record<string, unknown>>): string | null {
-  const text = typeof record.message === 'string' ? record.message.trim() : '';
+function readTrimmedText(value: unknown): string | null {
+  const text = typeof value === 'string' ? value.trim() : '';
   return text || null;
 }
 
@@ -33,6 +33,39 @@ function readProviderEventId(record: Readonly<Record<string, unknown>>): string 
   if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return String(value);
   if (typeof value !== 'string' || !value || value.trim() !== value) return null;
   return value.length > MAX_PROVIDER_EVENT_ID_LENGTH ? null : value;
+}
+
+type ProviderObservation = Readonly<{
+  role: 'user' | 'assistant';
+  text: string;
+  providerEventId: string;
+}>;
+
+function readMessageObservation(
+  record: Readonly<Record<string, unknown>>,
+): ProviderObservation | null {
+  const role = readRole(record);
+  const text = readTrimmedText(record.message);
+  const providerEventId = readProviderEventId(record);
+  return role && text && providerEventId ? { role, text, providerEventId } : null;
+}
+
+/**
+ * ElevenLabs does not restate a corrected agent turn as a second
+ * `agent_response`: it publishes an `agent_response_correction` client event
+ * carrying the whole corrected turn under the original turn's `event_id`.
+ * Reading that envelope into the same role/text/identity triple is what lets the
+ * shared ladder recognise the restatement it already knows how to correct.
+ */
+function readCorrectionObservation(
+  record: Readonly<Record<string, unknown>>,
+): ProviderObservation | null {
+  if (record.type !== 'agent_response_correction') return null;
+  const correction = readRecord(record.agent_response_correction_event);
+  if (!correction) return null;
+  const text = readTrimmedText(correction.corrected_agent_response);
+  const providerEventId = readProviderEventId(correction);
+  return text && providerEventId ? { role: 'assistant', text, providerEventId } : null;
 }
 
 /**
@@ -44,8 +77,9 @@ function readProviderEventId(record: Readonly<Record<string, unknown>>): string 
  * transcript ladder's, exactly as they are for every other realtime provider.
  *
  * ElevenLabs restates a whole message rather than streaming fragments, so every
- * classified observation is a `final` for its item; a restated message with
- * changed text is what the ladder turns into a correction.
+ * classified observation is a `final` for its item; the provider's own
+ * `agent_response_correction` restatement of a turn is what the ladder turns
+ * into a correction.
  */
 export function createElevenLabsEventMapper() {
   const ladder = createVoiceTranscriptLadderMapper();
@@ -61,12 +95,10 @@ export function createElevenLabsEventMapper() {
   const map = (value: unknown): VoiceTranscriptCanonicalEvent | null => {
     const record = readRecord(value);
     if (!record || !conversationStarted) return null;
-    const role = readRole(record);
-    const text = readText(record);
-    if (!role || !text) return null;
-    const providerEventId = readProviderEventId(record);
-    if (!providerEventId) return null;
-    const itemId = `${ITEM_ID_PREFIX}${providerEventId}`;
+    const observation = readCorrectionObservation(record) ?? readMessageObservation(record);
+    if (!observation) return null;
+    const { role, text } = observation;
+    const itemId = `${ITEM_ID_PREFIX}${observation.providerEventId}`;
     // Provider identity classification, not ladder ordering: a message claiming
     // an item the other speaker already owns is not the same conversation item.
     const knownRole = rolesByItemId.get(itemId);
@@ -76,7 +108,7 @@ export function createElevenLabsEventMapper() {
     rolesByItemId.set(itemId, role);
     // The ladder owns the revision; the leaf only spells the provider's
     // per-observation event identity, which ElevenLabs' wire does not carry
-    // because it restates the same `event_id` for a corrected message.
+    // because a correction reuses the corrected turn's `event_id`.
     return { ...event, eventId: `${itemId}:${event.revision}` };
   };
 

@@ -98,6 +98,21 @@ function assertSuccessfulResponse(
   }
 }
 
+/**
+ * The multipart filename is the only container hint an OpenAI-compatible
+ * transcription endpoint gets besides the part's Content-Type, and several
+ * implementations dispatch their decoder on the extension. Keying the table by
+ * the canonical input mime union makes a newly supported container a compile
+ * error here instead of a silently mislabelled upload.
+ */
+const TRANSCRIPTION_FILE_EXTENSIONS: Readonly<Record<VoiceSpeechTranscribeRequest['mimeType'], string>> = Object.freeze({
+  'audio/wav': 'wav',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/webm': 'webm',
+  'audio/ogg': 'ogg',
+});
+
 function encodeMultipart(params: Readonly<{
   requestId: string;
   model: string;
@@ -114,13 +129,7 @@ function encodeMultipart(params: Readonly<{
   };
   appendField('model', params.model);
   if (params.language) appendField('language', params.language);
-  const extension = params.mimeType === 'audio/wav'
-    ? 'wav'
-    : params.mimeType === 'audio/mpeg'
-      ? 'mp3'
-      : params.mimeType === 'audio/mp4'
-        ? 'm4a'
-        : 'webm';
+  const extension = TRANSCRIPTION_FILE_EXTENSIONS[params.mimeType];
   appendText(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="speech.${extension}"\r\nContent-Type: ${params.mimeType}\r\n\r\n`);
   chunks.push(params.bytes);
   appendText(`\r\n--${boundary}--\r\n`);
@@ -193,7 +202,15 @@ async function transcribe(
   if (contentType !== 'application/json' && !contentType?.endsWith('+json')) {
     throw providerError('provider_response_invalid');
   }
-  const text = new TextDecoder().decode(response.body);
+  // A JSON transcription body must be well-formed UTF-8. Substituting U+FFFD
+  // for malformed bytes would publish a corrupted transcript as if the provider
+  // had produced it, so the decode itself is a validation step.
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(response.body);
+  } catch {
+    throw providerError('provider_response_invalid');
+  }
   if (bearerToken && containsProviderRegisteredSensitiveValue(text, [bearerToken])) {
     throw providerError('provider_response_invalid');
   }

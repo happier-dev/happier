@@ -2,7 +2,6 @@ import { detectKiroCliAuthStatus } from '../auth/status.js';
 
 export const KIRO_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'kiro',
-  builtInAcpCatalog: true,
   cliAuth: {
     detectAuthStatus: async (params: Readonly<{
       runCommand: (

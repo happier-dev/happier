@@ -24,7 +24,7 @@ import {
     type PosthogIssueCrudRead,
     type PosthogIssueQueryDetail,
 } from '../api/types/issues.js';
-import { resolvePosthogCrudFailure, type PosthogIssueResolution } from './issueResolution.js';
+import { resolvePosthogCrudFailure, type PosthogUnresolvedIssue } from './issueResolution.js';
 import { buildPosthogIssueQueryBody, type PosthogResolvedWindow } from './scan/request.js';
 
 export type PosthogGetInput = Readonly<{
@@ -43,7 +43,7 @@ export type PosthogGetOutcome =
         /** Ephemeral detail-state diagnostic for a failed enrichment. */
         enrichmentFailure?: PosthogFailure;
     }>
-    | Readonly<{ kind: 'unresolved'; resolution: PosthogIssueResolution }>;
+    | Readonly<{ kind: 'unresolved'; resolution: PosthogUnresolvedIssue }>;
 
 export async function getPosthogIssue(
     client: PosthogApiClient,

@@ -16,61 +16,35 @@
 
 import type { PosthogFailure } from '../api/errors.js';
 
+/**
+ * The exact conclusion is unavailable; this is the common case, not an error path.
+ *
+ * It carries the classified provider failure verbatim, and nothing else. What the
+ * provider answered has ONE projection owner — `operations.ts#toTriageSourceFailure`
+ * — and it needs the failure itself. A second switch stood here, mapping the same
+ * input onto a parallel reason vocabulary, and it had already dropped the
+ * provider's `Retry-After` deadline that the same condition carries through
+ * `scan`; once the failure travelled whole, nothing read the reasons and they were
+ * a classification kept in step by hand with the one that decides.
+ */
+export type PosthogUnresolvedIssue = Readonly<{
+    kind: 'unresolved';
+    failure: PosthogFailure;
+}>;
+
 export type PosthogIssueResolution =
     /** The issue was read authoritatively. */
     | Readonly<{ kind: 'present' }>
-    /** The exact conclusion is unavailable; this is the common case, not an error path. */
-    | Readonly<{ kind: 'unresolved'; because: PosthogUnresolvedReason }>;
-
-export type PosthogUnresolvedReason =
-    | 'plainNotFound'
-    | 'authentication'
-    | 'permission'
-    | 'rateLimited'
-    | 'redirected'
-    | 'server'
-    | 'timeout'
-    /** A status PostHog's contract gives no meaning to: `400`, `409`, `410`, `422`. */
-    | 'unexpectedStatus'
-    | 'transport'
-    | 'malformedResponse'
-    | 'cancelled'
-    | 'configuration';
+    | PosthogUnresolvedIssue;
 
 /**
- * Maps a CRUD-plane failure to an unresolved reason. V1 has no arm that produces
- * `absent` or `merged`, and adding one requires authoritative API evidence for that
- * exact conclusion — never scan coverage, cache state, or UI inference.
+ * States that a CRUD-plane failure leaves the entry unresolved.
+ *
+ * V1 has no arm that produces `absent` or `merged`, and adding one requires
+ * authoritative API evidence for that exact conclusion — never scan coverage,
+ * cache state, or UI inference. That conclusion is the whole of what this decides;
+ * what the failure MEANS to a reader is the projection owner's answer.
  */
-export function resolvePosthogCrudFailure(failure: PosthogFailure): PosthogIssueResolution {
-    switch (failure.kind) {
-        case 'notFound':
-            return { kind: 'unresolved', because: 'plainNotFound' };
-        case 'unauthorized':
-            return { kind: 'unresolved', because: 'authentication' };
-        case 'forbidden':
-            return { kind: 'unresolved', because: 'permission' };
-        case 'rateLimited':
-            return { kind: 'unresolved', because: 'rateLimited' };
-        case 'redirected':
-            return { kind: 'unresolved', because: 'redirected' };
-        // Three distinct causes, three distinct reasons. Folding them into one
-        // `transient` told the caller that a request PostHog will always reject is
-        // about to succeed, and left one failure code standing for all three.
-        case 'server':
-            return { kind: 'unresolved', because: 'server' };
-        case 'timeout':
-            return { kind: 'unresolved', because: 'timeout' };
-        case 'unexpectedStatus':
-            return { kind: 'unresolved', because: 'unexpectedStatus' };
-        case 'transport':
-            return { kind: 'unresolved', because: 'transport' };
-        case 'malformedResponse':
-            return { kind: 'unresolved', because: 'malformedResponse' };
-        case 'cancelled':
-            return { kind: 'unresolved', because: 'cancelled' };
-        case 'originMismatch':
-        case 'requestInvalid':
-            return { kind: 'unresolved', because: 'configuration' };
-    }
+export function resolvePosthogCrudFailure(failure: PosthogFailure): PosthogUnresolvedIssue {
+    return { kind: 'unresolved', failure };
 }

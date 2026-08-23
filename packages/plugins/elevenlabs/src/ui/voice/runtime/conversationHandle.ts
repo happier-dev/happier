@@ -13,11 +13,14 @@ import type {
 } from '@elevenlabs/client';
 
 type MessagePayload = Parameters<NonNullable<Callbacks['onMessage']>>[0];
+type AgentResponseCorrectionPayload =
+    Parameters<NonNullable<Callbacks['onAgentResponseCorrection']>>[0];
 
 export type ElevenLabsConversationHandleEvent =
     | Readonly<{ type: 'connect' }>
     | Readonly<{ type: 'disconnect'; reason?: string }>
     | Readonly<{ type: 'message'; data: MessagePayload }>
+    | Readonly<{ type: 'agent_response_correction'; data: AgentResponseCorrectionPayload }>
     | Readonly<{ type: 'error'; error: Parameters<NonNullable<Callbacks['onError']>>[0] }>
     | Readonly<{ type: 'status'; data: { status: Status } }>
     | Readonly<{ type: 'mode'; data: { mode: Mode } }>
@@ -157,6 +160,13 @@ export function createElevenLabsConversationHandle(params: Readonly<{
         onMessage: (data) => {
             if (!isCurrentStartSequence(startSequence)) return;
             emit({ type: 'message', data });
+        },
+        // A corrected agent turn is its own SDK callback, not a replayed
+        // `onMessage`, so subscribing to `onMessage` alone silently drops every
+        // correction the provider publishes.
+        onAgentResponseCorrection: (data) => {
+            if (!isCurrentStartSequence(startSequence)) return;
+            emit({ type: 'agent_response_correction', data });
         },
         onError: (error) => {
             if (!isCurrentStartSequence(startSequence)) return;

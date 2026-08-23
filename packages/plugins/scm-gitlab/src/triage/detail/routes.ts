@@ -100,6 +100,33 @@ function itemPath(input: GitlabDetailRouteInputV1, suffix: string): string {
 }
 
 /**
+ * The item itself: `…/projects/{id}/{merge_requests|issues}/{iid}`.
+ *
+ * It is the currentness read every mutation performs before it writes, the
+ * confirming read every mutation performs after it writes, and — for the state
+ * transitions GitLab expresses as an item update — the write target. One builder
+ * for all three is the point: a confirming read that addressed a different route
+ * than the write would confirm nothing.
+ */
+export function buildGitlabItemUrl(input: GitlabDetailRouteInputV1): string {
+  assertRoute(input);
+  return buildGitlabApiUrl(input.origin, itemPath(input, ''));
+}
+
+/**
+ * `PUT …/merge_requests/{iid}/merge`.
+ *
+ * GitLab's own conditional write: the `sha` parameter must match the head of the
+ * source branch or the merge fails, which is the provider-native precondition
+ * the head pin exists to consume.
+ */
+export function buildGitlabMergeRequestMergeUrl(input: GitlabDetailRouteInputV1): string {
+  assertRoute(input);
+  if (input.kindId !== 'merge-request') throw new Error('gitlab_merge_route_kind_invalid');
+  return buildGitlabApiUrl(input.origin, itemPath(input, '/merge'));
+}
+
+/**
  * `GET …/notes?order_by=created_at&sort=desc&per_page=N`.
  *
  * Descending is what makes "the newest N" mean the newest N; the reader renders

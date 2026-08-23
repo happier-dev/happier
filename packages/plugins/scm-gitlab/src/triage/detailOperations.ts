@@ -21,7 +21,7 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
-import { authorizeGitlabConfiguredInstance } from './configuredInstance.js';
+import { admitGitlabItemInvocation } from './admission.js';
 import {
   GitlabActivityEventsInputV1Schema,
   GitlabApprovalsInputV1Schema,
@@ -40,6 +40,7 @@ import {
   decodeGitlabDetailContinuation,
   encodeGitlabDetailContinuation,
 } from './detail/continuation.js';
+import type { GitlabDetailRouteInputV1 } from './detail/routes.js';
 import {
   readGitlabActivityEventsPage,
   readGitlabApprovalsSurface,
@@ -48,15 +49,9 @@ import {
   readGitlabNotesPage,
   readGitlabPipelinesPage,
   type GitlabDetailPagePositionV1,
-  type GitlabDetailReadDependenciesV1,
   type GitlabWalkPositionV1,
 } from './detail/reads.js';
-import type { GitlabDetailRouteInputV1 } from './detail/routes.js';
-import { readGitlabTriageKindId } from './contribution.js';
-import { readGitlabScopeProjectId } from './identity.js';
-import { createGitlabHttpFetcher, readGitlabConnectedAccounts } from './invocation.js';
 import { projectGitlabSourceFailure } from './sourceFailure.js';
-import type { GitlabKindId } from './types.js';
 
 const INVALID_INPUT_FAILURE: TriageSourceFailureV1 = Object.freeze({
   class: 'unsupportedContract',
@@ -68,93 +63,11 @@ const CONTINUATION_UNREADABLE_FAILURE: TriageSourceFailureV1 = Object.freeze({
   code: 'gitlab-detail-continuation-unreadable',
 });
 
-const SCOPE_OUTSIDE_BINDING_FAILURE: TriageSourceFailureV1 = Object.freeze({
-  class: 'unsupportedContract',
-  code: 'scope-outside-binding',
-  detail: 'The requested entry was not keyed against this configured deployment.',
-});
-
-const ENTRY_ID_UNUSABLE_FAILURE: TriageSourceFailureV1 = Object.freeze({
-  class: 'unsupportedContract',
-  code: 'unusable-entry-id',
-  detail: 'A GitLab entry id is a positive project-internal id.',
-});
-
-const KIND_UNSUPPORTED_FAILURE: TriageSourceFailureV1 = Object.freeze({
-  class: 'unsupportedContract',
-  code: 'gitlab-detail-kind-unsupported',
-});
-
 function unavailable(failure: TriageSourceFailureV1): Readonly<{
   kind: 'unavailable';
   failure: TriageSourceFailureV1;
 }> {
   return Object.freeze({ kind: 'unavailable' as const, failure });
-}
-
-type AdmittedInvocation =
-  | Readonly<{
-    ok: true;
-    route: GitlabDetailRouteInputV1;
-    dependencies: GitlabDetailReadDependenciesV1;
-  }>
-  | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>;
-
-/**
- * Admits one detail invocation against the exact configured deployment and the
- * project this source itself keyed the entry to.
- *
- * The project id is read back out of the collision scope rather than taken from
- * the routing token: the scope is the value this source minted and re-validates
- * per origin, so a reference keyed against another deployment cannot address a
- * project that happens to carry the same number here. The account is
- * rematerialized on every invocation and grants no standing authority.
- */
-async function admitGitlabDetailInvocation(
-  input: Readonly<{
-    instance: Parameters<typeof authorizeGitlabConfiguredInstance>[0]['instance'];
-    localRef: Readonly<{ kindId: string; entryId: string; collisionScope: string }>;
-    /** The kinds this plane can answer for at all. */
-    admissibleKinds: readonly GitlabKindId[];
-  }>,
-  context: PluginInvocationContext,
-): Promise<AdmittedInvocation> {
-  const kindId = readGitlabTriageKindId(input.localRef.kindId);
-  if (kindId === null || !input.admissibleKinds.includes(kindId)) {
-    return Object.freeze({ ok: false as const, failure: KIND_UNSUPPORTED_FAILURE });
-  }
-
-  const authorized = await authorizeGitlabConfiguredInstance({
-    instance: input.instance,
-    connectedAccounts: readGitlabConnectedAccounts(context),
-    signal: context.signal,
-  });
-  if (authorized.kind === 'failed') {
-    return Object.freeze({
-      ok: false as const,
-      failure: projectGitlabSourceFailure(authorized.failure),
-    });
-  }
-  const { origin, invocation } = authorized.resolved;
-
-  const projectId = readGitlabScopeProjectId(input.localRef.collisionScope, origin);
-  if (projectId === null) {
-    return Object.freeze({ ok: false as const, failure: SCOPE_OUTSIDE_BINDING_FAILURE });
-  }
-  if (!/^[1-9][0-9]*$/u.test(input.localRef.entryId)) {
-    return Object.freeze({ ok: false as const, failure: ENTRY_ID_UNUSABLE_FAILURE });
-  }
-
-  return Object.freeze({
-    ok: true as const,
-    route: Object.freeze({ origin, projectId, iid: input.localRef.entryId, kindId }),
-    dependencies: Object.freeze({
-      invocation,
-      fetcher: createGitlabHttpFetcher(context),
-      signal: context.signal,
-      nowMs: Date.now(),
-    }),
-  });
 }
 
 /**
@@ -222,7 +135,7 @@ export async function listGitlabNotes(
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const request = parsed.data;
 
-  const admitted = await admitGitlabDetailInvocation({
+  const admitted = await admitGitlabItemInvocation({
     instance: request.instance,
     localRef: request.localRef,
     admissibleKinds: ['merge-request', 'issue'],
@@ -266,7 +179,7 @@ export async function listGitlabActivityEvents(
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const request = parsed.data;
 
-  const admitted = await admitGitlabDetailInvocation({
+  const admitted = await admitGitlabItemInvocation({
     instance: request.instance,
     localRef: request.localRef,
     admissibleKinds: ['merge-request', 'issue'],
@@ -305,7 +218,7 @@ export async function listGitlabDiscussions(
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const request = parsed.data;
 
-  const admitted = await admitGitlabDetailInvocation({
+  const admitted = await admitGitlabItemInvocation({
     instance: request.instance,
     localRef: request.localRef,
     // An issue has discussions too, but the `Reviews` tab is a merge-request
@@ -351,7 +264,7 @@ export async function readGitlabApprovals(
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const request = parsed.data;
 
-  const admitted = await admitGitlabDetailInvocation({
+  const admitted = await admitGitlabItemInvocation({
     instance: request.instance,
     localRef: request.localRef,
     admissibleKinds: ['merge-request'],
@@ -403,7 +316,7 @@ export async function listGitlabPipelines(
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const request = parsed.data;
 
-  const admitted = await admitGitlabDetailInvocation({
+  const admitted = await admitGitlabItemInvocation({
     instance: request.instance,
     localRef: request.localRef,
     admissibleKinds: ['merge-request'],
@@ -456,7 +369,7 @@ export async function listGitlabChanges(
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const request = parsed.data;
 
-  const admitted = await admitGitlabDetailInvocation({
+  const admitted = await admitGitlabItemInvocation({
     instance: request.instance,
     localRef: request.localRef,
     admissibleKinds: ['merge-request'],

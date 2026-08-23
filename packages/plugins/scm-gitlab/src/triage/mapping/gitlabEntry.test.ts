@@ -136,6 +136,98 @@ describe('issue mapping', () => {
   });
 });
 
+/**
+ * The revision a write pins against, per kind.
+ *
+ * `sources/SCM.md` §2.6 states the rule once for every forge: a mutation whose
+ * meaning depends on the item's current state carries **the exact SHA observed by
+ * the read the user acted on**. GitHub publishes `body.head.sha` in this slot and
+ * Bitbucket publishes the source-branch commit its read observed; GitLab's merge
+ * endpoint consumes the same value as its own `sha` precondition, so a merge
+ * request publishes its head commit here and nothing else.
+ *
+ * An issue has no head, so an issue publishes GitLab's `updated_at` byte —
+ * the token §4.7's issue Actions pin against. One slot, two kinds, one meaning:
+ * *the revision this read observed*.
+ */
+describe('observed revision', () => {
+  it('publishes a merge request’s observed head commit, not its update clock', () => {
+    const entry = mapMergeRequest(mergeRequestList[0]);
+
+    expect(entry.snapshot.nativeRevision).toBe('8888888888888888888888888888888888888888');
+    // The clock remains its own separate fact. A pin that was a timestamp could
+    // never be sent as GitLab's `sha` precondition, so the merge would be
+    // unconditional or unofferable — the two failures §2.6 exists to prevent.
+    expect(entry.snapshot.sourceUpdatedAtMs).toBe(Date.parse('2026-08-09T08:46:00Z'));
+  });
+
+  it('prefers sha over a diff_refs head that disagrees with it', () => {
+    // GitLab recomputes `diff_refs` asynchronously, so after a push the two
+    // disagree and `diff_refs.head_sha` is the STALE one. Publishing it would pin
+    // the merge to a commit that is no longer the head — GitLab would answer
+    // `409`, and the reader would be told their read went stale when it had not.
+    const entry = mapMergeRequest({
+      ...rowOf(mergeRequestList[0]),
+      diff_refs: { head_sha: 'ffffffffffffffffffffffffffffffffffffffff' },
+    });
+
+    expect(entry.snapshot.nativeRevision).toBe('8888888888888888888888888888888888888888');
+  });
+
+  it('reads diff_refs.head_sha only when GitLab omitted sha', () => {
+    // GitLab documents `diff_refs` as populated asynchronously after creation, so
+    // it is the fallback rather than the primary — never the other way round.
+    const row = { ...rowOf(mergeRequestList[0]) };
+    delete row.sha;
+    const entry = mapMergeRequest({
+      ...row,
+      diff_refs: { head_sha: 'aaaabbbbccccddddeeeeffff0000111122223333' },
+    });
+
+    expect(entry.snapshot.nativeRevision).toBe('aaaabbbbccccddddeeeeffff0000111122223333');
+  });
+
+  it('publishes no revision for a merge request whose head GitLab has not reported', () => {
+    // §4.7.2: a just-created merge request answers with empty diff refs. That is
+    // *not yet*, never *no head* — and a pin invented here would merge whatever
+    // the head turns out to be.
+    const row = { ...rowOf(mergeRequestList[0]) };
+    delete row.sha;
+    const entry = mapMergeRequest(row);
+
+    expect(entry.snapshot.nativeRevision).toBeNull();
+    // The row itself survives: an unpinnable merge request is still readable.
+    expect(entry.snapshot.title).toBe('Fix login page CSS paddings');
+  });
+
+  it('publishes an issue’s updated_at byte, because an issue has no head', () => {
+    const decoded = decodeGitlabRow({
+      kindId: 'issue',
+      origin: GITLAB_COM,
+      row: issueList[0],
+      laneInvolvement: 'assignee',
+    });
+    if (decoded.kind !== 'mapped') throw new Error(decoded.reason);
+
+    expect(decoded.entry.snapshot.nativeRevision).toBe('2026-08-09T15:31:51.081Z');
+  });
+
+  it('keeps an issue revision that differs from its parsed clock', () => {
+    // Two spellings of one instant. A pin that survived `Date.parse` would compare
+    // EQUAL across them, and the write the user was owed a refusal for would run.
+    const decoded = decodeGitlabRow({
+      kindId: 'issue',
+      origin: GITLAB_COM,
+      row: { ...rowOf(issueList[0]), updated_at: '2026-08-09T17:31:51.081+02:00' },
+      laneInvolvement: 'assignee',
+    });
+    if (decoded.kind !== 'mapped') throw new Error(decoded.reason);
+
+    expect(decoded.entry.snapshot.nativeRevision).toBe('2026-08-09T17:31:51.081+02:00');
+    expect(decoded.entry.snapshot.sourceUpdatedAtMs).toBe(Date.parse('2026-08-09T15:31:51.081Z'));
+  });
+});
+
 describe('semantic bounds', () => {
   it('keeps an oversize valid entry visible, bounded, and flagged rather than dropping it', () => {
     const entry = mapMergeRequest({

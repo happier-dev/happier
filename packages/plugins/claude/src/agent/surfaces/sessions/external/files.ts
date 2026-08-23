@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { opendir, readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { lstat, opendir, readdir, realpath, stat } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 
+import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import { compareExternalSessionCandidatePrecedence } from '@happier-dev/plugin-sdk/sessions/external';
 
 import { resolveClaudeConfigDir, type ClaudeExternalSessionSource } from './source.js';
@@ -290,6 +291,43 @@ function compareClaudeJsonlSessionPrecedence(
     );
 }
 
+/**
+ * The single authorization decision for "which bytes is this Claude session
+ * transcript?". A name inside the admitted projects root is not proof that the
+ * bytes are: a symlink placed there points anywhere on the machine, and `stat`
+ * follows it. Every consumer -- exact lookup, linking, metadata, candidate
+ * paging and read-after -- takes its path from here, so the containment rule
+ * cannot be satisfied on one surface and skipped on another.
+ *
+ * A symlinked *root* stays supported: containment is proven physically, so a
+ * configured config dir that is itself an alias of the real one still resolves.
+ */
+async function resolveCanonicalProjectsRoot(projectsDir: string): Promise<string> {
+    return await realpath(projectsDir).catch(() => resolve(projectsDir));
+}
+
+/**
+ * Proves the named session file is a real in-root regular file and returns the
+ * physical path callers may open. `lstat` (not `stat`) rejects a symlink at the
+ * session-file name itself; the remaining `realpath` resolves any symlinked
+ * ancestor so containment is decided on physical bytes, not on the lexical name.
+ */
+async function authorizeClaudeJsonlSessionFilePath(params: Readonly<{
+    canonicalProjectsRoot: string;
+    filePath: string;
+    signal?: AbortSignal;
+}>): Promise<string | null> {
+    const link = await lstat(params.filePath).catch(() => null);
+    throwIfAborted(params.signal);
+    if (!link?.isFile()) return null;
+    const physicalPath = await realpath(params.filePath).catch(() => null);
+    throwIfAborted(params.signal);
+    if (!physicalPath) return null;
+    return isCanonicalAbsolutePathInsideRoot(params.canonicalProjectsRoot, physicalPath)
+        ? physicalPath
+        : null;
+}
+
 export async function resolveClaudeJsonlSessionFile(params: Readonly<{
     source: ClaudeExternalSessionSource;
     env: NodeJS.ProcessEnv;
@@ -302,24 +340,23 @@ export async function resolveClaudeJsonlSessionFile(params: Readonly<{
 
     const configDir = resolveClaudeConfigDir({ source: params.source, env: params.env });
     const projectsDir = join(configDir, 'projects');
+    const canonicalProjectsRoot = await resolveCanonicalProjectsRoot(projectsDir);
+    throwIfAborted(params.signal);
     const preferredProjectId = resolvePreferredProjectId(params.source);
 
     const resolveInProject = async (projectId: string): Promise<ResolvedClaudeJsonlSessionFile | null> => {
         if (!isSafeClaudeJsonlPathSegment(projectId)) return null;
-        const filePath = join(projectsDir, projectId, `${remoteSessionId}.jsonl`);
-        try {
-            const entry = await stat(filePath);
-            throwIfAborted(params.signal);
-            if (!entry.isFile()) return null;
-            return {
-                filePath,
-                fileRelPath: join('projects', projectId, `${remoteSessionId}.jsonl`).replace(/\\/g, '/'),
-                projectId,
-            };
-        } catch {
-            throwIfAborted(params.signal);
-            return null;
-        }
+        const authorizedPath = await authorizeClaudeJsonlSessionFilePath({
+            canonicalProjectsRoot,
+            filePath: join(projectsDir, projectId, `${remoteSessionId}.jsonl`),
+            ...(params.signal ? { signal: params.signal } : {}),
+        });
+        if (!authorizedPath) return null;
+        return {
+            filePath: authorizedPath,
+            fileRelPath: join('projects', projectId, `${remoteSessionId}.jsonl`).replace(/\\/g, '/'),
+            projectId,
+        };
     };
 
     if (preferredProjectId) {
@@ -374,6 +411,8 @@ export async function findClaudeJsonlSessionsById(params: Readonly<{
 
     const configDir = resolveClaudeConfigDir({ source: params.source, env: params.env });
     const projectsDir = join(configDir, 'projects');
+    const canonicalProjectsRoot = await resolveCanonicalProjectsRoot(projectsDir);
+    throwIfAborted(params.signal);
     const preferredProjectId = resolvePreferredProjectId(params.source);
     if (preferredProjectId) {
         const projectsRoot = await stat(projectsDir).catch(() => null);
@@ -400,18 +439,29 @@ export async function findClaudeJsonlSessionsById(params: Readonly<{
     generation.update(`${candidateSourceGeneration}\n${remoteSessionId}\n`);
 
     const resolveInProject = async (projectId: string): Promise<DiscoveredClaudeJsonlSession | null> => {
-        const filePath = join(projectsDir, projectId, `${remoteSessionId}.jsonl`);
+        const authorizedPath = await authorizeClaudeJsonlSessionFilePath({
+            canonicalProjectsRoot,
+            filePath: join(projectsDir, projectId, `${remoteSessionId}.jsonl`),
+            ...(params.signal ? { signal: params.signal } : {}),
+        });
+        if (!authorizedPath) {
+            generation.update(`${projectId}:missing\n`);
+            return null;
+        }
         try {
-            const file = await stat(filePath, { bigint: true });
+            const file = await stat(authorizedPath, { bigint: true });
             throwIfAborted(params.signal);
-            if (!file.isFile()) return null;
+            if (!file.isFile()) {
+                generation.update(`${projectId}:missing\n`);
+                return null;
+            }
             generation.update(
                 `${projectId}:${file.dev}:${file.ino}:${file.size}:${file.mtimeNs}:${file.ctimeNs}\n`,
             );
             return {
                 remoteSessionId,
                 projectId,
-                filePath,
+                filePath: authorizedPath,
                 updatedAtMs: Math.trunc(Number(file.mtimeMs)),
             };
         } catch {

@@ -2,7 +2,6 @@
 import {
   type VoiceClientAuthArtifact,
 } from '@happier-dev/plugin-sdk/voice/client';
-import { parseTimestampMs } from '@happier-dev/plugin-sdk';
 import {
   classifyVoiceProviderHttpFailure,
   type VoiceAccountOperationService,
@@ -12,6 +11,8 @@ import { z } from 'zod';
 
 const DEFAULT_API_BASE_URL = 'https://api.x.ai/v1';
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MIN_CLIENT_AUTH_FRESHNESS_MS = 1_000;
+const MAX_CLIENT_AUTH_LIFETIME_MS = 10 * 60_000;
 const AudienceSchema = z.object({ platform: z.enum(['web', 'native']) }).strict();
 
 function providerError(
@@ -25,15 +26,24 @@ function assertProviderHttpSuccess(status: number): void {
   if (httpFailure) throw providerError(httpFailure);
 }
 
+/**
+ * The xAI client-secret contract (docs.x.ai REST API reference, Voice, verified
+ * 2026-08-23) makes `expires_at` a required integer Unix timestamp in SECONDS.
+ * It is a provider claim about the artifact's usable life, so an absent,
+ * differently-encoded, or implausible claim makes the artifact untrustworthy:
+ * this fails closed rather than coercing another unit or inventing a lifetime.
+ * Unrelated extra response fields are ignored, not rejected.
+ */
 function readExpiryMs(record: Record<string, unknown>, now: number): number {
-  const raw = record.expires_at ?? record.expiresAt;
-  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
-    const value = parseTimestampMs(raw);
-    if (value !== null && value > now + 1_000 && value <= now + 10 * 60_000) return value;
+  const seconds = record.expires_at;
+  if (typeof seconds !== 'number' || !Number.isSafeInteger(seconds) || seconds <= 0) {
+    throw providerError('provider_response_invalid');
   }
-  // xAI's endpoint accepts a requested 300-second lifetime but its public example
-  // does not promise an expiry field in the response. Bound the artifact locally.
-  return now + 300_000;
+  const value = seconds * 1_000;
+  if (value <= now + MIN_CLIENT_AUTH_FRESHNESS_MS || value > now + MAX_CLIENT_AUTH_LIFETIME_MS) {
+    throw providerError('provider_response_invalid');
+  }
+  return value;
 }
 
 function readBoundedJsonBytes(body: Uint8Array): unknown {

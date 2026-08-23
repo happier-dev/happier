@@ -8,7 +8,7 @@ import {
     testkitAccountMaterial,
 } from '../corpus/testkit/corpusCollections.test-support.js';
 import { testkitEntryRef, testkitLocator } from '../corpus/testkit/observations.test-support.js';
-import { linkEntryToSession } from './entrySessionLinks.js';
+import { linkEntryToSession, unlinkEntryFromSession } from './entrySessionLinks.js';
 import { TESTKIT_LINK_DISPLAY } from './testkit/entrySessionTestkit.test-support.js';
 
 const NOW_MS = 1_760_000_900_000;
@@ -185,6 +185,141 @@ describe('linkEntryToSession', () => {
             display: TESTKIT_LINK_DISPLAY,
             sessionId: 'session-a',
             nowMs: NOW_MS,
+        })).toEqual({ status: 'failed' });
+    });
+});
+
+describe('unlinkEntryFromSession', () => {
+    async function linkedFixture(): Promise<Readonly<{
+        fixture: ReturnType<typeof createTestkitCorpusCollections>;
+        entryRef: ReturnType<typeof testkitEntryRef>;
+        linkTag: string;
+    }>> {
+        const fixture = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
+        const entryRef = testkitEntryRef();
+        await linkEntryToSession({
+            collections: fixture.collections,
+            entryRef,
+            display: TESTKIT_LINK_DISPLAY,
+            sessionId: 'session-a',
+            nowMs: NOW_MS,
+        });
+        const linkTag = await deriveSessionLinkTag(
+            fixture.collections.sessionLinks,
+            entryRef,
+            'session-a',
+        );
+        return { fixture, entryRef, linkTag };
+    }
+
+    it('removes the one link the user named and leaves every other link alone', async () => {
+        // The failure this excludes: an unlink addressed by the entry alone,
+        // which would drop the same entry's link to a Session the user never
+        // touched. The named Session is deliberately the SECOND one, so an
+        // implementation that reaches for any of the entry's links — or for a
+        // fixed one — removes the wrong row and this fails.
+        const { fixture, entryRef, linkTag: linkToA } = await linkedFixture();
+        await linkEntryToSession({
+            collections: fixture.collections,
+            entryRef,
+            display: TESTKIT_LINK_DISPLAY,
+            sessionId: 'session-b',
+            nowMs: NOW_MS,
+        });
+        const linkToB = await deriveSessionLinkTag(
+            fixture.collections.sessionLinks,
+            entryRef,
+            'session-b',
+        );
+        expect(linkToB).not.toBe(linkToA);
+
+        expect(await unlinkEntryFromSession({
+            collections: fixture.collections,
+            entryRef,
+            sessionId: 'session-b',
+        })).toEqual({ status: 'unlinked', linkTag: linkToB });
+
+        expect(await fixture.collections.sessionLinks.get(linkToB)).toBeNull();
+        expect(fixture.control.sessionLinks.inspect(linkToB)?.deleted).toBe(true);
+        expect(await fixture.collections.sessionLinks.get(linkToA)).not.toBeNull();
+    });
+
+    it('answers an already absent link with the same idempotent success', async () => {
+        const fixture = createTestkitCorpusCollections();
+        const entryRef = testkitEntryRef();
+        const linkTag = await deriveSessionLinkTag(
+            fixture.collections.sessionLinks,
+            entryRef,
+            'session-a',
+        );
+
+        // Nothing was ever linked, so there is nothing different to tell the
+        // reader — and a second Unlink press must not report a failure.
+        expect(await unlinkEntryFromSession({
+            collections: fixture.collections,
+            entryRef,
+            sessionId: 'session-a',
+        })).toEqual({ status: 'unlinked', linkTag });
+    });
+
+    it('lets the user link the same entry to the same Session again afterwards', async () => {
+        // An unlink leaves a tombstone that keeps its revision, so a re-link is
+        // the conditional resurrection put. Without it the user's own mistake
+        // would strand the relationship at an address nothing can write again.
+        const { fixture, entryRef, linkTag } = await linkedFixture();
+        await unlinkEntryFromSession({
+            collections: fixture.collections,
+            entryRef,
+            sessionId: 'session-a',
+        });
+
+        expect(await linkEntryToSession({
+            collections: fixture.collections,
+            entryRef,
+            display: TESTKIT_LINK_DISPLAY,
+            sessionId: 'session-a',
+            nowMs: NOW_MS + 1,
+        })).toEqual({ status: 'linked', linkTag });
+        expect((await fixture.collections.sessionLinks.get(linkTag))?.value)
+            .toMatchObject({ linkedAtMs: NOW_MS + 1 });
+    });
+
+    it('reports a competing writer as a conflict the reader can re-read', async () => {
+        const { fixture, entryRef, linkTag } = await linkedFixture();
+        const base = fixture.collections.sessionLinks;
+
+        expect(await unlinkEntryFromSession({
+            collections: {
+                sessionLinks: {
+                    ...base,
+                    // The concurrent commit lands inside the exact window the
+                    // conditional delete exists to detect, and the real store
+                    // raises the real `plugin_collection_conflict`.
+                    async delete(rowId, options) {
+                        fixture.control.sessionLinks.tombstone(linkTag);
+                        return await base.delete(rowId, options);
+                    },
+                },
+            },
+            entryRef,
+            sessionId: 'session-a',
+        })).toEqual({ status: 'conflict', linkTag });
+    });
+
+    it('reports a refused storage delete as a failure rather than throwing', async () => {
+        const { fixture, entryRef } = await linkedFixture();
+
+        expect(await unlinkEntryFromSession({
+            collections: {
+                sessionLinks: {
+                    ...fixture.collections.sessionLinks,
+                    delete: async () => {
+                        throw new Error('collection_unavailable');
+                    },
+                },
+            },
+            entryRef,
+            sessionId: 'session-a',
         })).toEqual({ status: 'failed' });
     });
 });

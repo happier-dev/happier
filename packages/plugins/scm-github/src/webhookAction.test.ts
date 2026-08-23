@@ -69,10 +69,10 @@ const issueCommentInput = {
 };
 
 describe('GitHub webhook Action', () => {
-  it('declares the operator-routed verifier and registers its same-plugin handler', async () => {
+  it('declares the account-endpoint routed verifier and registers its same-plugin handler', async () => {
     expect(PLUGIN_MANIFEST.contributes.webhooks).toEqual([expect.objectContaining({
       id: 'github-events',
-      verifier: { kind: 'github_hmac_sha256_v1', routing: 'providerInstallation' },
+      verifier: { kind: 'github_hmac_sha256_v1', routing: 'accountEndpoint' },
       handlerAction: { localId: GITHUB_WEBHOOK_ACTION_ID },
     })]);
     const declaredAction = PLUGIN_MANIFEST.contributes.actions.find(

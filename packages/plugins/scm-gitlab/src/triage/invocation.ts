@@ -26,8 +26,9 @@ export function createGitlabHttpFetcher(context: PluginInvocationContext): Gitla
   return async (url, init) => {
     const response = await context.services.http.request({
       url,
-      method: 'GET',
+      method: init.method,
       headers: init.headers,
+      ...(init.body === undefined ? {} : { body: init.body }),
       redirect: init.redirect,
     }, { signal: init.signal });
     return {

@@ -1,4 +1,5 @@
 import type { PluginCollectionUiQueryErrorV1 } from '@happier-dev/plugin-sdk/collections';
+import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
 import { CORPUS_SESSION_LINKS_FIELD } from '../../corpus/collections/ids.js';
 import { MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 } from './linkedEntriesQuery.js';
@@ -22,7 +23,22 @@ import { MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 } from './linkedEntriesQuery.js
 
 /** One private link row as the hydration effect last read it, at that revision. */
 export type TriageSessionLinkHydrationV1 =
-    | Readonly<{ kind: 'ready'; revision: number; displayPath: string }>
+    | Readonly<{
+        kind: 'ready';
+        revision: number;
+        displayPath: string;
+        /**
+         * The canonical reference the link was written from, carried exactly as
+         * the private row holds it.
+         *
+         * Unlink is addressed by the entry AND the Session, and the mounted
+         * surface knows only the Session. Taking it from the read this row was
+         * already rendered from is what lets the reader undo a link they made by
+         * mistake without a second private read, and without any surface
+         * rebuilding a reference — a rebuilt one would address a different row.
+         */
+        entryRef: TriageEntryRefV1;
+    }>
     /** The private row is no longer there: the link was removed under this page. */
     | Readonly<{ kind: 'unlinked'; revision: number }>
     /** The private read itself failed; nothing is known about this link's entry. */
@@ -40,7 +56,7 @@ export type TriageSessionLinkQueryRowV1 = Readonly<{
 
 export type TriageSessionLinkedEntryPresentationV1 =
     | Readonly<{ kind: 'reading' }>
-    | Readonly<{ kind: 'linked'; displayPath: string }>
+    | Readonly<{ kind: 'linked'; displayPath: string; entryRef: TriageEntryRefV1 }>
     | Readonly<{ kind: 'unlinked' }>
     | Readonly<{ kind: 'unreadable' }>;
 
@@ -121,7 +137,9 @@ function presentationFor(
     // A hydration read at an older revision describes a row that has since
     // changed, so it is not presented as this row's current state.
     if (known === undefined || known.revision !== row.revision) return { kind: 'reading' };
-    if (known.kind === 'ready') return { kind: 'linked', displayPath: known.displayPath };
+    if (known.kind === 'ready') {
+        return { kind: 'linked', displayPath: known.displayPath, entryRef: known.entryRef };
+    }
     if (known.kind === 'unlinked') return { kind: 'unlinked' };
     return { kind: 'unreadable' };
 }

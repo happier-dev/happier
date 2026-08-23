@@ -182,8 +182,13 @@ export type BitbucketCommentsInputV1 = ReturnType<typeof BitbucketCommentsInputV
  * A genuine tri-state. `unknown` is what a response that omitted the field said,
  * and it is a different answer from `unresolved` — conflating them tells a
  * reviewer their resolved thread is still open.
+ *
+ * It is exported because the resolve and reopen writes settle into this exact
+ * vocabulary: the answer a write returns and the answer the Comments panel
+ * renders are the same fact about the same comment, and two spellings of it
+ * would be two answers to "is this thread resolved".
  */
-const CommentResolutionSchema = defineProtocolUnion([
+export const BitbucketCommentResolutionV1Schema = defineProtocolUnion([
   defineProtocolLiteral('resolved'),
   defineProtocolLiteral('unresolved'),
   defineProtocolLiteral('unknown'),
@@ -198,7 +203,7 @@ export const BitbucketProjectedCommentRowV1Schema = defineProtocolObject({
   /** The comment this one replies to; its absence makes this a thread root. */
   parentId: IdentifierSchema.optional(),
   deleted: BitbucketBooleanSchema,
-  resolution: CommentResolutionSchema,
+  resolution: BitbucketCommentResolutionV1Schema,
   path: TextSchema.optional(),
   url: LocationSchema.optional(),
   truncated: defineProtocolLiteral(true).optional(),

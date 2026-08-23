@@ -25,7 +25,7 @@ function setup(respond: (call: number) => Response) {
     const client = createPosthogApiClient({
         origin: ORIGIN,
         now: () => Date.UTC(2026, 7, 14, 12, 0, 0),
-        materializeHeaders: async () => ({ authorization: 'Bearer test-personal-api-key' }),
+        materializeHeaders: async () => ({ ok: true, authorization: 'Bearer test-personal-api-key' }),
         transport: async (url: string, request: PosthogTransportRequest) => {
             calls.push({ url, method: request.method });
             return respond(calls.length);
@@ -60,7 +60,7 @@ describe('readPosthogIssueActivity', () => {
         expect(outcome.value.totalCount).toBe(7);
         // The provider's own `next` advertises page 2; that is the validated position
         // the caller may ask for.
-        expect(outcome.value.nextPage).toBe(2);
+        expect(outcome.value.walk).toEqual({ kind: 'continues', position: 2 });
     });
 
     it('ends the page walk when the provider states no next page', async () => {
@@ -75,10 +75,11 @@ describe('readPosthogIssueActivity', () => {
 
         expect(outcome.ok).toBe(true);
         if (!outcome.ok) return;
-        expect(outcome.value.nextPage).toBeNull();
+        // The provider stated no next at all. That, and only that, is exhaustion.
+        expect(outcome.value.walk).toEqual({ kind: 'exhausted' });
     });
 
-    it('refuses a next that does not strictly advance this exact route', async () => {
+    it('refuses a next that does not strictly advance this exact route, and says the walk stopped short', async () => {
         const nonAdvancing = `${ACTIVITY_URL}?limit=50&page=1`;
         const elsewhere
             = 'https://eu.posthog.com/api/projects/4821/error_tracking/issues/'
@@ -96,8 +97,11 @@ describe('readPosthogIssueActivity', () => {
             expect(outcome.ok).toBe(true);
             if (!outcome.ok) return;
             // A next this source cannot verify is not a position: the walk stops rather
-            // than reading an unknown page under this issue's name.
-            expect(outcome.value.nextPage).toBeNull();
+            // than reading an unknown page under this issue's name. But the provider
+            // DID advertise another page, so stopping is not exhaustion — reporting it
+            // as the end of the walk tells a reader they have seen everything PostHog
+            // recorded when they have not.
+            expect(outcome.value.walk).toEqual({ kind: 'stoppedShort' });
         }
     });
 

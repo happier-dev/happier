@@ -38,6 +38,7 @@ import {
   createCurrentConversationConnectionFixture,
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 
 const endpoint = {
   kind: 'direct' as const,
@@ -128,6 +129,11 @@ function compareCanonicalText(left: string, right: string): number {
   return left === right ? 0 : left < right ? -1 : 1;
 }
 
+/**
+ * The exact `by-connection-binding-v2` sort key: `binding-id` with its stable
+ * null sentinel first, then `record-kind`, then `attention`, then the row-ID
+ * tiebreaker Data appends to every stored index key.
+ */
 function compareConnectionBindingRows(left: StoredRow, right: StoredRow): number {
   const leftBindingId = typeof left.value['binding-id'] === 'string'
     ? left.value['binding-id']
@@ -137,10 +143,28 @@ function compareConnectionBindingRows(left: StoredRow, right: StoredRow): number
     : null;
   if (leftBindingId === null && rightBindingId !== null) return -1;
   if (leftBindingId !== null && rightBindingId === null) return 1;
-  return leftBindingId === null
-    ? compareCanonicalText(left.rowId, right.rowId)
-    : compareCanonicalText(leftBindingId, rightBindingId!)
-      || compareCanonicalText(left.rowId, right.rowId);
+  return (leftBindingId === null || rightBindingId === null
+    ? 0
+    : compareCanonicalText(leftBindingId, rightBindingId))
+    || compareCanonicalText(String(left.value['record-kind']), String(right.value['record-kind']))
+    || (Number(left.value.attention === true) - Number(right.value.attention === true))
+    || compareCanonicalText(left.rowId, right.rowId);
+}
+
+/**
+ * The loaded Account-storage adapter refuses a query naming an index the bound
+ * contract does not declare. Mirroring that here is what makes a reader still
+ * pointed at a retired index fail instead of quietly reading a fake's rows.
+ */
+function assertDeclaredCollectionIndex(index: string | undefined): void {
+  if (index === undefined) return;
+  const declared = [
+    ...CHANNEL_STATE_COLLECTION.indexes,
+    ...CHANNEL_DELIVERIES_COLLECTION.indexes,
+  ].some((candidate) => candidate.id === index);
+  if (!declared) {
+    throw new Error(`Collection query names an undeclared index '${index}'.`);
+  }
 }
 
 class MemoryCollection {
@@ -258,6 +282,8 @@ class MemoryCollection {
     order?: 'asc' | 'desc';
     limit: number;
   }>) {
+    assertChannelsTestCollectionQueryLimit(input.limit);
+    assertDeclaredCollectionIndex(input.index);
     const prefix = input.prefix?.[0];
     const bindingPrefix = input.prefix?.[1];
     const all = [...this.rows.values()]
@@ -266,7 +292,7 @@ class MemoryCollection {
         if (input.index === CHANNEL_STATE_INDEX_ID.byKind) {
           return row.value['record-kind'] === prefix;
         }
-        if (input.index === CHANNEL_STATE_INDEX_ID.byConnectionBinding
+        if (input.index === CHANNEL_STATE_INDEX_ID.byConnectionBindingV2
           || input.index === CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention) {
           return row.value['connection-id'] === prefix
             && (bindingPrefix === undefined || row.value['binding-id'] === bindingPrefix);
@@ -280,7 +306,7 @@ class MemoryCollection {
         return true;
       })
       .sort((left, right) => {
-        const comparison = input.index === CHANNEL_STATE_INDEX_ID.byConnectionBinding
+        const comparison = input.index === CHANNEL_STATE_INDEX_ID.byConnectionBindingV2
           ? compareConnectionBindingRows(left, right)
           : left.rowId.localeCompare(right.rowId);
         return input.order === 'desc' ? -comparison : comparison;
@@ -788,7 +814,8 @@ function permissionWaitOutwardObligation(): ConversationOutwardDeliveryObligatio
       turnId: 'turn-1',
       requestId: 'permission-request-1',
     },
-    content: 'This Session is waiting for an approval in Happier.',
+    content: 'This Session is waiting for an approval in Happier. '
+      + 'Reply /allow permission-request-1 or /deny permission-request-1.',
     deliveryKey: 'channels:permission-wait:v1:turn-1:permission-request-1',
   };
 }
@@ -1051,6 +1078,11 @@ describe('Channels outward-delivery supervisor', () => {
               bindingRevision: 1,
               bindingAuthorityEpoch: 7,
             },
+            // The inbound grammar is `/allow <requestId>`, so a notice that
+            // withheld the exact request identity would be an approval
+            // request nobody in the conversation could actually answer.
+            content: 'This Session is waiting for an approval in Happier. '
+              + 'Reply /allow permission-request-1 or /deny permission-request-1.',
             state: 'ready',
           }),
         }),

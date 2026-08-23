@@ -49,6 +49,28 @@ describe('AUGGIE_UI_DESCRIPTOR', () => {
     expect(AUGGIE_UI_DESCRIPTOR).not.toHaveProperty('settings');
   });
 
+  it('declares the indexing option and its chip through the public declarative seams', () => {
+    expect(AUGGIE_UI_DESCRIPTOR.behavior.newSession.agentOptions).toEqual([
+      { key: 'allowIndexing', kind: 'boolean', spawnConfigOption: true },
+    ]);
+    expect(AUGGIE_UI_DESCRIPTOR.components.slots).toEqual([
+      {
+        id: 'auggie-allow-indexing',
+        slot: 'newSession.agentInputExtraActionChips',
+        chip: {
+          kind: 'booleanOption',
+          optionStateKey: 'allowIndexing',
+          iconName: 'magnifying-glass',
+          onLabelKey: 'agentInput.auggieIndexingChip.on',
+          offLabelKey: 'agentInput.auggieIndexingChip.off',
+        },
+      },
+    ]);
+    // A host component id would be a first-party-only escape hatch: an installed
+    // Agent cannot name one, so the chip must be fully declared.
+    expect(JSON.stringify(AUGGIE_UI_DESCRIPTOR)).not.toContain('componentId');
+  });
+
   it('is a data-only no-execute descriptor', () => {
     expect(collectNoExecuteViolations(AUGGIE_UI_DESCRIPTOR)).toEqual([]);
     expect(JSON.parse(JSON.stringify(AUGGIE_UI_DESCRIPTOR))).toEqual(AUGGIE_UI_DESCRIPTOR);

@@ -125,6 +125,10 @@ function useLinkHydration(
                             kind: 'ready',
                             revision: row.revision,
                             displayPath: value.displayPathAtLink,
+                            // The reference the link was written from, passed on
+                            // untouched: Unlink addresses the row derived from
+                            // exactly this value and the mounted Session.
+                            entryRef: value.entryRef,
                         }];
                     } catch {
                         return [row.rowId, { kind: 'unreadable', revision: row.revision }];

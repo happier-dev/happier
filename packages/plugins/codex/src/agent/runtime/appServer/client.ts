@@ -25,6 +25,7 @@ type JsonRpcRequestHandler = (params: unknown, message: Readonly<{ id?: unknown 
 type JsonRpcNotificationHandler = (params: unknown) => Promise<void> | void;
 
 export type CodexAppServerRequestOptions = Readonly<{
+    signal?: AbortSignal;
     timeoutMs?: number | null;
 }>;
 
@@ -351,7 +352,10 @@ function wrapNativeCodexAppServerClient(
             return await handle.client.request(
                 method,
                 toJsonValue(requestParams),
-                { timeoutMs },
+                {
+                    timeoutMs,
+                    ...(options?.signal ? { signal: options.signal } : {}),
+                },
             );
         },
         async notify(method, notificationParams) {
@@ -477,7 +481,12 @@ export async function createCodexNativeAppServerClient(params: Readonly<{
         await client.request('initialize', {
             clientInfo: CODEX_APP_SERVER_CLIENT_INFO,
             capabilities: { experimentalApi: true },
-        }, params.forkOnly ? { timeoutMs: null } : undefined);
+        }, params.forkOnly || params.signal
+            ? {
+                ...(params.forkOnly ? { timeoutMs: null } : {}),
+                ...(params.signal ? { signal: params.signal } : {}),
+            }
+            : undefined);
         await client.notify('initialized');
         return client;
     } catch (error) {

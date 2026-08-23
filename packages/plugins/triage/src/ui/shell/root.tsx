@@ -13,9 +13,14 @@ import {
   Screen,
   Stack,
   Status,
+  usePluginAccessibility,
   usePluginHostApi,
+  usePluginTheme,
   usePluginTranslation,
+  useSurfaceContext,
+  type LayoutChangeEvent,
 } from '@happier-dev/plugin-ui';
+import { scaleTextStyleMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
 import type { TriageEntryDetailLaunchInputV1 } from '../../composer/entryDetailLaunchInput.js';
@@ -37,7 +42,11 @@ import {
   planTriageListSections,
   type TriageListSectionItemV1,
 } from '../list/sections.js';
-import { TriageListContinuationRow, renderTriageListRow } from '../list/rows.js';
+import {
+  readTriageListSectionItemKey,
+  useTriageListRowRenderer,
+  type TriageListContinuationCopyV1,
+} from '../list/rows.js';
 import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
 import { useTriagePinnedEntries } from '../marks/useTriagePinnedEntries.js';
 import {
@@ -67,8 +76,17 @@ import {
   type TriageSurfaceStateV1,
 } from '../state/surface.js';
 import { useTriageListWindow } from '../window/useTriageListWindow.js';
+import {
+  planTriageConfigureSourceOffersV1,
+  type TriageConfigureSourceOfferV1,
+} from './configureSources.js';
 import { readTriageListEmptyState, readTriageListEmptyStateKeys } from './emptyState.js';
 import { retainTriageLastKnownRowV1, type TriageLastKnownRowV1 } from './lastKnownRow.js';
+import {
+  resolveTriageLayoutV1,
+  type TriageLayoutV1,
+  type TriageScaledTypeMetricsV1,
+} from './layout.js';
 import { readTriageWindowLensV1 } from './lens.js';
 import {
   readTriageListFailureNotice,
@@ -134,6 +152,37 @@ function seedFromLocation(subPath: string | undefined): TriageSurfaceStateV1 {
 
 /** A stable empty set, so an unread saved-view answer changes no memo identity. */
 const NO_SAVED_VIEWS: readonly CorpusSavedViewV1[] = Object.freeze([]);
+
+/**
+ * The measured fill region, as automation identity.
+ *
+ * It is exported because the platform's own layout observer is the only
+ * production producer of the measurement, and a mounted test has to be able to
+ * reach the exact box that asked to be measured rather than assert against a
+ * width nothing in production would have produced.
+ */
+export const TRIAGE_SHELL_FILL_TEST_ID_V1 = 'triage-shell-fill';
+
+/**
+ * The reader's own type size applied to the host's four measured text roles.
+ *
+ * The scaling itself belongs to `plugin-ui`'s canonical text-scale owner, the
+ * same one every `Text` on this page goes through. Multiplying the host's
+ * typography here instead would be a second text-scale decision, and the two
+ * would disagree the first time either rounded differently — with the pane
+ * minima quietly measuring a size nothing on screen is drawn at.
+ */
+function readTriageScaledTypeMetricsV1(
+  typography: ReturnType<typeof usePluginTheme>['typography'],
+  textScale: number,
+): TriageScaledTypeMetricsV1 {
+  return {
+    title: scaleTextStyleMetrics(typography.title, textScale),
+    body: scaleTextStyleMetrics(typography.body, textScale),
+    caption: scaleTextStyleMetrics(typography.caption, textScale),
+    label: scaleTextStyleMetrics(typography.label, textScale),
+  };
+}
 
 export type TriageListShellProps = Readonly<{
   /**
@@ -230,6 +279,32 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     unavailableReason: marks.unavailableReason,
     onSetPinned: marks.setPinned,
   }), [marks.busyKey, marks.setPinned, marks.unavailableReason]);
+
+  /**
+   * The row renderer and the key reader the shared `List` memoizes on.
+   *
+   * `List` rebuilds its flattened traversal order, its key index, its roving
+   * entries and every mounted cell whenever either identity changes. Focus
+   * movement dispatches `rowFocused`, so an inline lambda here made every
+   * cursor step reproject the entire window — the exact locality the shared
+   * virtualizer exists to provide. These two bind only to what a row's content
+   * actually depends on.
+   */
+  const continuationCopy = React.useCallback(
+    (sectionKey: string | null): TriageListContinuationCopyV1 => (
+      sectionKey === TRIAGE_PINNED_SECTION_KEY
+        ? {
+            title: text('plugins.triage.surface.morePins.title', 'More pinned entries exist'),
+            description: text('plugins.triage.surface.morePins.description', 'This page shows your most recent pins; the rest are still pinned.'),
+          }
+        : {
+            title: text('plugins.triage.surface.moreEntries.title', 'More entries may exist'),
+            description: text('plugins.triage.surface.moreEntries.description', 'This window is bounded; sources that had not finished are still walking.'),
+          }
+    ),
+    [text],
+  );
+  const renderRow = useTriageListRowRenderer({ continuationCopy, handlers: pinHandlers });
 
   /**
    * The reader's pins are planned even with no window at all
@@ -655,6 +730,86 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     readerChangedLens,
   });
 
+  /**
+   * The way out of an unconfigured PRs & Issues, or nothing at all.
+   *
+   * The unconfigured screen named the remedy — "connect a source in Settings" —
+   * and could not perform it, so a reader who had installed a source was told to
+   * go and find its page themselves. Every source already ships that page; what
+   * was missing was a way to NAME it, which the V1 descriptor now carries.
+   *
+   * Two independent facts gate the offer, and each one absent means the control
+   * is simply not rendered rather than rendered dead: whether this mount can
+   * navigate at all (`openSurface` is negotiated per mount, exactly as the route
+   * owner reads `replacePageLocation`), and whether a given source named a page.
+   */
+  const surfaceContext = useSurfaceContext();
+  /**
+   * `core/SURFACE.md` §2.1. The shell measures its OWN fill region and combines
+   * that width with the reader's type size; it never asks the platform how big
+   * a phone is. The solver has always been here — what was missing was this
+   * producer, so the split composition could not be reached at any width.
+   *
+   * `null` until the platform has actually laid the region out. That is not a
+   * neutral placeholder: an unmeasured shell renders the STACKED composition,
+   * because splitting on a width nobody has reported yet is precisely the
+   * desktop guess §2.1 forbids, and on a narrow window it would clip both panes
+   * on the first frame.
+   */
+  const [measuredFillWidth, setMeasuredFillWidth] = React.useState<number | null>(null);
+  const onFillRegionLayout = React.useCallback((event: LayoutChangeEvent) => {
+    const { width } = event.nativeEvent.layout;
+    // Equal measurements are dropped rather than re-set: the observer reports on
+    // every commit that touches the box, and a new state value each time would
+    // rebuild the composition — and every `List` section identity under it — for
+    // a region that did not move.
+    setMeasuredFillWidth((current) => (current === width ? current : width));
+  }, []);
+  const theme = usePluginTheme();
+  const { textScale } = usePluginAccessibility();
+  const scaledType = React.useMemo(
+    () => readTriageScaledTypeMetricsV1(theme.typography, textScale),
+    [textScale, theme.typography],
+  );
+  const layout = React.useMemo<TriageLayoutV1 | null>(
+    () => (measuredFillWidth === null
+      ? null
+      : resolveTriageLayoutV1({
+          availableWidth: measuredFillWidth,
+          type: scaledType,
+          spacing: theme.spacing,
+        })),
+    [measuredFillWidth, scaledType, theme.spacing],
+  );
+  const configureOffers = React.useMemo(
+    () => (hostApi.version().methods.includes('openSurface')
+      ? planTriageConfigureSourceOffersV1(surfaceContext.targetedContributions)
+      : []),
+    [hostApi, surfaceContext.targetedContributions],
+  );
+  /**
+   * The source whose page the host refused to open, if one did.
+   *
+   * A press that silently does nothing is the failure `core/CORPUS.md` §4.2
+   * names for **Refresh** and it is the same failure here: the destination is
+   * admitted by the host, not by this page, and a Settings page whose renderer
+   * cannot be staged is a real refusal a reader would otherwise read as a dead
+   * button.
+   */
+  const [configureRefused, setConfigureRefused] = React.useState<string | null>(null);
+  const openConfigureSource = React.useCallback(async (
+    offer: TriageConfigureSourceOfferV1,
+  ): Promise<void> => {
+    setConfigureRefused(null);
+    try {
+      // A Settings destination carries no launch input and no sub-path; the
+      // host's one resolver refuses both, so neither is supplied.
+      await hostApi.openSurface(offer.destination);
+    } catch {
+      setConfigureRefused(offer.displayName);
+    }
+  }, [hostApi]);
+
   if (state.kind === 'initial') {
     return (
       <Screen safeArea>
@@ -682,12 +837,48 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   if (state.kind === 'configureSources') {
     return (
       <Screen safeArea>
-        <EmptyState
-          titleKey="plugins.triage.surface.noSources.title"
-          title="No sources are configured"
-          descriptionKey="plugins.triage.surface.noSources.description"
-          description="Connect a source in Settings to see its pull requests, issues and error groups here."
-        />
+        <Stack gap="small">
+          <EmptyState
+            titleKey="plugins.triage.surface.noSources.title"
+            title="No sources are configured"
+            descriptionKey="plugins.triage.surface.noSources.description"
+            description="Connect a source in Settings to see its pull requests, issues and error groups here."
+            {...(configureOffers.length === 0 ? {} : {
+              action: (
+                /*
+                 * One control per source that named a page, rather than one
+                 * "Configure sources" that has to pick. With several installed
+                 * there is no single right destination, and a control that
+                 * opened the first would send most readers to the wrong page.
+                 */
+                <Row gap="small" wrap justify="center">
+                  {configureOffers.map((offer) => (
+                    <Button
+                      key={`${offer.destination.pluginId}/${offer.destination.localId}`}
+                      title={text(
+                        'plugins.triage.surface.noSources.configure',
+                        'Configure {name}',
+                        { name: offer.displayName },
+                      )}
+                      variant="secondary"
+                      onPress={() => openConfigureSource(offer)}
+                    />
+                  ))}
+                </Row>
+              ),
+            })}
+          />
+          {configureRefused === null ? null : (
+            <Banner
+              tone="warning"
+              title={text(
+                'plugins.triage.surface.noSources.openFailed',
+                '{name} settings could not be opened',
+                { name: configureRefused },
+              )}
+            />
+          )}
+        </Stack>
       </Screen>
     );
   }
@@ -700,12 +891,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const listWindow = state.kind === 'window' ? state : null;
   const empty = readTriageListEmptyState(state, rowCount, { narrowing, text });
 
-  /**
-   * `core/SURFACE.md` §2.1, stacked composition: the selection replaces the
-   * list rather than appearing under it, and the list is not duplicated
-   * underneath. Generic page Back clears the selection first — the route owner
-   * declares that step — and only an unhandled Back leaves the page.
-   */
   /**
    * Which of the two ordinary causes reached the header, decided from the fact
    * the reducer already carries rather than a second flag: a launch naming an
@@ -725,73 +910,105 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    */
   const neverListedHere = surface.selection !== null && surface.selection.sectionId === null;
 
-  if (surface.selection !== null) {
+  /**
+   * The ONE detail composition, whichever region ends up holding it.
+   *
+   * `core/SURFACE.md` §2.1 has two compositions and one detail: stacked puts it
+   * in the whole fill region, split puts the same thing in the detail pane
+   * beside the list. Building it once here is what keeps that true — a second
+   * copy for the split arm would be two answers to "what does an open entry look
+   * like", and they would diverge the first time either changed.
+   */
+  const detailContent = surface.selection === null ? null : (
+    selectedRow !== null ? (
+      <TriageDetailRegion
+        row={selectedRow}
+        lanes={listWindow?.window.lanes ?? []}
+        connectionLabel={selectedConnectionLabel}
+        onClose={dismissDetail}
+      />
+    ) : lastKnownHeader !== null ? (
+      /*
+       * The selection outlived its row. The reader keeps the entry they
+       * opened — its title, why it was asking for them, its state, scope and
+       * observing connection — stated as the last thing this page knew, and
+       * the cause underneath it. Replacing all of it with the cause alone
+       * left them holding a sentence with no subject: they could not say
+       * WHICH entry had gone, which is the one thing they were reading.
+       */
+      <Stack gap="small">
+        <TriageDetailHeaderView header={lastKnownHeader} onClose={dismissDetail} lastKnown />
+        <EmptyState
+          titleKey="plugins.triage.surface.entryGone.heading"
+          title="This entry is no longer in the list"
+          descriptionKey="plugins.triage.surface.entryGone.description"
+          description="The current window no longer holds this entry, so there is nothing to open it with. It may return on the next refresh."
+        />
+      </Stack>
+    ) : (
+      /*
+       * `core/SURFACE.md` §3.1 and §3.2: a selection the current window
+       * does not hold still renders, and says so. Two states reach here and
+       * both are ordinary — an entry that LEFT the window on a later pass,
+       * and a validated launch naming an entry this page's own lens never
+       * listed. Returning to the list on its own would look like the
+       * surface closed the detail by itself in the first case and like the
+       * launch did nothing at all in the second.
+       */
+      <Stack gap="small">
+        <Row justify="space-between" align="center">
+          <Heading
+            level={2}
+            value={neverListedHere
+              ? text('plugins.triage.surface.entryNotInFilter.heading', 'This entry is outside the current filter')
+              : text('plugins.triage.surface.entryGone.heading', 'This entry is no longer in the list')}
+          />
+          <Button titleKey="plugins.triage.surface.close" title="Close" variant="secondary" onPress={dismissDetail} />
+        </Row>
+        <EmptyState
+          titleKey="plugins.triage.surface.entryGone.title"
+          title="Nothing to show for it"
+          descriptionKey={neverListedHere
+            ? 'plugins.triage.surface.entryNotInFilter.description'
+            : 'plugins.triage.surface.entryGone.description'}
+          description={neverListedHere
+            ? 'The filters on this page do not include this entry, so there is nothing here to open. Clear them to see it in the list.'
+            : 'The current window no longer holds this entry, so there is nothing to open it with. It may return on the next refresh.'}
+        />
+      </Stack>
+    )
+  );
+
+  /**
+   * `core/SURFACE.md` §2.1's two compositions, decided from the measurement and
+   * nothing else.
+   *
+   * **Split** keeps the list mounted beside the detail, so the reader stays in
+   * the queue they were working through: their scroll position, their focused
+   * row and the section they had reached all survive opening an entry.
+   *
+   * **Stacked** is the composition for every region too narrow to honour both
+   * pane minima — and for a region nothing has measured yet. There the
+   * selection REPLACES the list, because §2.1 forbids duplicating it underneath
+   * and a starved two-pane split is worse than one readable pane.
+   */
+  const splitDetail = detailContent !== null && layout !== null && layout.mode === 'split'
+    ? { content: detailContent, listRatio: layout.listRatio }
+    : null;
+
+  if (detailContent !== null && splitDetail === null) {
     return (
       <Screen safeArea>
-        {selectedRow !== null ? (
-          <TriageDetailRegion
-            row={selectedRow}
-            lanes={listWindow?.window.lanes ?? []}
-            connectionLabel={selectedConnectionLabel}
-            onClose={dismissDetail}
-          />
-        ) : lastKnownHeader !== null ? (
-          /*
-           * The selection outlived its row. The reader keeps the entry they
-           * opened — its title, why it was asking for them, its state, scope and
-           * observing connection — stated as the last thing this page knew, and
-           * the cause underneath it. Replacing all of it with the cause alone
-           * left them holding a sentence with no subject: they could not say
-           * WHICH entry had gone, which is the one thing they were reading.
-           */
-          <Stack gap="small">
-            <TriageDetailHeaderView header={lastKnownHeader} onClose={dismissDetail} lastKnown />
-            <EmptyState
-              titleKey="plugins.triage.surface.entryGone.heading"
-              title="This entry is no longer in the list"
-              descriptionKey="plugins.triage.surface.entryGone.description"
-              description="The current window no longer holds this entry, so there is nothing to open it with. It may return on the next refresh."
-            />
-          </Stack>
-        ) : (
-          /*
-           * `core/SURFACE.md` §3.1 and §3.2: a selection the current window
-           * does not hold still renders, and says so. Two states reach here and
-           * both are ordinary — an entry that LEFT the window on a later pass,
-           * and a validated launch naming an entry this page's own lens never
-           * listed. Returning to the list on its own would look like the
-           * surface closed the detail by itself in the first case and like the
-           * launch did nothing at all in the second.
-           */
-          <Stack gap="small">
-            <Row justify="space-between" align="center">
-              <Heading
-                level={2}
-                value={neverListedHere
-                  ? text('plugins.triage.surface.entryNotInFilter.heading', 'This entry is outside the current filter')
-                  : text('plugins.triage.surface.entryGone.heading', 'This entry is no longer in the list')}
-              />
-              <Button titleKey="plugins.triage.surface.close" title="Close" variant="secondary" onPress={dismissDetail} />
-            </Row>
-            <EmptyState
-              titleKey="plugins.triage.surface.entryGone.title"
-              title="Nothing to show for it"
-              descriptionKey={neverListedHere
-                ? 'plugins.triage.surface.entryNotInFilter.description'
-                : 'plugins.triage.surface.entryGone.description'}
-              description={neverListedHere
-                ? 'The filters on this page do not include this entry, so there is nothing here to open. Clear them to see it in the list.'
-                : 'The current window no longer holds this entry, so there is nothing to open it with. It may return on the next refresh.'}
-            />
-          </Stack>
-        )}
+        <Stack gap="small" testID={TRIAGE_SHELL_FILL_TEST_ID_V1} onLayout={onFillRegionLayout}>
+          {detailContent}
+        </Stack>
       </Screen>
     );
   }
 
   return (
     <Screen safeArea>
-      <Stack gap="small">
+      <Stack gap="small" testID={TRIAGE_SHELL_FILL_TEST_ID_V1} onLayout={onFillRegionLayout}>
         <Row justify="space-between" align="center">
           <Heading level={1} value={TRIAGE_DISPLAY_NAME} />
           <Button
@@ -870,6 +1087,17 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
 
         <TriageFilterRail
           facets={facets}
+          // `core/SURFACE.md` §6's compact lens, decided by the SAME
+          // measurement §2.1's split composition is decided by. The rail
+          // measures nothing of its own, so the page has one width authority.
+          //
+          // An unmeasured region keeps the WIDE arm, which is the opposite
+          // default from the split above and for the opposite reason: folding
+          // five controls behind a trigger takes away things the reader can
+          // reach, so it waits for a measurement that actually says they do
+          // not fit. The wide arm wraps in render order and cannot overflow
+          // the page, so guessing wide costs height rather than reachability.
+          compact={layout !== null && layout.mode === 'stacked'}
           order={surface.order}
           smartPolicy={surface.smartPolicy}
           filtered={narrowing.facets}
@@ -952,62 +1180,77 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           <Status tone={marks.notice.tone} label={marks.notice.message} />
         )}
 
-        <List<TriageListSectionItemV1>
-          accessibilityLabel={TRIAGE_DISPLAY_NAME}
-          density="compact"
-          sections={sections}
-          /*
-            The shared `List`'s own search input, not a Triage one. Without it
-            the route's query narrowed the window with nothing on screen naming
-            it, so a copied link — or the reader's own Back — landed on a short
-            list with no cause and no way out.
+        {/*
+          `core/SURFACE.md` §2.1's two regions, in one stable shape.
 
-            `RETAIN_EVERY_ROW` is not a disabled filter: the corpus window owner
-            already matched this query before it published a row
-            (`projection/listWindow.ts#foldTriageListWindow`), and a second
-            matcher here would be a second answer to "does this entry match",
-            which is the split-brain class this program has already had to
-            extract once.
-          */
-          search={{
-            label: text('plugins.triage.surface.search', 'Search PRs & Issues'),
-            value: surface.search.query,
-            onValueChange: changeSearch,
-            filter: RETAIN_EVERY_ROW,
-          }}
-          keyForItem={(item) => item.key}
-          renderItem={(item, _index, sectionKey) => (item.kind === 'continuation'
-            ? (
-              <TriageListContinuationRow
-                {...(sectionKey === TRIAGE_PINNED_SECTION_KEY
-                  ? {
-                      title: text('plugins.triage.surface.morePins.title', 'More pinned entries exist'),
-                      description: text('plugins.triage.surface.morePins.description', 'This page shows your most recent pins; the rest are still pinned.'),
-                    }
-                  : {
-                      title: text('plugins.triage.surface.moreEntries.title', 'More entries may exist'),
-                      description: text('plugins.triage.surface.moreEntries.description', 'This window is bounded; sources that had not finished are still walking.'),
-                    })}
-              />
-            )
-            : renderTriageListRow(item.row, pinHandlers))}
-          // The shared owner of activation, roving focus, the tab stop and the
-          // option semantics. Without it every row rendered as inert text and a
-          // reader had no way to open anything.
-          selection={{ selectedKey, onSelectedKeyChange: activateRow, onFocusedKeyChange: focusRow }}
-          empty={empty === null ? null : empty.kind === 'sourceFailure' ? (
-            <ErrorState
-              title={empty.title}
-              description={empty.description}
-              action={<Button titleKey="plugins.triage.surface.refresh" title="Refresh" variant="secondary" onPress={refresh} />}
+          The list pane and this Row are rendered whether or not a detail is
+          open, and the list keeps the SAME position in the tree either way.
+          That is the whole point: React keeps the mounted `List` — with the
+          reader's scroll offset, their focused row and the virtualizer's window
+          — alive across opening and closing an entry. Rendering the list bare
+          when nothing is selected and re-parenting it into a pane when
+          something is would unmount and rebuild it on every open, which is
+          exactly how a reader loses their place — and §2.1 asks for the
+          opposite.
+
+          Both panes carry `minWidth: 0` because a flex child's default minimum
+          is its content, so a long unbroken title would otherwise push the pane
+          past its share and take the detail region off screen.
+        */}
+        <Row gap="small" align="stretch">
+          <Stack
+            gap="none"
+            style={{ flex: splitDetail === null ? 1 : splitDetail.listRatio, minWidth: 0 }}
+          >
+            <List<TriageListSectionItemV1>
+              accessibilityLabel={TRIAGE_DISPLAY_NAME}
+              density="compact"
+              sections={sections}
+              /*
+                The shared `List`'s own search input, not a Triage one. Without it
+                the route's query narrowed the window with nothing on screen naming
+                it, so a copied link — or the reader's own Back — landed on a short
+                list with no cause and no way out.
+
+                `RETAIN_EVERY_ROW` is not a disabled filter: the corpus window owner
+                already matched this query before it published a row
+                (`projection/listWindow.ts#foldTriageListWindow`), and a second
+                matcher here would be a second answer to "does this entry match",
+                which is the split-brain class this program has already had to
+                extract once.
+              */
+              search={{
+                label: text('plugins.triage.surface.search', 'Search PRs & Issues'),
+                value: surface.search.query,
+                onValueChange: changeSearch,
+                filter: RETAIN_EVERY_ROW,
+              }}
+              keyForItem={readTriageListSectionItemKey}
+              renderItem={renderRow}
+              // The shared owner of activation, roving focus, the tab stop and the
+              // option semantics. Without it every row rendered as inert text and a
+              // reader had no way to open anything.
+              selection={{ selectedKey, onSelectedKeyChange: activateRow, onFocusedKeyChange: focusRow }}
+              empty={empty === null ? null : empty.kind === 'sourceFailure' ? (
+                <ErrorState
+                  title={empty.title}
+                  description={empty.description}
+                  action={<Button titleKey="plugins.triage.surface.refresh" title="Refresh" variant="secondary" onPress={refresh} />}
+                />
+              ) : (
+                <EmptyState
+                  title={text(readTriageListEmptyStateKeys(empty.kind).title, empty.title)}
+                  description={text(readTriageListEmptyStateKeys(empty.kind).description, empty.description)}
+                />
+              )}
             />
-          ) : (
-            <EmptyState
-              title={text(readTriageListEmptyStateKeys(empty.kind).title, empty.title)}
-              description={text(readTriageListEmptyStateKeys(empty.kind).description, empty.description)}
-            />
+          </Stack>
+          {splitDetail === null ? null : (
+            <Stack gap="none" style={{ flex: 1 - splitDetail.listRatio, minWidth: 0 }}>
+              {splitDetail.content}
+            </Stack>
           )}
-        />
+        </Row>
       </Stack>
     </Screen>
   );

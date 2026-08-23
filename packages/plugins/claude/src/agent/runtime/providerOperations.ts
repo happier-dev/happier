@@ -94,7 +94,7 @@ export type ClaudeProviderPromptDeliveryOutcomeCallback = (
 ) => void;
 
 export type ClaudeRuntimeTurnOperations = Readonly<{
-  beginProviderTurn(): void;
+  beginProviderTurn(turnId?: string): void;
   startProviderSession(opts?: Readonly<Record<string, unknown>>): Promise<string | null | Readonly<Record<string, unknown>>>;
   sendProviderTurnPrompt(
     prompt: string,

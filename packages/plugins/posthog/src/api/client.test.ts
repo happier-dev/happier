@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { normalizePosthogApiOrigin, type PosthogApiOrigin } from '../connect/origin.js';
-import { createPosthogApiClient, type PosthogTransportRequest } from './client.js';
+import {
+    createPosthogApiClient,
+    type PosthogMaterializationOutcome,
+    type PosthogTransportRequest,
+} from './client.js';
 
 const NOW = Date.UTC(2026, 7, 14, 12, 0, 0);
 
@@ -35,20 +39,23 @@ function readObject(body: unknown): Readonly<Record<string, unknown>> | null {
 
 function setup(options?: Readonly<{
     respond?: (call: number) => Promise<Response>;
-    materialize?: () => Promise<Readonly<Record<string, string>>>;
+    materialize?: () => Promise<PosthogMaterializationOutcome>;
 }>) {
     const calls: Recorded[] = [];
-    const materializeCalls: { origin: string; headerNames: readonly string[] }[] = [];
+    const materializeCalls: { origin: string }[] = [];
     const client = createPosthogApiClient({
         origin: ORIGIN,
         now: () => NOW,
+        // The materializer settles its own outcome: which header name is asked for,
+        // and whether a withdrawn call is a cancellation or a refused account, belong
+        // to `@happier-dev/triage-sources`, not to this client.
         materializeHeaders: async (request, transportOptions) => {
-            materializeCalls.push({ origin: request.origin, headerNames: request.headerNames });
-            transportOptions.signal?.throwIfAborted();
+            materializeCalls.push({ origin: request.origin });
+            transportOptions.signal.throwIfAborted();
             if (options?.materialize !== undefined) {
                 return await options.materialize();
             }
-            return { authorization: 'Bearer test-personal-api-key' };
+            return { ok: true, authorization: 'Bearer test-personal-api-key' };
         },
         transport: async (url, request) => {
             calls.push({ url, request });
@@ -83,10 +90,7 @@ describe('createPosthogApiClient request construction', () => {
             'content-type': 'application/json',
         });
         expect(call?.request.body).toBe(JSON.stringify({ limit: 100 }));
-        expect(materializeCalls).toEqual([{
-            origin: 'https://eu.posthog.com',
-            headerNames: ['authorization'],
-        }]);
+        expect(materializeCalls).toEqual([{ origin: 'https://eu.posthog.com' }]);
     });
 
     it('never follows a redirect, because a followed 3xx would read a different resource', async () => {
@@ -389,8 +393,13 @@ describe('createPosthogApiClient response parsing boundary', () => {
         expect(calls).toHaveLength(0);
     });
 
-    it('refuses to send a materialization that did not supply the authorization header', async () => {
-        const { client, calls } = setup({ materialize: async () => ({}) });
+    it('returns the materializer\u2019s own settled failure and sends nothing', async () => {
+        // Deciding that a materialization carries no usable `authorization` is the
+        // shared owner's rule; what this client owes is to send no request once that
+        // owner has refused, rather than calling the provider anonymously.
+        const { client, calls } = setup({
+            materialize: async () => ({ ok: false, failure: { kind: 'unauthorized', status: 0 } }),
+        });
 
         await expect(client.requestJson({ method: 'GET', path: '/api/organizations/' }, readObject, {}))
             .resolves.toEqual({ ok: false, failure: { kind: 'unauthorized', status: 0 } });

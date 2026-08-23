@@ -59,6 +59,11 @@
             "externalSessions"
           ]
         },
+        "catalog": {
+          "agentCliSystemTool": {
+            "toolId": "claude-cli"
+          }
+        },
         "cli": {
           "auth": {
             "loginLaunches": [
@@ -1723,7 +1728,6 @@
                   },
                   "iconIonName": "sparkles-outline",
                   "id": "claude-teams-agent-settings",
-                  "route": "/(app)/settings/agents/claude",
                   "title": {
                     "fallback": "Claude subagent options",
                     "key": "subAgentGuidance.settings.agents.claude.openTitle"

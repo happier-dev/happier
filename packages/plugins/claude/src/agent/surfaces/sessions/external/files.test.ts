@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -26,7 +26,11 @@ vi.mock('node:fs/promises', async () => {
     };
 });
 
-import { resolveClaudeJsonlSessionFile } from './files.js';
+import {
+    discoverClaudeJsonlSessions,
+    findClaudeJsonlSessionsById,
+    resolveClaudeJsonlSessionFile,
+} from './files.js';
 
 const roots: string[] = [];
 
@@ -59,6 +63,166 @@ describe('Claude JSONL session file resolution', () => {
             source: { kind: 'claudeConfig', configDir },
             env: {},
             remoteSessionId,
+        })).resolves.toMatchObject({ projectId: 'project-a' });
+    });
+    it('refuses a qualified exact lookup whose session file symlinks outside the admitted project root', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-symlink-qualified-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const projectDir = join(configDir, 'projects', 'project-a');
+        const outsideDir = join(root, 'outside');
+        await mkdir(projectDir, { recursive: true });
+        await mkdir(outsideDir, { recursive: true });
+        const outsideFile = join(outsideDir, 'other-session.jsonl');
+        await writeFile(outsideFile, '{"type":"user"}\n', 'utf8');
+        await symlink(outsideFile, join(projectDir, 'escaped.jsonl'));
+
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir, projectId: 'project-a' },
+            env: {},
+            remoteSessionId: 'escaped',
+        })).resolves.toBeNull();
+    });
+
+    it('refuses an unqualified exact lookup whose session file symlinks outside the admitted project root', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-symlink-unqualified-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const projectDir = join(configDir, 'projects', 'project-a');
+        const outsideDir = join(root, 'outside');
+        await mkdir(projectDir, { recursive: true });
+        await mkdir(outsideDir, { recursive: true });
+        const outsideFile = join(outsideDir, 'other-session.jsonl');
+        await writeFile(outsideFile, '{"type":"user"}\n', 'utf8');
+        await symlink(outsideFile, join(projectDir, 'escaped.jsonl'));
+
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir },
+            env: {},
+            remoteSessionId: 'escaped',
+        })).resolves.toBeNull();
+        await expect(findClaudeJsonlSessionsById({
+            source: { kind: 'claudeConfig', configDir },
+            env: {},
+            remoteSessionId: 'escaped',
+        })).resolves.toMatchObject({ matches: [] });
+    });
+
+    it('refuses a linked session file that was replaced by an out-of-root symlink after linking', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-symlink-swapped-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const projectDir = join(configDir, 'projects', 'project-a');
+        const outsideDir = join(root, 'outside');
+        await mkdir(projectDir, { recursive: true });
+        await mkdir(outsideDir, { recursive: true });
+        const linkedFile = join(projectDir, 'linked.jsonl');
+        await writeFile(linkedFile, '{"type":"user"}\n', 'utf8');
+
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir, projectId: 'project-a' },
+            env: {},
+            remoteSessionId: 'linked',
+        })).resolves.toMatchObject({ projectId: 'project-a' });
+
+        const outsideFile = join(outsideDir, 'linked.jsonl');
+        await writeFile(outsideFile, '{"type":"user"}\n', 'utf8');
+        await unlink(linkedFile);
+        await symlink(outsideFile, linkedFile);
+
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir, projectId: 'project-a' },
+            env: {},
+            remoteSessionId: 'linked',
+        })).resolves.toBeNull();
+    });
+
+    it('keeps resolving ordinary in-root session files through a symlinked configured source root', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-symlink-alias-root-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const projectDir = join(configDir, 'projects', 'project-a');
+        await mkdir(projectDir, { recursive: true });
+        await writeFile(join(projectDir, 'canonical.jsonl'), '{"type":"user"}\n', 'utf8');
+        const aliasConfigDir = join(root, 'alias-claude');
+        await symlink(configDir, aliasConfigDir);
+
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir, projectId: 'project-a' },
+            env: {},
+            remoteSessionId: 'canonical',
+        })).resolves.toMatchObject({
+            projectId: 'project-a',
+            fileRelPath: 'projects/project-a/canonical.jsonl',
+        });
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir: aliasConfigDir, projectId: 'project-a' },
+            env: {},
+            remoteSessionId: 'canonical',
+        })).resolves.toMatchObject({
+            projectId: 'project-a',
+            fileRelPath: 'projects/project-a/canonical.jsonl',
+        });
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir: aliasConfigDir },
+            env: {},
+            remoteSessionId: 'canonical',
+        })).resolves.toMatchObject({ projectId: 'project-a' });
+        await expect(findClaudeJsonlSessionsById({
+            source: { kind: 'claudeConfig', configDir: aliasConfigDir },
+            env: {},
+            remoteSessionId: 'canonical',
+        })).resolves.toMatchObject({
+            matches: [expect.objectContaining({ projectId: 'project-a' })],
+        });
+    });
+    it('refuses a qualified lookup whose project directory symlinks a real file tree outside the admitted root', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-symlink-project-dir-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const projectsDir = join(configDir, 'projects');
+        const outsideProjectDir = join(root, 'outside', 'project-a');
+        await mkdir(projectsDir, { recursive: true });
+        await mkdir(outsideProjectDir, { recursive: true });
+        // A real, non-symlinked regular file: only physical containment can refuse it.
+        await writeFile(join(outsideProjectDir, 'escaped.jsonl'), '{"type":"user"}\n', 'utf8');
+        await symlink(outsideProjectDir, join(projectsDir, 'project-a'));
+
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir, projectId: 'project-a' },
+            env: {},
+            remoteSessionId: 'escaped',
+        })).resolves.toBeNull();
+        await expect(findClaudeJsonlSessionsById({
+            source: { kind: 'claudeConfig', configDir, projectId: 'project-a' },
+            env: {},
+            remoteSessionId: 'escaped',
+        })).resolves.toMatchObject({ matches: [] });
+    });
+    it('admits exactly what candidate discovery admits: an in-root symlink alias is not a session file', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-symlink-in-root-alias-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const projectDir = join(configDir, 'projects', 'project-a');
+        await mkdir(projectDir, { recursive: true });
+        await writeFile(join(projectDir, 'real.jsonl'), '{"type":"user"}\n', 'utf8');
+        await symlink(join(projectDir, 'real.jsonl'), join(projectDir, 'alias.jsonl'));
+
+        // Candidate discovery already refuses the alias; exact lookup must agree,
+        // or a name the Browse index never offers becomes linkable and readable.
+        await expect(discoverClaudeJsonlSessions({
+            source: { kind: 'claudeConfig', configDir },
+            env: {},
+        })).resolves.toMatchObject([expect.objectContaining({ remoteSessionId: 'real' })]);
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir, projectId: 'project-a' },
+            env: {},
+            remoteSessionId: 'alias',
+        })).resolves.toBeNull();
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir, projectId: 'project-a' },
+            env: {},
+            remoteSessionId: 'real',
         })).resolves.toMatchObject({ projectId: 'project-a' });
     });
 });

@@ -41,7 +41,7 @@ describe('ElevenLabs bundled autoprovision', () => {
     )).resolves.toEqual({ agentId: 'agent_1' });
     expect(provision).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'create',
-      prompt: expect.any(String),
+      prompt: expect.stringContaining('{{initialConversationContext}}'),
       tools: [
         {
           name: 'hostListMachines',
@@ -65,6 +65,13 @@ describe('ElevenLabs bundled autoprovision', () => {
         }),
       }),
     }), signal);
+    const provisionedPrompt = provision.mock.calls[0]?.[0]?.prompt;
+    // ElevenLabs substitutes these dynamic variables at conversation start; the
+    // plugin owns that dialect, so losing either one silently ships a prompt with
+    // no session target and no conversation context.
+    expect(provisionedPrompt).toContain('Active coding session (internal tool target): {{sessionId}}');
+    expect(provisionedPrompt).toContain('Conversation context (may be empty):\n{{initialConversationContext}}');
+
     const serialized = JSON.stringify(provision.mock.calls);
     expect(serialized).toContain('hostListMachines');
     expect(serialized).not.toContain('sendSessionMessage');

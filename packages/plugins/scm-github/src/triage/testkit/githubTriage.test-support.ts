@@ -26,7 +26,20 @@ export type RecordedGithubRequest = Readonly<{
   method: string;
   headers: Readonly<Record<string, string>>;
   redirect: 'error' | 'follow' | 'manual';
+  /**
+   * The exact bytes the boundary received. A write test asserts the body GitHub
+   * would actually be sent — the whole point of the delta/precondition rules is
+   * WHAT is transmitted, and a test that only checks the URL and verb proves none
+   * of it.
+   */
+  body?: Uint8Array;
 }>;
+
+/** Decodes a recorded write body for assertion. */
+export function readRecordedJsonBody(request: RecordedGithubRequest): unknown {
+  if (request.body === undefined) return undefined;
+  return JSON.parse(new TextDecoder().decode(request.body)) as unknown;
+}
 
 export type StubHttpResponse = Readonly<{
   status: number;
@@ -137,6 +150,7 @@ export function createStubGithubTransport(input: Readonly<{
         url: string;
         method?: string;
         headers?: Readonly<Record<string, string>>;
+        body?: Uint8Array;
         redirect: 'error' | 'follow' | 'manual';
       }>,
     ): Promise<Readonly<{
@@ -150,6 +164,7 @@ export function createStubGithubTransport(input: Readonly<{
         method: request.method ?? 'GET',
         headers: Object.freeze({ ...(request.headers ?? {}) }),
         redirect: request.redirect,
+        ...(request.body === undefined ? {} : { body: request.body }),
       });
       requests.push(recorded);
       const response = input.respond(recorded);

@@ -69,7 +69,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -79,7 +79,6 @@ import {
   resolveWorkspaceBundleLockPath,
   withWorkspaceBundleLock,
 } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
-import { publishStagedDirectoryMountedSync } from '../../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
 import {
   pluginPackageNameToPackageId,
   readBundledPluginPackageNames,
@@ -88,11 +87,25 @@ import {
 import { requiresBundledImmutableArtifact } from './bundledImmutableArtifactEligibility.ts';
 import { readAndAssertBundledProviderVerificationsV1 } from './bundledProviderVerification.ts';
 import {
+  assertGeneratedOutputMatches,
+  publishCoherentProjectionOutputs,
+  removeRetiredGeneratedOutput,
+  writeFileAtomic,
+  type GeneratorMode,
+} from './bundledPlugins/outputs.ts';
+import {
+  parseGeneratorCliArgs,
+  resolveSelectedBundledPluginPackageNames,
+  shouldHoldGeneratorWorkspaceLockDuringGeneration,
+  type GeneratorOptions,
+  type GeneratorScope,
+} from './bundledPlugins/options.ts';
+import {
   resolveCliBundledWorkspacePackageNames,
   syncSharedDepsForSourceDev,
 } from '../buildSharedDeps.mjs';
 
-type Mode = 'write' | 'check';
+type Mode = GeneratorMode;
 
 /**
  * `--mode check` answers two independent questions that used to share one name.
@@ -113,19 +126,7 @@ type Mode = 'write' | 'check';
  *
  * `--mode write` is the producer and always publishes the full scope.
  */
-type GeneratorScope = 'all' | 'projections';
-
-export function shouldHoldGeneratorWorkspaceLockDuringGeneration(mode: Mode): boolean {
-  return mode === 'write';
-}
-
-type GeneratorOptions = Readonly<{
-  rootDir: string;
-  mode: Mode;
-  scope: GeneratorScope;
-  workspaceNames: readonly string[];
-  aggregateOnly: boolean;
-}>;
+export { shouldHoldGeneratorWorkspaceLockDuringGeneration };
 type AgentsWorkspaceModule = typeof import('@happier-dev/agents');
 type CliCommonWorkspacesModule = typeof import('@happier-dev/cli-common/workspaces');
 type ProtocolWorkspaceModule = typeof import('@happier-dev/protocol');
@@ -303,6 +304,7 @@ async function synchronizeGeneratorAuthoringRuntimeClosure(
     await syncSharedDepsForSourceDev({
       repoRoot: CANONICAL_GENERATOR_REPO_ROOT,
       workspaceNames,
+      generatedCompilerInputMode: mode,
       includeRuntimeDependencies: true,
       publishBundledPluginArtifacts: false,
       preserveBundledPluginArtifacts,
@@ -955,165 +957,6 @@ function readJson(path: string): any {
 
 function isBundledFirstPartyVoicePackageId(value: string): value is BundledFirstPartyVoicePackageId {
   return Object.prototype.hasOwnProperty.call(BUNDLED_FIRST_PARTY_VOICE_PLUGIN_IDS, value);
-}
-
-function writeFileAtomic(path: string, content: string): boolean {
-  if (existsSync(path) && readFileSync(path, 'utf8') === content) return false;
-  mkdirSync(dirname(path), { recursive: true });
-  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    writeFileSync(temporaryPath, content, 'utf8');
-    renameSync(temporaryPath, path);
-  } finally {
-    if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
-  }
-  return true;
-}
-
-type CoherentProjectionOutput = Readonly<{
-  outPath: string;
-  out: string;
-}>;
-
-/**
- * The targeted/aggregate publisher owns this one coherent projection. Stage
- * only changed leaves beneath a sibling directory, then reconcile them through
- * the existing mounted-tree transaction so a later replacement failure restores
- * every earlier UI and Protocol leaf to the last-green projection.
- */
-function publishCoherentProjectionOutputs(
-  rootDir: string,
-  outputs: readonly CoherentProjectionOutput[],
-): void {
-  const resolvedRootDir = resolve(rootDir);
-  const changedOutputs = outputs.filter(({ outPath, out }) => (
-    !existsSync(outPath) || readFileSync(outPath, 'utf8') !== out
-  ));
-  if (changedOutputs.length === 0) return;
-
-  const stagingRoot = mkdtempSync(join(resolvedRootDir, '.bundled-plugin-projection-stage-'));
-  const rollbackRoot = `${stagingRoot}.rollback`;
-  try {
-    for (const { outPath, out } of changedOutputs) {
-      const relativeOutPath = relative(resolvedRootDir, resolve(outPath));
-      if (
-        !relativeOutPath
-        || relativeOutPath === '..'
-        || relativeOutPath.startsWith(`..${sep}`)
-      ) {
-        throw new Error(`Bundled plugin projection output escapes its root: ${outPath}`);
-      }
-      const stagedOutPath = resolve(stagingRoot, relativeOutPath);
-      mkdirSync(dirname(stagedOutPath), { recursive: true });
-      writeFileSync(stagedOutPath, out, 'utf8');
-    }
-    publishStagedDirectoryMountedSync({
-      stagedDir: stagingRoot,
-      liveDir: resolvedRootDir,
-      rollbackDir: rollbackRoot,
-      pruneStale: false,
-    });
-  } finally {
-    rmSync(stagingRoot, { recursive: true, force: true });
-    rmSync(rollbackRoot, { recursive: true, force: true });
-  }
-}
-
-function parseCliArgs(argv: readonly string[]): GeneratorOptions {
-  let rootDir = process.cwd();
-  let mode: Mode = 'write';
-  let scope: GeneratorScope = 'all';
-  let aggregateOnly = false;
-  const workspaceNames: string[] = [];
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === '--help' || arg === '-h') {
-      printUsage();
-      process.exit(0);
-    }
-    if (arg === '--root') {
-      const next = argv[index + 1];
-      if (!next) throw new Error('Missing value for --root');
-      rootDir = next;
-      index += 1;
-      continue;
-    }
-    if (arg === '--mode') {
-      const next = argv[index + 1];
-      if (next !== 'write' && next !== 'check') {
-        throw new Error(`Invalid --mode (expected write|check): ${String(next)}`);
-      }
-      mode = next;
-      index += 1;
-      continue;
-    }
-    if (arg === '--scope') {
-      const next = argv[index + 1];
-      if (next !== 'all' && next !== 'projections') {
-        throw new Error(`Invalid --scope (expected all|projections): ${String(next)}`);
-      }
-      scope = next;
-      index += 1;
-      continue;
-    }
-    if (arg === '--workspace') {
-      const next = argv[index + 1];
-      if (!next || next.trim().length === 0) throw new Error('Missing value for --workspace');
-      const workspaceName = next.startsWith('@happier-dev/')
-        ? next.slice('@happier-dev/'.length)
-        : next;
-      if (!workspaceName.startsWith('plugins-')) {
-        throw new Error(`Invalid --workspace '${next}': expected a plugins-* workspace`);
-      }
-      if (!workspaceNames.includes(workspaceName)) workspaceNames.push(workspaceName);
-      index += 1;
-      continue;
-    }
-    if (arg === '--aggregate') {
-      aggregateOnly = true;
-      continue;
-    }
-    throw new Error(`Unknown arg: ${arg}`);
-  }
-
-  if (aggregateOnly && workspaceNames.length > 0) {
-    throw new Error('--aggregate cannot be combined with --workspace');
-  }
-  if (mode === 'write' && scope !== 'all') {
-    // The publisher is the only writer of the staged runtime bytes the
-    // projections read back, so it can never publish a narrowed scope.
-    throw new Error('--scope projections is a check-only scope; --mode write always publishes --scope all');
-  }
-  return { rootDir, mode, scope, workspaceNames: Object.freeze(workspaceNames), aggregateOnly };
-}
-
-function printUsage(): void {
-  console.log([
-    'Usage: node --experimental-strip-types scripts/migrations/extensions/generateBundledPluginEntries.ts [--root DIR] [--mode write|check] [--scope all|projections] [--workspace plugins-<id>] [--aggregate]',
-    '',
-    'Generates/patches bundled plugin entry maps from packages/plugins/*.',
-    '',
-    '--scope projections (check only) compares the generated projections against the',
-    'bundled plugin sources and the installed bundle bytes. --scope all (default) also',
-    're-stages every bundled daemon runtime and requires the installed bytes to equal',
-    'that fresh build, which is a whole-repo build-determinism question because the',
-    'stage inlines the current plugin-sdk/protocol output into every bundle.',
-  ].join('\n'));
-}
-
-function resolveSelectedBundledPluginPackageNames(
-  bundledPluginPackageNames: readonly string[],
-  workspaceNames: readonly string[],
-): readonly string[] {
-  const bundledPackageNames = new Set(bundledPluginPackageNames);
-  return Object.freeze(workspaceNames.map((workspaceName) => {
-    const packageName = `@happier-dev/${workspaceName}`;
-    if (!bundledPackageNames.has(packageName)) {
-      throw new Error(`Requested bundled plugin workspace is not published by this checkout: ${workspaceName}`);
-    }
-    return packageName;
-  }));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -7473,23 +7316,6 @@ function renderBundledVoiceRuntimeEntriesTs(
   return lines.join('\n');
 }
 
-function assertGeneratedOutputMatches(filePath: string, expected: string): void {
-  if (!existsSync(filePath)) {
-    throw new Error(`missing generated output: ${filePath}`);
-  }
-  if (readFileSync(filePath, 'utf8') !== expected) {
-    throw new Error(`generated output differs: ${filePath}`);
-  }
-}
-
-function removeRetiredGeneratedOutput(filePath: string, mode: Mode): void {
-  if (!existsSync(filePath)) return;
-  if (mode === 'check') {
-    throw new Error(`retired generated output still exists: ${filePath}`);
-  }
-  unlinkSync(filePath);
-}
-
 async function generateBundledPluginEntries(
   options: GeneratorOptions,
   dependencies: GeneratorWorkspaceDependencies,
@@ -7875,48 +7701,47 @@ async function generateBundledPluginEntries(
     return;
   }
 
-  writeFileAtomic(cliOutPath, cliOut);
-  writeFileAtomic(cliArtifactsOutPath, cliArtifactsOut);
-  writeFileAtomic(agentsOutPath, agentsOut);
-  writeFileAtomic(agentIdsOutPath, agentIdsOut);
-  writeFileAtomic(sessionControlAdaptersOutPath, sessionControlAdaptersOut);
-  writeFileAtomic(runtimeDescriptorReadersOutPath, runtimeDescriptorReadersOut);
-  writeFileAtomic(protocolAgentProviderIdsV1OutPath, protocolAgentProviderIdsV1Out);
-  writeFileAtomic(
-    protocolBuiltInLegacyConnectedAccountCompatibilityOutPath,
-    protocolBuiltInLegacyConnectedAccountCompatibilityOut,
-  );
-  writeFileAtomic(protocolRuntimeDescriptorContributionsOutPath, protocolRuntimeDescriptorContributionsOut);
-  writeFileAtomic(
-    protocolSessionPresentationCompatV1OutPath,
-    protocolSessionPresentationCompatV1Out,
-  );
-  for (const output of protocolRuntimeDescriptorModuleOutputs) {
-    writeFileAtomic(output.outPath, output.out);
-  }
-  writeFileAtomic(protocolBuiltInBackendProfilesOutPath, protocolBuiltInBackendProfilesOut);
-  writeFileAtomic(protocolProjectionFactsOutPath, protocolProjectionFactsOut);
-  writeFileAtomic(protocolMemoryDefaultsOutPath, protocolMemoryDefaultsOut);
-  writeFileAtomic(protocolExternalSessionSourcesOutPath, protocolExternalSessionSourcesOut);
-  writeFileAtomic(uiOutPath, uiOut);
-  writeFileAtomic(uiTranslationsOutPath, uiTranslationsOut);
-  writeFileAtomic(uiBehaviorOverridesOutPath, uiBehaviorOverridesOut);
-  writeFileAtomic(sessionAgentBehaviorsOutPath, sessionAgentBehaviorsOut);
-  writeFileAtomic(visibleMessageResolversOutPath, visibleMessageResolversOut);
-  writeFileAtomic(promptAssetPluginDescriptorsOutPath, promptAssetPluginDescriptorsOut);
-  writeFileAtomic(uiVoiceEntriesOutPath, uiVoiceEntriesOut);
-  for (const platform of BUNDLED_VOICE_RUNTIME_PLATFORMS) {
-    writeFileAtomic(
-      uiVoiceRuntimeEntriesOutPaths[platform],
-      uiVoiceRuntimeEntriesOut[platform],
-    );
-  }
-  for (const platform of ['generic', ...BUNDLED_PLUGIN_UI_APP_ARTIFACT_PLATFORMS] as const) {
-    writeFileAtomic(
-      uiBundledPluginUiArtifactInventoryOutPaths[platform],
-      uiBundledPluginUiArtifactInventoryOut[platform],
-    );
-  }
+  publishCoherentProjectionOutputs(options.rootDir, [
+    { outPath: cliOutPath, out: cliOut },
+    { outPath: cliArtifactsOutPath, out: cliArtifactsOut },
+    { outPath: agentsOutPath, out: agentsOut },
+    { outPath: agentIdsOutPath, out: agentIdsOut },
+    { outPath: sessionControlAdaptersOutPath, out: sessionControlAdaptersOut },
+    { outPath: runtimeDescriptorReadersOutPath, out: runtimeDescriptorReadersOut },
+    { outPath: protocolAgentProviderIdsV1OutPath, out: protocolAgentProviderIdsV1Out },
+    {
+      outPath: protocolBuiltInLegacyConnectedAccountCompatibilityOutPath,
+      out: protocolBuiltInLegacyConnectedAccountCompatibilityOut,
+    },
+    {
+      outPath: protocolRuntimeDescriptorContributionsOutPath,
+      out: protocolRuntimeDescriptorContributionsOut,
+    },
+    {
+      outPath: protocolSessionPresentationCompatV1OutPath,
+      out: protocolSessionPresentationCompatV1Out,
+    },
+    ...protocolRuntimeDescriptorModuleOutputs,
+    { outPath: protocolBuiltInBackendProfilesOutPath, out: protocolBuiltInBackendProfilesOut },
+    { outPath: protocolProjectionFactsOutPath, out: protocolProjectionFactsOut },
+    { outPath: protocolMemoryDefaultsOutPath, out: protocolMemoryDefaultsOut },
+    { outPath: protocolExternalSessionSourcesOutPath, out: protocolExternalSessionSourcesOut },
+    { outPath: uiOutPath, out: uiOut },
+    { outPath: uiTranslationsOutPath, out: uiTranslationsOut },
+    { outPath: uiBehaviorOverridesOutPath, out: uiBehaviorOverridesOut },
+    { outPath: sessionAgentBehaviorsOutPath, out: sessionAgentBehaviorsOut },
+    { outPath: visibleMessageResolversOutPath, out: visibleMessageResolversOut },
+    { outPath: promptAssetPluginDescriptorsOutPath, out: promptAssetPluginDescriptorsOut },
+    { outPath: uiVoiceEntriesOutPath, out: uiVoiceEntriesOut },
+    ...BUNDLED_VOICE_RUNTIME_PLATFORMS.map((platform) => ({
+      outPath: uiVoiceRuntimeEntriesOutPaths[platform],
+      out: uiVoiceRuntimeEntriesOut[platform],
+    })),
+    ...(['generic', ...BUNDLED_PLUGIN_UI_APP_ARTIFACT_PLATFORMS] as const).map((platform) => ({
+      outPath: uiBundledPluginUiArtifactInventoryOutPaths[platform],
+      out: uiBundledPluginUiArtifactInventoryOut[platform],
+    })),
+  ]);
 }
 
 async function withGeneratorWorkspaceLock<T>(
@@ -7938,7 +7763,7 @@ async function withGeneratorWorkspaceLock<T>(
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
-  const options = parseCliArgs(argv);
+  const options = parseGeneratorCliArgs(argv);
   const inheritedLockValue = process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD;
   if (options.workspaceNames.length === 0 && !options.aggregateOnly) {
     // Package compilation and app-local runtime materialization are reusable

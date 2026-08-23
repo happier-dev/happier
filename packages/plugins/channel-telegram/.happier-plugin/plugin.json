@@ -49,10 +49,10 @@
           }
         },
         "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
           "properties": {
             "credentialRef": {
-              "$schema": "http://json-schema.org/draft-07/schema#",
               "additionalProperties": false,
               "properties": {
                 "accountId": {
@@ -250,6 +250,25 @@
                     }
                   ]
                 },
+                "sharedEndpointInputModes": {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "const": "directMentionsOnly"
+                      },
+                      {
+                        "const": "addressedMessages"
+                      },
+                      {
+                        "const": "allAllowedMessages"
+                      }
+                    ]
+                  },
+                  "maxItems": 3,
+                  "minItems": 1,
+                  "type": "array",
+                  "uniqueItems": true
+                },
                 "supportedTransports": {
                   "items": {
                     "anyOf": [
@@ -385,10 +404,10 @@
           }
         },
         "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
           "properties": {
             "credentialRef": {
-              "$schema": "http://json-schema.org/draft-07/schema#",
               "additionalProperties": false,
               "properties": {
                 "accountId": {

@@ -64,6 +64,7 @@ import {
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 const SOCKET_PROVIDER_ACTION_ID = {
   setup: 'fixture/initialize-socket',
   connectionTest: 'fixture/probe-socket',
@@ -538,11 +539,12 @@ function createMutableChannelStateCollection(options: Readonly<{
       return { status: 'updated' as const, results, changeCursor };
     },
     async query(request: Readonly<{
-      index: 'by-kind' | 'by-connection-binding' | 'by-attention';
-      prefix?: readonly string[];
+      index: 'by-kind' | 'by-connection-binding-v2' | 'by-attention';
+      prefix?: readonly (string | boolean | null)[];
       cursor?: string;
       limit?: number;
     }>) {
+      assertChannelsTestCollectionQueryLimit(request.limit);
       const prefix = request.prefix?.[0];
       const matching = [...rows.values()]
         .filter((row) => {
@@ -550,7 +552,18 @@ function createMutableChannelStateCollection(options: Readonly<{
           if (prefix === undefined) return true;
           const value = row.value;
           if (request.index === 'by-kind') return value['record-kind'] === prefix;
-          if (request.index === 'by-connection-binding') return value['connection-id'] === prefix;
+          if (request.index === 'by-connection-binding-v2') {
+            // The exact V2 tuple, not just its first member: a fake that
+            // ignored `record-kind`/`attention` answered the bounded
+            // conflict-eligibility probe with unrelated connection rows.
+            const tuple = [
+              value['connection-id'],
+              value['binding-id'] ?? null,
+              value['record-kind'],
+              value.attention,
+            ];
+            return (request.prefix ?? []).every((member, index) => tuple[index] === member);
+          }
           return value.attention === prefix;
         })
         .sort((left, right) => left.rowId.localeCompare(right.rowId));
@@ -569,7 +582,7 @@ function createMutableChannelStateCollection(options: Readonly<{
     },
     watch(
       _request: Readonly<{
-        index: 'by-kind' | 'by-connection-binding' | 'by-attention';
+        index: 'by-kind' | 'by-connection-binding-v2' | 'by-attention';
         prefix?: readonly string[];
       }>,
       listener: (event: Readonly<{ kind: 'changed'; changeCursor: number }>) => void,
@@ -592,7 +605,8 @@ function storageWithEmptyChannelDeliveries(
   stateCollection: ReturnType<typeof createMutableChannelStateCollection>,
 ): PluginServices['storage'] {
   const deliveriesCollection = {
-    async query() {
+    async query(request: Readonly<{ limit?: number }>) {
+      assertChannelsTestCollectionQueryLimit(request.limit);
       return { rows: [], changeCursor: 0 };
     },
     watch() {
@@ -701,7 +715,7 @@ describe('Channels core activation', () => {
       // The four Resources and two supervisors are the ones this package owns;
       // asserting the counts keeps the derived list from passing vacuously if a
       // whole family disappeared from the manifest.
-      expect(expected.filter((entry) => entry.family === 'actions')).toHaveLength(26);
+      expect(expected.filter((entry) => entry.family === 'actions')).toHaveLength(27);
       expect(expected.filter((entry) => entry.family === 'resources')).toHaveLength(4);
       expect(expected.filter((entry) => entry.family === 'backgroundServices')).toHaveLength(2);
       expect(activation.registrations()).toEqual(expected);
@@ -1203,7 +1217,8 @@ describe('Channels core activation', () => {
     // observed, distinct delivery Collection its own host boundary rather than
     // pretending both manifest declarations share one watch stream.
     const deliveriesCollection = {
-      async query() {
+      async query(request: Readonly<{ limit?: number }>) {
+        assertChannelsTestCollectionQueryLimit(request.limit);
         return { rows: [], changeCursor: 0 };
       },
       watch: () => ({ dispose: () => {} }),
@@ -3187,9 +3202,10 @@ describe('Channels core activation', () => {
     let forceSnapshotDrift = false;
     const collection = {
       async query(
-        request: Readonly<{ prefix?: readonly unknown[] }>,
+        request: Readonly<{ prefix?: readonly unknown[]; limit?: number }>,
         options?: Readonly<{ signal?: AbortSignal }>,
       ) {
+        assertChannelsTestCollectionQueryLimit(request.limit);
         if (options?.signal !== undefined) querySignals.push(options.signal);
         const kind = request.prefix?.[0];
         if (kind === 'connection') connectionQueryCount += 1;
@@ -3445,7 +3461,8 @@ describe('Channels core activation', () => {
       replayContinuity: 'none',
     });
     const collection = {
-      async query(request: Readonly<{ prefix?: readonly unknown[] }>) {
+      async query(request: Readonly<{ prefix?: readonly unknown[]; limit?: number }>) {
+        assertChannelsTestCollectionQueryLimit(request.limit);
         return {
           rows: request.prefix?.[0] === 'connection'
             ? [{ rowId: connection.id, revision: 1, value: connection }]

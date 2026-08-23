@@ -18,6 +18,7 @@ import {
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 class MemoryAccountCollection {
   readonly rows = new Map<string, Readonly<{
     rowId: string;
@@ -51,6 +52,7 @@ class MemoryAccountCollection {
     cursor?: string;
     limit?: number;
   }>) {
+    assertChannelsTestCollectionQueryLimit(request.limit);
     const prefix = request.prefix ?? [];
     const matching = [...this.rows.values()]
       .filter((row) => {

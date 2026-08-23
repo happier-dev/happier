@@ -23,6 +23,12 @@ import {
     TriageReadEntryDetailResultV1Schema,
 } from './entryDetailProtocol.js';
 import {
+    TriageStartEntrySessionInputV1Schema,
+    TriageStartEntrySessionResultV1Schema,
+    TriageUnlinkEntryFromSessionActionInputV1Schema,
+    TriageUnlinkEntryFromSessionActionResultV1Schema,
+} from './entrySessionProtocol.js';
+import {
     TriageListEntriesInputV1Schema,
     TriageListEntriesResultV1Schema,
 } from './listEntriesProtocol.js';
@@ -83,6 +89,10 @@ const structurallyBoundedSchemas = {
     listPinnedEntriesResult: TriageListPinnedEntriesResultV1Schema,
     linkEntryToSessionInput: TriageLinkEntryToSessionInputV1Schema,
     linkEntryToSessionResult: TriageLinkEntryToSessionActionResultV1Schema,
+    startEntrySessionInput: TriageStartEntrySessionInputV1Schema,
+    startEntrySessionResult: TriageStartEntrySessionResultV1Schema,
+    unlinkEntryFromSessionInput: TriageUnlinkEntryFromSessionActionInputV1Schema,
+    unlinkEntryFromSessionResult: TriageUnlinkEntryFromSessionActionResultV1Schema,
     readSavedViewsInput: TriageReadSavedViewsInputV1Schema,
     administerSavedViewInput: TriageAdministerSavedViewInputV1Schema,
     // The two caller-bound source Actions are declared by this manifest, so
@@ -146,7 +156,7 @@ describe('the aggregate Action byte gate', () => {
         // remaining headroom.
         expect(derivedMaxima).toEqual({
             readEntryDetailInput: 1_573,
-            readEntryDetailResult: 157_598,
+            readEntryDetailResult: 157_874,
             listEntriesInput: 40_213,
             listEntriesResult: 871_886,
             setEntryPinnedInput: 5_670,
@@ -155,6 +165,10 @@ describe('the aggregate Action byte gate', () => {
             listPinnedEntriesResult: 318_165,
             linkEntryToSessionInput: 6_359,
             linkEntryToSessionResult: 25,
+            startEntrySessionInput: 10_723,
+            startEntrySessionResult: 580,
+            unlinkEntryFromSessionInput: 2_042,
+            unlinkEntryFromSessionResult: 27,
             readSavedViewsInput: 7,
             readSavedViewsResult: 1_245_666,
             administerSavedViewInput: 38_930,

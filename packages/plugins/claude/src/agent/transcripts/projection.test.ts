@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    projectClaudeJsonlLineRecord,
     projectClaudeJsonlLineToDirectMessages,
     projectClaudeJsonlLineToRawMessage,
 } from './projection.js';
@@ -370,5 +371,66 @@ describe('Claude JSONL projection', () => {
             content: { type: 'text', text: '/compact' },
         });
         expect(projected[0]?.userProjection).toBe('source_fact');
+    });
+});
+
+/**
+ * Row shapes taken from the local `~/.claude/projects` corpus written by the
+ * pinned Claude CLI. `unsupported` is the disposition that stops a page from
+ * ever reporting completeness, so a row the CLI durably writes must never land
+ * there: `bridge-session` / `ai-title` / `agent-setting` carry no message body,
+ * and a sidechain or `isMeta` `user` row is a conversation row this projection
+ * withholds on purpose because it has no admissible user projection.
+ */
+describe('Claude JSONL record disposition', () => {
+    function project(lineValue: unknown) {
+        return projectClaudeJsonlLineRecord({
+            fileRelPath: 'session.jsonl',
+            lineStartOffsetBytes: 0,
+            lineValue,
+        });
+    }
+
+    it.each([
+        ['bridge-session', { type: 'bridge-session', bridgeSessionId: 'b1', lastSequenceNum: 4, sessionId: 's1' }],
+        ['ai-title', { type: 'ai-title', aiTitle: 'Refactor the parser', sessionId: 's1' }],
+        ['agent-setting', { type: 'agent-setting', agentSetting: 'model', sessionId: 's1' }],
+    ])('advances past the durable content-free record %s', (_label, record) => {
+        expect(project(record)).toEqual({ disposition: 'known_non_transcript', items: [] });
+    });
+
+    it.each([
+        ['a sidechain prompt', { isSidechain: true }],
+        ['an isMeta context row', { isMeta: true }],
+    ])('advances past %s whose text this projection withholds', (_label, flags) => {
+        expect(project({
+            type: 'user',
+            uuid: 'user-1',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            ...flags,
+            message: { role: 'user', content: 'spawned work' },
+        })).toEqual({ disposition: 'known_non_transcript', items: [] });
+    });
+
+    it('publishes a root user turn as a source fact', () => {
+        const projected = project({
+            type: 'user',
+            uuid: 'user-2',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            message: { role: 'user', content: 'hello' },
+        });
+        expect(projected.disposition).toBe('mapped');
+        expect(projected.items).toHaveLength(1);
+        expect(projected.items[0]?.userProjection).toBe('source_fact');
+    });
+
+    it('still refuses a record type the pinned CLI does not ratify', () => {
+        expect(project({ type: 'not-a-real-claude-record', sessionId: 's1' }).disposition)
+            .toBe('unsupported');
+    });
+
+    it('still refuses a conversation row it cannot parse', () => {
+        expect(project({ type: 'assistant', uuid: 'assistant-9', message: 7 }).disposition)
+            .toBe('unsupported');
     });
 });

@@ -36,6 +36,8 @@ export type SentryFailureInputV1 =
   /** The request never produced a response: DNS, socket, TLS or timeout. */
   | Readonly<{ kind: 'transport'; operation: SentryOperationV1 }>
   | Readonly<{ kind: 'cancelled'; operation: SentryOperationV1 }>
+  /** This source's own invocation bound elapsed before Sentry answered. */
+  | Readonly<{ kind: 'deadline'; operation: SentryOperationV1 }>
   /** A response arrived but its required fields could not be characterized. */
   | Readonly<{ kind: 'unparseable'; operation: SentryOperationV1 }>
   /** An allowed public operation is absent, renamed, or shaped differently. */
@@ -61,6 +63,13 @@ export function classifySentryFailure(input: SentryFailureInputV1): SentryFailur
       return Object.freeze({
         class: 'transient' as const,
         code: SENTRY_FAILURE_CODES.cancelled,
+      });
+    case 'deadline':
+      // Transient, like an outage: nothing about the connection is wrong, and
+      // the very next attempt may well answer.
+      return Object.freeze({
+        class: 'transient' as const,
+        code: SENTRY_FAILURE_CODES.deadlineElapsed,
       });
     case 'unparseable':
       return Object.freeze({

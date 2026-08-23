@@ -38,6 +38,7 @@ import {
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 const endpoint: ConversationResolvedEndpointV1 = {
   kind: 'direct',
   audience: 'direct',
@@ -286,6 +287,7 @@ class MemoryAccountCollection {
     cursor?: string;
     limit?: number;
   }>) {
+    assertChannelsTestCollectionQueryLimit(_request?.limit);
     return {
       rows: [...this.rows.values()].filter((row) => row.deleted !== true),
       changeCursor: 1,
@@ -300,6 +302,7 @@ class BindingIndexedAccountCollection extends MemoryAccountCollection {
     cursor?: string;
     limit?: number;
   }>) {
+    assertChannelsTestCollectionQueryLimit(request?.limit);
     const matching = [...this.rows.values()]
       .filter((row) => {
         if (request?.index !== 'by-owner-attention') return true;
@@ -521,6 +524,7 @@ describe('Channels control-response outward custody', () => {
     const snapshot = await readConversationOutwardDeliveryTranscriptActivities({
       deliveriesCollection: {
         async query(request) {
+          assertChannelsTestCollectionQueryLimit(request.limit);
           queriedTargets.push(request.prefix?.join('/') ?? '');
           return { rows: [], changeCursor: 1 };
         },

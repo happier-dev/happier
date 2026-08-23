@@ -7,6 +7,7 @@
  */
 
 import {
+  MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
   normalizeTriageSingleLineV1,
@@ -89,12 +90,25 @@ function projectSnapshot(
 }
 
 /**
- * Builds the `present` arm shared by `scan` and authoritative `get`. GitLab
- * exposes no per-item revision on these reads, so `nativeRevision` is omitted
- * rather than filled with a timestamp that is not one.
+ * Builds the `present` arm shared by `scan` and authoritative `get`.
+ *
+ * `nativeRevision` is the revision this read observed, emitted as the byte GitLab
+ * sent. For a merge request that is GitLab's own `sha` — the head commit — which
+ * is the value `sources/SCM.md` §2.6 requires merge and mark-ready to carry back
+ * and the one GitLab's merge endpoint consumes as its own `sha` precondition. It
+ * is the same fact GitHub and Bitbucket publish in this slot, so one protocol
+ * field means one thing across the three forges. An issue has no head and
+ * publishes `updated_at`, the token §4.7's issue Actions pin against.
+ *
+ * It is emitted whole or not at all, for the same reason a route is: a shortened
+ * revision is a DIFFERENT revision, and one that compared unequal forever would
+ * refuse every write while one that compared equal wrongly would perform one.
  */
 export function projectGitlabPresentObservation(entry: GitlabMappedEntry): PresentObservation {
   const displayPath = boundGitlabText(entry.locator.displayPath);
+  const nativeRevision = entry.snapshot.nativeRevision === null
+    ? null
+    : fittingGitlabLocation(entry.snapshot.nativeRevision, MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1);
   const routingToken = fittingGitlabLocation(
     entry.locator.routingToken,
     MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
@@ -124,5 +138,6 @@ export function projectGitlabPresentObservation(entry: GitlabMappedEntry): Prese
     ...(entry.snapshot.sourceUpdatedAtMs === null
       ? {}
       : { sourceUpdatedAtMs: entry.snapshot.sourceUpdatedAtMs }),
+    ...(nativeRevision === null ? {} : { nativeRevision }),
   };
 }

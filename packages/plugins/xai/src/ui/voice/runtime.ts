@@ -161,7 +161,7 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
     settingsOperations,
     microphoneMode: 'host_pcm',
     outputLevelMeter: 'measured',
-    async createConnection({ session, attemptId, media, tools, levels }) {
+    async createConnection({ session, attemptId, media, tools }) {
       const config = record(session.config);
       const settings = XaiRealtimeSettingsV1Schema.safeParse(config?.settings);
       const auth = config?.auth as VoiceClientAuthArtifact | undefined;
@@ -199,8 +199,11 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
         onConversationId: async (value) => {
           await providerConversation?.write(value);
         },
+        // The measured output meter is owned by the host audio scheduler, which
+        // is the only party that knows when the buffered tail actually stops
+        // being audible. `response.output_audio.done` only says the server
+        // finished sending, so it must not move the meter.
         onAudioDelta: (value) => attemptMedia?.enqueueOutput(value) ?? false,
-        onOutputDone: () => levels.onOutputLevel(0),
       });
       attemptMedia = media.createPcmConnection({
         driver,

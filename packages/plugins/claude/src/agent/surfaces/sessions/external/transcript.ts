@@ -22,22 +22,20 @@ type ClaudeBackwardCursorV1 = Readonly<{
 
 /**
  * A backward cursor names a byte position inside ONE physical generation of the
- * session file, so it carries the same physical-generation evidence the forward
- * cursor already proved: the device/inode pair plus a content anchor over
- * `[0, sourceAnchorOffsetBytes)` — every byte the cursor still promises to
- * deliver. Without it a same-path replacement or in-place rewrite reads as
- * ordinary continuation and splices rows from two generations into one
- * transcript.
+ * session file, so it carries the same continuity evidence the forward cursor
+ * proves: the physical generation plus a BOUNDED content anchor over the
+ * acknowledged prefix `[0, sourceAnchorOffsetBytes)`. Without it a same-path
+ * replacement or in-place rewrite reads as ordinary continuation and splices
+ * rows from two generations into one transcript.
  */
-type ClaudeBackwardCursorV2 = Readonly<{
-    v: 2;
+type ClaudeBackwardCursorV3 = Readonly<{
+    v: 3;
     kind: 'claudeBackward';
     fileRelPath: string;
     endOffsetBytes: number;
     sourceAnchorOffsetBytes: number;
     sourceAnchorSha256: string;
-    sourceDevice: string;
-    sourceInode: string;
+    sourceGeneration: string;
 }>;
 
 type ClaudeForwardCursorV1 = Readonly<{
@@ -47,15 +45,14 @@ type ClaudeForwardCursorV1 = Readonly<{
     offsetBytes: number;
 }>;
 
-type ClaudeForwardCursorV2 = Readonly<{
-    v: 2;
+type ClaudeForwardCursorV3 = Readonly<{
+    v: 3;
     kind: 'claudeForward';
     fileRelPath: string;
     offsetBytes: number;
     sourceAnchorOffsetBytes: number;
     sourceAnchorSha256: string;
-    sourceDevice: string;
-    sourceInode: string;
+    sourceGeneration: string;
 }>;
 
 export type ClaudeTranscriptResultBudget = Readonly<{
@@ -88,9 +85,9 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 function encodeCursor(
     value:
         | ClaudeBackwardCursorV1
-        | ClaudeBackwardCursorV2
+        | ClaudeBackwardCursorV3
         | ClaudeForwardCursorV1
-        | ClaudeForwardCursorV2,
+        | ClaudeForwardCursorV3,
 ): string {
     return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
@@ -109,9 +106,9 @@ function asCursorRecord(raw: string | undefined): Record<string, unknown> | null
 
 function decodeBackwardCursor(
     raw: string | undefined,
-): ClaudeBackwardCursorV1 | ClaudeBackwardCursorV2 | null {
+): ClaudeBackwardCursorV1 | ClaudeBackwardCursorV3 | null {
     const record = asCursorRecord(raw);
-    if (!record || (record.v !== 1 && record.v !== 2) || record.kind !== 'claudeBackward') return null;
+    if (!record || (record.v !== 1 && record.v !== 3) || record.kind !== 'claudeBackward') return null;
     const fileRelPath = typeof record.fileRelPath === 'string' ? record.fileRelPath : '';
     const endOffsetBytes = typeof record.endOffsetBytes === 'number' && Number.isFinite(record.endOffsetBytes)
         ? Math.trunc(record.endOffsetBytes)
@@ -127,33 +124,31 @@ function decodeBackwardCursor(
             : Number.NaN;
     const sourceAnchorSha256 =
         typeof record.sourceAnchorSha256 === 'string' ? record.sourceAnchorSha256 : '';
-    const sourceDevice = typeof record.sourceDevice === 'string' ? record.sourceDevice : '';
-    const sourceInode = typeof record.sourceInode === 'string' ? record.sourceInode : '';
+    const sourceGeneration =
+        typeof record.sourceGeneration === 'string' ? record.sourceGeneration : '';
     return sourceAnchorOffsetBytes >= 0
         && sourceAnchorOffsetBytes <= endOffsetBytes
         && /^[A-Za-z0-9_-]{43}$/.test(sourceAnchorSha256)
-        && /^\d+$/.test(sourceDevice)
-        && /^[1-9]\d*$/.test(sourceInode)
+        && SOURCE_GENERATION_PATTERN.test(sourceGeneration)
         ? {
-            v: 2,
+            v: 3,
             kind: 'claudeBackward',
             fileRelPath,
             endOffsetBytes,
             sourceAnchorOffsetBytes,
             sourceAnchorSha256,
-            sourceDevice,
-            sourceInode,
+            sourceGeneration,
         }
         : null;
 }
 
 function decodeForwardCursor(
     raw: string,
-): ClaudeForwardCursorV1 | ClaudeForwardCursorV2 | null {
+): ClaudeForwardCursorV1 | ClaudeForwardCursorV3 | null {
     const record = asCursorRecord(raw);
     if (
         !record
-        || (record.v !== 1 && record.v !== 2)
+        || (record.v !== 1 && record.v !== 3)
         || record.kind !== 'claudeForward'
     ) return null;
     const fileRelPath = typeof record.fileRelPath === 'string' ? record.fileRelPath : '';
@@ -173,26 +168,96 @@ function decodeForwardCursor(
         typeof record.sourceAnchorSha256 === 'string'
             ? record.sourceAnchorSha256
             : '';
-    const sourceDevice =
-        typeof record.sourceDevice === 'string' ? record.sourceDevice : '';
-    const sourceInode =
-        typeof record.sourceInode === 'string' ? record.sourceInode : '';
+    const sourceGeneration =
+        typeof record.sourceGeneration === 'string' ? record.sourceGeneration : '';
     return sourceAnchorOffsetBytes >= 0
         && sourceAnchorOffsetBytes <= offsetBytes
         && /^[A-Za-z0-9_-]{43}$/.test(sourceAnchorSha256)
-        && /^\d+$/.test(sourceDevice)
-        && /^[1-9]\d*$/.test(sourceInode)
+        && SOURCE_GENERATION_PATTERN.test(sourceGeneration)
         ? {
-            v: 2,
+            v: 3,
             kind: 'claudeForward',
             fileRelPath,
             offsetBytes,
             sourceAnchorOffsetBytes,
             sourceAnchorSha256,
-            sourceDevice,
-            sourceInode,
+            sourceGeneration,
         }
         : null;
+}
+
+/**
+ * How much of the acknowledged prefix each anchor window covers.
+ *
+ * The continuity contract is that append, in-place rewrite and replacement stay
+ * distinguishable — NOT that every acknowledged byte is re-verified. Hashing the
+ * whole prefix satisfied the contract by reading it again on every cursor mint
+ * and every cursor validation, which made draining a transcript quadratic in its
+ * size. Two fixed windows plus the prefix LENGTH keep the same three cases
+ * apart at a cost that does not grow with the file:
+ *
+ * - append leaves the head, the boundary and the length alone;
+ * - a rewrite at the boundary — where a writer that reflowed the prefix
+ *   necessarily lands — changes the boundary window;
+ * - a rewrite of the head, a truncation, or a regrow to a different length
+ *   changes the head window or the length;
+ * - a replacement changes the physical generation.
+ */
+const SOURCE_ANCHOR_WINDOW_BYTES = 8 * 1024;
+
+/**
+ * `i:` is the physical generation proper — the device/inode pair. Where a
+ * filesystem does not report an inode (Windows shares and some network mounts
+ * return zero), `b:` falls back to the creation timestamp, which still changes
+ * when a new file takes the same path, and `p:` names the case where neither is
+ * available and the content anchor carries the whole contract. Refusing to mint
+ * a cursor there — the previous behavior — made external transcript paging fail
+ * outright on those filesystems rather than degrade.
+ */
+const SOURCE_GENERATION_PATTERN = /^(?:i:\d+:\d+|b:\d+:\d+|p:\d+)$/;
+
+function formatSourceGeneration(stats: Readonly<{
+    dev: bigint;
+    ino: bigint;
+    birthtimeNs: bigint;
+}>): string {
+    if (stats.ino !== 0n) return `i:${stats.dev}:${stats.ino}`;
+    if (stats.birthtimeNs > 0n) return `b:${stats.dev}:${stats.birthtimeNs}`;
+    return `p:${stats.dev}`;
+}
+
+/**
+ * The generation alone, for the places that need a byte-exact stand-in for a
+ * cursor rather than the cursor itself. One stat, no read.
+ */
+async function readSourceGeneration(
+    filePath: string,
+    signal?: AbortSignal,
+): Promise<string | null> {
+    throwIfAborted(signal);
+    const stats = await stat(filePath, { bigint: true }).catch(() => null);
+    throwIfAborted(signal);
+    return stats?.isFile() ? formatSourceGeneration(stats) : null;
+}
+
+async function hashAnchorWindow(params: Readonly<{
+    handle: Awaited<ReturnType<typeof open>>;
+    hash: ReturnType<typeof createHash>;
+    buffer: Buffer;
+    startOffsetBytes: number;
+    endOffsetBytes: number;
+    signal?: AbortSignal;
+}>): Promise<boolean> {
+    let position = params.startOffsetBytes;
+    while (position < params.endOffsetBytes) {
+        throwIfAborted(params.signal);
+        const readLength = Math.min(params.buffer.length, params.endOffsetBytes - position);
+        const read = await params.handle.read(params.buffer, 0, readLength, position);
+        if (read.bytesRead !== readLength) return false;
+        params.hash.update(params.buffer.subarray(0, read.bytesRead));
+        position += read.bytesRead;
+    }
+    return true;
 }
 
 async function readSourceAnchorEvidence(
@@ -201,8 +266,7 @@ async function readSourceAnchorEvidence(
     signal?: AbortSignal,
 ): Promise<Readonly<{
     sourceAnchorSha256: string;
-    sourceDevice: string;
-    sourceInode: string;
+    sourceGeneration: string;
 }> | null> {
     throwIfAborted(signal);
     const handle = await open(filePath, 'r').catch(() => null);
@@ -211,16 +275,31 @@ async function readSourceAnchorEvidence(
         const before = await handle.stat({ bigint: true });
         if (!before.isFile() || before.size < BigInt(offsetBytes)) return null;
         const hash = createHash('sha256');
-        const buffer = Buffer.allocUnsafe(64 * 1024);
-        let position = 0;
-        while (position < offsetBytes) {
-            throwIfAborted(signal);
-            const readLength = Math.min(buffer.length, offsetBytes - position);
-            const read = await handle.read(buffer, 0, readLength, position);
-            if (read.bytesRead !== readLength) return null;
-            hash.update(buffer.subarray(0, read.bytesRead));
-            position += read.bytesRead;
-        }
+        // The acknowledged LENGTH is part of the anchor: without it two prefixes
+        // that share a head and a boundary window would anchor alike.
+        hash.update(`claudeAnchor/v3\n${offsetBytes}\n`);
+        const buffer = Buffer.allocUnsafe(SOURCE_ANCHOR_WINDOW_BYTES);
+        const headEndOffsetBytes = Math.min(offsetBytes, SOURCE_ANCHOR_WINDOW_BYTES);
+        const boundaryStartOffsetBytes = Math.max(
+            headEndOffsetBytes,
+            offsetBytes - SOURCE_ANCHOR_WINDOW_BYTES,
+        );
+        const hashed = await hashAnchorWindow({
+            handle,
+            hash,
+            buffer,
+            startOffsetBytes: 0,
+            endOffsetBytes: headEndOffsetBytes,
+            ...(signal ? { signal } : {}),
+        }) && await hashAnchorWindow({
+            handle,
+            hash,
+            buffer,
+            startOffsetBytes: boundaryStartOffsetBytes,
+            endOffsetBytes: offsetBytes,
+            ...(signal ? { signal } : {}),
+        });
+        if (!hashed) return null;
         const afterHandle = await handle.stat({ bigint: true });
         const afterPath = await stat(filePath, { bigint: true }).catch(() => null);
         if (
@@ -235,11 +314,9 @@ async function readSourceAnchorEvidence(
         ) {
             return null;
         }
-        if (afterHandle.ino === 0n) return null;
         return {
             sourceAnchorSha256: hash.digest('base64url'),
-            sourceDevice: afterHandle.dev.toString(10),
-            sourceInode: afterHandle.ino.toString(10),
+            sourceGeneration: formatSourceGeneration(afterHandle),
         };
     } finally {
         await handle.close();
@@ -259,7 +336,7 @@ async function createForwardCursor(params: Readonly<{
     );
     if (!evidence) return null;
     return encodeCursor({
-        v: 2,
+        v: 3,
         kind: 'claudeForward',
         fileRelPath: params.fileRelPath,
         offsetBytes: params.offsetBytes,
@@ -287,7 +364,7 @@ async function createBackwardCursor(params: Readonly<{
     );
     if (!evidence) return null;
     return encodeCursor({
-        v: 2,
+        v: 3,
         kind: 'claudeBackward',
         fileRelPath: params.fileRelPath,
         endOffsetBytes: params.endOffsetBytes,
@@ -298,25 +375,42 @@ async function createBackwardCursor(params: Readonly<{
 
 /**
  * A byte-exact stand-in for the cursor `createBackwardCursor` would mint at the
- * same offset, used only to size a candidate page against the result budget. The
- * SHA-256 anchor is always 43 base64url characters and the device/inode pair
- * belongs to the file rather than the offset, so probing with the real identity
- * costs one stat instead of one full re-hash per candidate row.
+ * same offset, used only to size a page against the result budget. The SHA-256
+ * anchor is always 43 base64url characters and the generation belongs to the
+ * file rather than the offset, so probing with the real generation costs one
+ * stat instead of one anchor read per row — and stays byte-exact, which a
+ * placeholder generation would not be.
  */
 function encodeBackwardCursorEnvelopeProbe(params: Readonly<{
     fileRelPath: string;
     endOffsetBytes: number;
-    identity: Readonly<{ sourceDevice: string; sourceInode: string }>;
+    sourceGeneration: string;
 }>): string {
     return encodeCursor({
-        v: 2,
+        v: 3,
         kind: 'claudeBackward',
         fileRelPath: params.fileRelPath,
         endOffsetBytes: params.endOffsetBytes,
         sourceAnchorOffsetBytes: params.endOffsetBytes,
         sourceAnchorSha256: 'A'.repeat(43),
-        sourceDevice: params.identity.sourceDevice,
-        sourceInode: params.identity.sourceInode,
+        sourceGeneration: params.sourceGeneration,
+    });
+}
+
+/** The forward counterpart of `encodeBackwardCursorEnvelopeProbe`. */
+function encodeForwardCursorEnvelopeProbe(params: Readonly<{
+    fileRelPath: string;
+    offsetBytes: number;
+    sourceGeneration: string;
+}>): string {
+    return encodeCursor({
+        v: 3,
+        kind: 'claudeForward',
+        fileRelPath: params.fileRelPath,
+        offsetBytes: params.offsetBytes,
+        sourceAnchorOffsetBytes: params.offsetBytes,
+        sourceAnchorSha256: 'A'.repeat(43),
+        sourceGeneration: params.sourceGeneration,
     });
 }
 
@@ -456,7 +550,7 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
     // A v1 cursor carries no such evidence — it can only have been minted by a
     // predecessor writer, and rejecting it outright would restart an in-progress
     // browse at the tail — so it keeps its established offset-only meaning.
-    if (decoded?.v === 2 && !cursorMismatch) {
+    if (decoded?.v === 3 && !cursorMismatch) {
         const currentEvidence = await readSourceAnchorEvidence(
             resolved.filePath,
             decoded.sourceAnchorOffsetBytes,
@@ -465,8 +559,7 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
         if (
             !currentEvidence
             || currentEvidence.sourceAnchorSha256 !== decoded.sourceAnchorSha256
-            || currentEvidence.sourceDevice !== decoded.sourceDevice
-            || currentEvidence.sourceInode !== decoded.sourceInode
+            || currentEvidence.sourceGeneration !== decoded.sourceGeneration
         ) {
             return { items: [], nextCursor: null, tailCursor, hasMore: false, truncated: true };
         }
@@ -477,8 +570,8 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
     if (endOffsetBytes <= 0) {
         return { items: [], nextCursor: null, tailCursor, hasMore: false, ...(cursorMismatch ? { truncated: true } : {}) };
     }
-    const sourceIdentity = await readSourceAnchorEvidence(resolved.filePath, 0, params.signal);
-    if (!sourceIdentity) {
+    const sourceGeneration = await readSourceGeneration(resolved.filePath, params.signal);
+    if (!sourceGeneration) {
         return { items: [], nextCursor: null, tailCursor, hasMore: false, truncated: true };
     }
 
@@ -526,7 +619,7 @@ export async function pageClaudeExternalSessionTranscript(params: Readonly<{
                 ? encodeBackwardCursorEnvelopeProbe({
                     fileRelPath: resolved.fileRelPath,
                     endOffsetBytes: proposedNextEndOffsetBytes,
-                    identity: sourceIdentity,
+                    sourceGeneration,
                 })
                 : null;
             const proposed = {
@@ -676,7 +769,7 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
             readAfterOutcome: 'source_replaced',
         };
     }
-    if (decoded.v === 2) {
+    if (decoded.v === 3) {
         const currentEvidence = await readSourceAnchorEvidence(
             resolved.filePath,
             decoded.sourceAnchorOffsetBytes,
@@ -686,8 +779,7 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
             !currentEvidence
             || currentEvidence.sourceAnchorSha256
               !== decoded.sourceAnchorSha256
-            || currentEvidence.sourceDevice !== decoded.sourceDevice
-            || currentEvidence.sourceInode !== decoded.sourceInode
+            || currentEvidence.sourceGeneration !== decoded.sourceGeneration
         ) {
             return {
                 items: [],
@@ -725,6 +817,13 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
     }
 
     if (params.resultBudget) {
+        // The budget is measured against the cursor this page would actually
+        // return, so the probe carries the file's real generation rather than a
+        // placeholder whose length differs from it.
+        const forwardSourceGeneration = await readSourceGeneration(resolved.filePath, params.signal);
+        if (!forwardSourceGeneration) {
+            return { items: [], nextCursor: null, truncated: true, readAfterOutcome: 'source_unavailable' };
+        }
         const maxItems = Math.max(1, Math.trunc(params.maxItems));
         const items: ReturnType<typeof projectClaudeJsonlLineToDirectMessages> = [];
         const knownNonTranscriptPositions: number[] = [];
@@ -755,15 +854,10 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
                 ?? read.nextOffsetBytes;
             const proposed = {
                 items: proposedItems,
-                nextCursor: encodeCursor({
-                    v: 2,
-                    kind: 'claudeForward',
+                nextCursor: encodeForwardCursorEnvelopeProbe({
                     fileRelPath: resolved.fileRelPath,
                     offsetBytes: proposedNextOffsetBytes,
-                    sourceAnchorOffsetBytes: proposedNextOffsetBytes,
-                    sourceAnchorSha256: 'A'.repeat(43),
-                    sourceDevice: '0',
-                    sourceInode: '1',
+                    sourceGeneration: forwardSourceGeneration,
                 }),
                 truncated: false,
             };

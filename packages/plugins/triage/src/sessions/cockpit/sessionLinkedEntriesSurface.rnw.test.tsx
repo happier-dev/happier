@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SESSION_LINKS_FIELD } from '../../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../../corpus/collections/rowCodec.js';
 import type { CorpusSessionLinkRowV1 } from '../../corpus/collections/rows.js';
+import { TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1 } from '../../actions/entrySessionProtocol.js';
 import { TRIAGE_SESSION_LINKED_ENTRIES_UI_QUERY_ID_V1 } from './linkedEntriesQuery.js';
 import { renderSurface as renderSessionLinkedEntriesSurface } from './sessionLinkedEntriesSurface.js';
 
@@ -164,11 +165,20 @@ function createCockpitAdapter(
 }
 
 const mounted: PluginUiTestkit[] = [];
-const actionCalls: string[] = [];
+type ActionCall = Readonly<{ action: string; input: unknown }>;
+const actionCalls: ActionCall[] = [];
 
+/**
+ * The one Action the cockpit can invoke, scripted per test.
+ *
+ * `null` keeps the original behaviour — any dispatch is a failure — which is
+ * what the read-only cases still assert. A scripted result stands in for the
+ * host Action boundary so a press can be followed all the way through.
+ */
 async function mountCockpit(
     harness: DataHarness,
     target: ReturnType<typeof createSurfaceContextFixture>['target'],
+    unlinkResult: unknown = null,
 ): Promise<PluginUiTestkit> {
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -190,9 +200,12 @@ async function mountCockpit(
             }),
             adapter: createCockpitAdapter(harness.client),
             handlers: {
-                executeAction: async ({ action }) => {
-                    actionCalls.push(String(action));
-                    throw new Error('The cockpit invokes no host Action.');
+                executeAction: async ({ action, input }) => {
+                    actionCalls.push({ action: String(action), input });
+                    if (unlinkResult === null) {
+                        throw new Error('This mount scripts no host Action.');
+                    }
+                    return unlinkResult as never;
                 },
             },
         });
@@ -362,5 +375,84 @@ describe('the mounted Session cockpit', () => {
         expect(harness.gets).toEqual([]);
         await expect(fixture.getByText('No session for this panel')).resolves
             .toEqual({ content: 'No session for this panel' });
+    });
+});
+
+describe('undoing a link from the mounted cockpit', () => {
+    /**
+     * The reader who started a Session from the wrong entry had no way back: a
+     * link is durable Account state, the cockpit was read-only, and nothing
+     * else removes one. This is that path, end to end through the real mount.
+     */
+    it('removes exactly the link the pressed row was rendered from', async () => {
+        const rows = [queryRow('link-a', 2_000), queryRow('link-b', 1_000)];
+        const wrongEntry = linkRow({
+            displayPathAtLink: 'example/repository#42',
+            entryRef: {
+                source: { pluginId: 'happier.example.source', localId: 'example-forge' },
+                kindId: 'pull-request',
+                collisionScope: 'example/repository',
+                entryId: '42',
+            },
+        });
+        const harness = createDataHarness({
+            snapshot: { rows, hasMore: false, status: 'ready' },
+            rowsById: new Map([
+                ['link-a', wrongEntry],
+                ['link-b', linkRow({ displayPathAtLink: 'example/other#7' })],
+            ]),
+        });
+
+        const fixture = await mountCockpit(
+            harness,
+            { kind: 'session', sessionId: SESSION_ID },
+            { v: 1, status: 'unlinked' },
+        );
+
+        const buttons = await fixture.queryAllByRole('button');
+        // One per resolved link and no more: a row that is still being read,
+        // already removed, or unreadable carries no reference to remove.
+        expect(buttons.map((button) => button.name ?? '')).toEqual(['Unlink', 'Unlink']);
+
+        await act(async () => {
+            await fixture.press(buttons[0]!);
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        // The exact mounted Session and the exact reference the private row
+        // held. A rebuilt reference would address a row the reader never
+        // linked, which for a removal means deleting nothing and saying it
+        // worked.
+        expect(actionCalls).toEqual([{
+            action: TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
+            input: { v: 1, sessionId: SESSION_ID, entryRef: wrongEntry.entryRef },
+        }]);
+    });
+
+    it('says a refused removal failed instead of showing the link as gone', async () => {
+        const rows = [queryRow('link-a', 2_000)];
+        const harness = createDataHarness({
+            snapshot: { rows, hasMore: false, status: 'ready' },
+            rowsById: new Map([['link-a', linkRow({ displayPathAtLink: 'example/repository#42' })]]),
+        });
+
+        const fixture = await mountCockpit(
+            harness,
+            { kind: 'session', sessionId: SESSION_ID },
+            { v: 1, status: 'failed' },
+        );
+
+        await act(async () => {
+            await fixture.press(await fixture.getByRole('button', { name: 'Unlink' }));
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        // The row is still the link it was. Presenting a refused delete as a
+        // removal would tell the reader their mistake is undone while the
+        // Session still claims the entry.
+        await expect(fixture.getByText('example/repository#42')).resolves
+            .toEqual({ content: 'example/repository#42' });
+        await expect(fixture.getByText('This link could not be removed.')).resolves
+            .toEqual({ content: 'This link could not be removed.' });
     });
 });

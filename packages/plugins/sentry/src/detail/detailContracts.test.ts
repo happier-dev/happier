@@ -42,23 +42,65 @@ const LOCAL_REF = Object.freeze({
 const INSTANCE_INPUT = Object.freeze({ v: 1, instance: INSTANCE, localRef: LOCAL_REF });
 
 describe('Sentry detail continuation', () => {
-  it('round-trips a position this source minted', () => {
-    const token = encodeSentryDetailContinuation({ v: 1, cursor: '0:100:0', limit: 100 });
+  it('round-trips a position this source minted, with the probe that watches it', () => {
+    const probe = { cursor: '0:0:0', stepsSince: 1, interval: 2 };
+    const token = encodeSentryDetailContinuation({
+      v: 1,
+      cursor: '0:100:0',
+      limit: 100,
+      probe,
+    });
     expect(token).not.toBeNull();
     expect(decodeSentryDetailContinuation(token ?? '')).toEqual({
       v: 1,
       cursor: '0:100:0',
       limit: 100,
+      probe,
     });
   });
 
+  it('stays one constant width however many pages the walk has read', () => {
+    // The evidence rides inside a BOUNDED token, so evidence that grows per page
+    // is an undeclared "Load more" ceiling: with real keyset cursors the
+    // predecessor position history stopped fitting at the 23rd page and the
+    // panel settled `continuationUnavailable` a reader could not get past.
+    const widthAt = (interval: number): number => {
+      const token = encodeSentryDetailContinuation({
+        v: 1,
+        cursor: '1754000000000:0:0',
+        limit: 100,
+        probe: { cursor: '1755000000000:0:0', stepsSince: 0, interval },
+      });
+      expect(token).not.toBeNull();
+      return new TextEncoder().encode(token ?? '').byteLength;
+    };
+    // A walk deep enough to have doubled its wait twenty times costs the same
+    // bytes as one on its second page, give or take the digits of the counter.
+    expect(widthAt(2 ** 20) - widthAt(2)).toBeLessThan(8);
+    expect(widthAt(2 ** 20)).toBeLessThan(MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES / 2);
+  });
+
   it('refuses a token this source did not mint', () => {
+    const probe = '{"cursor":"c","stepsSince":0,"interval":2}';
+    // The unmodified record is admitted, so each refusal below is caused by the
+    // one thing it changed rather than by a base this decoder never accepts.
+    expect(decodeSentryDetailContinuation(`{"v":1,"cursor":"c","limit":100,"probe":${probe}}`))
+      .not.toBeNull();
     for (const token of [
       '{}',
-      '{"v":2,"cursor":"c","limit":100}',
-      '{"v":1,"cursor":"","limit":100}',
-      '{"v":1,"cursor":"c","limit":0}',
-      '{"v":1,"cursor":"c","limit":101}',
+      `{"v":2,"cursor":"c","limit":100,"probe":${probe}}`,
+      `{"v":1,"cursor":"","limit":100,"probe":${probe}}`,
+      `{"v":1,"cursor":"c","limit":0,"probe":${probe}}`,
+      `{"v":1,"cursor":"c","limit":101,"probe":${probe}}`,
+      // A frontier with no cycle evidence behind it, and evidence whose schedule
+      // this side could not have produced, are both positions this source never
+      // handed out.
+      '{"v":1,"cursor":"c","limit":100}',
+      '{"v":1,"cursor":"c","limit":100,"probe":{"cursor":"c","stepsSince":2,"interval":2}}',
+      '{"v":1,"cursor":"c","limit":100,"probe":{"cursor":"c","stepsSince":0,"interval":3}}',
+      '{"v":1,"cursor":"c","limit":100,"probe":{"cursor":"c","stepsSince":0,"interval":1}}',
+      '{"v":1,"cursor":"c","limit":100,"probe":{"cursor":"","stepsSince":0,"interval":2}}',
+      '{"v":1,"cursor":"c","limit":100,"probe":"c"}',
       'https://us.sentry.io/api/0/organizations/42/issues/1/events/?cursor=c',
       'not json',
     ]) {
@@ -67,10 +109,30 @@ describe('Sentry detail continuation', () => {
   });
 
   it('refuses to mint a position larger than the bounded token', () => {
+    const cursor = 'c'.repeat(MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES);
     expect(encodeSentryDetailContinuation({
       v: 1,
-      cursor: 'c'.repeat(MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES),
+      cursor,
       limit: 100,
+      probe: { cursor: '0:0:0', stepsSince: 0, interval: 2 },
+    })).toBeNull();
+  });
+
+  it('refuses to mint a frontier whose cycle evidence is not its own', () => {
+    // The probe is the walk's non-progress evidence. A token carrying a schedule
+    // this walk could not have produced cannot answer "have I been here
+    // already", so it is not minted at all.
+    expect(encodeSentryDetailContinuation({
+      v: 1,
+      cursor: '0:100:0',
+      limit: 100,
+      probe: { cursor: '0:0:0', stepsSince: 2, interval: 2 },
+    })).toBeNull();
+    expect(encodeSentryDetailContinuation({
+      v: 1,
+      cursor: '0:100:0',
+      limit: 100,
+      probe: { cursor: '', stepsSince: 0, interval: 2 },
     })).toBeNull();
   });
 });

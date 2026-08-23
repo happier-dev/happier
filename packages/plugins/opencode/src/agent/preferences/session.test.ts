@@ -17,6 +17,7 @@ describe('resolveOpenCodeSessionRuntimePreferences', () => {
     });
   });
 
+
   it('does not use ambient runtime env when settings omit an explicit server override', () => {
     expect(resolveOpenCodeSessionRuntimePreferences({
       settings: {},

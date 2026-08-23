@@ -16,6 +16,7 @@ import {
   GITHUB_TRIAGE_ACTION_IDS_V1,
   GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1,
   GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1,
+  GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1,
   PLUGIN_MANIFEST,
 } from './manifest.js';
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE } from './observations/githubProviderContracts.js';
@@ -181,6 +182,93 @@ describe('GitHub SCM manifest', () => {
     })).toThrow(
       'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
     );
+  });
+
+  it('declares the pull-request mutations as confirmation-gated UI-only writes', () => {
+    const actions = new Map(
+      PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]),
+    );
+    const declared = Object.values(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1);
+    expect(declared).toHaveLength(13);
+
+    for (const id of declared) {
+      const action = actions.get(id);
+      if (!action) throw new Error(`the mutation '${id}' must be declared`);
+
+      // The human gate is the ABSENCE of `agent` and `mcp`: the write is not
+      // agent-reachable at all — no prompt to bypass, no tool, no exposure. A
+      // `danger` level with `agent: true` would only FLOOR the action to an
+      // approval prompt, which is a different and weaker guarantee. That
+      // absence is asserted directly, so the intent survives any future
+      // addition to this array.
+      expect(action.surfaces).not.toContain('agent');
+      expect(action.surfaces).not.toContain('mcp');
+      // `plugin` is REQUIRED for the write to be reachable at all and does not
+      // weaken the gate above. A mounted plugin surface always dispatches as a
+      // plugin caller, so `executeContributedAction` resolves `actionSurface` to
+      // `plugin` and refuses anything that does not declare it — which is why
+      // the detail READS already declare `['plugin']`. Host confirmation is
+      // unaffected because it keys off `invocationSurface` ('ui' from the
+      // dispatcher), computed separately from `actionSurface`.
+      expect(action.surfaces).toEqual(['ui', 'plugin']);
+      expect(action.dangerLevel).not.toBe('safe');
+      // Non-safe + a non-`plugin` surface is exactly the condition the manifest
+      // grammar uses to require host confirmation presentation.
+      expect(action.confirmation).toBeDefined();
+      // Every write declares the network resource AND the connected-account
+      // resource, and rebinds the exact account the configured instance names.
+      expect(action.hostAccess).toEqual(['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
+      expect(action.connectedAccountPurposeBindings).toEqual([
+        { path: 'instance.binding.account', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE },
+      ]);
+      expect(() => PluginActionContributionV2Schema.parse(action)).not.toThrow();
+    }
+
+    expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge)?.dangerLevel)
+      .toBe('destructive');
+    expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestClose)?.dangerLevel)
+      .toBe('writesRemote');
+    expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReopen)?.dangerLevel)
+      .toBe('writesRemote');
+    // Draft -> ready and a reviewer request are `externalSideEffect` because the
+    // effect users feel IS the notification fan-out, not the state field.
+    expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMarkReady)?.dangerLevel)
+      .toBe('externalSideEffect');
+    expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestAddReviewers)?.dangerLevel)
+      .toBe('externalSideEffect');
+    expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestUpdateBranch)?.dangerLevel)
+      .toBe('writesRemote');
+    expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestRemoveReviewers)?.dangerLevel)
+      .toBe('writesRemote');
+    // Every issue write moves remote state and summons nobody. None is
+    // `destructive`: an issue transition and an exact delta are both reversible
+    // through the Action that undoes them.
+    for (const id of [
+      GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueClose,
+      GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueReopen,
+      GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeAdd,
+      GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeRemove,
+      GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelAdd,
+      GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelRemove,
+    ]) expect(actions.get(id)?.dangerLevel, id).toBe('writesRemote');
+
+    // They bind to no Triage operation role: the aggregate never invokes a write.
+    const roleBound = JSON.stringify(PLUGIN_MANIFEST.contributes.targetedPluginContributions);
+    for (const id of declared) expect(roleBound).not.toContain(id);
+  });
+
+  it('admits exactly the verbs the declared Actions consume on the one github-api grant', () => {
+    const grants = PLUGIN_MANIFEST.hostAccess.required
+      .filter((request) => request.id === 'github-api');
+    // One grant, widened in place. A second network scope for writes would be the
+    // split-brain this assertion exists to prevent.
+    expect(grants).toHaveLength(1);
+    const scope = grants[0]?.scope as { methods?: readonly string[] } | undefined;
+    // PUT is merge and update-branch; PATCH is close/reopen; POST is the reviewer
+    // request; DELETE is the reviewer withdrawal, which is the ONLY declared
+    // Action that consumes it. No verb is granted "for symmetry".
+    expect([...(scope?.methods ?? [])].sort())
+      .toEqual(['DELETE', 'GET', 'PATCH', 'POST', 'PUT']);
   });
 
   it('declares and packages the official GitHub brand mark through the generic Resource owner', async () => {

@@ -3,7 +3,6 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { telegramConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
 import {
@@ -25,6 +24,7 @@ import {
   resolveTelegramEndpoint,
   setupTelegramChannels,
   testTelegramConnection,
+  TELEGRAM_SETUP_INPUT_PROTOCOL_SCHEMA,
 } from './channelActions.js';
 import { TELEGRAM_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
@@ -32,18 +32,13 @@ const providers = ConversationProvidersContributionProtocolV1;
 
 /**
  * The Channels provider protocol leaves `setup` and `setupRemediation` input
- * contributor-defined, so this plugin — not the host — declares and validates
- * the shape. Both roles need exactly the selected bot account, so they share
- * one declaration rather than two literals that can drift apart.
+ * contributor-defined, so this plugin declares the shape. Both roles need
+ * exactly the selected bot account and both handlers read the same
+ * declaration, so the manifest the host enforces and the value the handler
+ * receives cannot drift apart.
  */
-const TELEGRAM_CREDENTIAL_REF_INPUT_SCHEMA: PluginJsonSchema = {
-  type: 'object',
-  properties: {
-    credentialRef: QualifiedConnectedAccountRefJsonSchema,
-  },
-  required: ['credentialRef'],
-  additionalProperties: false,
-};
+const TELEGRAM_CREDENTIAL_REF_INPUT_SCHEMA: PluginJsonSchema =
+  TELEGRAM_SETUP_INPUT_PROTOCOL_SCHEMA.jsonSchema;
 
 export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: 'happier.channel.telegram',
@@ -307,9 +302,11 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   //
   // Telegram `getUpdates` is single-consumer: one `offset` confirms and
   // discards every earlier update for every reader of the bot. The admission in
-  // `automationEvents.ts` runs inline inside that shared cycle with no durable
-  // obligation, so a catalog or admission outage can only choose between losing
-  // occurrences and stalling Channel delivery for every user of the bot.
+  // `automationEvents.ts` would run inline inside that shared cycle with no
+  // durable obligation, so a catalog or admission outage could only choose
+  // between losing occurrences and stalling Channel delivery for every user of
+  // the bot. `pollTelegramObservations` therefore reaches no Automation
+  // authority at all while this Event is withheld.
   //
   // Before this is declared, the occurrence must become a durable obligation in
   // the SAME ingress store the canonical Channels owner already uses
@@ -317,9 +314,9 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   // `blockedIngressObligationValue`, `MAX_CONVERSATION_DELIVERY_ATTEMPTS`,
   // `unsettled`/`checkpointSafe`), persisted BEFORE the shared offset advances —
   // one shared single-consumer lifecycle, no second `getUpdates` consumer, no
-  // provider-local replay ledger, no new store. The implementation stays on
-  // disk in `automationEvents.ts` and is still exercised end to end through
-  // `pollTelegramObservations`.
+  // provider-local replay ledger, no new store. The implementation stays whole
+  // on disk in `automationEvents.ts`; re-declaring the Event restores its one
+  // call site in `pollTelegramObservations`.
   contributesTo: {
     'happier.channels': {
       providers: {

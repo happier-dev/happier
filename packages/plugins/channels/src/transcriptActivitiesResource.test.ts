@@ -17,6 +17,7 @@ import {
 import { TRANSCRIPT_ACTIVITIES_RESOURCE_RUNTIME } from './transcriptActivitiesResource.js';
 import { resourceText } from './testkit/resourceContract.js';
 
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 class MemoryAccountCollection {
   readonly rows = new Map<string, Readonly<{
     rowId: string;
@@ -50,6 +51,7 @@ class MemoryAccountCollection {
     cursor?: string;
     limit?: number;
   }>) {
+    assertChannelsTestCollectionQueryLimit(request.limit);
     const matching = [...this.rows.values()]
       .filter((row) => {
         if (request.index === 'by-kind') {

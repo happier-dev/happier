@@ -11,6 +11,15 @@ import { resolveConfiguredClaudeConfigDir } from './source.js';
 export const CLAUDE_EXTERNAL_SESSION_HOOK_SUPPORTED_VERSION = '2.1.217' as const;
 export const CLAUDE_EXTERNAL_SESSION_HOOK_INSTALLATION_VARIANT_ID =
     'claude-session-lifecycle-v1' as const;
+/**
+ * Windows Claude Code runs a hook entry through whichever shell the platform
+ * hands it, so a POSIX-quoted command is not executable there. The plugin's own
+ * session-hook writer already installs the encoded-PowerShell form on win32
+ * (`agent/hooks/settings.ts`), and this variant keeps External Session hooks on
+ * that same proven serialization.
+ */
+export const CLAUDE_EXTERNAL_SESSION_HOOK_WINDOWS_VARIANT_ID =
+    'claude-session-lifecycle-windows-v1' as const;
 export const CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID =
     'claude-user-settings' as const;
 export const CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_COLLECTION_ID =
@@ -93,38 +102,59 @@ function sourceInput() {
     return { kind: 'claudeConfig' } as const;
 }
 
+function installationVariant(
+    variantId: string,
+    shellDialect: 'posix' | 'powershell_encoded',
+) {
+    return Object.freeze({
+        variantId,
+        targets: Object.freeze([Object.freeze({
+            targetId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
+            format: 'hook_event_json_arrays_v1' as const,
+            collectionId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_COLLECTION_ID,
+        })]),
+        events: Object.freeze([
+            Object.freeze({
+                eventId: CLAUDE_EXTERNAL_SESSION_HOOK_SESSION_START_EVENT_ID,
+                targetId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
+                nativeEventName: 'SessionStart',
+                command: Object.freeze({
+                    kind: 'happier_observation_v1' as const,
+                    shellDialect,
+                    timeoutMs: 500,
+                }),
+            }),
+            Object.freeze({
+                eventId: CLAUDE_EXTERNAL_SESSION_HOOK_STOP_EVENT_ID,
+                targetId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
+                nativeEventName: 'Stop',
+                command: Object.freeze({
+                    kind: 'happier_observation_v1' as const,
+                    shellDialect,
+                    timeoutMs: 500,
+                }),
+            }),
+        ]),
+    });
+}
+
+const INSTALLATION_VARIANT_IDS: ReadonlySet<string> = new Set([
+    CLAUDE_EXTERNAL_SESSION_HOOK_INSTALLATION_VARIANT_ID,
+    CLAUDE_EXTERNAL_SESSION_HOOK_WINDOWS_VARIANT_ID,
+]);
+
 export const claudeExternalSessionHooksContribution =
     Object.freeze({
-        installationVariants: Object.freeze([Object.freeze({
-            variantId: CLAUDE_EXTERNAL_SESSION_HOOK_INSTALLATION_VARIANT_ID,
-            targets: Object.freeze([Object.freeze({
-                targetId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
-                format: 'hook_event_json_arrays_v1' as const,
-                collectionId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_COLLECTION_ID,
-            })]),
-            events: Object.freeze([
-                Object.freeze({
-                    eventId: CLAUDE_EXTERNAL_SESSION_HOOK_SESSION_START_EVENT_ID,
-                    targetId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
-                    nativeEventName: 'SessionStart',
-                    command: Object.freeze({
-                        kind: 'happier_observation_v1' as const,
-                        shellDialect: 'posix' as const,
-                        timeoutMs: 500,
-                    }),
-                }),
-                Object.freeze({
-                    eventId: CLAUDE_EXTERNAL_SESSION_HOOK_STOP_EVENT_ID,
-                    targetId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
-                    nativeEventName: 'Stop',
-                    command: Object.freeze({
-                        kind: 'happier_observation_v1' as const,
-                        shellDialect: 'posix' as const,
-                        timeoutMs: 500,
-                    }),
-                }),
-            ]),
-        })]),
+        installationVariants: Object.freeze([
+            installationVariant(
+                CLAUDE_EXTERNAL_SESSION_HOOK_INSTALLATION_VARIANT_ID,
+                'posix',
+            ),
+            installationVariant(
+                CLAUDE_EXTERNAL_SESSION_HOOK_WINDOWS_VARIANT_ID,
+                'powershell_encoded',
+            ),
+        ]),
 
         resolveInstallation(request) {
             const stopped = invocationFailure(request);
@@ -142,7 +172,9 @@ export const claudeExternalSessionHooksContribution =
             const configDir = resolveConfiguredClaudeConfigDir({ env: process.env });
             return ok({
                 kind: 'supported' as const,
-                variantId: CLAUDE_EXTERNAL_SESSION_HOOK_INSTALLATION_VARIANT_ID,
+                variantId: request.installation.platform === 'win32'
+                    ? CLAUDE_EXTERNAL_SESSION_HOOK_WINDOWS_VARIANT_ID
+                    : CLAUDE_EXTERNAL_SESSION_HOOK_INSTALLATION_VARIANT_ID,
                 targets: [{
                     targetId: CLAUDE_EXTERNAL_SESSION_HOOK_SETTINGS_TARGET_ID,
                     absolutePath: join(configDir, 'settings.json'),
@@ -154,9 +186,7 @@ export const claudeExternalSessionHooksContribution =
         mapHookEvent(request) {
             const stopped = invocationFailure(request);
             if (stopped) return stopped;
-            if (
-                request.variantId !== CLAUDE_EXTERNAL_SESSION_HOOK_INSTALLATION_VARIANT_ID
-            ) {
+            if (!INSTALLATION_VARIANT_IDS.has(request.variantId)) {
                 return ok({ kind: 'ignored' as const });
             }
 

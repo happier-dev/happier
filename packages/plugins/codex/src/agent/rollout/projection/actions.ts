@@ -23,6 +23,59 @@ export type CodexRolloutAction =
 type RolloutEnvelope = { timestamp?: string; type?: string; payload?: unknown };
 
 /**
+ * Rollout envelopes the pinned recorder durably writes that carry no
+ * recipient-facing transcript row. `compacted` restates history this reader
+ * already published from the rows it replaces, `world_state` is environment
+ * context rather than conversation, and `inter_agent_communication_metadata`
+ * is turn-routing metadata. Advancing past them is safe; treating them as
+ * unknown fails the whole page.
+ */
+const CODEX_KNOWN_NON_TRANSCRIPT_ENVELOPE_TYPES: ReadonlySet<string> = new Set([
+    'compacted',
+    'inter_agent_communication_metadata',
+    'world_state',
+]);
+
+/**
+ * `event_msg` payload families the pinned recorder persists that this leaf
+ * intentionally does not publish: turn lifecycle, token accounting, sub-agent
+ * activity pings, the tool-lifecycle echoes of the `response_item` call/output
+ * pair, reasoning (which has no row in this leaf's transcript vocabulary), and
+ * `user_message`, which always mirrors the canonical `response_item` user row
+ * recorded immediately before it.
+ */
+const CODEX_KNOWN_NON_TRANSCRIPT_EVENT_MSG_TYPES: ReadonlySet<string> = new Set([
+    'agent_reasoning',
+    'context_compacted',
+    'exec_command_end',
+    'mcp_tool_call_end',
+    'patch_apply_end',
+    'sub_agent_activity',
+    'task_complete',
+    'task_started',
+    'thread_rolled_back',
+    'thread_settings_applied',
+    'token_count',
+    'turn_aborted',
+    'user_message',
+    'web_search_end',
+]);
+
+/**
+ * `response_item` payload families the recorder persists that this leaf does
+ * not publish: reasoning has no row in the Codex transcript vocabulary,
+ * `ghost_snapshot` is git snapshot bookkeeping, and `agent_message` is the
+ * inter-agent routing copy of a prompt already published from the
+ * `spawn_agent` call that produced it.
+ */
+const CODEX_KNOWN_NON_TRANSCRIPT_RESPONSE_ITEM_TYPES: ReadonlySet<string> = new Set([
+    'agent_message',
+    'ghost_snapshot',
+    'reasoning',
+    'web_search_call',
+]);
+
+/**
  * Keeps strict source-record admission beside the Codex event parser. A record
  * can be known but intentionally content-free; an unknown or malformed record
  * must never be mistaken for one of those safe skips by a cursor owner.
@@ -182,7 +235,7 @@ export function projectCodexRolloutRecord(
 
     // Codex emits this bounded turn metadata between transcript records. It is
     // a ratified source fact but has no recipient-facing transcript projection.
-    if (env.type === 'turn_context') {
+    if (env.type === 'turn_context' || CODEX_KNOWN_NON_TRANSCRIPT_ENVELOPE_TYPES.has(env.type)) {
         return asRecord(env.payload)
             ? { disposition: 'known', actions: [] }
             : { disposition: 'unsupported', actions: [] };
@@ -239,6 +292,21 @@ export function projectCodexRolloutRecord(
                 : { disposition: 'unsupported', actions: [] };
         }
 
+        // The pinned recorder stops writing `response_item` assistant messages,
+        // so from 0.145.0 this event is the only durable carrier of the
+        // assistant turn. Pre-frontier rollouts record both; the semantic
+        // tracker drops the duplicate so either era publishes the turn once.
+        if (payloadType === 'agent_message') {
+            const message = readCodexMessageContentText(payload.message ?? payload.content);
+            return message
+                ? { disposition: 'known', actions: [{ type: 'assistant-text', text: message }] }
+                : { disposition: 'unsupported', actions: [] };
+        }
+
+        if (CODEX_KNOWN_NON_TRANSCRIPT_EVENT_MSG_TYPES.has(payloadType)) {
+            return { disposition: 'known', actions: [] };
+        }
+
         return {
             disposition: 'unsupported',
             actions: opts.debug
@@ -259,6 +327,10 @@ export function projectCodexRolloutRecord(
                 ? [{ type: 'debug', message: 'unhandled rollout payload type: ', value: payload ?? {} }]
                 : [],
         };
+    }
+
+    if (CODEX_KNOWN_NON_TRANSCRIPT_RESPONSE_ITEM_TYPES.has(payloadType)) {
+        return { disposition: 'known', actions: [] };
     }
 
     if (payloadType === 'message') {

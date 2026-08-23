@@ -344,7 +344,17 @@ export type BitbucketProjectedCommentRowV1 = Readonly<{
   truncated?: true;
 }>;
 
-function readCommentResolution(raw: JsonRecord): BitbucketCommentResolutionV1 {
+/**
+ * One comment's resolution, as this source reads it — from the projected page or
+ * from the confirming read of a resolve or reopen write.
+ *
+ * It is exported because those two callers must agree: the panel's tri-state and
+ * the write's proof are the same fact about the same comment, and a second
+ * reader is how one of them starts answering `unresolved` where the other
+ * answers `unknown`.
+ */
+export function readBitbucketCommentResolution(raw: unknown): BitbucketCommentResolutionV1 {
+  if (!isRecord(raw)) return 'unknown';
   // `in` rather than a truthiness read: the difference between "the deployment
   // said not resolved" and "the deployment did not say" is exactly the key's
   // presence, and it is the whole point of this tri-state.
@@ -382,7 +392,7 @@ export function projectBitbucketCommentRows(
         ...(updatedAtMs === null || updatedAtMs === atMs ? {} : { editedAtMs: updatedAtMs }),
         ...(parentId === null ? {} : { parentId }),
         deleted: raw.deleted === true,
-        resolution: readCommentResolution(raw),
+        resolution: readBitbucketCommentResolution(raw),
         ...(path === null ? {} : { path: path.value }),
         ...(url === null ? {} : { url }),
         ...(truncated ? { truncated: true as const } : {}),

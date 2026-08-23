@@ -17,8 +17,8 @@ const BUNDLED_PLUGIN_UI_APP_ASSET_2 = require("@happier-dev/plugins-channels/hap
 const BUNDLED_PLUGIN_UI_APP_ASSET_3 = require("@happier-dev/plugins-channels/happier-plugin-ui/react-native/channels-app-native/ios/src_manifest_ts.chunk.bundle.map");
 const BUNDLED_PLUGIN_UI_APP_ASSET_4 = require("@happier-dev/plugins-channels/happier-plugin-ui/react-native/channels-app-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle");
 const BUNDLED_PLUGIN_UI_APP_ASSET_5 = require("@happier-dev/plugins-channels/happier-plugin-ui/react-native/channels-app-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map");
-const BUNDLED_PLUGIN_UI_APP_ASSET_6 = require("@happier-dev/plugins-channels/happier-plugin-ui/react-native/channels-app-native/ios/vendors-node_modules_happier-dev_channels-protocol_dist_v1_index_js-node_modules_happier-dev_-69158c.chunk.bundle");
-const BUNDLED_PLUGIN_UI_APP_ASSET_7 = require("@happier-dev/plugins-channels/happier-plugin-ui/react-native/channels-app-native/ios/vendors-node_modules_happier-dev_channels-protocol_dist_v1_index_js-node_modules_happier-dev_-69158c.chunk.bundle.map");
+const BUNDLED_PLUGIN_UI_APP_ASSET_6 = require("@happier-dev/plugins-channels/happier-plugin-ui/react-native/channels-app-native/ios/vendors-node_modules_happier-dev_channels-protocol_dist_v1_index_js-node_modules_happier-dev_-c513f2.chunk.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_7 = require("@happier-dev/plugins-channels/happier-plugin-ui/react-native/channels-app-native/ios/vendors-node_modules_happier-dev_channels-protocol_dist_v1_index_js-node_modules_happier-dev_-c513f2.chunk.bundle.map");
 const BUNDLED_PLUGIN_UI_APP_ASSET_8 = require("@happier-dev/plugins-inspector/happier-plugin-ui/react-native/inspector-app-native/ios/ios.bundle");
 const BUNDLED_PLUGIN_UI_APP_ASSET_9 = require("@happier-dev/plugins-inspector/happier-plugin-ui/react-native/inspector-app-native/ios/ios.bundle.map");
 const BUNDLED_PLUGIN_UI_APP_ASSET_10 = require("@happier-dev/plugins-inspector/happier-plugin-ui/react-native/inspector-app-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle");
@@ -113,8 +113,8 @@ const BUNDLED_PLUGIN_UI_APP_ASSET_98 = require("@happier-dev/plugins-triage/happ
 const BUNDLED_PLUGIN_UI_APP_ASSET_99 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native/triage-list-page-native/ios/ios.bundle.map");
 const BUNDLED_PLUGIN_UI_APP_ASSET_100 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native/triage-list-page-native/ios/src_ui_surface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle");
 const BUNDLED_PLUGIN_UI_APP_ASSET_101 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native/triage-list-page-native/ios/src_ui_surface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map");
-const BUNDLED_PLUGIN_UI_APP_ASSET_102 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native/triage-list-page-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-f58295.chunk.bundle");
-const BUNDLED_PLUGIN_UI_APP_ASSET_103 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native/triage-list-page-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-f58295.chunk.bundle.map");
+const BUNDLED_PLUGIN_UI_APP_ASSET_102 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native/triage-list-page-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-206238.chunk.bundle");
+const BUNDLED_PLUGIN_UI_APP_ASSET_103 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native/triage-list-page-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-206238.chunk.bundle.map");
 const BUNDLED_PLUGIN_UI_APP_ASSET_104 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native/triage-session-entries-native/ios/ios.bundle");
 const BUNDLED_PLUGIN_UI_APP_ASSET_105 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native/triage-session-entries-native/ios/ios.bundle.map");
 const BUNDLED_PLUGIN_UI_APP_ASSET_106 = require("@happier-dev/plugins-triage/happier-plugin-ui/react-native/triage-session-entries-native/ios/src_sessions_cockpit_sessionLinkedEntriesSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle");
@@ -128,7 +128,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "channels-app-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:ec6758c47185401717a83d79aedfb80564f29270d9233b4bb7e24801c77439dc",
+    digest: "sha256:afe9e67558be7cc5c993649ee061ff4ea32d2cfdc416050674699b199567e747",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -156,11 +156,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_5,
       }),
       Object.freeze({
-        relativePath: "react-native/channels-app-native/ios/vendors-node_modules_happier-dev_channels-protocol_dist_v1_index_js-node_modules_happier-dev_-69158c.chunk.bundle",
+        relativePath: "react-native/channels-app-native/ios/vendors-node_modules_happier-dev_channels-protocol_dist_v1_index_js-node_modules_happier-dev_-c513f2.chunk.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_6,
       }),
       Object.freeze({
-        relativePath: "react-native/channels-app-native/ios/vendors-node_modules_happier-dev_channels-protocol_dist_v1_index_js-node_modules_happier-dev_-69158c.chunk.bundle.map",
+        relativePath: "react-native/channels-app-native/ios/vendors-node_modules_happier-dev_channels-protocol_dist_v1_index_js-node_modules_happier-dev_-c513f2.chunk.bundle.map",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_7,
       }),
     ]),
@@ -170,7 +170,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "inspector-app-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:2fbd62129fbf312c0b23eb7f0c2c8b5dd841d9c052e8249cfeaf3e22904b4a75",
+    digest: "sha256:65e9ec0cd4e89655b6748e64e37857d674909c3a593c731d61884d17adb93c80",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -204,7 +204,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "posthog-issue-detail-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:a19c75b9c218ce707eb6c95cc85061a74df077f395ad37046ec2b8180a56ab51",
+    digest: "sha256:4c1b07bdd4c7e34680fae6da5b33983519f80655753e612325526daa72bffb7a",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -238,7 +238,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "posthog-triage-sources-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:2d7e18d9b389cff66a53840fc0684bd53172e07b28d15d08de9ba83bc7951c97",
+    digest: "sha256:1c9d4703b3453c880ebded24ddd09ca08231673389a104683d19d91599dc3a36",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -272,7 +272,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "azure-devops-detail-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:e2d689dc08d3f9e3090b17f9a9c31a2501afec4251bd5956a767c77ce44658c2",
+    digest: "sha256:7831407e4418fff36ef541ac84f38d2d58cf3295904ef967856ef0b82b0f44ea",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -306,7 +306,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "azure-devops-triage-sources-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:05aa902821e38498f83be964985897da2d97bfa30b2a7f484ff885891659d6a3",
+    digest: "sha256:685f6f0824c0c632d0af08d3abc45bfaafa56741af3d567f3c48f24237d000eb",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -340,7 +340,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "bitbucket-detail-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:f2a2a98b55b3b5277cf1d98f4559f79d49ded79350c33177d794afc4869993b9",
+    digest: "sha256:dfe08cb9817485cb9d016120a8b361f3c434ba269b815d678810e7402fe4b363",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -374,7 +374,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "bitbucket-triage-sources-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:9db78d341f4eece6763def72c79dfe36fec2bfae44aa96b050314d11c6b1fa3e",
+    digest: "sha256:decaf3b18a4308f87e260a392bf59cb08a37f15722e31d43d845bbaa9a705279",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -408,7 +408,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "github-detail-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:cf61aaac2bbdb9c642c75f423c5bbe6e1fdb19aa6ea57c3216965a0931fbd7f2",
+    digest: "sha256:b767447c8453dc94a0cfa71bee22317f7d601fcf916e37c31702373a38d067c0",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -442,7 +442,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "github-triage-sources-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:020b78242cb87be41cdecc808e3bfcb452ca8a5e172bbb63ccfc55debf5aae8c",
+    digest: "sha256:f6b14688a43b54645bb8dff79134d28437e1877c9d3c5d89e38464ce45a4b755",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -476,7 +476,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "gitlab-detail-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:ee92f0da45b6d96da304886d32da1f7ed9ceea1c9184ef1409a9759b3938657f",
+    digest: "sha256:9673c9ecd7c95a583b924e74d5c89aeef2e39004f82aae073bef17e386ec4cc9",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -510,7 +510,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "gitlab-triage-sources-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:a9855490bf1aac1b6503d12d40e3c629e8c8e286cdf9a0dc30247867be574abd",
+    digest: "sha256:64c3c716a840f791304d70571cd8b380ebb81e5878a517dcf5eb6dad66bcf0bb",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -544,7 +544,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "sentry-detail-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:88f4f16c2650a9214994bd5e77e4d6e99165b95739d689c8ef94c899e5a5d445",
+    digest: "sha256:8db4d56f050da426a9cd908a93278f9c555f941d16ac04ffe90581becee11d34",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -578,7 +578,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "sentry-triage-sources-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:0e1c2fe199d5fdfe9390112e446e4b9d5181977bf636c73be9476f23456b9b13",
+    digest: "sha256:33ec102ac8233c93a0f34e97ae0a9f2a0d4d0cd31d9801d0e8c8dbf4a27413ff",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -612,7 +612,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "triage-entries-compact-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:ae02deba7a58c40916c067db29c03086717fd6e69ff27ed4cfb139c9e6f979aa",
+    digest: "sha256:6bc23c69a465dde7d719f8b27d1a781d3e6b391ac5cc32f4ffcc192e5eeecf44",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -646,7 +646,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "triage-entry-picker-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:2bfaeb32e43c8d97d2a039b906fcb1c74bcaace5a0dd467449209040b90c48ab",
+    digest: "sha256:57c7c65356ddc32ed21e2e64a37ca01feead423483fc58d178b441072756a813",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -680,7 +680,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "triage-list-page-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:0658f6ef461528eb7b24b17f1706a27230f2419ac921e0250d10c8e809724c6e",
+    digest: "sha256:e5cad2d08b38c253682df7ac53172e5c139cc5bc57e46ce1469cbfb0a3237664",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -700,11 +700,11 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_101,
       }),
       Object.freeze({
-        relativePath: "react-native/triage-list-page-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-f58295.chunk.bundle",
+        relativePath: "react-native/triage-list-page-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-206238.chunk.bundle",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_102,
       }),
       Object.freeze({
-        relativePath: "react-native/triage-list-page-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-f58295.chunk.bundle.map",
+        relativePath: "react-native/triage-list-page-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-206238.chunk.bundle.map",
         asset: BUNDLED_PLUGIN_UI_APP_ASSET_103,
       }),
     ]),
@@ -714,7 +714,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "triage-session-entries-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:81c63e097cdb18ec3c5e04233cb4723dbad5d2bb9f82e7b618fe24f4b25b8b6d",
+    digest: "sha256:3084204d77b3bbfa8681256c7fb54570a4ccf8729e3024fbf4648e68f3b972b9",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({

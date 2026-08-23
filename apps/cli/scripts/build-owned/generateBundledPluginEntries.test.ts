@@ -179,7 +179,7 @@ describe('bundled Voice UI declaration projection', () => {
     );
     const runtimeRenderer = sourceBetween(
       'function renderBundledVoiceRuntimeEntriesTs(',
-      'function assertGeneratedOutputMatches(',
+      'async function generateBundledPluginEntries(',
     );
 
     expect(manifestProjection).toContain('Object.freeze(');

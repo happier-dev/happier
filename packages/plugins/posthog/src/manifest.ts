@@ -114,6 +114,10 @@ const PERSONAL_API_KEY_FIELD = {
 const POSTHOG_SOURCE_DESCRIPTOR = {
     v: 1 as const,
     purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
+    // The page this source's own Settings contribution ships, so the PRs & Issues
+    // surface can offer a working Configure action. A BARE local id — the target
+    // qualifies it with the contributor identity the host already admitted.
+    settingsPageId: POSTHOG_TRIAGE_SETTINGS_PAGE_ID,
     displayName: POSTHOG_SOURCE_DISPLAY_NAME,
     kinds: [{
         id: POSTHOG_ENTRY_KIND,

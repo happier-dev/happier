@@ -1,62 +1,22 @@
-export const AUGGIE_NEW_SESSION_OPTION_ALLOW_INDEXING = 'allowIndexing' as const;
-
-type AuggieAgentOptionState = Record<string, unknown> | null | undefined;
-type AuggieSessionConfigOptionOverrides = Readonly<{
-  v: 1;
-  updatedAt: number;
-  overrides: Readonly<Record<string, Readonly<{
-    updatedAt: number;
-    value: string | number | boolean | null;
-  }>>>;
-}>;
-
-function readAuggieAllowIndexingFromAgentOptionState(agentOptionState: AuggieAgentOptionState): boolean {
-  return agentOptionState?.[AUGGIE_NEW_SESSION_OPTION_ALLOW_INDEXING] === true;
-}
-
-export const AUGGIE_UI_BEHAVIOR_OVERRIDE = {
-  newSession: {
-    buildNewSessionOptions: ({ agentOptionState }: {
-      agentOptionState?: Record<string, unknown> | null;
-    }) => {
-      const allowIndexing = readAuggieAllowIndexingFromAgentOptionState(agentOptionState);
-      return { [AUGGIE_NEW_SESSION_OPTION_ALLOW_INDEXING]: allowIndexing };
-    },
-  },
-  payload: {
-    buildSpawnSessionExtras: ({
-      newSessionOptions,
-      sessionConfigOptionOverrides,
-      updatedAt,
-    }: {
-      newSessionOptions?: Record<string, unknown> | null;
-      sessionConfigOptionOverrides?: AuggieSessionConfigOptionOverrides | null;
-      updatedAt?: number;
-    }) => {
-      if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt)) {
-        return {};
-      }
-      if (!Object.prototype.hasOwnProperty.call(
-        newSessionOptions ?? {},
-        AUGGIE_NEW_SESSION_OPTION_ALLOW_INDEXING,
-      )) {
-        return {};
-      }
-      const allowIndexing = newSessionOptions?.[AUGGIE_NEW_SESSION_OPTION_ALLOW_INDEXING] === true;
-      return {
-        sessionConfigOptionOverrides: {
-          ...(sessionConfigOptionOverrides ?? {}),
-          v: 1 as const,
-          updatedAt,
-          overrides: {
-            ...(sessionConfigOptionOverrides?.overrides ?? {}),
-            [AUGGIE_NEW_SESSION_OPTION_ALLOW_INDEXING]: {
-              updatedAt,
-              value: allowIndexing,
-            },
-          },
-        },
-      };
-    },
-  },
-} as const;
+/**
+ * STAGED REMOVAL — this module has no behavior left.
+ *
+ * Auggie's indexing option moved onto the public declarative path
+ * (`behavior.newSession.agentOptions` plus the `booleanOption` chip slot in
+ * `./descriptor.ts`), which is the same seam an externally installed Agent
+ * reaches. The spawn envelope is now built by the host through the canonical
+ * `mergeSpawnConfigOptionAliases` owner instead of a plugin-local copy.
+ *
+ * The constant stays only because the checked-in bundled projection
+ * (`apps/ui/sources/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides.ts`)
+ * still imports it, and that file has a single producer: the bundled-plugin
+ * publisher. Its descriptor half is already current with `./descriptor.ts`, so
+ * emptying this override is behavior-preserving.
+ *
+ * Removal condition: delete this file and the `./ui/behavior` export from
+ * `package.json`, then run
+ * `node --experimental-strip-types scripts/migrations/extensions/generateBundledPluginEntries.ts --mode write`.
+ * The generator only emits the override import when `src/ui/uiBehavior.ts`
+ * exists, so that run drops the import.
+ */
+export const AUGGIE_UI_BEHAVIOR_OVERRIDE = {} as const;

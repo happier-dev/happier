@@ -33,7 +33,9 @@ function declaredMigrationIds(
 
 describe('Channels plugin daemon entry', () => {
   it('exposes the callable activation the host resolves from the declared entrypoint', () => {
-    expect(PLUGIN_MANIFEST.entrypoints?.daemon).toBe('./dist/index.js');
+    // The declared entrypoint string itself is owned by `manifest.test.ts`;
+    // this asserts the half that file cannot: the module the host loads from
+    // that entrypoint really exports a callable `activate`.
     expect(entry.activate).toBeTypeOf('function');
   });
 

@@ -50,6 +50,7 @@ export type ClaudeAgentSdkResumeIdentityOwner = Readonly<{
 
 export class ClaudeAgentSdkResumeIdentityMismatchError extends Error {
     readonly code = 'claude_agent_sdk_resume_identity_mismatch';
+    readonly happierNativeResumeIdentityMismatch = true;
 
     constructor(
         readonly requestedProviderSessionId: string,

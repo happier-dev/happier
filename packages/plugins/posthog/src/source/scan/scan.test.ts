@@ -34,7 +34,7 @@ function setup(respond: (call: number, body: unknown, url: string) => Response) 
     const client = createPosthogApiClient({
         origin: ORIGIN,
         now: () => Date.UTC(2026, 7, 14, 12, 0, 0),
-        materializeHeaders: async () => ({ authorization: 'Bearer test-personal-api-key' }),
+        materializeHeaders: async () => ({ ok: true, authorization: 'Bearer test-personal-api-key' }),
         transport: async (url: string, request: PosthogTransportRequest) => {
             const body = request.body === undefined ? undefined : JSON.parse(request.body);
             calls.push({ url, body });

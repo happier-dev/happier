@@ -25,6 +25,7 @@ import {
 } from './candidates.js';
 import { resolveOhMyPiSessionFile } from './files.js';
 import {
+  OhMyPiExternalSessionIncompleteBranchError,
   OhMyPiExternalSessionInvalidCursorError,
   OhMyPiExternalSessionSourceChangedError,
   OhMyPiExternalSessionSourceUnavailableError,
@@ -249,11 +250,18 @@ function serializedByteLength(value: unknown): number {
 }
 
 function transcriptFailure(error: unknown): AgentExternalSessionsResult<never> {
+  if (error instanceof OhMyPiExternalSessionSourceUnavailableError) {
+    return failed('source_unreachable', error.message, true);
+  }
   if (error instanceof OhMyPiExternalSessionSourceChangedError) {
     return failed('unavailable', error.message, true);
   }
   if (error instanceof OhMyPiExternalSessionInvalidCursorError) {
     return failed('invalid_request', error.message);
+  }
+  // Not retryable: the source is intact and its branch is genuinely rootless.
+  if (error instanceof OhMyPiExternalSessionIncompleteBranchError) {
+    return failed('agent_error', error.message, false);
   }
   return failed(
     'agent_unavailable',
@@ -493,7 +501,7 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
         });
         const after = invocationFailure(request);
         if (after) return after;
-        if (!resolved) {
+        if (!resolved.ok) {
           return failed('candidate_not_found', 'Oh My Pi external-session candidate was not found.');
         }
         return ok({
@@ -529,6 +537,9 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
       if (stopped) return stopped;
       if (!Number.isFinite(request.maxItems) || request.maxItems < 1) {
         return failed('invalid_request', 'Oh My Pi external-session transcript limit must be positive.');
+      }
+      if (request.direction !== 'older') {
+        return failed('unsupported', 'Oh My Pi transcript paging supports only older pages.');
       }
       const env = readEnv();
       const validation = validateSource({ source: request.source, env });

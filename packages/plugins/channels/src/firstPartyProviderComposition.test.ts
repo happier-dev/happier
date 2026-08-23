@@ -143,6 +143,10 @@ describe('Channels first-party provider composition', () => {
         overlapSafety: 'providerExclusive',
         replayContinuity: 'checkpointed',
         outboundTextLimit: { maximum: 4_096, unit: 'unicodeCodePoints' },
+        // This fixture's `getMe` reports group privacy enabled, so Telegram
+        // cannot deliver ordinary shared-conversation messages and preparation
+        // must carry that authenticated truth rather than drop it.
+        sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
         destinationLabel: 'Happier Bot',
       });
       expect(telegramAccounts.materialize).toHaveBeenCalledWith(

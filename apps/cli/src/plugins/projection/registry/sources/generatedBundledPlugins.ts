@@ -57,7 +57,6 @@ import { ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-ant
 import { AUGGIE_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-auggie/agent/contributions/runtime';
 import { CLAUDE_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-claude/agent/contributions/runtime';
 import { CODEX_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-codex/agent/contributions/runtime';
-import { COPILOT_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-copilot/agent/contributions/runtime';
 import { CURSOR_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-cursor/agent/contributions/runtime';
 import { GEMINI_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-gemini/agent/contributions/runtime';
 import { GROK_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-grok/agent/contributions/runtime';
@@ -1078,20 +1077,6 @@ export const BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS: readonly BundledFirstP
       packageName: '@happier-dev/plugins-codex',
       contribution: CODEX_AGENT_RUNTIME_CONTRIBUTION,
       systemTools: CODEX_PLUGIN_MANIFEST.contributes.systemTools,
-    }),
-  }),
-  Object.freeze({
-    identity: createPluginContributionIdentity({
-      pluginId: "happier.agent.copilot",
-      localId: "copilot",
-    }),
-    implementationOwnerId: "copilot",
-    registrationFamily: 'agents',
-    implementation: createAgentRuntimeCatalogEntryHooks({
-      agentId: 'copilot',
-      packageName: '@happier-dev/plugins-copilot',
-      contribution: COPILOT_AGENT_RUNTIME_CONTRIBUTION,
-      systemTools: COPILOT_PLUGIN_MANIFEST.contributes.systemTools,
     }),
   }),
   Object.freeze({

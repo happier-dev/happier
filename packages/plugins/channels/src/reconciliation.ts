@@ -14,6 +14,7 @@ import type {
   ConversationTransportKindV1,
 } from '@happier-dev/channels-protocol/v1';
 import {
+  isConversationBindingInputModeDeliverableV1,
   MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
   MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
 } from '@happier-dev/channels-protocol/v1';
@@ -29,7 +30,11 @@ import {
   MAX_CHANNEL_ACCOUNT_COLLECTION_QUERY_PAGE_SIZE,
   requireChannelsAccountStorage,
 } from './requiredAccountStorage.js';
-import { hasUnsettledDestructiveOldTransportStop } from './connectionLifecycle.js';
+import {
+  areConversationMaterializationRefsEqual,
+  hasUnsettledDestructiveOldTransportStop,
+  isSelfStampedPluginCaller,
+} from './connectionLifecycle.js';
 
 /*
  * Keep the two Account-backed projections on one observed Account revision.
@@ -106,25 +111,6 @@ export type ConversationReconciliationBindingPolicyStateV1 = Readonly<{
   inputMode: ConversationBindingInputModeV1;
 }>;
 
-function hasExactMaterialization(
-  left: PluginCaller['materialization'],
-  right: PluginCaller['materialization'],
-): boolean {
-  return left.machineId === right.machineId
-    && left.materializationId === right.materializationId
-    && left.pluginId === right.pluginId;
-}
-
-function stampedCallerMaterialization(
-  caller: PluginInvocationCaller | undefined,
-): PluginCaller['materialization'] | undefined {
-  if (caller?.kind !== 'plugin') return undefined;
-  const materialization: unknown = caller.materialization;
-  if (materialization === null || typeof materialization !== 'object') return undefined;
-  const stamped = materialization as PluginCaller['materialization'];
-  return stamped.pluginId === caller.pluginId ? stamped : undefined;
-}
-
 /**
  * The one caller-proven materialization predicate shared by reconciliation
  * projections and provider transport facts. It deliberately checks only the
@@ -136,11 +122,77 @@ export function hasCurrentConversationTransportCaller(input: Readonly<{
   providerPluginId: string;
   transportOrigin: ConversationReconciliationConnectionStateV1['transportOrigin'];
 }>): boolean {
-  const materialization = stampedCallerMaterialization(input.caller);
-  return input.caller?.kind === 'plugin'
+  return isSelfStampedPluginCaller(input.caller)
     && input.caller.pluginId === input.providerPluginId
-    && materialization !== undefined
-    && hasExactMaterialization(materialization, input.transportOrigin.materializationRef);
+    && areConversationMaterializationRefsEqual(
+      input.caller.materialization,
+      input.transportOrigin.materializationRef,
+    );
+}
+
+/**
+ * The input modes an enabled binding of this connection still promises that the
+ * provider's CURRENT authenticated capability can no longer deliver.
+ *
+ * One core-owned answer for every caller that must decide whether a saved
+ * policy is still honourable: the retest that re-observes an existing
+ * connection and the transfer that replaces its credential. Deliverability
+ * itself stays at the single protocol owner the binding writer and the surface
+ * already share, so a person can never be told three different things about the
+ * same promise. An empty result means every enabled binding is still
+ * satisfiable.
+ */
+function bindingInputModesNoLongerDeliverable(input: Readonly<{
+  connectionId: string;
+  bindingPolicies: readonly ConversationReconciliationBindingPolicyStateV1[];
+  sharedEndpointInputModes: readonly ConversationBindingInputModeV1[];
+}>): readonly ConversationBindingInputModeV1[] {
+  const unsatisfiable: ConversationBindingInputModeV1[] = [];
+  for (const binding of input.bindingPolicies) {
+    if (binding.connectionId !== input.connectionId || !binding.enabled) continue;
+    if (isConversationBindingInputModeDeliverableV1({
+      audience: binding.endpointAudience,
+      inputMode: binding.inputMode,
+      sharedEndpointInputModes: input.sharedEndpointInputModes,
+    })) continue;
+    if (!unsatisfiable.includes(binding.inputMode)) unsatisfiable.push(binding.inputMode);
+  }
+  return unsatisfiable;
+}
+
+/**
+ * The one core-owned answer to "can this connection's saved bindings still be
+ * delivered by the capability the provider proves right now?", for the two
+ * callers that re-observe an existing connection: the present-user retest and
+ * the credential transfer.
+ *
+ * Bindings are read through the same bounded Account index and the same row
+ * projection the reconciliation snapshot already uses, so this adds no second
+ * binding reader or index.
+ */
+export async function readConversationBindingInputModesNoLongerDeliverable(input: Readonly<{
+  context: PluginInvocationContext;
+  connectionId: string;
+  sharedEndpointInputModes: readonly ConversationBindingInputModeV1[] | undefined;
+}>): Promise<readonly ConversationBindingInputModeV1[]> {
+  // A provider that declares no shared-endpoint restriction can deliver every
+  // mode by definition, so there is nothing to compare and no binding read to
+  // pay for. This is the same rule the protocol deliverability owner applies;
+  // stating it here keeps the read off the common path without a second answer.
+  if (input.sharedEndpointInputModes === undefined) return [];
+  const read = await readCollectionValuesByKind({
+    context: input.context,
+    kind: CHANNEL_STATE_RECORD_KIND.binding,
+    limit: MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
+  });
+  return bindingInputModesNoLongerDeliverable({
+    connectionId: input.connectionId,
+    bindingPolicies: read.values.flatMap((value) => {
+      const binding = bindingPolicyFromCollectionValue(value);
+      return binding === undefined ? [] : [binding];
+    }),
+    sharedEndpointInputModes: input.sharedEndpointInputModes,
+  });
 }
 
 function requiresFullSharedMessageContent(

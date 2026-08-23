@@ -565,17 +565,29 @@ describe('OpenCode public External Sessions contribution', () => {
     expect(requested.some((url) => url.includes('limit=3'))).toBe(true);
   });
 
-  it('round-trips the canonical OpenCode runtime identity through public linkData', async () => {
+  // The admitted External Sessions source is the identity the host persisted and
+  // re-presents; the runtime descriptor is derived data. If reconstruction hands
+  // back a different address the host refuses the link as `source_invalid`, so a
+  // reverse-proxied OpenCode simply stops working after persistence.
+  it.each([
+    ['a bare origin', 'https://opencode.example.test'],
+    ['a reverse-proxy path', 'https://opencode.example.test/proxy/opencode'],
+  ])('preserves %s admitted OpenCode source byte-for-byte across link persistence', async (_label, admittedBaseUrl) => {
     const contribution = createOpenCodeExternalSessionsContribution({ env: {} });
+    const admittedSource = {
+      kind: 'opencodeServer' as const,
+      baseUrl: admittedBaseUrl,
+      directory: '/tmp/project',
+    };
     const runtimeDescriptorV1 = buildOpenCodeAgentRuntimeDescriptorV1({
       backendMode: 'server',
       providerSessionId: 'session-canonical',
-      serverBaseUrl: baseUrl,
+      serverBaseUrl: admittedBaseUrl,
       serverBaseUrlExplicit: true,
     });
 
     const linked = await contribution.resolveLinkIdentity({
-      source,
+      source: admittedSource,
       remoteSessionId: 'session-candidate',
       linkData: { runtimeDescriptorV1 },
       ...invocation(),
@@ -583,44 +595,73 @@ describe('OpenCode public External Sessions contribution', () => {
     expect(linked).toMatchObject({
       ok: true,
       value: {
-        source: {
-          ...source,
-          baseUrl: `${baseUrl}/`,
-        },
+        source: admittedSource,
         remoteSessionId: 'session-canonical',
         linkData: {
-          runtimeDescriptorV1,
           opencodeSessionId: 'session-canonical',
           opencodeBackendMode: 'server',
-          opencodeServerBaseUrl: `${baseUrl}/`,
+          opencodeServerBaseUrl: admittedBaseUrl,
           opencodeServerBaseUrlExplicit: true,
         },
       },
     });
     if (!linked.ok) throw new Error('Expected a linked identity');
+    expect(linked.value.source).toEqual(admittedSource);
 
-    expect(await contribution.resolveLinkedIdentity({
+    const reconstructed = await contribution.resolveLinkedIdentity({
       source: linked.value.source,
       remoteSessionId: linked.value.remoteSessionId,
       linkData: linked.value.linkData,
       ...invocation(),
-    })).toMatchObject({
+    });
+    expect(reconstructed).toMatchObject({
       ok: true,
       value: {
-        source: {
-          ...source,
-          baseUrl: `${baseUrl}/`,
-        },
+        source: admittedSource,
         remoteSessionId: 'session-canonical',
         linkData: {
-          runtimeDescriptorV1,
           opencodeSessionId: 'session-canonical',
           opencodeBackendMode: 'server',
-          opencodeServerBaseUrl: `${baseUrl}/`,
+          opencodeServerBaseUrl: admittedBaseUrl,
           opencodeServerBaseUrlExplicit: true,
         },
       },
     });
+    if (!reconstructed.ok) throw new Error('Expected a reconstructed identity');
+    expect(reconstructed.value.source).toEqual(admittedSource);
+  });
+
+  // Re-pointing the configured server is an ordinary edit. The persisted
+  // descriptor records where the session used to be reached; it is not the
+  // authority for which server the user just admitted.
+  it('never lets a persisted runtime descriptor rewrite a re-pointed admitted source', async () => {
+    const contribution = createOpenCodeExternalSessionsContribution({ env: {} });
+    const admittedSource = {
+      kind: 'opencodeServer' as const,
+      baseUrl: 'https://opencode.example.test/proxy/new',
+      directory: '/tmp/project',
+    };
+    const stalePersistedDescriptor = buildOpenCodeAgentRuntimeDescriptorV1({
+      backendMode: 'server',
+      providerSessionId: 'session-canonical',
+      serverBaseUrl: 'https://opencode.example.test/proxy/old',
+      serverBaseUrlExplicit: true,
+    });
+
+    const reconstructed = await contribution.resolveLinkedIdentity({
+      source: admittedSource,
+      remoteSessionId: 'session-canonical',
+      linkData: {
+        runtimeDescriptorV1: stalePersistedDescriptor,
+        opencodeSessionId: 'session-canonical',
+        opencodeBackendMode: 'server',
+        opencodeServerBaseUrl: 'https://opencode.example.test/proxy/old',
+        opencodeServerBaseUrlExplicit: true,
+      },
+      ...invocation(),
+    });
+    if (!reconstructed.ok) throw new Error('Expected a reconstructed identity');
+    expect(reconstructed.value.source).toEqual(admittedSource);
   });
 
   it('keeps a managed source authoritative over a URL-bearing canonical runtime descriptor', async () => {
@@ -804,14 +845,11 @@ describe('OpenCode public External Sessions contribution', () => {
       ok: true,
       value: {
         remoteSessionId: 'session-canonical',
-        source: {
-          ...source,
-          baseUrl: `${baseUrl}/`,
-        },
+        source,
         linkData: {
           opencodeSessionId: 'session-canonical',
           opencodeBackendMode: 'server',
-          opencodeServerBaseUrl: `${baseUrl}/`,
+          opencodeServerBaseUrl: baseUrl,
           opencodeServerBaseUrlExplicit: true,
           runtimeDescriptorV1: {
             agent: {

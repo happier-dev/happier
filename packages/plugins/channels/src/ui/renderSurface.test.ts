@@ -41,6 +41,7 @@ import {
 } from '../testkit/currentConnectionFixture.js';
 import { renderSurface } from './renderSurface.js';
 
+import { assertChannelsTestCollectionQueryLimit } from '../testkit/collectionQueryBound.js';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const CONNECTIONS_RESOURCE = {
@@ -176,6 +177,40 @@ function connectionsResourceForTransport(selectedTransport: 'checkpointedPull' |
 }
 
 const connectionsResource = connectionsResourceForTransport('checkpointedPull');
+
+/**
+ * A connection whose provider authenticated, during setup, that its platform
+ * withholds ordinary shared-conversation messages — a Telegram bot with group
+ * privacy enabled is the real case.
+ */
+const connectionsResourceWithoutSharedAllMessages: ResourceContent = jsonResource({
+  connections: [{
+    connectionId: 'connection-1',
+    revision: 1,
+    authorityEpoch: 1,
+    providerPluginId: providerSetupOperation.contributor.pluginId,
+    selectedMachineId: 'machine-1',
+    selectedTransport: 'checkpointedPull',
+    integrationPrincipalLabel: 'Example conversation',
+    sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
+    enabled: true,
+    deletionState: 'none',
+    maximumObservationAgeMs: 60_000,
+    attention: {
+      historyGap: null,
+      pollFailure: null,
+      bestEffortBeforeDurableAdmission: false,
+      oldTransportStopUnconfirmed: false,
+      acceptedPossibleLoss: false,
+      outwardDelivery: {
+        retryDue: false,
+        notDelivered: false,
+        partial: false,
+        outcomeUnknown: false,
+      },
+    },
+  }],
+}, '3');
 
 function connectionsResourceWithProviderReadiness(input: Readonly<{
   code: 'providerPermissionMissing' | 'providerConfigurationInvalid';
@@ -378,6 +413,27 @@ function createChannelsSurfaceContext(
       }],
     },
     ...(accountEncryptionMode === undefined ? {} : { accountEncryptionMode }),
+  });
+}
+
+/** A reachable Account state: nothing on this machine contributes a provider. */
+function createChannelsSurfaceContextWithoutProviders() {
+  return createSurfaceContextFixture({
+    mount: {
+      kind: 'destination',
+      destination: { pluginId: 'happier.channels', localId: 'channels-account' },
+      container: 'rightSidebarTab',
+    },
+    targetedContributions: {
+      target: {
+        pluginId: 'happier.channels',
+        immutableGenerationId: 'channels-target-generation-a',
+      },
+      points: [{
+        pointId: CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1,
+        protocols: [{ protocol: providerProtocol(), contributions: [] }],
+      }],
+    },
   });
 }
 
@@ -775,7 +831,8 @@ function createOfflineChannelStateFixture() {
     async get(rowId: string) {
       return rows.get(rowId) ?? null;
     },
-    async query(request: Readonly<{ index: string; prefix?: readonly string[] }>) {
+    async query(request: Readonly<{ index: string; prefix?: readonly string[]; limit?: number }>) {
+      assertChannelsTestCollectionQueryLimit(request.limit);
       if (request.index !== 'by-kind') return { rows: [], changeCursor: 1 };
       const matching = [...rows.values()]
         .filter((row) => row.value['record-kind'] === request.prefix?.[0])
@@ -816,7 +873,8 @@ function createOfflineChannelStateFixture() {
     async get(rowId: string) {
       return deliveryRows.get(rowId) ?? null;
     },
-    async query(request: Readonly<{ index: string; prefix?: readonly string[] }>) {
+    async query(request: Readonly<{ index: string; prefix?: readonly string[]; limit?: number }>) {
+      assertChannelsTestCollectionQueryLimit(request.limit);
       if (request.index !== 'by-owner-attention') return { rows: [], changeCursor: 1 };
       const matching = [...deliveryRows.values()]
         .filter((row) => row.value['connection-id'] === request.prefix?.[0])
@@ -852,6 +910,44 @@ function createOfflineChannelStateFixture() {
 }
 
 describe('Channels mounted provider setup recovery', () => {
+  it('offers a next step instead of an empty surface when no provider is admitted', async () => {
+    // A fresh Account, or a machine with no conversation integration enabled,
+    // reaches this state. Rendering nothing left the person with no way to
+    // learn why the page is empty or what to do about it.
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-provider-setup-none',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContextWithoutProviders(),
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction: async () => { throw new Error('No provider is admitted, so nothing may be executed.'); },
+        readResource: bindingResourceReader(),
+      },
+    });
+
+    try {
+      const remediation = document.querySelector<HTMLElement>(
+        '[data-testid="channels-provider-setup-none-available"]',
+      );
+      expect(remediation, 'Expected provider discovery guidance when nothing contributes a provider.')
+        .not.toBeNull();
+      expect(remediation?.textContent).toContain('No conversation providers are available');
+      expect(remediation?.textContent).toContain('Install and enable a conversation integration plugin');
+      // The next step is actionable, not just words.
+      expect(document.querySelector('[data-testid="channels-provider-setup-none-refresh"]')).not.toBeNull();
+      expect(document.querySelector('[data-testid="channels-provider-setup-picker"]')).toBeNull();
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it('runs an arbitrary provider remediation through its exact current role, then re-runs canonical prepare', async () => {
     const submittedProviderSetup = {
       kind: 'submitted' as const,
@@ -1832,6 +1928,68 @@ describe('Channels mounted binding creation', () => {
     }
   });
 
+  it('offers only the incoming message policies the integration can deliver in a shared conversation', async () => {
+    // The create writer rejects a policy the platform will not honour, so the
+    // policies step must not offer one either.
+    const executeAction = vi.fn(async ({ action, input }: Readonly<{
+      action: unknown;
+      input: unknown;
+    }>): Promise<JsonValue> => {
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
+        return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
+          ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
+          : { kind: 'principalCandidates', candidates: [bindingPrincipalCandidate] };
+      }
+      if (action === 'session.list') {
+        return { sessions: [{ id: 'session-1', title: 'Project review' }], nextCursor: null };
+      }
+      throw new Error(`Unexpected mounted Action: ${String(action)}`);
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-binding-create-input-mode-capability',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction,
+        readResource: async ({ resource }) => {
+          const localId = typeof resource === 'string' ? resource : resource.localId;
+          if (localId === BINDINGS_RESOURCE.localId) return bindingsResource;
+          if (localId === CONNECTIONS_RESOURCE.localId) return connectionsResourceWithoutSharedAllMessages;
+          throw new Error(`Unexpected Resource: ${localId}`);
+        },
+      },
+    });
+
+    try {
+      // `bindingEndpointCandidate` is a shared conversation.
+      await openBindingEndpointSelection(fixture);
+      await selectPrincipalAndOpenTarget(fixture);
+      await fixture.press(await fixture.getByRole('button', { name: 'Project review' }));
+
+      const select = document.querySelector<HTMLElement>('[data-testid="channels-binding-create-input-mode"]');
+      expect(select, 'Expected the policies step to offer an incoming message policy.').not.toBeNull();
+      // The retained binding in this fixture is `directMentionsOnly`, so the
+      // only place "All allowed messages" could appear is this chooser.
+      expect(document.body.textContent).toContain('Direct mentions only');
+      expect(document.body.textContent).toContain('Addressed messages');
+      expect(document.body.textContent).not.toContain('All allowed messages');
+      const capability = document.querySelector<HTMLElement>(
+        '[data-testid="channels-binding-create-input-mode-capability"]',
+      );
+      expect(capability?.textContent).toContain('only delivers messages that address it');
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it('keeps the binding draft on Back, announces each step, and discards it only on Cancel', async () => {
     const executeAction = vi.fn(async ({ action, input }: Readonly<{
       action: unknown;
@@ -2238,6 +2396,113 @@ describe('Channels mounted binding creation', () => {
       ))).toHaveLength(1);
       await fixture.press(await fixture.getByRole('button', { name: 'Cancel' }));
       await expect(fixture.getByRole('button', { name: 'Add binding' })).resolves.toBeDefined();
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it('expires a pairing challenge locally and announces the transition exactly once', async () => {
+    // The daemon owns real expiry, but nothing rereads the pairing Resource on
+    // its own. Without a local transition the token, link, and deep link stay
+    // on screen forever behind a countdown frozen at 0m 00s.
+    const expiringPairingResource = jsonResource({
+      generationId: 'pairing-generation',
+      observedAt: 1_040,
+      challenges: [{
+        challengeId: 'pairing-challenge',
+        connectionId: 'connection-1',
+        expectedConnectionRevision: 1,
+        expiresAt: 1_040,
+        attemptsRemaining: 5,
+        destinationLabel: 'Project room',
+        manualToken: 'ABCDEFGH',
+        deepLinkUrl: 'https://example.test/pair?token=ABCDEFGH',
+      }],
+      proposals: [],
+    }, 'e');
+    const executeAction = vi.fn(async ({ action, input }: Readonly<{
+      action: unknown;
+      input: unknown;
+    }>): Promise<JsonValue> => {
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
+        return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
+          ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
+          : { kind: 'unavailable', reason: 'principalResolveUnsupported' };
+      }
+      if (action === 'session.list') {
+        return { sessions: [{ id: 'session-pairing', title: 'Pairing Session' }], nextCursor: null };
+      }
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCreate) {
+        return {
+          kind: 'created',
+          generationId: 'pairing-generation',
+          challengeId: 'pairing-challenge',
+          expiresAt: 1_040,
+          attemptsRemaining: 5,
+          destinationLabel: 'Project room',
+          manualToken: 'ABCDEFGH',
+          deepLinkUrl: 'https://example.test/pair?token=ABCDEFGH',
+        };
+      }
+      throw new Error(`Unexpected mounted Action: ${String(action)}`);
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-binding-pairing-expiry',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction,
+        readResource: async ({ resource }) => {
+          const localId = typeof resource === 'string' ? resource : resource.localId;
+          if (localId === PAIRING_RESOURCE.localId) return expiringPairingResource;
+          if (localId === BINDINGS_RESOURCE.localId) return bindingsResource;
+          if (localId === CONNECTIONS_RESOURCE.localId) return connectionsResource;
+          throw new Error(`Unexpected Resource: ${localId}`);
+        },
+      },
+    });
+
+    try {
+      await openBindingEndpointSelection(fixture);
+      await searchBindingPrincipal(fixture);
+      await expect(fixture.getByText('Pairing is required')).resolves.toBeDefined();
+      await vi.waitFor(() => {
+        expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({ action: 'session.list' }));
+      });
+      await fixture.press(await fixture.getByRole('button', { name: 'Pairing Session' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Review binding' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Create pairing challenge' }));
+      await vi.waitFor(() => {
+        expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
+          action: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCreate,
+        }));
+      });
+
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain('Pairing expired');
+      }, { timeout: 3_000, interval: 25 });
+      // The challenge presentation is gone: no token, no link, no countdown.
+      expect(document.body.textContent).not.toContain('ABCDEFGH');
+      expect(document.body.textContent).not.toContain('Expires in');
+      expect(document.querySelector('[data-testid="channels-binding-create-pairing-countdown"]')).toBeNull();
+
+      // Exactly one live region carries the transition, so it announces once
+      // rather than once per countdown tick.
+      const announcements = document.querySelectorAll<HTMLElement>(
+        '[data-testid="channels-binding-create-pairing-expired"]',
+      );
+      expect(announcements).toHaveLength(1);
+      const announcement = announcements[0]!;
+      expect(announcement.getAttribute('aria-live')).not.toBeNull();
+      expect(announcement.textContent).toContain('Pairing expired');
     } finally {
       await fixture.dispose();
     }
@@ -3458,6 +3723,107 @@ describe('Channels mounted binding editor', () => {
     }
   });
 
+  it('persists an owner-enabled chat-approval policy from the binding editor', async () => {
+    const approvalOffBinding = {
+      v: 1,
+      id: 'binding-1',
+      connectionId: 'connection-1',
+      endpoint: {
+        kind: 'direct' as const,
+        audience: 'direct' as const,
+        id: 'private-direct-9',
+        label: 'Private direct conversation',
+      },
+      target: {
+        kind: 'session' as const,
+        sessionId: 'session-private-7',
+        policy: {
+          deliveryMode: 'repliesOnly' as const,
+          permissionCeiling: 'read-only',
+          approvals: { kind: 'off' as const },
+          newSession: { kind: 'off' as const },
+        },
+      },
+      allowedPrincipalIds: ['provider-principal-private-4'],
+      allowBotSenders: false,
+      inputMode: 'directMentionsOnly' as const,
+      inboundDebounceMs: 0,
+      linkPreviewPolicy: 'suppress' as const,
+      senderFeedback: 'off' as const,
+      authorityEpoch: 4,
+      enabled: true,
+      deletionState: 'none' as const,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const updateInputs: unknown[] = [];
+    const executeAction = vi.fn(async ({ action, input }: Readonly<{
+      action: unknown;
+      input: unknown;
+    }>): Promise<JsonValue> => {
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
+        return { kind: 'ready', revision: 1, binding: approvalOffBinding };
+      }
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate) {
+        updateInputs.push(input);
+        return { kind: 'updated', bindingId: 'binding-1', revision: 2, authorityEpoch: 5 };
+      }
+      throw new Error(`Unexpected mounted Action: ${String(action)}`);
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-binding-editor-approvals',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction,
+        readResource: bindingResourceReader(),
+      },
+    });
+
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Edit binding' }));
+      await expect(fixture.getByRole('heading', { name: 'Edit binding' })).resolves.toBeDefined();
+
+      // The scope selector only exists once the owner turns approvals on, so
+      // its absence here proves the toggle is the control, not decoration.
+      expect(await fixture.queryByRole('radio', { name: 'This Session' })).toBeUndefined();
+      await fixture.press(await fixture.getByRole('switch', {
+        name: 'Approvals',
+        state: { checked: false },
+      }));
+      await fixture.press(await fixture.getByRole('radio', { name: 'This Session' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Review changes' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Save binding' }));
+
+      await vi.waitFor(() => {
+        expect(updateInputs).toEqual([expect.objectContaining({
+          bindingId: 'binding-1',
+          expectedRevision: 1,
+          target: {
+            kind: 'session',
+            sessionId: 'session-private-7',
+            policy: {
+              deliveryMode: 'repliesOnly',
+              permissionCeiling: 'read-only',
+              approvals: { kind: 'enabled', maximumScope: 'session' },
+              newSession: { kind: 'off' },
+            },
+          },
+        })]);
+      });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it('reports a Session policy clamp only from the authoritative post-update detail reread', async () => {
     const initialBinding = {
       v: 1,
@@ -4265,6 +4631,66 @@ describe('Channels connection lifecycle actions', () => {
       expect(disclosure).not.toBeNull();
       expect(disclosure?.textContent).toContain('Provider permission needs attention');
       expect(disclosure?.textContent).toContain('Enable the required permission in the provider configuration.');
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it('re-probes a failed connection through the canonical retest Action and reports the provider verdict', async () => {
+    const providerReadiness = connectionsResourceWithProviderReadiness({
+      code: 'providerPermissionMissing',
+      diagnostic: 'Enable the required permission in the provider configuration.',
+    });
+    const executeAction = vi.fn(async () => ({
+      kind: 'ready' as const,
+      connectionId: 'connection-1',
+      revision: 2,
+      authorityEpoch: 1,
+    }));
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-connection-retest',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction,
+        readResource: async ({ resource }) => {
+          const localId = typeof resource === 'string' ? resource : resource.localId;
+          if (localId === BINDINGS_RESOURCE.localId) return bindingsResource;
+          if (localId === CONNECTIONS_RESOURCE.localId) return providerReadiness;
+          throw new Error(`Unexpected Resource: ${localId}`);
+        },
+      },
+    });
+
+    try {
+      await pressByTestId('channels-connection-connection-1');
+      // Before this existed the only exit from a failed connection was
+      // deleting it, so its presence next to the readiness banner is the
+      // contract, not decoration.
+      await fixture.press(await fixture.getByRole('button', { name: 'Test connection' }));
+
+      await vi.waitFor(() => {
+        expect(executeAction).toHaveBeenCalledTimes(1);
+      });
+      expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
+        action: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionRetest,
+        input: {
+          connectionId: 'connection-1',
+          expectedRevision: 1,
+          authorityEpoch: 1,
+        },
+      }));
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-testid="channels-connection-retest-ready"]')).not.toBeNull();
+      });
     } finally {
       await fixture.dispose();
     }
@@ -5092,6 +5518,56 @@ describe('Channels offline Account-local binding policy', () => {
     }
   });
 
+  it('offers and saves the Account-decidable Session target policy from the offline binding editor', async () => {
+    const account = createOfflineChannelStateFixture();
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-offline-binding-target-policy',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(account.dataClient),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+      },
+    });
+
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Edit binding' }));
+      // Rotating to a DIFFERENT target still needs the machine's Session and
+      // Automation catalogs, so the identity chooser stays absent.
+      await expect(fixture.queryByRole('button', { name: 'Change target' })).resolves.toBeUndefined();
+
+      // The Session target POLICY is decided entirely from the Account, so it
+      // is offered here exactly as the daemon-backed editor offers it.
+      await fixture.press(await fixture.getByRole('radio', {
+        name: 'Mirror Session',
+        state: { checked: false },
+      }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Save binding' }));
+
+      await vi.waitFor(() => {
+        expect(account.collection.batches).toHaveLength(1);
+      });
+      expect(account.collection.rows.get('binding-1')?.value.payload).toMatchObject({
+        target: {
+          kind: 'session',
+          sessionId: 'session-1',
+          policy: { deliveryMode: 'mirrorSession', permissionCeiling: 'read-only' },
+        },
+        // A target-only edit carries the rest of the retained policy forward.
+        inputMode: 'allAllowedMessages',
+        inboundDebounceMs: 750,
+      });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it('keeps an ambiguous offline binding write locked until an explicit reread reconciles it', async () => {
     const account = createOfflineChannelStateFixture();
     const fixture = await createPluginUiTestkit({
@@ -5148,6 +5624,93 @@ describe('Channels offline Account-local binding policy', () => {
       });
       expect(account.collection.rows.get('binding-1')?.value.payload).toMatchObject({
         inputMode: 'directMentionsOnly',
+        authorityEpoch: 2,
+      });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+});
+
+describe('Channels offline Account-local sender revocation', () => {
+  /** The retained binding, with a second sender that also holds `/new` authority. */
+  function offlineSharedBindingRowWithTwoSenders(): OfflineChannelStateRow {
+    const retained = offlineBindingRow();
+    return {
+      ...retained,
+      value: {
+        ...retained.value,
+        payload: {
+          endpoint: { kind: 'shared', audience: 'shared', id: 'chat-1', label: 'Example conversation' },
+          target: {
+            kind: 'session',
+            sessionId: 'session-1',
+            policy: {
+              deliveryMode: 'repliesOnly',
+              permissionCeiling: 'read-only',
+              approvals: { kind: 'off' },
+              newSession: { kind: 'enabled', principalIds: ['person-2'], recipe: {} },
+            },
+          },
+          allowedPrincipalIds: ['person-1', 'person-2'],
+          allowBotSenders: false,
+          inputMode: 'directMentionsOnly',
+          inboundDebounceMs: 750,
+          linkPreviewPolicy: 'suppress',
+          senderFeedback: 'off',
+          authorityEpoch: 1,
+          enabled: true,
+          deletionState: 'none',
+        },
+      },
+    };
+  }
+
+  it('revokes a retained sender offline and withdraws the authority that named them', async () => {
+    const account = createOfflineChannelStateFixture();
+    account.collection.rows.set('binding-1', offlineSharedBindingRowWithTwoSenders());
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-offline-binding-revocation',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(account.dataClient),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+      },
+    });
+
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Edit binding' }));
+      // Admitting a sender needs the provider resolver, so only the withdrawal
+      // half of the audience is offered here.
+      await expect(fixture.queryByRole('button', {
+        name: 'Re-resolve conversation and allowed senders',
+      })).resolves.toBeUndefined();
+
+      await fixture.press(await fixture.getByRole('button', { name: 'Revoke person-2' }));
+      // A binding with no audience cannot persist, so the last remaining sender
+      // is not revocable from here at all.
+      await expect(fixture.getByRole('button', {
+        name: 'Revoke person-1',
+        state: { disabled: true },
+      })).resolves.toBeDefined();
+      await fixture.press(await fixture.getByRole('button', { name: 'Save binding' }));
+
+      await vi.waitFor(() => {
+        expect(account.collection.batches).toHaveLength(1);
+      });
+      expect(account.collection.rows.get('binding-1')?.value.payload).toMatchObject({
+        allowedPrincipalIds: ['person-1'],
+        // Leaving `/new` naming a revoked sender would both keep their
+        // authority and make the shared transition owner refuse the write.
+        target: { policy: { newSession: { kind: 'off' } } },
+        // Audience membership changed, so in-flight authority is superseded.
         authorityEpoch: 2,
       });
     } finally {

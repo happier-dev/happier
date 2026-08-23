@@ -92,7 +92,7 @@ describe('classifySentryFailure', () => {
     })).toEqual({ class: 'unknown', code: 'sentry-not-found-unverified' });
   });
 
-  it('classifies 5xx, transport failure and cancellation as transient with distinct codes', () => {
+  it('classifies 5xx, transport, cancellation and a deadline as transient with distinct codes', () => {
     expect(classifySentryFailure({
       kind: 'status',
       operation: 'issuesList',
@@ -105,6 +105,12 @@ describe('classifySentryFailure', () => {
 
     expect(classifySentryFailure({ kind: 'cancelled', operation: 'issuesList' }))
       .toEqual({ class: 'transient', code: 'sentry-cancelled' });
+
+    // A deployment that never answered inside this source's own bound is
+    // transient like an outage, but it is NOT a cancellation: a reader told
+    // "cancelled" has no reason to try again, and a stalled Sentry stays hidden.
+    expect(classifySentryFailure({ kind: 'deadline', operation: 'issuesList' }))
+      .toEqual({ class: 'transient', code: 'sentry-deadline-elapsed' });
   });
 
   it('reports an unparseable body as unsupportedContract', () => {

@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SENTRY_CLOUD_REGION_ORIGINS, SENTRY_FAILURE_CODES } from '../sentryContracts.js';
 
 import {
+  SENTRY_ACCOUNT_CONFIRMATION_DEADLINE_MS,
   SENTRY_CLOUD_MODE_ID,
   SENTRY_CONFIRMED_ORIGIN_CREDENTIAL_KEY,
   SENTRY_SELF_HOSTED_MODE_ID,
@@ -99,6 +100,85 @@ function completeConnection(
     harness.authenticationContext as never,
   );
 }
+
+/**
+ * A deployment that accepts the connection and then never answers.
+ *
+ * This is the case the confirmation bound exists for. The host's signal is a
+ * cancellation signal, not a deadline: it ends this work when the person walks
+ * away and never because Sentry went quiet, so without a bound of its own the
+ * connect dialog spins with nothing to act on.
+ */
+function createSilentHarness(input: Readonly<{
+  modeId: string;
+  values: Readonly<Record<string, unknown>>;
+  credentials?: Readonly<Record<string, string>>;
+}>) {
+  const harness = createHarness(input);
+  harness.request.mockImplementation(
+    async (_request: unknown, options?: Readonly<{ signal?: AbortSignal }>) =>
+      await new Promise<never>((_resolve, reject) => {
+        const signal = options?.signal;
+        if (signal === undefined) return;
+        const fail = (): void => { reject(signal.reason as Error); };
+        if (signal.aborted) {
+          fail();
+          return;
+        }
+        signal.addEventListener('abort', fail, { once: true });
+      }),
+  );
+  return harness;
+}
+
+describe('Sentry connected-account confirmation deadline', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('answers a silent deployment instead of waiting on it forever', async () => {
+    vi.useFakeTimers();
+    const harness = createSilentHarness({
+      modeId: SENTRY_SELF_HOSTED_MODE_ID,
+      values: { origin: 'https://sentry.example.com' },
+    });
+    const pending = completeConnection(harness);
+
+    await vi.advanceTimersByTimeAsync(SENTRY_ACCOUNT_CONFIRMATION_DEADLINE_MS - 1);
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(2);
+    expect(await pending).toMatchObject({
+      status: 'unavailable',
+      diagnostic: { code: SENTRY_FAILURE_CODES.verificationUnavailable },
+    });
+    // Nothing was staged: a connection that was never confirmed must not leave
+    // a credential or a confirmed origin behind.
+    expect(harness.stored.size).toBe(0);
+  });
+
+  it('reports the same silence on a health read rather than hanging the account', async () => {
+    vi.useFakeTimers();
+    const harness = createSilentHarness({
+      modeId: SENTRY_SELF_HOSTED_MODE_ID,
+      values: { origin: 'https://sentry.example.com' },
+      credentials: {
+        [SENTRY_TOKEN_CREDENTIAL_KEY]: 'sentry-test-token',
+        [SENTRY_CONFIRMED_ORIGIN_CREDENTIAL_KEY]: 'https://sentry.example.com',
+      },
+    });
+    const pending = sentryConnectedAccountRuntime.status(harness.readContext as never);
+
+    await vi.advanceTimersByTimeAsync(SENTRY_ACCOUNT_CONFIRMATION_DEADLINE_MS + 1);
+    expect(await pending).toMatchObject({
+      status: 'unavailable',
+      diagnostic: { code: SENTRY_FAILURE_CODES.verificationUnavailable },
+    });
+  });
+});
 
 describe('Sentry connected-account runtime — Cloud region choice', () => {
   it('confirms a Cloud connection on the origin its closed region choice declares', async () => {

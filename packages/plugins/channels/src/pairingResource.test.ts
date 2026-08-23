@@ -12,6 +12,7 @@ import {
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 const materialization = {
   pluginId: 'example.channels.provider',
   machineId: 'machine-1',
@@ -60,6 +61,7 @@ class MemoryAccountCollection {
     cursor?: string;
     limit?: number;
   }>) {
+    assertChannelsTestCollectionQueryLimit(request.limit);
     const recordKind = request.prefix?.[0];
     const matching = [...this.rows.values()]
       .filter((row) => row.value['record-kind'] === recordKind)

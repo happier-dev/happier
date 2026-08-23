@@ -2560,6 +2560,667 @@
       },
       {
         "dangerLevel": "writesLocal",
+        "description": "Creates or rejoins one session for a pull request, issue or error group, records the link, and opens it.",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "account-storage"
+        ],
+        "id": "sessions/start-entry-v1",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "destination": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "existing"
+                    },
+                    "sessionId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "sessionId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "creationKey": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "const": "new"
+                    },
+                    "materialization": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "directory": {
+                              "maxLength": 512,
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string"
+                            },
+                            "kind": {
+                              "const": "referenceOnly"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "directory"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "directory": {
+                              "maxLength": 512,
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string"
+                            },
+                            "kind": {
+                              "const": "selectedProject"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "directory"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "spawn": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "agentTarget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "identity": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "localId": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string"
+                                },
+                                "pluginId": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "type": "object"
+                            },
+                            "kind": {
+                              "const": "agent"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "identity"
+                          ],
+                          "type": "object"
+                        },
+                        "executionTarget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "machineId": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string"
+                            },
+                            "serverId": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "serverId",
+                            "machineId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "executionTarget",
+                        "agentTarget"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "creationKey",
+                    "spawn",
+                    "materialization"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "display": {
+              "additionalProperties": false,
+              "properties": {
+                "locator": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "displayPath": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "routingToken": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 192
+                    },
+                    "v": {
+                      "const": 1
+                    },
+                    "webUrl": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 384
+                    }
+                  },
+                  "required": [
+                    "v"
+                  ],
+                  "type": "object"
+                },
+                "scopeLabel": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "locator",
+                "scopeLabel"
+              ],
+              "type": "object"
+            },
+            "entryRef": {
+              "additionalProperties": false,
+              "properties": {
+                "collisionScope": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 192
+                },
+                "entryId": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "kindId": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "source": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "localId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "pluginId": {
+                      "maxLength": 256,
+                      "minLength": 3,
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pluginId",
+                    "localId"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "source",
+                "kindId",
+                "collisionScope",
+                "entryId"
+              ],
+              "type": "object"
+            },
+            "intent": {
+              "anyOf": [
+                {
+                  "const": "ask"
+                },
+                {
+                  "const": "fix"
+                }
+              ]
+            },
+            "v": {
+              "const": 1
+            },
+            "workflowSubject": {
+              "anyOf": [
+                {
+                  "const": "pullRequest"
+                },
+                {
+                  "const": "issue"
+                },
+                {
+                  "const": "errorIssue"
+                },
+                {
+                  "const": "other"
+                }
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "intent",
+            "workflowSubject",
+            "entryRef",
+            "display",
+            "destination"
+          ],
+          "type": "object"
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "disposition": {
+                  "anyOf": [
+                    {
+                      "const": "created"
+                    },
+                    {
+                      "const": "rejoined"
+                    },
+                    {
+                      "const": "existing"
+                    }
+                  ]
+                },
+                "sessionId": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "opened"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "type",
+                "sessionId",
+                "disposition"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "disposition": {
+                  "anyOf": [
+                    {
+                      "const": "created"
+                    },
+                    {
+                      "const": "rejoined"
+                    },
+                    {
+                      "const": "existing"
+                    }
+                  ]
+                },
+                "sessionId": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "linkPending"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "type",
+                "sessionId",
+                "disposition"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "disposition": {
+                  "anyOf": [
+                    {
+                      "const": "created"
+                    },
+                    {
+                      "const": "rejoined"
+                    },
+                    {
+                      "const": "existing"
+                    }
+                  ]
+                },
+                "sessionId": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "openPending"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "type",
+                "sessionId",
+                "disposition"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "outcome": {
+                  "anyOf": [
+                    {
+                      "const": "accepted"
+                    },
+                    {
+                      "const": "unknown"
+                    }
+                  ]
+                },
+                "type": {
+                  "const": "creationPending"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "type",
+                "outcome"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "const": "creationFailed"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "type"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "refused"
+                    },
+                    {
+                      "const": "failed"
+                    }
+                  ]
+                },
+                "retryable": {
+                  "anyOf": [
+                    {
+                      "const": true
+                    },
+                    {
+                      "const": false
+                    }
+                  ]
+                },
+                "type": {
+                  "const": "workspacePreparationFailed"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "type",
+                "reason",
+                "retryable"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "existingSessionNotOfferedForFix"
+                    },
+                    {
+                      "const": "askUsesReferenceOnly"
+                    },
+                    {
+                      "const": "pullRequestFixRequiresPreparedWorkspace"
+                    },
+                    {
+                      "const": "nonPullRequestFixRequiresSelectedProject"
+                    }
+                  ]
+                },
+                "type": {
+                  "const": "rejected"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "type",
+                "reason"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Start a session on an entry"
+      },
+      {
+        "dangerLevel": "writesLocal",
+        "description": "Removes the record that a pull request, issue or error group is being worked on in one session.",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "account-storage"
+        ],
+        "id": "sessions/unlink-entry-v1",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "entryRef": {
+              "additionalProperties": false,
+              "properties": {
+                "collisionScope": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 192
+                },
+                "entryId": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "kindId": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "source": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "localId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "pluginId": {
+                      "maxLength": 256,
+                      "minLength": 3,
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pluginId",
+                    "localId"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "source",
+                "kindId",
+                "collisionScope",
+                "entryId"
+              ],
+              "type": "object"
+            },
+            "sessionId": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "sessionId",
+            "entryRef"
+          ],
+          "type": "object"
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "anyOf": [
+                {
+                  "const": "unlinked"
+                },
+                {
+                  "const": "conflict"
+                },
+                {
+                  "const": "failed"
+                }
+              ]
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "status"
+          ],
+          "type": "object"
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Unlink an entry from a session"
+      },
+      {
+        "dangerLevel": "writesLocal",
         "description": "Creates, reconfigures, removes or restores one configured pull-request, issue or error-group source.",
         "execution": {
           "target": "daemon"
@@ -3850,6 +4511,12 @@
                       "type": "array"
                     },
                     "purpose": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "settingsPageId": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
@@ -5330,6 +5997,12 @@
                   "type": "array"
                 },
                 "purpose": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "settingsPageId": {
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
@@ -10323,13 +10996,20 @@
           "id": "entry-picker",
           "kind": "reactNative",
           "requiredHostMethods": [
-            "executeAction"
+            "executeAction",
+            "readComposer",
+            "watchComposer",
+            "applyComposer"
           ]
         },
         {
           "artifact": "triage-entries-compact-native",
           "id": "entries-compact",
-          "kind": "reactNative"
+          "kind": "reactNative",
+          "requiredHostMethods": [
+            "readComposer",
+            "watchComposer"
+          ]
         },
         {
           "artifact": "triage-session-entries-native",
@@ -10373,6 +11053,8 @@
             "plugins.triage.sessionLinks.removed": "This link was removed.",
             "plugins.triage.sessionLinks.stale.title": "These may not be current",
             "plugins.triage.sessionLinks.unavailable": "Linked entries could not be read",
+            "plugins.triage.sessionLinks.unlink": "Unlink",
+            "plugins.triage.sessionLinks.unlinkFailed": "This link could not be removed.",
             "plugins.triage.sessionLinks.unreadable": "This link could not be read.",
             "plugins.triage.surface.close": "Close",
             "plugins.triage.surface.detail.accountError.description": "Happier could not reach your account, so this entry's details are unavailable right now.",
@@ -10381,6 +11063,7 @@
             "plugins.triage.surface.detail.connectionUnhealthy": "This connection could not be read in the last pass.",
             "plugins.triage.surface.detail.entryAbsent": "This entry is no longer at the source.",
             "plugins.triage.surface.detail.entryUnresolved": "This entry could not be read from the source.",
+            "plugins.triage.surface.detail.lastKnown": "These are the last facts this page held for this entry, and they may be out of date.",
             "plugins.triage.surface.detail.mountError.description": "Happier could not mount the source's own view of this entry. The facts above are what the aggregate already knows.",
             "plugins.triage.surface.detail.mountError.title": "This source's detail view is unavailable",
             "plugins.triage.surface.detail.noConnection.description": "No configured connection currently observes this entry, so there is nothing to read it with.",
@@ -10447,7 +11130,9 @@
             "plugins.triage.surface.moreEntries.title": "More entries may exist",
             "plugins.triage.surface.morePins.description": "This page shows your most recent pins; the rest are still pinned.",
             "plugins.triage.surface.morePins.title": "More pinned entries exist",
+            "plugins.triage.surface.noSources.configure": "Configure {name}",
             "plugins.triage.surface.noSources.description": "Connect a source in Settings to see its pull requests, issues and error groups here.",
+            "plugins.triage.surface.noSources.openFailed": "{name} settings could not be opened",
             "plugins.triage.surface.noSources.title": "No sources are configured",
             "plugins.triage.surface.order": "Order",
             "plugins.triage.surface.order.newest": "Newest",
@@ -10463,6 +11148,9 @@
             "plugins.triage.surface.refreshing": "Refreshing",
             "plugins.triage.surface.routeTooLong.description": "Opening it would make this page’s shareable location longer than it can carry, so nothing was changed.",
             "plugins.triage.surface.routeTooLong.title": "That entry could not be opened",
+            "plugins.triage.surface.row.moreActions": "More actions for {title}",
+            "plugins.triage.surface.row.pin": "Pin {title}",
+            "plugins.triage.surface.row.unpin": "Unpin {title}",
             "plugins.triage.surface.search": "Search PRs & Issues",
             "plugins.triage.surface.section.done": "Done",
             "plugins.triage.surface.section.open": "Open",
@@ -10538,6 +11226,8 @@
             "plugins.triage.sessionLinks.removed": "Эта ссылка удалена.",
             "plugins.triage.sessionLinks.stale.title": "Эти данные могут быть неактуальны",
             "plugins.triage.sessionLinks.unavailable": "Не удалось прочитать связанные записи",
+            "plugins.triage.sessionLinks.unlink": "Отвязать",
+            "plugins.triage.sessionLinks.unlinkFailed": "Не удалось удалить эту связь.",
             "plugins.triage.sessionLinks.unreadable": "Не удалось прочитать эту ссылку.",
             "plugins.triage.surface.close": "Закрыть",
             "plugins.triage.surface.detail.accountError.description": "Happier не может достучаться до вашего аккаунта, поэтому детали этой записи недоступны в настоящее время.",
@@ -10546,6 +11236,7 @@
             "plugins.triage.surface.detail.connectionUnhealthy": "Это подключение не удалось прочитать в последнем проходе.",
             "plugins.triage.surface.detail.entryAbsent": "Эта запись больше не существует на источнике.",
             "plugins.triage.surface.detail.entryUnresolved": "Эта запись не может быть прочитана с источника.",
+            "plugins.triage.surface.detail.lastKnown": "Это последние сведения, которые эта страница хранила об этой записи; они могут быть устаревшими.",
             "plugins.triage.surface.detail.mountError.description": "Happier не смог подключить собственное представление в виде этого источника. Утверждения выше - это то, что уже знает агрегат.",
             "plugins.triage.surface.detail.mountError.title": "Представление в виде этого источника недоступно",
             "plugins.triage.surface.detail.noConnection.description": "В настоящее время нет настроенного подключения, который наблюдает за этой записью, поэтому ее невозможно прочитать.",
@@ -10612,7 +11303,9 @@
             "plugins.triage.surface.moreEntries.title": "Возможно, существует еще больше элементов",
             "plugins.triage.surface.morePins.description": "Эта страница показывает ваши самые последние закладки; остальные продолжают закрепляться.",
             "plugins.triage.surface.morePins.title": "Есть еще закрепленные записи",
+            "plugins.triage.surface.noSources.configure": "Настроить {name}",
             "plugins.triage.surface.noSources.description": "Подключите источник в настройках, чтобы увидеть тудушки PR, проблемы и группы ошибок.",
+            "plugins.triage.surface.noSources.openFailed": "Не удалось открыть настройки {name}",
             "plugins.triage.surface.noSources.title": "Нет настроенных источников",
             "plugins.triage.surface.order": "Порядок",
             "plugins.triage.surface.order.newest": "Сначала новые",
@@ -10628,6 +11321,9 @@
             "plugins.triage.surface.refreshing": "Обновление",
             "plugins.triage.surface.routeTooLong.description": "При открытии общий адрес страницы стал бы слишком длинным, поэтому ничего не изменилось.",
             "plugins.triage.surface.routeTooLong.title": "Не удалось открыть эту запись",
+            "plugins.triage.surface.row.moreActions": "Другие действия для {title}",
+            "plugins.triage.surface.row.pin": "Закрепить {title}",
+            "plugins.triage.surface.row.unpin": "Открепить {title}",
             "plugins.triage.surface.search": "Поиск PRs & Issues",
             "plugins.triage.surface.section.done": "Завершенный",
             "plugins.triage.surface.section.open": "Открытый",
@@ -10703,6 +11399,8 @@
             "plugins.triage.sessionLinks.removed": "To łącze zostało usunięte.",
             "plugins.triage.sessionLinks.stale.title": "Te dane mogą być nieaktualne",
             "plugins.triage.sessionLinks.unavailable": "Nie udało się odczytać powiązanych wpisów",
+            "plugins.triage.sessionLinks.unlink": "Odłącz",
+            "plugins.triage.sessionLinks.unlinkFailed": "Nie udało się usunąć tego powiązania.",
             "plugins.triage.sessionLinks.unreadable": "Nie udało się odczytać tego łącza.",
             "plugins.triage.surface.close": "Zamknij",
             "plugins.triage.surface.detail.accountError.description": "Happier nie mógł dojść do Twojego konta, więc szczegółów tego wpisu nie ma obecnie.",
@@ -10711,6 +11409,7 @@
             "plugins.triage.surface.detail.connectionUnhealthy": "Nie udało się odczytać tego połączenia w ostatnim przebiegu.",
             "plugins.triage.surface.detail.entryAbsent": "To wpis nie jest już w źródle.",
             "plugins.triage.surface.detail.entryUnresolved": "Nie udało się odczytać tego wpisu z źródła.",
+            "plugins.triage.surface.detail.lastKnown": "To ostatnie informacje, jakie ta strona przechowywała o tym wpisie — mogą być nieaktualne.",
             "plugins.triage.surface.detail.mountError.description": "Happier nie mógł zamontować własnego widoku dla tej pozycji tego źródła. Fakty powyżej to, czego agregat już wie.",
             "plugins.triage.surface.detail.mountError.title": "Widok szczegółowy tego źródła jest niedostępny",
             "plugins.triage.surface.detail.noConnection.description": "Nie skonfigurowane połączenie obserwuje obecnie tego wpisu, więc nie ma czego odczytać.",
@@ -10777,7 +11476,9 @@
             "plugins.triage.surface.moreEntries.title": "Możliwe są jeszcze więcej pozycji",
             "plugins.triage.surface.morePins.description": "Ta strona pokazuje ostatnio przypięte wpisy; pozostałe nadal są przypięte.",
             "plugins.triage.surface.morePins.title": "Istnieje więcej przypiętych wpisów",
+            "plugins.triage.surface.noSources.configure": "Skonfiguruj {name}",
             "plugins.triage.surface.noSources.description": "Połącz źródło w Ustawieniach, aby zobaczyć swoje żądania ściągnięcia, problemy i grupy błędów tutaj.",
+            "plugins.triage.surface.noSources.openFailed": "Nie udało się otworzyć ustawień {name}",
             "plugins.triage.surface.noSources.title": "Brak skonfigurowanych źródeł",
             "plugins.triage.surface.order": "Kolejność",
             "plugins.triage.surface.order.newest": "Najnowsze",
@@ -10793,6 +11494,9 @@
             "plugins.triage.surface.refreshing": "Odświeżanie",
             "plugins.triage.surface.routeTooLong.description": "Otwarcie go przekroczyłoby limit udostępnianego adresu tej strony, więc nic nie zmieniono.",
             "plugins.triage.surface.routeTooLong.title": "Nie udało się otworzyć tego wpisu",
+            "plugins.triage.surface.row.moreActions": "Więcej akcji dla {title}",
+            "plugins.triage.surface.row.pin": "Przypnij {title}",
+            "plugins.triage.surface.row.unpin": "Odepnij {title}",
             "plugins.triage.surface.search": "Szukaj w PRs & Issues",
             "plugins.triage.surface.section.done": "Zakończone",
             "plugins.triage.surface.section.open": "Otwarte",
@@ -10868,6 +11572,8 @@
             "plugins.triage.sessionLinks.removed": "Este enlace se eliminó.",
             "plugins.triage.sessionLinks.stale.title": "Puede que estos datos no estén actualizados",
             "plugins.triage.sessionLinks.unavailable": "No se pudieron leer las entradas vinculadas",
+            "plugins.triage.sessionLinks.unlink": "Desvincular",
+            "plugins.triage.sessionLinks.unlinkFailed": "No se pudo eliminar este vínculo.",
             "plugins.triage.sessionLinks.unreadable": "No se pudo leer este enlace.",
             "plugins.triage.surface.close": "Cerrar",
             "plugins.triage.surface.detail.accountError.description": "Happier no pudo alcanzar tu cuenta, por lo que los detalles de esta entrada no están disponibles en este momento.",
@@ -10876,6 +11582,7 @@
             "plugins.triage.surface.detail.connectionUnhealthy": "No se pudo leer esta conexión en la última pasada.",
             "plugins.triage.surface.detail.entryAbsent": "Este entrada ya no está en el origen.",
             "plugins.triage.surface.detail.entryUnresolved": "No se pudo leer esta entrada desde el origen.",
+            "plugins.triage.surface.detail.lastKnown": "Estos son los últimos datos que esta página tenía de esta entrada y pueden estar desactualizados.",
             "plugins.triage.surface.detail.mountError.description": "Happier no pudo montar la propia vista de la fuente de esta entrada. Los hechos anteriores son lo que el agente ya sabe.",
             "plugins.triage.surface.detail.mountError.title": "La vista detallada de esta fuente no está disponible",
             "plugins.triage.surface.detail.noConnection.description": "No hay ninguna conexión configurada que observe esta entrada, por lo que no hay nada con lo que leerla.",
@@ -10942,7 +11649,9 @@
             "plugins.triage.surface.moreEntries.title": "Podrían existir más entradas",
             "plugins.triage.surface.morePins.description": "Esta página muestra tus marcadores más recientes; el resto aún están marcados.",
             "plugins.triage.surface.morePins.title": "Hay más entradas marcadas",
+            "plugins.triage.surface.noSources.configure": "Configurar {name}",
             "plugins.triage.surface.noSources.description": "Conecte una fuente en Configuraciones para ver sus solicitudes de extracción, problemas y grupos de errores aquí.",
+            "plugins.triage.surface.noSources.openFailed": "No se pudo abrir la configuración de {name}",
             "plugins.triage.surface.noSources.title": "No se configuran fuentes",
             "plugins.triage.surface.order": "Orden",
             "plugins.triage.surface.order.newest": "Más recientes",
@@ -10958,6 +11667,9 @@
             "plugins.triage.surface.refreshing": "Refrescando",
             "plugins.triage.surface.routeTooLong.description": "Al abrirla, la dirección compartible de esta página superaría su límite, así que no se cambió nada.",
             "plugins.triage.surface.routeTooLong.title": "No se pudo abrir esta entrada",
+            "plugins.triage.surface.row.moreActions": "Más acciones para {title}",
+            "plugins.triage.surface.row.pin": "Fijar {title}",
+            "plugins.triage.surface.row.unpin": "Dejar de fijar {title}",
             "plugins.triage.surface.search": "Buscar en PRs & Issues",
             "plugins.triage.surface.section.done": "Hecho",
             "plugins.triage.surface.section.open": "Abierto",
@@ -11033,6 +11745,8 @@
             "plugins.triage.sessionLinks.removed": "Ce lien a été supprimé.",
             "plugins.triage.sessionLinks.stale.title": "Ces données ne sont peut-être pas à jour",
             "plugins.triage.sessionLinks.unavailable": "Impossible de lire les entrées liées",
+            "plugins.triage.sessionLinks.unlink": "Dissocier",
+            "plugins.triage.sessionLinks.unlinkFailed": "Ce lien n’a pas pu être supprimé.",
             "plugins.triage.sessionLinks.unreadable": "Impossible de lire ce lien.",
             "plugins.triage.surface.close": "Fermer",
             "plugins.triage.surface.detail.accountError.description": "Happier ne peut pas atteindre votre compte, donc les détails de cette entrée ne sont pas disponibles pour le moment.",
@@ -11041,6 +11755,7 @@
             "plugins.triage.surface.detail.connectionUnhealthy": "Cette connexion n'a pas pu être lue lors du dernier passage.",
             "plugins.triage.surface.detail.entryAbsent": "Cette entrée n'est plus à l'origine.",
             "plugins.triage.surface.detail.entryUnresolved": "Cette entrée ne peut pas être lue à l'origine.",
+            "plugins.triage.surface.detail.lastKnown": "Voici les derniers éléments que cette page conservait pour cette entrée ; ils peuvent être obsolètes.",
             "plugins.triage.surface.detail.mountError.description": "Happier n'a pas pu monter la vue propre de cette entrée de la part de la source. Les faits mentionnés ci-dessus sont ce que l'agrégat connaît déjà.",
             "plugins.triage.surface.detail.mountError.title": "La vue de détail de cette source n'est pas disponible",
             "plugins.triage.surface.detail.noConnection.description": "Aucune connexion configurée n'observe actuellement cette entrée, donc il n'y a rien à la lire.",
@@ -11107,7 +11822,9 @@
             "plugins.triage.surface.moreEntries.title": "Plus d'entrées peuvent exister",
             "plugins.triage.surface.morePins.description": "Cette page montre vos visées les plus récentes ; le reste est toujours visé.",
             "plugins.triage.surface.morePins.title": "Plus d'entrées visées existent",
+            "plugins.triage.surface.noSources.configure": "Configurer {name}",
             "plugins.triage.surface.noSources.description": "Connectez une source dans les paramètres pour voir ses demandes de fusion, problèmes et groupes d'erreurs ici.",
+            "plugins.triage.surface.noSources.openFailed": "Impossible d’ouvrir les réglages de {name}",
             "plugins.triage.surface.noSources.title": "Aucune source n'est configurée",
             "plugins.triage.surface.order": "Tri",
             "plugins.triage.surface.order.newest": "Plus récents",
@@ -11123,6 +11840,9 @@
             "plugins.triage.surface.refreshing": "Mise à jour",
             "plugins.triage.surface.routeTooLong.description": "Son ouverture dépasserait la longueur permise pour l’adresse partageable de cette page ; rien n’a donc été modifié.",
             "plugins.triage.surface.routeTooLong.title": "Impossible d’ouvrir cette entrée",
+            "plugins.triage.surface.row.moreActions": "Plus d’actions pour {title}",
+            "plugins.triage.surface.row.pin": "Épingler {title}",
+            "plugins.triage.surface.row.unpin": "Désépingler {title}",
             "plugins.triage.surface.search": "Rechercher dans PRs & Issues",
             "plugins.triage.surface.section.done": "Terminé",
             "plugins.triage.surface.section.open": "Ouvert",
@@ -11198,6 +11918,8 @@
             "plugins.triage.sessionLinks.removed": "Questo collegamento è stato rimosso.",
             "plugins.triage.sessionLinks.stale.title": "Questi dati potrebbero non essere aggiornati",
             "plugins.triage.sessionLinks.unavailable": "Impossibile leggere le voci collegate",
+            "plugins.triage.sessionLinks.unlink": "Scollega",
+            "plugins.triage.sessionLinks.unlinkFailed": "Non è stato possibile rimuovere questo collegamento.",
             "plugins.triage.sessionLinks.unreadable": "Impossibile leggere questo collegamento.",
             "plugins.triage.surface.close": "Chiudi",
             "plugins.triage.surface.detail.accountError.description": "Happier non può raggiungere il tuo account, quindi le dettagli di questa voce non sono disponibili ora.",
@@ -11206,6 +11928,7 @@
             "plugins.triage.surface.detail.connectionUnhealthy": "Non è stato possibile leggere questa connessione nell'ultima passata.",
             "plugins.triage.surface.detail.entryAbsent": "Questa voce non è più presente.",
             "plugins.triage.surface.detail.entryUnresolved": "Impossibile leggere questa voce.",
+            "plugins.triage.surface.detail.lastKnown": "Questi sono gli ultimi dati che questa pagina aveva per questa voce e potrebbero non essere aggiornati.",
             "plugins.triage.surface.detail.mountError.description": "Happier non ha potuto montare la propria vista della fonte per questa voce. Le fatti sopra elencati sono ciò che l'aggregato già sa.",
             "plugins.triage.surface.detail.mountError.title": "Questa vista dettagliata della fonte non è disponibile",
             "plugins.triage.surface.detail.noConnection.description": "Nessuna connessione configurata attualmente osserva questa voce, quindi non c'è niente da leggere.",
@@ -11272,7 +11995,9 @@
             "plugins.triage.surface.moreEntries.title": "Potrebbero esistere altre voci",
             "plugins.triage.surface.morePins.description": "Questa pagina mostra le tue voci segnaposto più recenti; le altre sono ancora segnaposto.",
             "plugins.triage.surface.morePins.title": "Ci sono più voci segnaposto",
+            "plugins.triage.surface.noSources.configure": "Configura {name}",
             "plugins.triage.surface.noSources.description": "Connetti una sorgente nei Impostazioni per vedere le richieste di pull, i problemi e i gruppi di errori qui.",
+            "plugins.triage.surface.noSources.openFailed": "Impossibile aprire le impostazioni di {name}",
             "plugins.triage.surface.noSources.title": "Nessuna sorgente configurata",
             "plugins.triage.surface.order": "Ordine",
             "plugins.triage.surface.order.newest": "Più recenti",
@@ -11288,6 +12013,9 @@
             "plugins.triage.surface.refreshing": "Aggiornamento in corso",
             "plugins.triage.surface.routeTooLong.description": "Aprendola, l’indirizzo condivisibile della pagina supererebbe il limite, quindi non è cambiato nulla.",
             "plugins.triage.surface.routeTooLong.title": "Impossibile aprire questa voce",
+            "plugins.triage.surface.row.moreActions": "Altre azioni per {title}",
+            "plugins.triage.surface.row.pin": "Fissa {title}",
+            "plugins.triage.surface.row.unpin": "Rimuovi {title} dai fissati",
             "plugins.triage.surface.search": "Cerca in PRs & Issues",
             "plugins.triage.surface.section.done": "Fatto",
             "plugins.triage.surface.section.open": "Aperto",
@@ -11363,6 +12091,8 @@
             "plugins.triage.sessionLinks.removed": "Este link foi removido.",
             "plugins.triage.sessionLinks.stale.title": "Estes dados podem não estar atualizados",
             "plugins.triage.sessionLinks.unavailable": "Não foi possível ler as entradas vinculadas",
+            "plugins.triage.sessionLinks.unlink": "Desvincular",
+            "plugins.triage.sessionLinks.unlinkFailed": "Não foi possível remover esta ligação.",
             "plugins.triage.sessionLinks.unreadable": "Não foi possível ler este link.",
             "plugins.triage.surface.close": "Fechar",
             "plugins.triage.surface.detail.accountError.description": "Happier não conseguiu alcançar sua conta, então os detalhes desta entrada estão indisponíveis por enquanto.",
@@ -11371,6 +12101,7 @@
             "plugins.triage.surface.detail.connectionUnhealthy": "Não foi possível ler esta conexão na última passagem.",
             "plugins.triage.surface.detail.entryAbsent": "Esta entrada não está mais no local.",
             "plugins.triage.surface.detail.entryUnresolved": "Não foi possível ler esta entrada no local.",
+            "plugins.triage.surface.detail.lastKnown": "Estes são os últimos dados que esta página tinha para esta entrada e podem estar desatualizados.",
             "plugins.triage.surface.detail.mountError.description": "Happier não conseguiu montar a própria visão da fonte para esta entrada. As fatos acima são o que o agregado já sabe.",
             "plugins.triage.surface.detail.mountError.title": "Esta visão de detalhes da fonte não está disponível",
             "plugins.triage.surface.detail.noConnection.description": "Nenhuma conexão configurada está observando esta entrada, então não há nada para ler com ela.",
@@ -11437,7 +12168,9 @@
             "plugins.triage.surface.moreEntries.title": "Mais entradas podem existir",
             "plugins.triage.surface.morePins.description": "Esta página mostra suas entradas pinnadas mais recentes; o resto ainda está pinnado.",
             "plugins.triage.surface.morePins.title": "Mais entradas pinnadas existem",
+            "plugins.triage.surface.noSources.configure": "Configurar {name}",
             "plugins.triage.surface.noSources.description": "Conecte uma fonte nas Configurações para ver suas solicitações de pull, problemas e grupos de erros aqui.",
+            "plugins.triage.surface.noSources.openFailed": "Não foi possível abrir as definições de {name}",
             "plugins.triage.surface.noSources.title": "Nenhuma fonte configurada",
             "plugins.triage.surface.order": "Ordem",
             "plugins.triage.surface.order.newest": "Mais recentes",
@@ -11453,6 +12186,9 @@
             "plugins.triage.surface.refreshing": "Atualizando",
             "plugins.triage.surface.routeTooLong.description": "A abertura excederia o limite do endereço compartilhável desta página, por isso nada foi alterado.",
             "plugins.triage.surface.routeTooLong.title": "Não foi possível abrir esta entrada",
+            "plugins.triage.surface.row.moreActions": "Mais ações para {title}",
+            "plugins.triage.surface.row.pin": "Fixar {title}",
+            "plugins.triage.surface.row.unpin": "Desafixar {title}",
             "plugins.triage.surface.search": "Pesquisar PRs & Issues",
             "plugins.triage.surface.section.done": "Feito",
             "plugins.triage.surface.section.open": "Aberto",
@@ -11528,6 +12264,8 @@
             "plugins.triage.sessionLinks.removed": "Aquest enllaç s’ha suprimit.",
             "plugins.triage.sessionLinks.stale.title": "Aquestes dades poden no estar actualitzades",
             "plugins.triage.sessionLinks.unavailable": "No s’han pogut llegir les entrades vinculades",
+            "plugins.triage.sessionLinks.unlink": "Desvincula",
+            "plugins.triage.sessionLinks.unlinkFailed": "No s’ha pogut eliminar aquest enllaç.",
             "plugins.triage.sessionLinks.unreadable": "No s’ha pogut llegir aquest enllaç.",
             "plugins.triage.surface.close": "Tancar",
             "plugins.triage.surface.detail.accountError.description": "Happier no pot arribar al seu compte, així que els detalls d'aquesta entrada no estan disponibles ara mateix.",
@@ -11536,6 +12274,7 @@
             "plugins.triage.surface.detail.connectionUnhealthy": "No s'ha pogut llegir aquesta connexió al pas anterior.",
             "plugins.triage.surface.detail.entryAbsent": "Aquesta entrada ja no està a la font.",
             "plugins.triage.surface.detail.entryUnresolved": "No es pot llegir aquesta entrada de la font.",
+            "plugins.triage.surface.detail.lastKnown": "Aquestes són les darreres dades que aquesta pàgina tenia d’aquesta entrada i poden estar desactualitzades.",
             "plugins.triage.surface.detail.mountError.description": "Happier no pot montar la vista propria de l'origen d'aquesta entrada. La informació encima és la que l'agregat ja coneix.",
             "plugins.triage.surface.detail.mountError.title": "Aquesta vista detallada d'origen no està disponible",
             "plugins.triage.surface.detail.noConnection.description": "No hi ha cap connexió configurada que observes aquesta entrada, així que no hi ha res per llegir-lo amb.",
@@ -11602,7 +12341,9 @@
             "plugins.triage.surface.moreEntries.title": "Poden existir més entrades",
             "plugins.triage.surface.morePins.description": "Aquesta pàgina mostra les teves entrades més recents; el que resta encara està arrodonit.",
             "plugins.triage.surface.morePins.title": "Hi ha més entrades arrodonides",
+            "plugins.triage.surface.noSources.configure": "Configura {name}",
             "plugins.triage.surface.noSources.description": "Connecta una font en les Ajustaments per veure les seves sol·licituds de pull, errors i grups d'errors aquí.",
+            "plugins.triage.surface.noSources.openFailed": "No s’ha pogut obrir la configuració de {name}",
             "plugins.triage.surface.noSources.title": "No hi ha cap font configurada",
             "plugins.triage.surface.order": "Ordre",
             "plugins.triage.surface.order.newest": "Més recents",
@@ -11618,6 +12359,9 @@
             "plugins.triage.surface.refreshing": "S'està actualitzant",
             "plugins.triage.surface.routeTooLong.description": "En obrir-la, l’adreça compartible de la pàgina superaria el límit, així que no s’ha canviat res.",
             "plugins.triage.surface.routeTooLong.title": "No s’ha pogut obrir aquesta entrada",
+            "plugins.triage.surface.row.moreActions": "Més accions per a {title}",
+            "plugins.triage.surface.row.pin": "Fixa {title}",
+            "plugins.triage.surface.row.unpin": "Deixa de fixar {title}",
             "plugins.triage.surface.search": "Cerca a PRs & Issues",
             "plugins.triage.surface.section.done": "Fet",
             "plugins.triage.surface.section.open": "Obert",
@@ -11693,6 +12437,8 @@
             "plugins.triage.sessionLinks.removed": "此链接已移除。",
             "plugins.triage.sessionLinks.stale.title": "这些内容可能不是最新的",
             "plugins.triage.sessionLinks.unavailable": "无法读取已链接的条目",
+            "plugins.triage.sessionLinks.unlink": "取消关联",
+            "plugins.triage.sessionLinks.unlinkFailed": "无法移除此关联。",
             "plugins.triage.sessionLinks.unreadable": "无法读取此链接。",
             "plugins.triage.surface.close": "关闭",
             "plugins.triage.surface.detail.accountError.description": "Happier无法到达您的账户，因此此条目的详细信息目前不可用。",
@@ -11701,6 +12447,7 @@
             "plugins.triage.surface.detail.connectionUnhealthy": "上一次读取时无法读取此连接。",
             "plugins.triage.surface.detail.entryAbsent": "这个条目不再在源处。",
             "plugins.triage.surface.detail.entryUnresolved": "无法从源读取此条目。",
+            "plugins.triage.surface.detail.lastKnown": "这些是本页面为该条目保留的最后信息，可能已过时。",
             "plugins.triage.surface.detail.mountError.description": "Happier 无法挂载此记录的源视图。上述事实是聚合已知的。",
             "plugins.triage.surface.detail.mountError.title": "此源的详情视图不可用",
             "plugins.triage.surface.detail.noConnection.description": "当前没有配置的连接观察此条目，因此无法读取。",
@@ -11767,7 +12514,9 @@
             "plugins.triage.surface.moreEntries.title": "可能存在更多条目",
             "plugins.triage.surface.morePins.description": "此页面显示您最近的固定条目；其余的仍然固定。",
             "plugins.triage.surface.morePins.title": "存在更多固定条目",
+            "plugins.triage.surface.noSources.configure": "配置 {name}",
             "plugins.triage.surface.noSources.description": "在设置中连接一个源以查看其拉取请求、问题和错误组。",
+            "plugins.triage.surface.noSources.openFailed": "无法打开 {name} 设置",
             "plugins.triage.surface.noSources.title": "没有配置源",
             "plugins.triage.surface.order": "排序",
             "plugins.triage.surface.order.newest": "最新优先",
@@ -11783,6 +12532,9 @@
             "plugins.triage.surface.refreshing": "正在刷新",
             "plugins.triage.surface.routeTooLong.description": "打开后会使此页面的共享地址超出长度限制，因此未进行任何更改。",
             "plugins.triage.surface.routeTooLong.title": "无法打开此条目",
+            "plugins.triage.surface.row.moreActions": "{title} 的更多操作",
+            "plugins.triage.surface.row.pin": "置顶 {title}",
+            "plugins.triage.surface.row.unpin": "取消置顶 {title}",
             "plugins.triage.surface.search": "搜索 PRs & Issues",
             "plugins.triage.surface.section.done": "完成",
             "plugins.triage.surface.section.open": "打开",
@@ -11858,6 +12610,8 @@
             "plugins.triage.sessionLinks.removed": "此連結已移除。",
             "plugins.triage.sessionLinks.stale.title": "這些內容可能不是最新的",
             "plugins.triage.sessionLinks.unavailable": "無法讀取已連結的項目",
+            "plugins.triage.sessionLinks.unlink": "取消關聯",
+            "plugins.triage.sessionLinks.unlinkFailed": "無法移除此關聯。",
             "plugins.triage.sessionLinks.unreadable": "無法讀取此連結。",
             "plugins.triage.surface.close": "關閉",
             "plugins.triage.surface.detail.accountError.description": "Happier 无法連接到您的賬戶，因此此項目詳情目前無法使用。",
@@ -11866,6 +12620,7 @@
             "plugins.triage.surface.detail.connectionUnhealthy": "上一次讀取時無法讀取此連線。",
             "plugins.triage.surface.detail.entryAbsent": "此項目已不再於源處。",
             "plugins.triage.surface.detail.entryUnresolved": "無法從源處讀取此項目。",
+            "plugins.triage.surface.detail.lastKnown": "這些是本頁面為該項目保留的最後資訊，可能已過時。",
             "plugins.triage.surface.detail.mountError.description": "Happier 未能掛載此來源自己的視窗。上述事實是聚合已經知道的。",
             "plugins.triage.surface.detail.mountError.title": "此來源的細節視窗無法使用",
             "plugins.triage.surface.detail.noConnection.description": "目前沒有配置的連接觀察此項目，因此無法用於讀取它。",
@@ -11932,7 +12687,9 @@
             "plugins.triage.surface.moreEntries.title": "可能還存在更多項目",
             "plugins.triage.surface.morePins.description": "此頁面顯示您最新的釘釘項目；其餘項目仍為釘釘。",
             "plugins.triage.surface.morePins.title": "存在更多釘釘項目",
+            "plugins.triage.surface.noSources.configure": "設定 {name}",
             "plugins.triage.surface.noSources.description": "在設置中連接一個來源以查看其提取請求、問題和錯誤群組。",
+            "plugins.triage.surface.noSources.openFailed": "無法開啟 {name} 設定",
             "plugins.triage.surface.noSources.title": "未配置來源",
             "plugins.triage.surface.order": "排序",
             "plugins.triage.surface.order.newest": "最新優先",
@@ -11948,6 +12705,9 @@
             "plugins.triage.surface.refreshing": "整理中",
             "plugins.triage.surface.routeTooLong.description": "開啟後會使此頁面的共享位址超出長度限制，因此未進行任何變更。",
             "plugins.triage.surface.routeTooLong.title": "無法開啟此項目",
+            "plugins.triage.surface.row.moreActions": "{title} 的更多操作",
+            "plugins.triage.surface.row.pin": "置頂 {title}",
+            "plugins.triage.surface.row.unpin": "取消置頂 {title}",
             "plugins.triage.surface.search": "搜尋 PRs & Issues",
             "plugins.triage.surface.section.done": "已完成",
             "plugins.triage.surface.section.open": "已開啟",
@@ -12023,6 +12783,8 @@
             "plugins.triage.sessionLinks.removed": "このリンクは削除されました。",
             "plugins.triage.sessionLinks.stale.title": "これらは最新ではない可能性があります",
             "plugins.triage.sessionLinks.unavailable": "リンク済みの項目を読み取れませんでした",
+            "plugins.triage.sessionLinks.unlink": "リンク解除",
+            "plugins.triage.sessionLinks.unlinkFailed": "このリンクを削除できませんでした。",
             "plugins.triage.sessionLinks.unreadable": "このリンクを読み取れませんでした。",
             "plugins.triage.surface.close": "閉じる",
             "plugins.triage.surface.detail.accountError.description": "Happierはあなたのアカウントに達できませんでしたので、このエントリの詳細は現在利用できません。",
@@ -12031,6 +12793,7 @@
             "plugins.triage.surface.detail.connectionUnhealthy": "最後のパスでこの接続を読み取れませんでした。",
             "plugins.triage.surface.detail.entryAbsent": "このエントリは元の場所に存在しません。",
             "plugins.triage.surface.detail.entryUnresolved": "このエントリは元の場所から読み取ることができません。",
+            "plugins.triage.surface.detail.lastKnown": "この項目についてこのページが最後に保持していた情報です。最新でない可能性があります。",
             "plugins.triage.surface.detail.mountError.description": "Happierは、このエントリのソース独自の表示をマウントできませんでした。上記の事実は、集計が既に知っているものです。",
             "plugins.triage.surface.detail.mountError.title": "このソースの詳細表示は利用できません",
             "plugins.triage.surface.detail.noConnection.description": "現在、このエントリを観察している設定された接続がありませんので、読み取るものはありません。",
@@ -12097,7 +12860,9 @@
             "plugins.triage.surface.moreEntries.title": "他のエントリが存在する可能性があります",
             "plugins.triage.surface.morePins.description": "このページでは、あなたの最新のピンを表示しています；残りはまだ固定されています。",
             "plugins.triage.surface.morePins.title": "追加の固定エントリが存在します",
+            "plugins.triage.surface.noSources.configure": "{name} を設定",
             "plugins.triage.surface.noSources.description": "ここにプルリクエスト、問題、エラーグループを表示するには、設定でソースに接続してください",
+            "plugins.triage.surface.noSources.openFailed": "{name} の設定を開けませんでした",
             "plugins.triage.surface.noSources.title": "ソースが設定されていません",
             "plugins.triage.surface.order": "並び順",
             "plugins.triage.surface.order.newest": "新しい順",
@@ -12113,6 +12878,9 @@
             "plugins.triage.surface.refreshing": "更新中",
             "plugins.triage.surface.routeTooLong.description": "開くとこのページの共有用アドレスが上限を超えるため、変更は行われませんでした。",
             "plugins.triage.surface.routeTooLong.title": "この項目を開けませんでした",
+            "plugins.triage.surface.row.moreActions": "{title} のその他の操作",
+            "plugins.triage.surface.row.pin": "{title} をピン留め",
+            "plugins.triage.surface.row.unpin": "{title} のピン留めを解除",
             "plugins.triage.surface.search": "PRs & Issues を検索",
             "plugins.triage.surface.section.done": "完了",
             "plugins.triage.surface.section.open": "開かれている",

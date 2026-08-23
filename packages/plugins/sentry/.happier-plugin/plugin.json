@@ -3482,6 +3482,9 @@
                     },
                     {
                       "const": "paginationCursorNotAdvancing"
+                    },
+                    {
+                      "const": "continuationUnavailable"
                     }
                   ]
                 },
@@ -4855,6 +4858,9 @@
                     },
                     {
                       "const": "paginationCursorNotAdvancing"
+                    },
+                    {
+                      "const": "continuationUnavailable"
                     }
                   ]
                 },
@@ -6091,6 +6097,7 @@
             }
           ],
           "purpose": "sentry-account-use",
+          "settingsPageId": "triage-sources",
           "v": 1
         },
         "id": "sentry-issues",
@@ -6257,6 +6264,7 @@
             "plugins.sentry.ui.retainedCount.description": "Sentry counts what it retained for this project’s window, never every occurrence.",
             "plugins.sentry.ui.retainedEventsRead": "{count} retained event(s) read.",
             "plugins.sentry.ui.retainedEventsReadWithUnreadable": "{count} retained event(s) read. {unreadable} row(s) on the pages read could not be understood.",
+            "plugins.sentry.ui.retentionDisclosure": "These are the events Sentry retained in the queried window, not every occurrence.",
             "plugins.sentry.ui.selectedOccurrence": "Selected occurrence",
             "plugins.sentry.ui.selectionIdentity": "This is {selection}.",
             "plugins.sentry.ui.selectionIdentityRecorded": "This is {selection}, recorded {when}.",
@@ -6267,6 +6275,12 @@
             "plugins.sentry.ui.showUserDetails": "Show event user details",
             "plugins.sentry.ui.showingSelection": "Showing {selection}.",
             "plugins.sentry.ui.showingSelectionRecorded": "Showing {selection}, recorded {when}.",
+            "plugins.sentry.ui.tab.activity": "Activity",
+            "plugins.sentry.ui.tab.occurrences": "Occurrences",
+            "plugins.sentry.ui.tab.overview": "Overview",
+            "plugins.sentry.ui.tab.release": "Release association",
+            "plugins.sentry.ui.tab.stackTrace": "Stack Trace",
+            "plugins.sentry.ui.tabsLabel": "Sentry issue detail sections",
             "plugins.sentry.ui.tagValues.description": "Tag values come from the events Sentry retained. Opening one reads its distribution.",
             "plugins.sentry.ui.tagValuesLabel": "Values of {tag} on this Sentry issue",
             "plugins.sentry.ui.tagValuesUnavailable": "{tag} values are unavailable",
@@ -6277,7 +6291,9 @@
             "plugins.sentry.ui.tagsUnreadable": "{count} tag(s) on this issue could not be read.",
             "plugins.sentry.ui.valuesRead": "{count} value(s) read.",
             "plugins.sentry.ui.valuesRedacted": "Sentry redacted some values",
-            "plugins.sentry.ui.valuesRedacted.description": "{count} value(s) were already scrubbed by this organization’s own Sentry rules."
+            "plugins.sentry.ui.valuesRedacted.description": "{count} value(s) were already scrubbed by this organization’s own Sentry rules.",
+            "plugins.sentry.ui.walkStoppedShort": "Sentry offered the next page in a form this build will not follow, so this list stops here.",
+            "plugins.sentry.ui.walkStoppedShort.continuation": "This list stops here: Sentry’s next page position is longer than this build can carry forward."
           }
         },
         {
@@ -6350,6 +6366,7 @@
             "plugins.sentry.ui.retainedCount.description": "Sentry считает только события, сохраненные за окно этого проекта, а не все события.",
             "plugins.sentry.ui.retainedEventsRead": "Прочитано сохранённых событий: {count}.",
             "plugins.sentry.ui.retainedEventsReadWithUnreadable": "Прочитано сохранённых событий: {count}. Не удалось распознать строк на прочитанных страницах: {unreadable}.",
+            "plugins.sentry.ui.retentionDisclosure": "Это события, сохраненные Sentry в запрошенном окне, а не все случаи.",
             "plugins.sentry.ui.selectedOccurrence": "Выбранное событие",
             "plugins.sentry.ui.selectionIdentity": "Это {selection}.",
             "plugins.sentry.ui.selectionIdentityRecorded": "Это {selection}, записано {when}.",
@@ -6360,6 +6377,12 @@
             "plugins.sentry.ui.showUserDetails": "Показать сведения о пользователе события",
             "plugins.sentry.ui.showingSelection": "Показано: {selection}.",
             "plugins.sentry.ui.showingSelectionRecorded": "Показано: {selection}, записано {when}.",
+            "plugins.sentry.ui.tab.activity": "Активность",
+            "plugins.sentry.ui.tab.occurrences": "Случаи",
+            "plugins.sentry.ui.tab.overview": "Обзор",
+            "plugins.sentry.ui.tab.release": "Связь с выпуском",
+            "plugins.sentry.ui.tab.stackTrace": "Стек вызовов",
+            "plugins.sentry.ui.tabsLabel": "Разделы сведений о проблеме Sentry",
             "plugins.sentry.ui.tagValues.description": "Значения тегов взяты из сохраненных Sentry событий. Откройте тег, чтобы увидеть его распределение.",
             "plugins.sentry.ui.tagValuesLabel": "Значения {tag} для этой проблемы Sentry",
             "plugins.sentry.ui.tagValuesUnavailable": "Значения {tag} недоступны",
@@ -6370,7 +6393,9 @@
             "plugins.sentry.ui.tagsUnreadable": "Не удалось прочитать тегов этой ошибки: {count}.",
             "plugins.sentry.ui.valuesRead": "Прочитано значений: {count}.",
             "plugins.sentry.ui.valuesRedacted": "Sentry скрыл некоторые значения",
-            "plugins.sentry.ui.valuesRedacted.description": "Правила Sentry этой организации уже скрыли значений: {count}."
+            "plugins.sentry.ui.valuesRedacted.description": "Правила Sentry этой организации уже скрыли значений: {count}.",
+            "plugins.sentry.ui.walkStoppedShort": "Sentry предложил следующую страницу в форме, которую эта сборка не станет использовать, поэтому список заканчивается здесь.",
+            "plugins.sentry.ui.walkStoppedShort.continuation": "Список заканчивается здесь: позиция следующей страницы Sentry длиннее, чем эта сборка может перенести дальше."
           }
         },
         {
@@ -6443,6 +6468,7 @@
             "plugins.sentry.ui.retainedCount.description": "Sentry zlicza tylko zdarzenia zachowane w oknie tego projektu, a nie wszystkie wystąpienia.",
             "plugins.sentry.ui.retainedEventsRead": "Odczytane zachowane zdarzenia: {count}.",
             "plugins.sentry.ui.retainedEventsReadWithUnreadable": "Odczytane zachowane zdarzenia: {count}. Nie udało się zrozumieć wierszy na odczytanych stronach: {unreadable}.",
+            "plugins.sentry.ui.retentionDisclosure": "To są zdarzenia zachowane przez Sentry w odpytywanym oknie, a nie wszystkie wystąpienia.",
             "plugins.sentry.ui.selectedOccurrence": "Wybrane wystąpienie",
             "plugins.sentry.ui.selectionIdentity": "To jest {selection}.",
             "plugins.sentry.ui.selectionIdentityRecorded": "To jest {selection}, zapisano {when}.",
@@ -6453,6 +6479,12 @@
             "plugins.sentry.ui.showUserDetails": "Pokaż dane użytkownika zdarzenia",
             "plugins.sentry.ui.showingSelection": "Wyświetlanie: {selection}.",
             "plugins.sentry.ui.showingSelectionRecorded": "Wyświetlanie: {selection}, zapisano {when}.",
+            "plugins.sentry.ui.tab.activity": "Aktywność",
+            "plugins.sentry.ui.tab.occurrences": "Wystąpienia",
+            "plugins.sentry.ui.tab.overview": "Przegląd",
+            "plugins.sentry.ui.tab.release": "Powiązanie z wydaniem",
+            "plugins.sentry.ui.tab.stackTrace": "Ślad stosu",
+            "plugins.sentry.ui.tabsLabel": "Sekcje szczegółów problemu Sentry",
             "plugins.sentry.ui.tagValues.description": "Wartości tagów pochodzą ze zdarzeń zachowanych przez Sentry. Otwórz tag, aby zobaczyć jego rozkład.",
             "plugins.sentry.ui.tagValuesLabel": "Wartości {tag} dla tego problemu Sentry",
             "plugins.sentry.ui.tagValuesUnavailable": "Wartości {tag} są niedostępne",
@@ -6463,7 +6495,9 @@
             "plugins.sentry.ui.tagsUnreadable": "Nie udało się odczytać tagów tego zgłoszenia: {count}.",
             "plugins.sentry.ui.valuesRead": "Odczytane wartości: {count}.",
             "plugins.sentry.ui.valuesRedacted": "Sentry ukrył niektóre wartości",
-            "plugins.sentry.ui.valuesRedacted.description": "Reguły Sentry tej organizacji ukryły już {count} wartości."
+            "plugins.sentry.ui.valuesRedacted.description": "Reguły Sentry tej organizacji ukryły już {count} wartości.",
+            "plugins.sentry.ui.walkStoppedShort": "Sentry wskazał kolejną stronę w formie, której ta wersja nie użyje, więc lista kończy się w tym miejscu.",
+            "plugins.sentry.ui.walkStoppedShort.continuation": "Lista kończy się w tym miejscu: pozycja następnej strony Sentry jest dłuższa, niż ta wersja może przenieść dalej."
           }
         },
         {
@@ -6536,6 +6570,7 @@
             "plugins.sentry.ui.retainedCount.description": "Sentry cuenta solo lo que conservó durante el intervalo de este proyecto, nunca todas las ocurrencias.",
             "plugins.sentry.ui.retainedEventsRead": "Eventos conservados leídos: {count}.",
             "plugins.sentry.ui.retainedEventsReadWithUnreadable": "Eventos conservados leídos: {count}. No se pudieron interpretar {unreadable} fila(s) de las páginas leídas.",
+            "plugins.sentry.ui.retentionDisclosure": "Estos son los eventos que Sentry conservó en la ventana consultada, no todas las ocurrencias.",
             "plugins.sentry.ui.selectedOccurrence": "Ocurrencia seleccionada",
             "plugins.sentry.ui.selectionIdentity": "Esta es {selection}.",
             "plugins.sentry.ui.selectionIdentityRecorded": "Esta es {selection}, registrada {when}.",
@@ -6546,6 +6581,12 @@
             "plugins.sentry.ui.showUserDetails": "Mostrar los datos del usuario del evento",
             "plugins.sentry.ui.showingSelection": "Mostrando {selection}.",
             "plugins.sentry.ui.showingSelectionRecorded": "Mostrando {selection}, registrado {when}.",
+            "plugins.sentry.ui.tab.activity": "Actividad",
+            "plugins.sentry.ui.tab.occurrences": "Ocurrencias",
+            "plugins.sentry.ui.tab.overview": "Resumen",
+            "plugins.sentry.ui.tab.release": "Asociación con la versión",
+            "plugins.sentry.ui.tab.stackTrace": "Traza de pila",
+            "plugins.sentry.ui.tabsLabel": "Secciones del detalle de la incidencia de Sentry",
             "plugins.sentry.ui.tagValues.description": "Los valores de las etiquetas proceden de los eventos que conservó Sentry. Abre una etiqueta para ver su distribución.",
             "plugins.sentry.ui.tagValuesLabel": "Valores de {tag} en esta incidencia de Sentry",
             "plugins.sentry.ui.tagValuesUnavailable": "Los valores de {tag} no están disponibles",
@@ -6556,7 +6597,9 @@
             "plugins.sentry.ui.tagsUnreadable": "No se pudieron leer {count} etiqueta(s) de esta incidencia.",
             "plugins.sentry.ui.valuesRead": "Valores leídos: {count}.",
             "plugins.sentry.ui.valuesRedacted": "Sentry ocultó algunos valores",
-            "plugins.sentry.ui.valuesRedacted.description": "Las reglas de Sentry de esta organización ya ocultaron {count} valor(es)."
+            "plugins.sentry.ui.valuesRedacted.description": "Las reglas de Sentry de esta organización ya ocultaron {count} valor(es).",
+            "plugins.sentry.ui.walkStoppedShort": "Sentry ofreció la página siguiente en un formato que esta versión no seguirá, así que la lista termina aquí.",
+            "plugins.sentry.ui.walkStoppedShort.continuation": "La lista termina aquí: la posición de la página siguiente de Sentry es más larga de lo que esta versión puede transportar."
           }
         },
         {
@@ -6629,6 +6672,7 @@
             "plugins.sentry.ui.retainedCount.description": "Sentry compte uniquement les événements conservés pendant la fenêtre de ce projet, jamais toutes les occurrences.",
             "plugins.sentry.ui.retainedEventsRead": "Événements conservés lus : {count}.",
             "plugins.sentry.ui.retainedEventsReadWithUnreadable": "Événements conservés lus : {count}. {unreadable} ligne(s) des pages lues n’ont pas pu être interprétées.",
+            "plugins.sentry.ui.retentionDisclosure": "Voici les événements que Sentry a conservés dans la fenêtre interrogée, et non toutes les occurrences.",
             "plugins.sentry.ui.selectedOccurrence": "Occurrence sélectionnée",
             "plugins.sentry.ui.selectionIdentity": "Il s’agit de {selection}.",
             "plugins.sentry.ui.selectionIdentityRecorded": "Il s’agit de {selection}, enregistré {when}.",
@@ -6639,6 +6683,12 @@
             "plugins.sentry.ui.showUserDetails": "Afficher les détails de l’utilisateur de l’événement",
             "plugins.sentry.ui.showingSelection": "Affichage de {selection}.",
             "plugins.sentry.ui.showingSelectionRecorded": "Affichage de {selection}, enregistré {when}.",
+            "plugins.sentry.ui.tab.activity": "Activité",
+            "plugins.sentry.ui.tab.occurrences": "Occurrences",
+            "plugins.sentry.ui.tab.overview": "Aperçu",
+            "plugins.sentry.ui.tab.release": "Association de version",
+            "plugins.sentry.ui.tab.stackTrace": "Trace de pile",
+            "plugins.sentry.ui.tabsLabel": "Sections du détail du problème Sentry",
             "plugins.sentry.ui.tagValues.description": "Les valeurs des tags proviennent des événements conservés par Sentry. Ouvrez un tag pour voir sa distribution.",
             "plugins.sentry.ui.tagValuesLabel": "Valeurs de {tag} sur ce problème Sentry",
             "plugins.sentry.ui.tagValuesUnavailable": "Les valeurs de {tag} ne sont pas disponibles",
@@ -6649,7 +6699,9 @@
             "plugins.sentry.ui.tagsUnreadable": "{count} étiquette(s) de cette anomalie n’ont pas pu être lues.",
             "plugins.sentry.ui.valuesRead": "Valeurs lues : {count}.",
             "plugins.sentry.ui.valuesRedacted": "Sentry a masqué certaines valeurs",
-            "plugins.sentry.ui.valuesRedacted.description": "Les règles Sentry de cette organisation ont déjà masqué {count} valeur(s)."
+            "plugins.sentry.ui.valuesRedacted.description": "Les règles Sentry de cette organisation ont déjà masqué {count} valeur(s).",
+            "plugins.sentry.ui.walkStoppedShort": "Sentry a proposé la page suivante sous une forme que cette version ne suivra pas ; la liste s’arrête donc ici.",
+            "plugins.sentry.ui.walkStoppedShort.continuation": "La liste s’arrête ici : la position de la page suivante de Sentry est plus longue que ce que cette version peut transmettre."
           }
         },
         {
@@ -6722,6 +6774,7 @@
             "plugins.sentry.ui.retainedCount.description": "Sentry conta solo gli eventi conservati nella finestra di questo progetto, mai tutte le occorrenze.",
             "plugins.sentry.ui.retainedEventsRead": "Eventi conservati letti: {count}.",
             "plugins.sentry.ui.retainedEventsReadWithUnreadable": "Eventi conservati letti: {count}. Impossibile interpretare {unreadable} riga/righe nelle pagine lette.",
+            "plugins.sentry.ui.retentionDisclosure": "Questi sono gli eventi che Sentry ha conservato nella finestra interrogata, non tutte le occorrenze.",
             "plugins.sentry.ui.selectedOccurrence": "Occorrenza selezionata",
             "plugins.sentry.ui.selectionIdentity": "Questa è {selection}.",
             "plugins.sentry.ui.selectionIdentityRecorded": "Questa è {selection}, registrata {when}.",
@@ -6732,6 +6785,12 @@
             "plugins.sentry.ui.showUserDetails": "Mostra i dettagli utente dell’evento",
             "plugins.sentry.ui.showingSelection": "Visualizzazione di {selection}.",
             "plugins.sentry.ui.showingSelectionRecorded": "Visualizzazione di {selection}, registrata {when}.",
+            "plugins.sentry.ui.tab.activity": "Attività",
+            "plugins.sentry.ui.tab.occurrences": "Occorrenze",
+            "plugins.sentry.ui.tab.overview": "Panoramica",
+            "plugins.sentry.ui.tab.release": "Associazione al rilascio",
+            "plugins.sentry.ui.tab.stackTrace": "Traccia dello stack",
+            "plugins.sentry.ui.tabsLabel": "Sezioni del dettaglio del problema Sentry",
             "plugins.sentry.ui.tagValues.description": "I valori dei tag provengono dagli eventi conservati da Sentry. Apri un tag per vederne la distribuzione.",
             "plugins.sentry.ui.tagValuesLabel": "Valori di {tag} per questo problema Sentry",
             "plugins.sentry.ui.tagValuesUnavailable": "I valori di {tag} non sono disponibili",
@@ -6742,7 +6801,9 @@
             "plugins.sentry.ui.tagsUnreadable": "Impossibile leggere {count} tag di questo problema.",
             "plugins.sentry.ui.valuesRead": "Valori letti: {count}.",
             "plugins.sentry.ui.valuesRedacted": "Sentry ha nascosto alcuni valori",
-            "plugins.sentry.ui.valuesRedacted.description": "Le regole Sentry di questa organizzazione hanno già nascosto {count} valori."
+            "plugins.sentry.ui.valuesRedacted.description": "Le regole Sentry di questa organizzazione hanno già nascosto {count} valori.",
+            "plugins.sentry.ui.walkStoppedShort": "Sentry ha proposto la pagina successiva in una forma che questa build non seguirà, quindi l’elenco si ferma qui.",
+            "plugins.sentry.ui.walkStoppedShort.continuation": "L’elenco si ferma qui: la posizione della pagina successiva di Sentry è più lunga di quanto questa build possa portare avanti."
           }
         },
         {
@@ -6815,6 +6876,7 @@
             "plugins.sentry.ui.retainedCount.description": "O Sentry conta apenas os eventos retidos durante a janela deste projeto, nunca todas as ocorrências.",
             "plugins.sentry.ui.retainedEventsRead": "Eventos retidos lidos: {count}.",
             "plugins.sentry.ui.retainedEventsReadWithUnreadable": "Eventos retidos lidos: {count}. Não foi possível interpretar {unreadable} linha(s) nas páginas lidas.",
+            "plugins.sentry.ui.retentionDisclosure": "Estes são os eventos que o Sentry reteve na janela consultada, e não todas as ocorrências.",
             "plugins.sentry.ui.selectedOccurrence": "Ocorrência selecionada",
             "plugins.sentry.ui.selectionIdentity": "Esta é {selection}.",
             "plugins.sentry.ui.selectionIdentityRecorded": "Esta é {selection}, registrada em {when}.",
@@ -6825,6 +6887,12 @@
             "plugins.sentry.ui.showUserDetails": "Mostrar detalhes do utilizador do evento",
             "plugins.sentry.ui.showingSelection": "Mostrando {selection}.",
             "plugins.sentry.ui.showingSelectionRecorded": "Mostrando {selection}, registrado em {when}.",
+            "plugins.sentry.ui.tab.activity": "Atividade",
+            "plugins.sentry.ui.tab.occurrences": "Ocorrências",
+            "plugins.sentry.ui.tab.overview": "Visão geral",
+            "plugins.sentry.ui.tab.release": "Associação à versão",
+            "plugins.sentry.ui.tab.stackTrace": "Rastreio de pilha",
+            "plugins.sentry.ui.tabsLabel": "Secções do detalhe do problema do Sentry",
             "plugins.sentry.ui.tagValues.description": "Os valores das etiquetas provêm dos eventos retidos pelo Sentry. Abra uma etiqueta para ver a sua distribuição.",
             "plugins.sentry.ui.tagValuesLabel": "Valores de {tag} neste problema do Sentry",
             "plugins.sentry.ui.tagValuesUnavailable": "Os valores de {tag} não estão disponíveis",
@@ -6835,7 +6903,9 @@
             "plugins.sentry.ui.tagsUnreadable": "Não foi possível ler {count} etiqueta(s) deste problema.",
             "plugins.sentry.ui.valuesRead": "Valores lidos: {count}.",
             "plugins.sentry.ui.valuesRedacted": "O Sentry ocultou alguns valores",
-            "plugins.sentry.ui.valuesRedacted.description": "As regras do Sentry desta organização já ocultaram {count} valor(es)."
+            "plugins.sentry.ui.valuesRedacted.description": "As regras do Sentry desta organização já ocultaram {count} valor(es).",
+            "plugins.sentry.ui.walkStoppedShort": "O Sentry indicou a página seguinte numa forma que esta compilação não vai seguir, por isso a lista termina aqui.",
+            "plugins.sentry.ui.walkStoppedShort.continuation": "A lista termina aqui: a posição da página seguinte do Sentry é maior do que esta compilação consegue transportar."
           }
         },
         {
@@ -6908,6 +6978,7 @@
             "plugins.sentry.ui.retainedCount.description": "Sentry compta només els esdeveniments conservats durant la finestra d’aquest projecte, mai totes les ocurrències.",
             "plugins.sentry.ui.retainedEventsRead": "Esdeveniments conservats llegits: {count}.",
             "plugins.sentry.ui.retainedEventsReadWithUnreadable": "Esdeveniments conservats llegits: {count}. No s’han pogut interpretar {unreadable} fila(es) de les pàgines llegides.",
+            "plugins.sentry.ui.retentionDisclosure": "Aquests són els esdeveniments que Sentry ha conservat a la finestra consultada, no totes les ocurrències.",
             "plugins.sentry.ui.selectedOccurrence": "Ocurrència seleccionada",
             "plugins.sentry.ui.selectionIdentity": "Aquesta és {selection}.",
             "plugins.sentry.ui.selectionIdentityRecorded": "Aquesta és {selection}, registrada {when}.",
@@ -6918,6 +6989,12 @@
             "plugins.sentry.ui.showUserDetails": "Mostra els detalls d’usuari de l’esdeveniment",
             "plugins.sentry.ui.showingSelection": "Es mostra {selection}.",
             "plugins.sentry.ui.showingSelectionRecorded": "Es mostra {selection}, registrat {when}.",
+            "plugins.sentry.ui.tab.activity": "Activitat",
+            "plugins.sentry.ui.tab.occurrences": "Ocurrències",
+            "plugins.sentry.ui.tab.overview": "Resum",
+            "plugins.sentry.ui.tab.release": "Associació amb la versió",
+            "plugins.sentry.ui.tab.stackTrace": "Traça de pila",
+            "plugins.sentry.ui.tabsLabel": "Seccions del detall de la incidència de Sentry",
             "plugins.sentry.ui.tagValues.description": "Els valors de les etiquetes provenen dels esdeveniments conservats per Sentry. Obre una etiqueta per veure’n la distribució.",
             "plugins.sentry.ui.tagValuesLabel": "Valors de {tag} en aquest problema de Sentry",
             "plugins.sentry.ui.tagValuesUnavailable": "Els valors de {tag} no estan disponibles",
@@ -6928,7 +7005,9 @@
             "plugins.sentry.ui.tagsUnreadable": "No s’han pogut llegir {count} etiqueta(es) d’aquesta incidència.",
             "plugins.sentry.ui.valuesRead": "Valors llegits: {count}.",
             "plugins.sentry.ui.valuesRedacted": "Sentry ha ocultat alguns valors",
-            "plugins.sentry.ui.valuesRedacted.description": "Les regles de Sentry d’aquesta organització ja han ocultat {count} valor(s)."
+            "plugins.sentry.ui.valuesRedacted.description": "Les regles de Sentry d’aquesta organització ja han ocultat {count} valor(s).",
+            "plugins.sentry.ui.walkStoppedShort": "Sentry ha ofert la pàgina següent en una forma que aquesta versió no seguirà, de manera que la llista s’atura aquí.",
+            "plugins.sentry.ui.walkStoppedShort.continuation": "La llista s’atura aquí: la posició de la pàgina següent de Sentry és més llarga del que aquesta versió pot transportar."
           }
         },
         {
@@ -7001,6 +7080,7 @@
             "plugins.sentry.ui.retainedCount.description": "Sentry 仅统计在此项目时间窗口内保留的事件，而非所有发生记录。",
             "plugins.sentry.ui.retainedEventsRead": "已读取 {count} 个保留事件。",
             "plugins.sentry.ui.retainedEventsReadWithUnreadable": "已读取 {count} 个保留事件。已读取页面中有 {unreadable} 行无法解析。",
+            "plugins.sentry.ui.retentionDisclosure": "这些是 Sentry 在所查询时间窗口内保留的事件，并非全部发生记录。",
             "plugins.sentry.ui.selectedOccurrence": "选定的事件",
             "plugins.sentry.ui.selectionIdentity": "这是{selection}。",
             "plugins.sentry.ui.selectionIdentityRecorded": "这是{selection}，记录于 {when}。",
@@ -7011,6 +7091,12 @@
             "plugins.sentry.ui.showUserDetails": "显示事件用户详细信息",
             "plugins.sentry.ui.showingSelection": "正在显示{selection}。",
             "plugins.sentry.ui.showingSelectionRecorded": "正在显示{selection}，记录于 {when}。",
+            "plugins.sentry.ui.tab.activity": "活动",
+            "plugins.sentry.ui.tab.occurrences": "发生记录",
+            "plugins.sentry.ui.tab.overview": "概览",
+            "plugins.sentry.ui.tab.release": "版本关联",
+            "plugins.sentry.ui.tab.stackTrace": "堆栈跟踪",
+            "plugins.sentry.ui.tabsLabel": "Sentry 问题详情分区",
             "plugins.sentry.ui.tagValues.description": "标签值来自 Sentry 保留的事件。打开标签即可查看其分布。",
             "plugins.sentry.ui.tagValuesLabel": "此 Sentry 问题的 {tag} 值",
             "plugins.sentry.ui.tagValuesUnavailable": "{tag} 值不可用",
@@ -7021,7 +7107,9 @@
             "plugins.sentry.ui.tagsUnreadable": "无法读取此问题的 {count} 个标签。",
             "plugins.sentry.ui.valuesRead": "已读取 {count} 个值。",
             "plugins.sentry.ui.valuesRedacted": "Sentry 隐去了部分值",
-            "plugins.sentry.ui.valuesRedacted.description": "此组织的 Sentry 规则已隐去 {count} 个值。"
+            "plugins.sentry.ui.valuesRedacted.description": "此组织的 Sentry 规则已隐去 {count} 个值。",
+            "plugins.sentry.ui.walkStoppedShort": "Sentry 给出的下一页格式为此版本不会跟进的形式，因此列表到此为止。",
+            "plugins.sentry.ui.walkStoppedShort.continuation": "列表到此为止：Sentry 的下一页位置超出了此版本可以继续传递的长度。"
           }
         },
         {
@@ -7094,6 +7182,7 @@
             "plugins.sentry.ui.retainedCount.description": "Sentry 僅統計在此專案時間視窗內保留的事件，而非所有發生記錄。",
             "plugins.sentry.ui.retainedEventsRead": "已讀取 {count} 個保留事件。",
             "plugins.sentry.ui.retainedEventsReadWithUnreadable": "已讀取 {count} 個保留事件。已讀取頁面中有 {unreadable} 列無法解析。",
+            "plugins.sentry.ui.retentionDisclosure": "這些是 Sentry 在所查詢時間範圍內保留的事件，並非全部發生紀錄。",
             "plugins.sentry.ui.selectedOccurrence": "選取的事件",
             "plugins.sentry.ui.selectionIdentity": "這是{selection}。",
             "plugins.sentry.ui.selectionIdentityRecorded": "這是{selection}，記錄於 {when}。",
@@ -7104,6 +7193,12 @@
             "plugins.sentry.ui.showUserDetails": "顯示事件使用者詳細資料",
             "plugins.sentry.ui.showingSelection": "正在顯示{selection}。",
             "plugins.sentry.ui.showingSelectionRecorded": "正在顯示{selection}，記錄於 {when}。",
+            "plugins.sentry.ui.tab.activity": "活動",
+            "plugins.sentry.ui.tab.occurrences": "發生紀錄",
+            "plugins.sentry.ui.tab.overview": "概覽",
+            "plugins.sentry.ui.tab.release": "版本關聯",
+            "plugins.sentry.ui.tab.stackTrace": "堆疊追蹤",
+            "plugins.sentry.ui.tabsLabel": "Sentry 問題詳情區段",
             "plugins.sentry.ui.tagValues.description": "標籤值來自 Sentry 保留的事件。開啟標籤即可檢視其分佈。",
             "plugins.sentry.ui.tagValuesLabel": "此 Sentry 問題的 {tag} 值",
             "plugins.sentry.ui.tagValuesUnavailable": "{tag} 值無法使用",
@@ -7114,7 +7209,9 @@
             "plugins.sentry.ui.tagsUnreadable": "無法讀取此問題的 {count} 個標籤。",
             "plugins.sentry.ui.valuesRead": "已讀取 {count} 個值。",
             "plugins.sentry.ui.valuesRedacted": "Sentry 隱去了部分值",
-            "plugins.sentry.ui.valuesRedacted.description": "此組織的 Sentry 規則已隱去 {count} 個值。"
+            "plugins.sentry.ui.valuesRedacted.description": "此組織的 Sentry 規則已隱去 {count} 個值。",
+            "plugins.sentry.ui.walkStoppedShort": "Sentry 提供的下一頁格式為此版本不會跟進的形式，因此清單到此為止。",
+            "plugins.sentry.ui.walkStoppedShort.continuation": "清單到此為止：Sentry 的下一頁位置超出了此版本能夠繼續帶往下一頁的長度。"
           }
         },
         {
@@ -7187,6 +7284,7 @@
             "plugins.sentry.ui.retainedCount.description": "Sentry が集計するのはこのプロジェクトの期間内に保持したイベントのみで、すべての発生件数ではありません。",
             "plugins.sentry.ui.retainedEventsRead": "{count} 件の保持イベントを読み取りました。",
             "plugins.sentry.ui.retainedEventsReadWithUnreadable": "{count} 件の保持イベントを読み取りました。読み取ったページ内の {unreadable} 行を解釈できませんでした。",
+            "plugins.sentry.ui.retentionDisclosure": "これは Sentry が照会した期間に保持したイベントであり、すべての発生ではありません。",
             "plugins.sentry.ui.selectedOccurrence": "選択した発生",
             "plugins.sentry.ui.selectionIdentity": "これは {selection} です。",
             "plugins.sentry.ui.selectionIdentityRecorded": "これは {selection} です。記録時刻: {when}。",
@@ -7197,6 +7295,12 @@
             "plugins.sentry.ui.showUserDetails": "イベントユーザーの詳細を表示",
             "plugins.sentry.ui.showingSelection": "{selection} を表示しています。",
             "plugins.sentry.ui.showingSelectionRecorded": "{selection} を表示しています。記録時刻: {when}。",
+            "plugins.sentry.ui.tab.activity": "アクティビティ",
+            "plugins.sentry.ui.tab.occurrences": "発生",
+            "plugins.sentry.ui.tab.overview": "概要",
+            "plugins.sentry.ui.tab.release": "リリースとの関連",
+            "plugins.sentry.ui.tab.stackTrace": "スタックトレース",
+            "plugins.sentry.ui.tabsLabel": "Sentry 問題詳細のセクション",
             "plugins.sentry.ui.tagValues.description": "タグ値は Sentry が保持したイベントに基づきます。タグを開くと分布を確認できます。",
             "plugins.sentry.ui.tagValuesLabel": "この Sentry 問題の {tag} 値",
             "plugins.sentry.ui.tagValuesUnavailable": "{tag} の値は利用できません",
@@ -7207,7 +7311,9 @@
             "plugins.sentry.ui.tagsUnreadable": "この問題の {count} 個のタグを読み取れませんでした。",
             "plugins.sentry.ui.valuesRead": "{count} 個の値を読み取りました。",
             "plugins.sentry.ui.valuesRedacted": "Sentry が一部の値を秘匿しました",
-            "plugins.sentry.ui.valuesRedacted.description": "この組織の Sentry ルールにより {count} 個の値がすでに秘匿されています。"
+            "plugins.sentry.ui.valuesRedacted.description": "この組織の Sentry ルールにより {count} 個の値がすでに秘匿されています。",
+            "plugins.sentry.ui.walkStoppedShort": "Sentry が示した次のページはこのビルドが従わない形式のため、この一覧はここで終わります。",
+            "plugins.sentry.ui.walkStoppedShort.continuation": "この一覧はここで終わります。Sentry の次ページ位置が、このビルドで引き継げる長さを超えています。"
           }
         }
       ],

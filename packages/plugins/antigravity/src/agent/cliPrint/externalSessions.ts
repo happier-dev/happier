@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type {
   AgentExternalSessionLinkData,
   AgentExternalSessionLinkDataValue,
@@ -49,6 +51,22 @@ type FullCandidateSearchCursorV1 = Readonly<{
   brainDir: string;
   sourceGeneration: string;
   searchTerm: string;
+  /**
+   * Order-independent digest of the conversation ids the browse has already
+   * served, up to and including the anchor. The anchor alone cannot detect an
+   * unserved match OVERTAKING it: `updatedAtMs` is a live mtime, so a
+   * conversation the user keeps driving moves under the cursor and the
+   * continuation reads it as already served. A COUNT of those matches aliases —
+   * an overtaking match plus a vanished served one leave the size intact, and
+   * neither touches a brain-dir entry, so the source generation cannot see them
+   * either. Digesting the identities makes any membership change in the served
+   * prefix a stale-cursor refresh instead of a silent omission.
+   *
+   * Identity only: a served conversation being appended to keeps it in the same
+   * prefix, so folding its mutable revision in would refresh the browse for a
+   * change that did not move anything.
+   */
+  servedDigest: string;
   after: Readonly<{
     remoteSessionId: string;
     updatedAtMs: number;
@@ -61,6 +79,39 @@ type AntigravityExternalReadAfterCursorV1 = Readonly<{
   kind: 'antigravityExternalReadAfter';
   transcriptCursor: string;
   pendingToolCallIds: readonly string[];
+  /**
+   * Public items of the window at `transcriptCursor` already delivered. One
+   * native record projects to assistant text PLUS one item per tool call, so a
+   * small item budget cannot always be met by advancing whole records. The
+   * native budgets that produced the window are pinned alongside it so a caller
+   * page-size change cannot reslice a different window at the same position.
+   */
+  itemStart?: number;
+  nativeMaxItems?: number;
+  nativeMaxBytes?: number;
+}>;
+
+/**
+ * A transcript page is budgeted in PUBLIC items, but the source is budgeted in
+ * NATIVE records, and one valid record projects to several items. Without a
+ * position inside the projected window, a record wider than the item budget is
+ * unreadable at every retry. This cursor replays the same native window and
+ * carries the exclusive end of the slice still owed to the caller.
+ */
+type AntigravityExternalPageCursorV1 = Readonly<{
+  v: 1;
+  kind: 'antigravityExternalPage';
+  /** Native backward cursor for the window to replay; null replays the newest window. */
+  nativeCursor: string | null;
+  /**
+   * Native record and byte budgets this window was read with. `itemEnd` indexes
+   * that window's projection, so replaying under a caller-chosen budget would
+   * slice a different window and emit different history at the same position.
+   */
+  nativeMaxItems: number;
+  nativeMaxBytes: number;
+  /** Exclusive end index into that window's projected items; absent means all of them. */
+  itemEnd?: number;
 }>;
 
 type AntigravityExternalReadAfterOutcome =
@@ -159,11 +210,75 @@ function decodeAntigravityExternalReadAfterCursor(
       || typeof record.transcriptCursor !== 'string'
       || !record.transcriptCursor.trim()
     ) return null;
+    const rawItemStart = record.itemStart;
+    if (
+      rawItemStart !== undefined
+      && (!Number.isSafeInteger(rawItemStart) || (rawItemStart as number) < 1)
+    ) return null;
+    const rawNativeMaxItems = record.nativeMaxItems;
+    const rawNativeMaxBytes = record.nativeMaxBytes;
+    if (
+      (rawItemStart === undefined) !== (rawNativeMaxItems === undefined)
+      || (rawItemStart === undefined) !== (rawNativeMaxBytes === undefined)
+    ) return null;
+    if (
+      rawItemStart !== undefined
+      && (
+        !Number.isSafeInteger(rawNativeMaxItems) || (rawNativeMaxItems as number) < 1
+        || !Number.isSafeInteger(rawNativeMaxBytes) || (rawNativeMaxBytes as number) < 1
+      )
+    ) return null;
     return {
       v: 1,
       kind: 'antigravityExternalReadAfter',
       transcriptCursor: record.transcriptCursor,
       pendingToolCallIds,
+      ...(rawItemStart === undefined
+        ? {}
+        : {
+          itemStart: rawItemStart as number,
+          nativeMaxItems: rawNativeMaxItems as number,
+          nativeMaxBytes: rawNativeMaxBytes as number,
+        }),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function encodeAntigravityExternalPageCursor(cursor: AntigravityExternalPageCursorV1): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function decodeAntigravityExternalPageCursor(
+  raw: string,
+): AntigravityExternalPageCursorV1 | null {
+  try {
+    const value = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (record.v !== 1 || record.kind !== 'antigravityExternalPage') return null;
+    const nativeCursor = record.nativeCursor;
+    if (nativeCursor !== null && (typeof nativeCursor !== 'string' || !nativeCursor.trim())) {
+      return null;
+    }
+    const itemEnd = record.itemEnd;
+    if (itemEnd !== undefined && (!Number.isSafeInteger(itemEnd) || (itemEnd as number) < 1)) {
+      return null;
+    }
+    const nativeMaxItems = record.nativeMaxItems;
+    const nativeMaxBytes = record.nativeMaxBytes;
+    if (
+      !Number.isSafeInteger(nativeMaxItems) || (nativeMaxItems as number) < 1
+      || !Number.isSafeInteger(nativeMaxBytes) || (nativeMaxBytes as number) < 1
+    ) return null;
+    return {
+      v: 1,
+      kind: 'antigravityExternalPage',
+      nativeCursor,
+      nativeMaxItems: nativeMaxItems as number,
+      nativeMaxBytes: nativeMaxBytes as number,
+      ...(itemEnd === undefined ? {} : { itemEnd: itemEnd as number }),
     };
   } catch {
     return null;
@@ -187,6 +302,8 @@ function decodeFullCandidateSearchCursor(raw: string | undefined): FullCandidate
       && record.sourceGeneration.length > 0
       && typeof record.searchTerm === 'string'
       && record.searchTerm.trim().length > 0
+      && typeof record.servedDigest === 'string'
+      && SERVED_DIGEST_PATTERN.test(record.servedDigest)
       && typeof anchor.remoteSessionId === 'string'
       && anchor.remoteSessionId.trim().length > 0
       && typeof anchor.updatedAtMs === 'number'
@@ -199,6 +316,7 @@ function decodeFullCandidateSearchCursor(raw: string | undefined): FullCandidate
           brainDir: record.brainDir,
           sourceGeneration: record.sourceGeneration,
           searchTerm: record.searchTerm,
+          servedDigest: record.servedDigest,
           after: {
             remoteSessionId: anchor.remoteSessionId,
             updatedAtMs: anchor.updatedAtMs,
@@ -309,6 +427,26 @@ function toCandidate(candidate: Readonly<{
   };
 }
 
+/**
+ * The served-prefix digest folds one conversation id at a time and is XOR-based
+ * so it depends on the SET of served identities, never on the order the
+ * directory scan happens to reach them in. Each conversation id appears at most
+ * once per scan — they are directory entry names — so no pair can cancel out.
+ */
+const SERVED_DIGEST_BYTES = 16;
+const SERVED_DIGEST_PATTERN = /^[0-9a-f]{32}$/;
+
+function foldServedMatchDigest(digest: Uint8Array, remoteSessionId: string): void {
+  const hash = createHash('sha256').update(remoteSessionId, 'utf8').digest();
+  for (let index = 0; index < SERVED_DIGEST_BYTES; index += 1) {
+    digest[index] = (digest[index] ?? 0) ^ (hash[index] ?? 0);
+  }
+}
+
+function formatServedMatchDigest(digest: Uint8Array): string {
+  return Buffer.from(digest).toString('hex');
+}
+
 function isFullCandidateSearchAnchor(
   candidate: AgentExternalSessionCandidate,
   anchor: FullCandidateSearchCursorV1['after'],
@@ -332,6 +470,7 @@ function encodeFullCandidateSearchCursor(params: Readonly<{
   brainDir: string;
   sourceGeneration: string;
   searchTerm: string;
+  servedDigest: string;
   candidate: AgentExternalSessionCandidate;
 }>): string | null {
   const sourceRevision = readLinkSourceRevision(params.candidate.linkData);
@@ -342,6 +481,7 @@ function encodeFullCandidateSearchCursor(params: Readonly<{
     brainDir: params.brainDir,
     sourceGeneration: params.sourceGeneration,
     searchTerm: params.searchTerm,
+    servedDigest: params.servedDigest,
     after: {
       remoteSessionId: params.candidate.remoteSessionId,
       updatedAtMs: params.candidate.updatedAtMs,
@@ -369,6 +509,7 @@ async function listFullCandidateSearch(params: Readonly<{
   let foundAfter = after === null;
   let sourceGeneration = params.cursor?.sourceGeneration ?? null;
   let afterDirectoryEntryOffset: number | null = null;
+  const precedingMatchDigest = new Uint8Array(SERVED_DIGEST_BYTES);
   const retained: AgentExternalSessionCandidate[] = [];
 
   while (true) {
@@ -391,12 +532,16 @@ async function listFullCandidateSearch(params: Readonly<{
       ) {
         continue;
       }
-      if (params.cursor) {
-        if (isFullCandidateSearchAnchor(candidate, params.cursor.after)) {
+      if (after) {
+        if (isFullCandidateSearchAnchor(candidate, params.cursor!.after)) {
           foundAfter = true;
+          foldServedMatchDigest(precedingMatchDigest, candidate.remoteSessionId);
           continue;
         }
-        if (!after || compareExternalSessionCandidatePrecedence(candidate, after) <= 0) continue;
+        if (compareExternalSessionCandidatePrecedence(candidate, after) <= 0) {
+          foldServedMatchDigest(precedingMatchDigest, candidate.remoteSessionId);
+          continue;
+        }
       }
       retained.push(candidate);
       retained.sort(compareExternalSessionCandidatePrecedence);
@@ -410,6 +555,13 @@ async function listFullCandidateSearch(params: Readonly<{
   if (!foundAfter) {
     return failed('source_invalid', 'Antigravity full-search candidate cursor is stale or unavailable.', true);
   }
+  // The anchor survived, but the matches ordered at or before it did not: an
+  // unserved conversation overtook it, a served one fell behind it, or a served
+  // one stopped resolving. Either way the served prefix is no longer a prefix of
+  // the current ordering, so answering this cursor would drop or repeat a match.
+  if (params.cursor && formatServedMatchDigest(precedingMatchDigest) !== params.cursor.servedDigest) {
+    return failed('source_invalid', 'Antigravity full-search candidate ordering changed under its cursor.', true);
+  }
   const stopped = invocationFailure(params.invocation);
   if (stopped) return stopped;
 
@@ -422,11 +574,14 @@ async function listFullCandidateSearch(params: Readonly<{
     const hasMore = retained.length > candidates.length;
     const lastCandidate = candidates.at(-1);
     if (!lastCandidate) return failed('invalid_request');
+    const servedDigest = new Uint8Array(precedingMatchDigest);
+    for (const served of candidates) foldServedMatchDigest(servedDigest, served.remoteSessionId);
     const nextCursor = hasMore && sourceGeneration
       ? encodeFullCandidateSearchCursor({
         brainDir: params.brainDir,
         sourceGeneration,
         searchTerm: params.searchTerm,
+        servedDigest: formatServedMatchDigest(servedDigest),
         candidate: lastCandidate,
       })
       : null;
@@ -517,13 +672,15 @@ export async function readAntigravityExternalTranscriptAfter(params: Readonly<{
   maxBytes: number;
 }>): Promise<AntigravityExternalReadAfterOutcome> {
   const wrappedCursor = decodeAntigravityExternalReadAfterCursor(params.cursor);
+  const nativeMaxItems = wrappedCursor?.nativeMaxItems ?? Math.trunc(params.maxItems);
+  const nativeMaxBytes = wrappedCursor?.nativeMaxBytes ?? params.maxBytes;
   const outcome = await readAntigravityTranscriptLinesAfter({
     path: params.transcriptPath,
     conversationId: params.conversationId,
     sourceRevision: params.sourceRevision,
     cursor: wrappedCursor?.transcriptCursor ?? params.cursor,
-    maxItems: params.maxItems,
-    maxBytes: params.maxBytes,
+    maxItems: nativeMaxItems,
+    maxBytes: nativeMaxBytes,
     includeCorrelationLookback: !wrappedCursor,
   });
   if (outcome.kind === 'already_current') return { ...outcome, cursor: params.cursor };
@@ -539,27 +696,46 @@ export async function readAntigravityExternalTranscriptAfter(params: Readonly<{
     pendingToolCallIds: incomingPendingToolCallIds,
   });
   const groups = projected.groups;
-  const items = groups.flatMap((group) => group.items);
+  const windowItems = groups.flatMap((group) => group.items);
+  // One native record projects to assistant text PLUS one item per tool call, so
+  // whole-record advancement cannot honor a smaller item budget. Resume inside
+  // the projected window instead of refusing the record forever.
+  const itemStart = wrappedCursor?.itemStart ?? 0;
+  if (itemStart > windowItems.length) return { kind: 'gap_or_cursor_expired' };
+  const itemEnd = Math.min(windowItems.length, itemStart + Math.trunc(params.maxItems));
+  const items = windowItems.slice(itemStart, itemEnd);
+  const windowDrained = itemEnd >= windowItems.length;
   const emptyGroups = groups.filter((group) => group.items.length === 0);
   // The host counts every skip code except `non_transcript_record_skipped` as a
   // REQUIRED item failure, so a checkpoint this build deliberately omits must
-  // not be reported as history it could not read.
-  const skippedPositions = emptyGroups
-    .filter((group) => group.unsupported)
-    .map((group) => group.startOffsetBytes);
-  const nonTranscriptPositions = emptyGroups
-    .filter((group) => !group.unsupported)
-    .map((group) => group.startOffsetBytes);
+  // not be reported as history it could not read. Reported once, when this
+  // window is retired, so replaying it cannot inflate the counts.
+  const skippedPositions = windowDrained
+    ? emptyGroups.filter((group) => group.unsupported).map((group) => group.startOffsetBytes)
+    : [];
+  const nonTranscriptPositions = windowDrained
+    ? emptyGroups.filter((group) => !group.unsupported).map((group) => group.startOffsetBytes)
+    : [];
   return {
     kind: 'advanced',
     items,
-    nextCursor: encodeAntigravityExternalReadAfterCursor({
-      v: 1,
-      kind: 'antigravityExternalReadAfter',
-      transcriptCursor: outcome.nextCursor,
-      pendingToolCallIds: projected.pendingToolCallIds,
-    }),
-    hasMore: outcome.hasMore,
+    nextCursor: windowDrained
+      ? encodeAntigravityExternalReadAfterCursor({
+        v: 1,
+        kind: 'antigravityExternalReadAfter',
+        transcriptCursor: outcome.nextCursor,
+        pendingToolCallIds: projected.pendingToolCallIds,
+      })
+      : encodeAntigravityExternalReadAfterCursor({
+        v: 1,
+        kind: 'antigravityExternalReadAfter',
+        transcriptCursor: wrappedCursor?.transcriptCursor ?? params.cursor,
+        pendingToolCallIds: incomingPendingToolCallIds,
+        itemStart: itemEnd,
+        nativeMaxItems,
+        nativeMaxBytes,
+      }),
+    hasMore: windowDrained ? outcome.hasMore : true,
     sourceRevision: outcome.sourceRevision,
     ...(outcome.sourceDiagnostics === undefined
       ? {}
@@ -811,13 +987,21 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
         remoteSessionId: request.remoteSessionId,
       });
       if (!resolved.ok) return boundedResult(request, resolved);
+      const pageCursor = request.cursor
+        ? decodeAntigravityExternalPageCursor(request.cursor)
+        : null;
+      if (request.cursor && !pageCursor) {
+        return failed('invalid_request', 'Invalid Antigravity transcript page cursor.');
+      }
+      const nativeMaxItems = pageCursor?.nativeMaxItems ?? Math.trunc(request.maxItems);
+      const nativeMaxBytes = pageCursor?.nativeMaxBytes ?? request.maxSerializedBytes;
       const outcome = await pageAntigravityTranscriptLines({
         path: resolved.value.transcriptPath,
         conversationId: request.remoteSessionId,
         sourceRevision: resolved.value.sourceRevision,
-        cursor: request.cursor,
-        maxItems: request.maxItems,
-        maxBytes: request.maxSerializedBytes,
+        ...(pageCursor?.nativeCursor ? { cursor: pageCursor.nativeCursor } : {}),
+        maxItems: nativeMaxItems,
+        maxBytes: nativeMaxBytes,
       });
       const after = invocationFailure(request);
       if (after) return after;
@@ -858,23 +1042,58 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
       const readableGroups = lastUnsupportedIndex < 0
         ? groups
         : groups.slice(lastUnsupportedIndex + 1);
-      const items = readableGroups.flatMap((group) => group.items);
-      if (items.length > request.maxItems) return failed('invalid_request');
+      const windowItems = readableGroups.flatMap((group) => group.items);
+      // The cursor replays this window; a smaller projection than it recorded
+      // means the source moved under it, and slicing it anyway would silently
+      // emit different history at the same position.
+      if (pageCursor?.itemEnd !== undefined && pageCursor.itemEnd > windowItems.length) {
+        return boundedResult(request, ok({
+          items: [],
+          nextCursor: null,
+          hasMore: false,
+          truncated: true,
+        }));
+      }
+      const itemEnd = pageCursor?.itemEnd ?? windowItems.length;
+      const itemStart = Math.max(0, itemEnd - request.maxItems);
+      const items = windowItems.slice(itemStart, itemEnd);
+      const windowDrained = itemStart === 0;
       const tailPendingToolCallIds = projectAntigravityTranscriptRecordGroupsWithCorrelation({
         conversationId: request.remoteSessionId,
         records: outcome.tailCorrelationLookbackRecords,
       }).pendingToolCallIds;
-      const truncated = lastUnsupportedIndex >= 0;
+      // Older items of this window are unreachable past an unreadable record,
+      // but the readable ones newer than it are still owed to the caller, so the
+      // page only becomes incomplete once this window is drained.
+      const truncated = lastUnsupportedIndex >= 0 && windowDrained;
+      const nextCursor = !windowDrained
+        ? encodeAntigravityExternalPageCursor({
+          v: 1,
+          kind: 'antigravityExternalPage',
+          nativeCursor: pageCursor?.nativeCursor ?? null,
+          nativeMaxItems,
+          nativeMaxBytes,
+          itemEnd: itemStart,
+        })
+        : truncated || outcome.nextCursor === null
+          ? null
+          : encodeAntigravityExternalPageCursor({
+            v: 1,
+            kind: 'antigravityExternalPage',
+            nativeCursor: outcome.nextCursor,
+            nativeMaxItems,
+            nativeMaxBytes,
+          });
       return boundedResult(request, ok({
         items,
-        nextCursor: truncated ? null : outcome.nextCursor,
+        nextCursor,
         tailCursor: encodeAntigravityExternalReadAfterCursor({
           v: 1,
           kind: 'antigravityExternalReadAfter',
           transcriptCursor: outcome.tailCursor,
           pendingToolCallIds: tailPendingToolCallIds,
         }),
-        hasMore: truncated ? false : outcome.hasMore,
+        hasMore: nextCursor !== null,
         ...(truncated ? { truncated: true } : {}),
       }));
     },
@@ -903,9 +1122,6 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
       });
       const after = invocationFailure(request);
       if (after) return after;
-      if (outcome.kind === 'advanced' && outcome.items.length > request.maxItems) {
-        return failed('invalid_request');
-      }
       return boundedResult(request, mapReadAfterOutcome(outcome));
     },
   });

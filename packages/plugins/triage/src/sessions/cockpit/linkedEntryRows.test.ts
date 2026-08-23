@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { CORPUS_SESSION_LINKS_FIELD } from '../../corpus/collections/ids.js';
+import { testkitEntryRef } from '../../corpus/testkit/observations.test-support.js';
 import { MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 } from './linkedEntriesQuery.js';
 import {
     projectTriageSessionLinkedEntries,
@@ -41,6 +42,9 @@ function state(
     return { status: 'ready', rows: [], hasMore: false, failure: null, ...overrides };
 }
 
+/** The reference the private link row held, as every `ready` read carries it. */
+const ENTRY_REF = testkitEntryRef();
+
 function hydration(
     entries: readonly (readonly [string, TriageSessionLinkHydrationV1])[],
 ): ReadonlyMap<string, TriageSessionLinkHydrationV1> {
@@ -52,7 +56,7 @@ describe('the Session cockpit linked-entry projection', () => {
         const view = projectTriageSessionLinkedEntries({
             query: state({ rows: [queryRow('link-a', 10)] }),
             hydration: hydration([
-                ['link-a', { kind: 'ready', revision: 1, displayPath: 'example/repository#42' }],
+                ['link-a', { kind: 'ready', revision: 1, displayPath: 'example/repository#42', entryRef: ENTRY_REF }],
             ]),
         });
 
@@ -61,7 +65,15 @@ describe('the Session cockpit linked-entry projection', () => {
             rows: [{
                 key: 'link-a',
                 linkedAtMs: 10,
-                presentation: { kind: 'linked', displayPath: 'example/repository#42' },
+                presentation: {
+                    kind: 'linked',
+                    displayPath: 'example/repository#42',
+                    // Unlink is addressed by the entry AND the Session, and the
+                    // mounted surface knows only the Session. Without the
+                    // reference the private read already returned, a reader who
+                    // linked the wrong entry has nothing to undo it with.
+                    entryRef: ENTRY_REF,
+                },
             }],
             more: false,
             notice: null,
@@ -72,7 +84,7 @@ describe('the Session cockpit linked-entry projection', () => {
         const view = projectTriageSessionLinkedEntries({
             query: state({ rows: [queryRow('link-a', 10), queryRow('link-b', 20)] }),
             hydration: hydration([
-                ['link-b', { kind: 'ready', revision: 1, displayPath: 'example/repository#7' }],
+                ['link-b', { kind: 'ready', revision: 1, displayPath: 'example/repository#7', entryRef: ENTRY_REF }],
             ]),
         });
 
@@ -105,7 +117,7 @@ describe('the Session cockpit linked-entry projection', () => {
         const view = projectTriageSessionLinkedEntries({
             query: state({ rows: [queryRow('link-a', 10, 4)] }),
             hydration: hydration([
-                ['link-a', { kind: 'ready', revision: 3, displayPath: 'stale/path#1' }],
+                ['link-a', { kind: 'ready', revision: 3, displayPath: 'stale/path#1', entryRef: ENTRY_REF }],
             ]),
         });
 
@@ -161,7 +173,7 @@ describe('the Session cockpit linked-entry projection', () => {
                 rows: [queryRow('link-a', 10)],
             }),
             hydration: hydration([
-                ['link-a', { kind: 'ready', revision: 1, displayPath: 'example/repository#42' }],
+                ['link-a', { kind: 'ready', revision: 1, displayPath: 'example/repository#42', entryRef: ENTRY_REF }],
             ]),
         });
 

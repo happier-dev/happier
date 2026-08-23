@@ -21,6 +21,7 @@ import {
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 type StateValue = Readonly<Record<string, unknown>>
   & Readonly<{ id: string; payload: Readonly<Record<string, unknown>> }>;
 type StateRow = Readonly<{ rowId: string; revision: number; value: StateValue }>;
@@ -209,6 +210,7 @@ function createCollection(initial: readonly StateRow[]) {
       prefix?: readonly unknown[];
       limit?: number;
     }>) {
+      assertChannelsTestCollectionQueryLimit(request.limit);
       if (request.index !== 'by-connection-binding-v2') {
         throw new Error(`Unexpected Collection query index '${request.index}'.`);
       }
@@ -547,7 +549,7 @@ describe('Channels pairing management writer', () => {
     }, context)).resolves.toEqual({ kind: 'cancelled' });
   });
 
-  it('fails closed before pairing finalization persists an enabled approval policy without its producer', async () => {
+  it('persists the owner-chosen enabled approval policy through pairing finalization', async () => {
     const createHandlers = Reflect.get(management, 'createConversationPairingManagementHandlers');
     expect(createHandlers).toEqual(expect.any(Function));
     if (typeof createHandlers !== 'function') return;
@@ -592,15 +594,16 @@ describe('Channels pairing management writer', () => {
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
       finalizeIdempotencyKey: 'finalize-1',
-    }, context)).rejects.toMatchObject({ code: 'plugin_action_unavailable' });
+    }, context)).resolves.toMatchObject({ kind: 'created' });
 
-    expect(execute).not.toHaveBeenCalled();
-    expect(collection.batches).toHaveLength(0);
-    expect(collection.rows.has('binding-1')).toBe(false);
-    await expect(handlers.cancel({
-      generationId: challenge.generationId,
-      proposalId: proposal.proposalId,
-    }, context)).resolves.toEqual({ kind: 'cancelled' });
+    // Pairing finalization is a binding writer like any other: it stores the
+    // owner's exact approval ceiling rather than clamping it.
+    expect(collection.rows.get('binding-1')?.value.payload).toMatchObject({
+      target: {
+        kind: 'session',
+        policy: { approvals: { kind: 'enabled', maximumScope: 'request' } },
+      },
+    });
   });
 
   it('withholds a checkpointed-pull pairing challenge until the core commits its first no-history poll token', async () => {

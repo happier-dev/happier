@@ -18,10 +18,20 @@ import queryIssuesPage2 from '../api/__fixtures__/queryIssuesPage2.json' with { 
 import crudIssueRead from '../api/__fixtures__/crudIssueRead.json' with { type: 'json' };
 import queryIssueEventsPage from '../api/__fixtures__/queryIssueEventsPage.json' with { type: 'json' };
 import queryIssueDetail from '../api/__fixtures__/queryIssueDetail.json' with { type: 'json' };
+import issueActivityPage from '../api/__fixtures__/issueActivityPage.json' with { type: 'json' };
 import { POSTHOG_CONNECTED_ACCOUNT_PURPOSE } from '../posthogContracts.js';
-import { PosthogSampledEventsResultV1Schema } from './detail/issueEventsContract.js';
+import {
+    POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1,
+    PosthogSampledEventsResultV1Schema,
+} from './detail/issueEventsContract.js';
+import {
+    POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1,
+    PosthogIssueActivityResultV1Schema,
+} from './detail/issueActivityContract.js';
 import {
     POSTHOG_FAILURE_CODES,
+    createPosthogIssueActivityReader,
+    createPosthogSampledEventsReader,
     getPosthogSourceEntry,
     listPosthogInstances,
     readPosthogSampledEvents,
@@ -37,7 +47,21 @@ const ACCOUNT = {
     accountId: 'account-1',
 } as const;
 
-function context(responses: readonly unknown[], statuses: readonly number[] = []) {
+type MaterializeStub = (
+    request: unknown,
+    options: Readonly<{ signal?: AbortSignal }>,
+) => Promise<unknown>;
+
+function context(
+    responses: readonly unknown[],
+    statuses: readonly number[] = [],
+    options: Readonly<{
+        /** Extra response headers per call, merged over the JSON content type. */
+        responseHeaders?: readonly Readonly<Record<string, string>>[];
+        /** Replaces the host materialization boundary for one exact case. */
+        materialize?: MaterializeStub;
+    }> = {},
+) {
     let call = 0;
     const listAccounts = vi.fn(async () => ({
         status: 'complete' as const,
@@ -49,17 +73,21 @@ function context(responses: readonly unknown[], statuses: readonly number[] = []
             connectedAccountBases: ['https://eu.posthog.com'],
         }],
     }));
-    const materializeListedAccount = vi.fn(async () => ({
+    const defaultMaterialize: MaterializeStub = async () => ({
         kind: 'httpHeaders' as const,
         headers: { authorization: 'Bearer secret' },
-    }));
+    });
+    const materializeListedAccount = vi.fn(options.materialize ?? defaultMaterialize);
     const request = vi.fn(async (input: Readonly<{ url: string }>) => {
         const index = call++;
         const body = responses[index];
         return {
             status: statuses[index] ?? 200,
             finalUrl: input.url,
-            headers: { 'content-type': 'application/json' },
+            headers: {
+                'content-type': 'application/json',
+                ...(options.responseHeaders?.[index] ?? {}),
+            },
             body: new TextEncoder().encode(JSON.stringify(body)),
         };
     });
@@ -142,7 +170,7 @@ describe('PostHog Triage source operations', () => {
                 origin: 'https://eu.posthog.com',
                 headerNames: ['authorization'],
             },
-        }), { signal: host.value.signal });
+        }), { signal: expect.any(AbortSignal) });
     });
 
     it('returns a bounded scan page and carries frozen geometry only in its continuation', async () => {
@@ -261,6 +289,8 @@ describe('PostHog Triage source operations', () => {
         expect(second.kind).toBe('sampled');
         if (second.kind !== 'sampled') return;
         expect(second.continuation).toBeUndefined();
+        // The provider's own `hasMore: false` ended it, so there is no gap to state.
+        expect(second.incomplete).toBeUndefined();
 
         const bodies = host.request.mock.calls.map(([callInput]) => JSON.parse(
             new TextDecoder().decode((callInput as Readonly<{ body: Uint8Array }>).body),
@@ -418,5 +448,238 @@ describe('PostHog listInstances with no connected account', () => {
         await expect(listPosthogInstances({ v: 1 }, host.value)).rejects.toMatchObject({
             code: 'plugin_host_access_resource_not_selected',
         });
+    });
+});
+
+/**
+ * The three boundaries every invoked operation crosses before it can answer:
+ * the exact provider retry evidence, the account materialization signal, and the
+ * shared authorization admission rule.
+ */
+describe('PostHog invocation boundaries', () => {
+    const LOCAL_REF = {
+        kindId: 'error-issue',
+        collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1',
+        entryId: '00000000-0000-4000-8000-000000000001',
+    } as const;
+
+    it('carries the provider retry deadline through an authoritative get', async () => {
+        // An HTTP-date `Retry-After` is an absolute instant, so the deadline the
+        // aggregate receives is exactly the one the provider named rather than a
+        // value derived from when this test happened to run.
+        const retryAt = 'Wed, 21 Oct 2099 07:28:00 GMT';
+        const host = context([{ detail: 'slow down' }], [429], {
+            responseHeaders: [{ 'retry-after': retryAt }],
+        });
+
+        const result = await getPosthogSourceEntry({
+            v: 1,
+            instance: configuredInstance(),
+            localRef: LOCAL_REF,
+        }, host.value);
+
+        expect(() => TriageGetResultV1Schema.parse(result)).not.toThrow();
+        expect(result.kind).toBe('unresolved');
+        if (result.kind !== 'unresolved') return;
+        // `scan` already publishes this evidence. A `get` that dropped it made the
+        // aggregate retry a read the provider had explicitly deferred.
+        expect(result.failure).toEqual({
+            class: 'rateLimit',
+            code: POSTHOG_FAILURE_CODES.throttled,
+            retryNotBeforeMs: Date.parse(retryAt),
+        });
+    });
+
+    it('aborts account materialization when a private request deadline elapses', async () => {
+        let observed: AbortSignal | undefined;
+        const host = context([], [], {
+            materialize: async (_request, materializeOptions) => {
+                observed = materializeOptions.signal;
+                return await new Promise(() => {
+                    // A host materialization that never settles: only the signal the
+                    // source hands it can end this call.
+                });
+            },
+        });
+
+        const read = createPosthogSampledEventsReader(5);
+        const result = await read({
+            v: 1,
+            instance: configuredInstance(),
+            localRef: LOCAL_REF,
+            limit: 3,
+        }, host.value);
+
+        expect(result).toEqual({
+            kind: 'unavailable',
+            failure: { class: 'transient', code: POSTHOG_FAILURE_CODES.timedOut },
+        });
+        // The caller's aggregate signal never aborts here, so a materialization
+        // handed that signal keeps running against the account after this source has
+        // already given up on it.
+        expect(observed).toBeDefined();
+        expect(observed).not.toBe(host.value.signal);
+        expect(observed?.aborted).toBe(true);
+    });
+
+    it('admits the materialized account through the shared authorization owner', async () => {
+        const cancelled = context([], [], {
+            materialize: async () => {
+                throw Object.assign(new Error('withdrawn'), { name: 'AbortError' });
+            },
+        });
+
+        const result = await getPosthogSourceEntry({
+            v: 1,
+            instance: configuredInstance(),
+            localRef: LOCAL_REF,
+        }, cancelled.value);
+
+        expect(result.kind).toBe('unresolved');
+        if (result.kind !== 'unresolved') return;
+        // A withdrawn materialization is a cancellation, not a refused account. The
+        // shared owner is what tells those apart; a local `catch` reported every one
+        // of them as an authentication failure the reader was asked to fix.
+        expect(result.failure).toEqual({
+            class: 'transient',
+            code: POSTHOG_FAILURE_CODES.cancelled,
+        });
+        expect(cancelled.request).not.toHaveBeenCalled();
+    });
+
+    it('refuses a materialization that carries no usable authorization', async () => {
+        const wrongKind = context([], [], {
+            materialize: async () => ({ kind: 'oauthToken' as const, token: 'nope' }),
+        });
+
+        const result = await getPosthogSourceEntry({
+            v: 1,
+            instance: configuredInstance(),
+            localRef: LOCAL_REF,
+        }, wrongKind.value);
+
+        expect(result.kind).toBe('unresolved');
+        if (result.kind !== 'unresolved') return;
+        expect(result.failure).toEqual({
+            class: 'authentication',
+            code: POSTHOG_FAILURE_CODES.unauthorized,
+        });
+        expect(wrongKind.request).not.toHaveBeenCalled();
+    });
+});
+
+
+/**
+ * What one Activity page publishes about its own coverage.
+ *
+ * The provider advertises a `next` this source will not follow more often than the
+ * happy path suggests — a URL naming another route, one that will not parse, one that
+ * repeats the page just read. Every one of them used to leave the published page with
+ * no continuation, which the panel reducer reads as the end of the walk. A reader was
+ * shown "12 activity record(s) read." under a list PostHog had more of, and nothing on
+ * screen said so.
+ */
+describe('PostHog issue activity coverage', () => {
+    const LOCAL_REF = {
+        kindId: 'error-issue',
+        collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1',
+        entryId: '00000000-0000-4000-8000-000000000001',
+    } as const;
+
+    async function readActivity(page: unknown) {
+        const host = context([page]);
+        const read = createPosthogIssueActivityReader(5_000);
+        const result = await read({
+            v: 1,
+            instance: configuredInstance(),
+            localRef: LOCAL_REF,
+            limit: 50,
+        }, host.value);
+        expect(() => PosthogIssueActivityResultV1Schema.parse(result)).not.toThrow();
+        return result;
+    }
+
+    it('carries a verified next page as a continuation and claims no incompleteness', async () => {
+        const result = await readActivity(issueActivityPage);
+
+        expect(result.kind).toBe('activity');
+        if (result.kind !== 'activity') return;
+        expect(result.continuation).toBeDefined();
+        expect(result.incomplete).toBeUndefined();
+    });
+
+    it('states that the walk stopped short when the provider named a next it will not follow', async () => {
+        const result = await readActivity({
+            ...issueActivityPage,
+            // The provider's own `next` for the page just read: a real response shape,
+            // and one this source must not request again.
+            next: 'https://eu.posthog.com/api/projects/4821/error_tracking/issues/'
+                + '00000000-0000-4000-8000-000000000001/activity/?limit=50&page=1',
+        });
+
+        expect(result.kind).toBe('activity');
+        if (result.kind !== 'activity') return;
+        // No continuation, because there is no position this source trusts...
+        expect(result.continuation).toBeUndefined();
+        // ...but the absence of a continuation is not exhaustion, and the page says so.
+        expect(result.incomplete).toBe(POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1);
+    });
+
+    it('claims exhaustion only when the provider stated no next at all', async () => {
+        const result = await readActivity({ ...issueActivityPage, next: null });
+
+        expect(result.kind).toBe('activity');
+        if (result.kind !== 'activity') return;
+        expect(result.continuation).toBeUndefined();
+        expect(result.incomplete).toBeUndefined();
+        // The unreadable third fixture row is still charged to the page budget, so a
+        // reader is never told a page covered fewer rows than it consumed.
+        expect(result.omittedRowCount).toBe(1);
+    });
+});
+
+/**
+ * The sampled plane's half of the same coverage contract.
+ *
+ * `query/issue_events` is offset-paged rather than page-numbered, so the deviation looks
+ * different — `hasMore: true` beside an offset that does not move — and the consequence
+ * is identical: no continuation, no Load more, and a panel that reads the missing
+ * affordance as the end of what PostHog offered.
+ */
+describe('PostHog sampled occurrence coverage', () => {
+    const LOCAL_REF = {
+        kindId: 'error-issue',
+        collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1',
+        entryId: '00000000-0000-4000-8000-000000000001',
+    } as const;
+
+    async function readSample(page: unknown) {
+        const host = context([page]);
+        const result = await readPosthogSampledEvents({
+            v: 1,
+            instance: configuredInstance(),
+            localRef: LOCAL_REF,
+            limit: 3,
+        }, host.value);
+        expect(() => PosthogSampledEventsResultV1Schema.parse(result)).not.toThrow();
+        return result;
+    }
+
+    it('states the gap when the provider claims more rows at an offset that will not move', async () => {
+        const result = await readSample({ ...queryIssueEventsPage, hasMore: true, nextOffset: 0 });
+
+        expect(result.kind).toBe('sampled');
+        if (result.kind !== 'sampled') return;
+        expect(result.continuation).toBeUndefined();
+        expect(result.incomplete).toBe(POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1);
+    });
+
+    it('claims the sample finished only on the provider\u2019s own end of it', async () => {
+        const result = await readSample({ ...queryIssueEventsPage, hasMore: false, nextOffset: null });
+
+        expect(result.kind).toBe('sampled');
+        if (result.kind !== 'sampled') return;
+        expect(result.continuation).toBeUndefined();
+        expect(result.incomplete).toBeUndefined();
     });
 });

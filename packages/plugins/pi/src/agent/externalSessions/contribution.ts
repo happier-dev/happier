@@ -744,17 +744,33 @@ function readPiBlockText(block: Record<string, unknown>, key: string): string | 
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function readPiTextContent(content: unknown): string | null {
+/**
+ * Pi 0.82.1 types user-authored content as `string | (TextContent | ImageContent)[]`
+ * (`@earendil-works/pi-ai` `UserMessage`, and the same union on `CustomMessageEntry`).
+ * The canonical user envelope is text-only, so an image block is named in the row
+ * instead of being dropped or failing the whole page.
+ */
+function readPiUserContentText(content: unknown): string | null {
   if (typeof content === 'string') return content.length > 0 ? content : null;
   if (!Array.isArray(content) || content.length === 0) return null;
-  const text: string[] = [];
+  const segments: string[] = [];
   for (const block of content) {
-    if (!isRecord(block) || block.type !== 'text') return null;
-    const value = readPiBlockText(block, 'text');
-    if (!value) return null;
-    text.push(value);
+    if (!isRecord(block)) return null;
+    if (block.type === 'text') {
+      const value = readPiBlockText(block, 'text');
+      if (!value) return null;
+      segments.push(value);
+      continue;
+    }
+    if (block.type === 'image') {
+      const mimeType = readPiBlockText(block, 'mimeType');
+      if (!mimeType) return null;
+      segments.push(`\n[Pi image content (${mimeType})]\n`);
+      continue;
+    }
+    return null;
   }
-  return text.join('');
+  return segments.length > 0 ? segments.join('') : null;
 }
 
 /** Keep durable tool output bounded to visible content; media bytes are not transcript JSON. */
@@ -770,6 +786,52 @@ function sanitizePiToolResultContent(
 }
 
 /**
+ * `recordBashResult` persists a `!` bash execution through `appendMessage`, so this
+ * arrives as an ordinary `message` entry whose role is outside pi-ai's `Message`
+ * union. The entry id is the only correlation Pi records, so it is also the call id.
+ */
+function projectPiBashExecutionRows(
+  message: Record<string, unknown>,
+  buildRowId: (suffix: string | null) => string,
+): readonly PiTranscriptRow[] | null {
+  const command = readPiBlockText(message, 'command');
+  const output = message.output;
+  const exitCode = message.exitCode;
+  if (
+    !command
+    || typeof output !== 'string'
+    || (exitCode !== undefined && exitCode !== null && typeof exitCode !== 'number')
+    || typeof message.cancelled !== 'boolean'
+    || typeof message.truncated !== 'boolean'
+  ) return null;
+  const callId = buildRowId(null);
+  const callRowId = buildRowId('bash-call');
+  const resultRowId = buildRowId('bash-result');
+  const callRaw = agentAcpRaw({
+    type: 'tool-call',
+    callId,
+    name: 'bash',
+    id: callRowId,
+    input: { command },
+  });
+  const resultRaw = agentAcpRaw({
+    type: 'tool-result',
+    callId,
+    id: resultRowId,
+    output: {
+      output,
+      exitCode: typeof exitCode === 'number' ? exitCode : null,
+      cancelled: message.cancelled,
+      truncated: message.truncated,
+    },
+    isError: message.cancelled || (typeof exitCode === 'number' && exitCode !== 0),
+  });
+  return callRaw && resultRaw
+    ? [{ id: callRowId, raw: callRaw }, { id: resultRowId, raw: resultRaw }]
+    : null;
+}
+
+/**
  * Projects one Pi message record into the canonical rows it actually carries.
  * A Pi assistant message routinely mixes thinking, text, and several tool calls
  * in a single record, so this is deliberately one-to-many. `null` means the
@@ -781,10 +843,14 @@ function projectPiMessageRows(
   buildRowId: (suffix: string | null) => string,
 ): readonly PiTranscriptRow[] | null {
   if (message.role === 'user') {
-    const text = readPiTextContent(message.content);
+    const text = readPiUserContentText(message.content);
     if (!text) return null;
     const raw = canonicalRaw({ role: 'user', content: { type: 'text', text } });
     return raw ? [{ id: buildRowId(null), raw }] : null;
+  }
+
+  if (message.role === 'bashExecution') {
+    return projectPiBashExecutionRows(message, buildRowId);
   }
 
   if (message.role === 'toolResult') {
@@ -808,12 +874,16 @@ function projectPiMessageRows(
   if (message.role !== 'assistant') return null;
 
   const content = message.content;
+  // Pi persists an assistant turn that produced no content — an interrupted or
+  // tool-only turn writes `''` or `[]`. That is a complete record carrying no
+  // row, not a record this projection failed to understand.
   if (typeof content === 'string') {
-    if (content.length === 0) return null;
+    if (content.length === 0) return [];
     const raw = agentAcpRaw({ type: 'message', message: content });
     return raw ? [{ id: buildRowId('text:0'), raw }] : null;
   }
-  if (!Array.isArray(content) || content.length === 0) return null;
+  if (!Array.isArray(content)) return null;
+  if (content.length === 0) return [];
 
   const rows: PiTranscriptRow[] = [];
   for (const [index, value] of content.entries()) {
@@ -822,17 +892,23 @@ function projectPiMessageRows(
     if (!blockType) return null;
     const id = buildRowId(`${blockType}:${index}`);
 
+    // Pi durably writes a redacted block as an empty string beside its
+    // `textSignature` / `thinkingSignature`. The block is well-formed and
+    // carries no readable text, so it is advanced past rather than failing the
+    // whole record and, with it, the whole page.
     if (blockType === 'text') {
+      if (typeof value.text !== 'string') return null;
       const text = readPiBlockText(value, 'text');
-      if (!text) return null;
+      if (!text) continue;
       const raw = agentAcpRaw({ type: 'message', message: text });
       if (!raw) return null;
       rows.push({ id, raw });
       continue;
     }
     if (blockType === 'thinking') {
+      if (typeof value.thinking !== 'string') return null;
       const thinking = readPiBlockText(value, 'thinking');
-      if (!thinking) return null;
+      if (!thinking) continue;
       const raw = agentAcpRaw({ type: 'thinking', text: thinking });
       if (!raw) return null;
       rows.push({ id, raw });
@@ -855,7 +931,7 @@ function projectPiMessageRows(
     }
     return null;
   }
-  return rows.length > 0 ? rows : null;
+  return rows;
 }
 
 const PI_KNOWN_NON_TRANSCRIPT_ENTRY_TYPES = new Set([
@@ -914,7 +990,28 @@ function projectEntry(
       (suffix) => (suffix ? `${baseId}:${suffix}` : baseId),
     );
     if (rows === null) return { kind: 'unsupported' };
-    return { kind: 'item', items: rows.map(({ id, raw }) => buildItem(id, raw)) };
+    // An understood record that carries no publishable row is a ratified skip;
+    // reporting it unsupported would fail the page over ordinary Pi output.
+    return rows.length === 0
+      ? { kind: 'known_non_transcript' }
+      : { kind: 'item', items: rows.map(({ id, raw }) => buildItem(id, raw)) };
+  }
+
+  /**
+   * `appendCustomMessageEntry` persists extension-injected turns that Pi converts
+   * into a user message in `buildSessionContext`. `display: false` means Pi hides
+   * the entry entirely, which is a ratified skip rather than a lost record.
+   */
+  if (entry.type === 'custom_message') {
+    if (typeof record.customType !== 'string' || typeof record.display !== 'boolean') {
+      return { kind: 'unsupported' };
+    }
+    if (!record.display) return { kind: 'known_non_transcript' };
+    const text = readPiUserContentText(record.content);
+    const raw = text ? canonicalRaw({ role: 'user', content: { type: 'text', text } }) : null;
+    return raw
+      ? { kind: 'item', items: [buildItem(baseId, raw)] }
+      : { kind: 'unsupported' };
   }
 
   if (entry.type === 'branch_summary') {
@@ -1590,6 +1687,18 @@ export function createPiExternalSessionsContribution(params: Readonly<{
           },
         });
       }
+      // A missing parent inside a WINDOW is the pagination handoff. A missing
+      // parent once the backward reader has consumed the first byte of the file
+      // is not: the branch has no root in this source, so its reachable suffix
+      // is not the transcript. Reporting ordinary completion here publishes a
+      // partial history as authoritative and retires the continuation that
+      // would have surfaced the gap.
+      if (!hasMore && page.reachedStart && nextActiveLeafId !== null) {
+        return failed(
+          'agent_error',
+          'Pi transcript branch reaches the start of its source with an unresolved parent entry.',
+        );
+      }
       const tail = request.cursor && !sourceReplaced
         ? null
         : await readCurrentTail({ file, maxBytes: request.maxSerializedBytes });
@@ -1600,7 +1709,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
         nextCursor,
         ...(tail ? { tailCursor: tail.cursor } : {}),
         hasMore,
-        ...(sourceReplaced || (!expectedLeafPresent && page.reachedStart) ? { truncated: true } : {}),
+        ...(sourceReplaced ? { truncated: true } : {}),
       });
       return resultFits(result, request.maxSerializedBytes)
         ? result

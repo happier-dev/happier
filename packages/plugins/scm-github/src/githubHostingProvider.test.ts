@@ -35,7 +35,13 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
           capability: 'network',
           scope: expect.objectContaining({
             targets: expect.arrayContaining([{ kind: 'scmProviderOrigin', provider: 'github' }]),
-            methods: ['GET', 'POST'],
+            // Still an EXACT set, deliberately: widening this grant is a real
+            // capability change and must stay visible here. PUT, PATCH and DELETE
+            // were added for the approved pull-request mutations — PUT for merge
+            // and update-branch, PATCH for close/reopen, DELETE for the reviewer
+            // withdrawal, which is the only declared Action that sends it. No verb
+            // is present that no declared write consumes.
+            methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
           }),
         }), expect.objectContaining({
           id: 'github-cli-process',

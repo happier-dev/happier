@@ -12,18 +12,12 @@ import {
   type BitbucketDetailReadDependenciesV1,
   type BitbucketWalkPositionV1,
 } from '../detail/reads.js';
-import type { BitbucketDetailRouteInputV1 } from '../detail/routes.js';
 import { createBitbucketFailure } from '../failures.js';
-import { readBitbucketCollisionScopeRepositoryUuid } from '../identity.js';
-import { decodeBitbucketConfiguration } from '../instance.js';
 import {
-  createAuthorizedBitbucketClient,
-  type BitbucketSourceRuntime,
-} from './authorization.js';
-import {
-  BITBUCKET_CONNECTED_ACCOUNT_PURPOSE,
-  BITBUCKET_PULL_REQUEST_KIND_ID,
-} from './descriptor.js';
+  admitBitbucketEntryInvocation,
+  toBitbucketRuntime,
+  type BitbucketEntryRouteV1,
+} from './invocationAdmission.js';
 import {
   decodeBitbucketDetailContinuation,
   encodeBitbucketDetailContinuation,
@@ -65,23 +59,6 @@ const CONTINUATION_UNREADABLE = createBitbucketFailure(
   'unsupportedContract',
   'detail-continuation-unreadable',
 );
-const KIND_NOT_DECLARED = createBitbucketFailure('unsupportedContract', 'kind-not-declared');
-const BINDING_PURPOSE_MISMATCH = createBitbucketFailure(
-  'unsupportedContract',
-  'binding-purpose-mismatch',
-);
-const CONFIGURATION_UNDECODABLE = createBitbucketFailure(
-  'unsupportedContract',
-  'configuration-undecodable',
-);
-const CONFIGURATION_INSTANCE_MISMATCH = createBitbucketFailure(
-  'unsupportedContract',
-  'configuration-instance-mismatch',
-);
-const COLLISION_SCOPE_INVALID = createBitbucketFailure(
-  'unsupportedContract',
-  'collision-scope-invalid',
-);
 
 function unavailable(failure: TriageSourceFailureV1): Readonly<{
   kind: 'unavailable';
@@ -90,32 +67,20 @@ function unavailable(failure: TriageSourceFailureV1): Readonly<{
   return Object.freeze({ kind: 'unavailable' as const, failure });
 }
 
-function toRuntime(context: PluginInvocationContext): BitbucketSourceRuntime {
-  return {
-    connectedAccounts: context.services.connectedAccounts,
-    http: context.services.http,
-    now: () => Date.now(),
-    signal: context.signal,
-  };
-}
-
 type AdmittedInvocation =
   | Readonly<{
     ok: true;
-    route: BitbucketDetailRouteInputV1;
+    route: BitbucketEntryRouteV1;
     dependencies: BitbucketDetailReadDependenciesV1;
   }>
   | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>;
 
 /**
- * Admits one detail invocation against the exact configured workspace and the
- * repository this source itself keyed the entry to.
+ * Admits one detail invocation through the shared entry-admission owner.
  *
- * The repository UUID is read back out of the collision scope rather than taken
- * from the routing token: the scope is the value this source minted, and a
- * reference keyed against another workspace cannot address a repository here.
- * The account is rematerialized on every invocation and grants no standing
- * authority.
+ * The rule is `invocationAdmission.ts`'s, not this file's: a mounted panel and a pull-request
+ * write must agree byte-for-byte about which references route through which configured workspace.
+ * What remains here is only the shape a paged detail reader consumes.
  */
 async function admitBitbucketDetailInvocation(
   input: Readonly<{
@@ -124,42 +89,15 @@ async function admitBitbucketDetailInvocation(
   }>,
   context: PluginInvocationContext,
 ): Promise<AdmittedInvocation> {
-  if (input.localRef.kindId !== BITBUCKET_PULL_REQUEST_KIND_ID) {
-    return { ok: false, failure: toTriageSourceFailure(KIND_NOT_DECLARED) };
-  }
-  if (input.instance.binding.purpose !== BITBUCKET_CONNECTED_ACCOUNT_PURPOSE) {
-    return { ok: false, failure: toTriageSourceFailure(BINDING_PURPOSE_MISMATCH) };
-  }
-
-  const configuration = decodeBitbucketConfiguration(input.instance.configuration);
-  if (configuration === null) {
-    return { ok: false, failure: toTriageSourceFailure(CONFIGURATION_UNDECODABLE) };
-  }
-  if (input.instance.localInstanceKey !== configuration.workspaceUuid) {
-    return { ok: false, failure: toTriageSourceFailure(CONFIGURATION_INSTANCE_MISMATCH) };
-  }
-
-  const repositoryUuid = readBitbucketCollisionScopeRepositoryUuid(input.localRef.collisionScope);
-  if (repositoryUuid === null) {
-    return { ok: false, failure: toTriageSourceFailure(COLLISION_SCOPE_INVALID) };
-  }
-
-  const runtime = toRuntime(context);
-  const authorized = await createAuthorizedBitbucketClient(runtime, {
-    purpose: input.instance.binding.purpose,
-    account: input.instance.binding.account,
-  });
-  if (!authorized.ok) return { ok: false, failure: toTriageSourceFailure(authorized.failure) };
+  const runtime = toBitbucketRuntime(context, context.signal);
+  const admitted = await admitBitbucketEntryInvocation(input, runtime);
+  if (!admitted.ok) return admitted;
 
   return {
     ok: true,
-    route: Object.freeze({
-      workspaceUuid: configuration.workspaceUuid,
-      repositoryUuid,
-      entryId: input.localRef.entryId,
-    }),
+    route: admitted.route,
     dependencies: Object.freeze({
-      client: authorized.client,
+      client: admitted.client,
       ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
     }),
   };

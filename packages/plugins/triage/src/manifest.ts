@@ -40,6 +40,18 @@ import {
   TriageSetEntryPinnedInputV1Schema,
   TriageSetEntryPinnedResultV1Schema,
 } from './actions/userMarksProtocol.js';
+import {
+  createTriageStartEntrySessionActionHandler,
+  createTriageUnlinkEntryFromSessionActionHandler,
+} from './actions/entrySession.js';
+import {
+  TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
+  TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
+  TriageStartEntrySessionInputV1Schema,
+  TriageStartEntrySessionResultV1Schema,
+  TriageUnlinkEntryFromSessionActionInputV1Schema,
+  TriageUnlinkEntryFromSessionActionResultV1Schema,
+} from './actions/entrySessionProtocol.js';
 import { createTriageLinkEntryToSessionActionHandler } from './actions/sessionLinks.js';
 import {
   TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1,
@@ -208,6 +220,45 @@ function createTriagePlugin() {
         hostAccess: ['account-storage'],
         run: createTriageLinkEntryToSessionActionHandler(),
       },
+      [TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1]: {
+        title: 'Start a session on an entry',
+        description: 'Creates or rejoins one session for a pull request, issue or error group, records the link, and opens it.',
+        scopes: ['global'],
+        // The same `plugin` surface as the link write beneath it, and for the
+        // same reason: the caller is this plugin's own always-mounted header,
+        // which dispatches as a plugin caller. `ui` is deliberately absent —
+        // that surface requires a placement binding and would put a bare "start
+        // a session" command in the product with no entry selected. `agent` and
+        // `mcp` are absent because starting a session on a person's machine and
+        // claiming an entry for it is a decision a person makes.
+        surfaces: ['plugin'],
+        // It writes durable Account state and reaches the generic Session
+        // creator. Nothing outside Happier is touched: the one materialization
+        // that would enter a checkout is not reachable from this wire.
+        dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
+        inputSchema: TriageStartEntrySessionInputV1Schema,
+        resultSchema: TriageStartEntrySessionResultV1Schema,
+        // The one Collection it touches is `session-links`, through the same
+        // canonical writer the link Action uses.
+        hostAccess: ['account-storage'],
+        run: createTriageStartEntrySessionActionHandler(),
+      },
+      [TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1]: {
+        title: 'Unlink an entry from a session',
+        description: 'Removes the record that a pull request, issue or error group is being worked on in one session.',
+        scopes: ['global'],
+        // The reader who linked the wrong entry is the only caller. An agent
+        // that could drop the relationship would undo a person's routing
+        // decision without them.
+        surfaces: ['plugin'],
+        dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
+        inputSchema: TriageUnlinkEntryFromSessionActionInputV1Schema,
+        resultSchema: TriageUnlinkEntryFromSessionActionResultV1Schema,
+        hostAccess: ['account-storage'],
+        run: createTriageUnlinkEntryFromSessionActionHandler(),
+      },
       [TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1]: {
         title: 'Configure a source',
         description: 'Creates, reconfigures, removes or restores one configured pull-request, issue or error-group source.',
@@ -342,13 +393,39 @@ function createTriagePlugin() {
         id: TRIAGE_ENTRY_PICKER_RENDERER_ID_V1,
         kind: 'reactNative',
         artifact: TRIAGE_ENTRY_PICKER_ARTIFACT_ID_V1,
-        requiredHostMethods: ['executeAction'],
+        // Its rows come from the list Action, and Attach/Remove is a
+        // `readComposer` → plan → `applyComposer` round trip on the draft this
+        // mount was stamped with; `useComposerView` also observes that draft
+        // through `watchComposer` on every mount, which is what keeps a row's
+        // Attached state honest about a change this picker did not make.
+        // Declaring only the Action mounted a full list of controls that could
+        // not write anything.
+        //
+        // `openSurface` is declared because **View details** unconditionally
+        // calls it. A Composer scope reaches navigation through the SAME
+        // enclosing qualified-destination owner every other mounted surface
+        // uses, so a Composer mount inside the app shell installs the method;
+        // a scope with no destination owner installs nothing, and refusing the
+        // picker there is the truthful outcome rather than presenting an
+        // enabled row control that resolves after doing nothing.
+        requiredHostMethods: [
+          'executeAction',
+          'readComposer',
+          'watchComposer',
+          'applyComposer',
+          'openSurface',
+        ],
       }, {
-        // Presentation only: the compact label derives zero/one/many from the
-        // canonical composer snapshot and has nothing of its own to require.
+        // Presentation, but not self-contained: the compact label holds no count
+        // of its own and derives zero/one/many from the canonical composer
+        // snapshot it reads. It never asks for a refresh, so `watchComposer` is
+        // its only update path after mount — without it the label freezes at its
+        // mount-time value and goes on claiming attachments the message will not
+        // carry, which is the one thing this renderer exists to prevent.
         id: TRIAGE_ENTRIES_COMPACT_RENDERER_ID_V1,
         kind: 'reactNative',
         artifact: TRIAGE_ENTRIES_COMPACT_ARTIFACT_ID_V1,
+        requiredHostMethods: ['readComposer', 'watchComposer'],
       }, {
         // Its links are read through the Data-owned Collection pager, which
         // reports a typed failure rather than needing a declared method gate.

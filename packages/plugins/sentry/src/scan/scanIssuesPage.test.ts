@@ -14,7 +14,7 @@ import {
   SENTRY_CONTINUATION_UNAVAILABLE_REASON,
   decodeSentryScanContinuation,
 } from './sentryContinuation.js';
-import { executeSentryScanPage } from './scanIssuesPage.js';
+import { executeSentryScanPage, type SentryScanPageResultV1 } from './scanIssuesPage.js';
 
 const CONFIGURED = Object.freeze({
   deploymentOrigin: 'https://us.sentry.io',
@@ -130,6 +130,9 @@ describe('executeSentryScanPage', () => {
           scanLimit: 64,
           nativeLimit: 64,
           cursor: '1754000000000:0:0',
+          // The walk carries the earlier position its cycle probe is watching;
+          // a token without that evidence is not one this source mints.
+          probe: { cursor: '1754000000000:0:0', stepsSince: 0, interval: 2 },
           query: '',
           statsPeriod: '90d',
           sort: 'date',
@@ -268,6 +271,7 @@ describe('executeSentryScanPage', () => {
           scanLimit: 64,
           nativeLimit: 64,
           cursor: '1754000000000:0:0',
+          probe: { cursor: '1754000000000:0:0', stepsSince: 0, interval: 2 },
           query: '',
           statsPeriod: '90d',
           sort: 'date',
@@ -283,6 +287,89 @@ describe('executeSentryScanPage', () => {
       reason: 'sentry-pagination-cursor-not-advancing',
     });
     expect(result.continuation).toBeNull();
+  });
+
+  it('stops partial when the next cursor returns to a position this walk already requested', async () => {
+    // A → B → A. Comparing the advertised next cursor against the ONE cursor
+    // this request used cannot see it: `A` is not `B`, so the walk mints a
+    // continuation for a position it already read and the alternation runs for
+    // as long as the caller keeps asking. The walk's own requested positions are
+    // what make it visible.
+    const backToFirst = {
+      ...issuesListPage1,
+      headers: {
+        ...issuesListPage1.headers,
+        link: '<https://us.sentry.io/api/0/organizations/7701/issues/?&cursor=1755000000000%3A0%3A0>; rel="next"; results="true"; cursor="1755000000000:0:0"',
+      },
+    };
+    const { client } = clientReturning(backToFirst);
+
+    const result = await executeSentryScanPage({
+      client,
+      configured: CONFIGURED,
+      organizationSlug: 'example-org',
+      page: {
+        kind: 'continuation',
+        token: JSON.stringify({
+          v: 1,
+          scanLimit: 64,
+          nativeLimit: 64,
+          cursor: '1754000000000:0:0',
+          probe: { cursor: '1755000000000:0:0', stepsSince: 1, interval: 2 },
+          query: '',
+          statsPeriod: '90d',
+          sort: 'date',
+        }),
+      },
+      nowMs: NOW_MS,
+    });
+
+    expect(result.kind).toBe('page');
+    if (result.kind !== 'page') return;
+    // The rows this page did read survive: a cycling provider is a stop, not a
+    // reason to discard what it already answered.
+    expect(result.observations).toHaveLength(2);
+    expect(result.health).toEqual({
+      kind: 'partial',
+      reason: 'sentry-pagination-cursor-not-advancing',
+    });
+    expect(result.continuation).toBeNull();
+  });
+
+  it('carries its cycle probe forward so a later page can see a return', async () => {
+    const { client } = clientReturning(issuesListPage1);
+
+    const result = await executeSentryScanPage({
+      client,
+      configured: CONFIGURED,
+      organizationSlug: 'example-org',
+      page: {
+        kind: 'continuation',
+        token: JSON.stringify({
+          v: 1,
+          scanLimit: 64,
+          nativeLimit: 64,
+          cursor: '1755000000000:0:0',
+          probe: { cursor: '1755000000000:0:0', stepsSince: 0, interval: 2 },
+          query: '',
+          statsPeriod: '90d',
+          sort: 'date',
+        }),
+      },
+      nowMs: NOW_MS,
+    });
+
+    expect(result.kind).toBe('page');
+    if (result.kind !== 'page') return;
+    const decoded = decodeSentryScanContinuation(result.continuation ?? '');
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    // The saved position stays where it was and its step count advances, so the
+    // walk is one step closer to adopting a new one — and a return to
+    // `1755000000000:0:0` is still visible while it waits.
+    expect(decoded.continuation.probe)
+      .toEqual({ cursor: '1755000000000:0:0', stepsSince: 1, interval: 2 });
+    expect(decoded.continuation.cursor).toBe('1754000000000:0:0');
   });
 
   it('stops partial when the next relation has results="true" but no usable cursor', async () => {
@@ -304,6 +391,95 @@ describe('executeSentryScanPage', () => {
       reason: 'sentry-pagination-cursor-malformed',
     });
     expect(result.continuation).toBeNull();
+  });
+
+  it('keeps minting a frontier however long a genuinely advancing walk runs', async () => {
+    // The non-progress evidence rides inside a BOUNDED token, so evidence that
+    // grows with the walk is a page ceiling nobody declared. With Sentry's own
+    // keyset cursors a position history stopped fitting at the 199th page and
+    // the walk settled `continuation-unavailable` — the branch written for a
+    // pathologically wide provider cursor, reached by an ordinary long scan.
+    const advertise = (cursor: string) => ({
+      ...issuesListPage1,
+      headers: {
+        ...issuesListPage1.headers,
+        link: `<https://us.sentry.io/api/0/organizations/7701/issues/?&cursor=${cursor}>;`
+          + ` rel="next"; results="true"; cursor="${cursor}"`,
+      },
+    });
+
+    let token: string | null = null;
+    for (let page = 0; page < 400; page += 1) {
+      // Every page advertises a position no earlier page used, so nothing here
+      // is a cycle: this walk is simply long.
+      const { client } = clientReturning(advertise(`${1_754_000_000_000 - page * 1_000}:0:0`));
+      const result: SentryScanPageResultV1 = token === null
+        ? await initialPage(client)
+        : await executeSentryScanPage({
+          client,
+          configured: CONFIGURED,
+          organizationSlug: 'example-org',
+          page: { kind: 'continuation', token },
+          nowMs: NOW_MS,
+        });
+
+      expect(result.kind).toBe('page');
+      if (result.kind !== 'page') return;
+      expect(result.health).toBeNull();
+      expect(result.continuation).not.toBeNull();
+      if (result.continuation === null) return;
+      // The token itself must not grow with the walk; a frontier that widens
+      // per page is the ceiling in a different disguise.
+      expect(new TextEncoder().encode(result.continuation).byteLength)
+        .toBeLessThan(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 / 4);
+      token = result.continuation;
+    }
+  });
+
+  it('stops partial when a longer cycle brings the walk back to a position it left', async () => {
+    // `A → B → C → A → …`. No page repeats the cursor that produced it and none
+    // repeats the one before it, so only evidence that outlives two steps sees
+    // it at all. A bounded probe sees it a few pages later than a full history
+    // would have; what it must never do is not see it.
+    const advertise = (cursor: string) => ({
+      ...issuesListPage1,
+      headers: {
+        ...issuesListPage1.headers,
+        link: `<https://us.sentry.io/api/0/organizations/7701/issues/?&cursor=${cursor}>;`
+          + ` rel="next"; results="true"; cursor="${cursor}"`,
+      },
+    });
+    const cycle = ['1755000000000:0:0', '1754000000000:0:0', '1753000000000:0:0'];
+
+    let token: string | null = null;
+    let stoppedAt: number | null = null;
+    for (let page = 0; page < 32 && stoppedAt === null; page += 1) {
+      const { client } = clientReturning(advertise(cycle[page % cycle.length] as string));
+      const result: SentryScanPageResultV1 = token === null
+        ? await initialPage(client)
+        : await executeSentryScanPage({
+          client,
+          configured: CONFIGURED,
+          organizationSlug: 'example-org',
+          page: { kind: 'continuation', token },
+          nowMs: NOW_MS,
+        });
+      expect(result.kind).toBe('page');
+      if (result.kind !== 'page') return;
+      if (result.continuation === null) {
+        stoppedAt = page;
+        // The rows already read survive, and the reason names the cycle rather
+        // than this side's own bound.
+        expect(result.observations).toHaveLength(2);
+        expect(result.health).toEqual({
+          kind: 'partial',
+          reason: 'sentry-pagination-cursor-not-advancing',
+        });
+        break;
+      }
+      token = result.continuation;
+    }
+    expect(stoppedAt).not.toBeNull();
   });
 
   it('stops with continuation-unavailable, not a cursor verdict, when the frontier exceeds the bound', async () => {

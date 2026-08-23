@@ -1699,3 +1699,145 @@ describe('GitHub Channel Actions', () => {
     });
   });
 });
+
+describe('GitHub content-creation 422 classification', () => {
+  const materializeGithubAccount = () => ({
+    materialize: vi.fn(async () => ({
+      kind: 'httpHeaders' as const,
+      headers: { Authorization: 'Bearer exact-account-token' },
+    })),
+  });
+
+  function commentPostHttp(commentResponse: ReturnType<typeof jsonResponse>) {
+    return {
+      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+        request.url === 'https://api.github.com/repos/acme/widgets/issues/1'
+          ? jsonResponse({ id: 5, number: 1, title: 'Issue title' })
+          : request.url === 'https://api.github.com/repos/acme/widgets/issues/1/comments'
+            ? commentResponse
+            : Promise.reject(new Error(`Unexpected GitHub request: ${request.url}`))
+      )),
+    };
+  }
+
+  // GitHub documents this endpoint's 422 as "Validation failed, or the endpoint
+  // has been spammed", and warns that creating content too quickly results in
+  // secondary rate limiting. A throttle must not be settled as permanent.
+  it('retries a comment POST that GitHub throttled with a 422', async () => {
+    for (const throttled of [
+      { message: 'You have exceeded a secondary rate limit. Please wait a few minutes before you try again.' },
+      {
+        message: 'Validation Failed',
+        errors: [{ resource: 'IssueComment', code: 'unprocessable', field: 'data', message: 'was submitted too quickly' }],
+      },
+      { message: 'This comment was flagged as spam and was not created.' },
+    ]) {
+      const http = commentPostHttp(jsonResponse(throttled, 422));
+      await expect(deliverGithubChannelMessage(
+        githubChannelDeliveryInput(`delivery-throttled-422-${JSON.stringify(throttled).length}`),
+        coreContext({ connectedAccounts: materializeGithubAccount(), http }),
+      )).resolves.toEqual({
+        kind: 'notDelivered',
+        retry: 'after',
+        retryAfterMs: 60_000,
+      });
+    }
+  });
+
+  it('keeps a documented GitHub validation 422 permanent', async () => {
+    const http = commentPostHttp(jsonResponse({
+      message: 'Validation Failed',
+      errors: [{ resource: 'IssueComment', code: 'invalid', field: 'body' }],
+    }, 422));
+    await expect(deliverGithubChannelMessage(
+      githubChannelDeliveryInput('delivery-validation-422'),
+      coreContext({ connectedAccounts: materializeGithubAccount(), http }),
+    )).resolves.toEqual({ kind: 'notDelivered', retry: 'never' });
+  });
+
+  it('reports a throttled endpoint read as rate limited rather than misconfigured', async () => {
+    const http = {
+      request: vi.fn(async () => jsonResponse(
+        { message: 'You have exceeded a secondary rate limit.' },
+        422,
+      )),
+    };
+    await expect(resolveGithubChannelEndpoint({
+      ...githubChannelConnectionInput(),
+      query: '#1',
+    }, coreContext({ connectedAccounts: materializeGithubAccount(), http }))).resolves.toEqual({
+      kind: 'notReady',
+      reason: 'rateLimited',
+      retryAfterMs: 60_000,
+    });
+  });
+});
+
+describe('GitHub Channel readiness probe', () => {
+  const materializeGithubAccount = () => ({
+    materialize: vi.fn(async () => ({
+      kind: 'httpHeaders' as const,
+      headers: { Authorization: 'Bearer exact-account-token' },
+    })),
+  });
+
+  const ISSUE_COMMENTS_PROBE_URL =
+    'https://api.github.com/repos/acme/widgets/issues/comments?per_page=1';
+
+  // A PAT that authenticates is not a PAT that can read this repository's issue
+  // comments. READY is the gate the Channels core creates a connection behind,
+  // so it must exercise the endpoint the Channel actually polls.
+  it('reports ready only after the configured account can read repository issue comments', async () => {
+    const http = {
+      request: vi.fn(async (request: Readonly<{ url: string }>) => (
+        request.url === 'https://api.github.com/user'
+          ? jsonResponse({ id: 99, login: 'happier-bot' })
+          : request.url === ISSUE_COMMENTS_PROBE_URL
+            ? jsonResponse([])
+            : Promise.reject(new Error(`Unexpected GitHub request: ${request.url}`))
+      )),
+    };
+
+    await expect(testGithubChannelConnection({
+      ...githubChannelConnectionInput(),
+      selectedTransport: 'checkpointedPull',
+    }, coreContext({ connectedAccounts: materializeGithubAccount(), http }))).resolves.toEqual({
+      kind: 'ready',
+      integrationPrincipal: { id: '99', label: 'happier-bot' },
+      providerConnectionKey: 'github:repository:77',
+    });
+    expect(http.request.mock.calls.map(([request]) => request.url)).toEqual([
+      'https://api.github.com/user',
+      ISSUE_COMMENTS_PROBE_URL,
+    ]);
+  });
+
+  it('refuses readiness when the configured account cannot read repository issue comments', async () => {
+    for (const probe of [
+      {
+        response: jsonResponse({ message: 'Resource not accessible by personal access token' }, 403, {
+          'x-ratelimit-remaining': '4999',
+        }),
+        expected: { kind: 'notReady', reason: 'permissionMissing' },
+      },
+      {
+        response: jsonResponse({ message: 'Not Found' }, 404),
+        expected: { kind: 'notReady', reason: 'invalidConfiguration' },
+      },
+    ]) {
+      const http = {
+        request: vi.fn(async (request: Readonly<{ url: string }>) => (
+          request.url === 'https://api.github.com/user'
+            ? jsonResponse({ id: 99, login: 'happier-bot' })
+            : probe.response
+        )),
+      };
+
+      await expect(testGithubChannelConnection({
+        ...githubChannelConnectionInput(),
+        selectedTransport: 'checkpointedPull',
+      }, coreContext({ connectedAccounts: materializeGithubAccount(), http })))
+        .resolves.toEqual(probe.expected);
+    }
+  });
+});

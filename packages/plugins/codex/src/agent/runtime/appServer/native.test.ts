@@ -174,6 +174,37 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
     );
   });
 
+  it('passes matching native-return strictness to the app-server resume', async () => {
+    const appServer = createAppServerSession();
+    runtimeModuleMocks.createCodexAppServerRuntime.mockReturnValueOnce(appServer.runtime);
+    const context = {
+      signal: new AbortController().signal,
+      services: {
+        logger: { debug: vi.fn() },
+        sessions: { current: { media: { registerSourceRoot: vi.fn() } } },
+        connectedAccounts: createConnectedAccountsFixture(),
+      },
+      session: { id: 'session-1', services: {} },
+      ui: { title: { set: vi.fn(async () => undefined) } },
+    } as unknown as AgentSessionRuntimeContext;
+
+    await openCodexNativeAppServerSession({
+      kind: 'resume',
+      sessionId: 'session-1',
+      cwd: '/tmp/codex',
+      providerSessionId: 'thread-1',
+      strictNativeResumeIdentity: true,
+    }, context);
+
+    expect(runtimeModuleMocks.startCodexAppServerRuntime).toHaveBeenCalledWith(
+      appServer.runtime,
+      expect.objectContaining({
+        resumeId: 'thread-1',
+        strictNativeResumeIdentity: true,
+      }),
+    );
+  });
+
   it('does not eagerly start a fresh session before its first prompt', async () => {
     const appServer = createAppServerSession();
     runtimeModuleMocks.createCodexAppServerRuntime.mockReturnValueOnce(appServer.runtime);

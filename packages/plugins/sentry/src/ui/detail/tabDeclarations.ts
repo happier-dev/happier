@@ -51,7 +51,16 @@ export type SentryDetailTabReadPlaneV1 =
 
 export type SentryDetailTabDeclarationV1 = Readonly<{
   id: SentryDetailTabIdV1;
+  /**
+   * The English wording, and the fallback a locale with no entry falls back to.
+   *
+   * A tab title reaches the shared strip as a plain string, so a declaration
+   * with no key renders English on ten of the eleven locales this plugin ships
+   * and nothing fails — the silent half of a missing translation.
+   */
   title: string;
+  /** The catalog key that title is resolved through, in every shipped locale. */
+  titleKey: string;
   /** Stated on every concrete tab; never inherited from the shared default. */
   retention: 'retain' | 'discard';
   /** Exactly what survives a tab leave, in this panel and nothing else. */
@@ -71,6 +80,7 @@ export const SENTRY_DETAIL_TABS_V1: readonly SentryDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'overview' as const,
     title: 'Overview',
+    titleKey: 'plugins.sentry.ui.tab.overview',
     // The panel that carries the tag distribution and its drill-down keeps
     // nothing: leaving discards every tag value and reveal it held.
     retention: 'discard' as const,
@@ -82,6 +92,7 @@ export const SENTRY_DETAIL_TABS_V1: readonly SentryDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'occurrences' as const,
     title: 'Occurrences',
+    titleKey: 'plugins.sentry.ui.tab.occurrences',
     retention: 'retain' as const,
     retainedState: 'its one vertical list viewport and scroll anchor only; the loaded'
       + ' event rows, page position and errors are discarded when the panel'
@@ -93,6 +104,7 @@ export const SENTRY_DETAIL_TABS_V1: readonly SentryDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'stack-trace' as const,
     title: 'Stack Trace',
+    titleKey: 'plugins.sentry.ui.tab.stackTrace',
     retention: 'retain' as const,
     retainedState: 'its frame window, scroll anchor and system-frame expansion only; the'
       + ' event projection stays in the detail-root controller and every expansion'
@@ -107,6 +119,7 @@ export const SENTRY_DETAIL_TABS_V1: readonly SentryDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'release' as const,
     title: 'Release association',
+    titleKey: 'plugins.sentry.ui.tab.release',
     retention: 'discard' as const,
     retainedState: 'nothing; its Tier-A fields are cheap derivatives of the detail'
       + ' root’s current issue summary',
@@ -119,6 +132,7 @@ export const SENTRY_DETAIL_TABS_V1: readonly SentryDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'activity' as const,
     title: 'Activity',
+    titleKey: 'plugins.sentry.ui.tab.activity',
     retention: 'discard' as const,
     retainedState: 'nothing across a tab leave',
     readPlane: 'issueActivity' as const,

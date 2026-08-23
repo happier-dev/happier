@@ -9,9 +9,13 @@ import {
 import type {
   PluginCollectionBatchMeasurement,
   PluginCollectionLimits,
+  PluginCollectionRow,
 } from '@happier-dev/plugin-sdk/collections';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
+import type {
+  PluginActionResultById,
+  PluginMachineExecutionOriginV1,
+} from '@happier-dev/plugin-sdk/actions';
 import {
   AutomationConversationResultDeliveryV1Schema,
   type AutomationConversationAdmitInputV1,
@@ -55,6 +59,7 @@ import {
 } from './bindingTransition.js';
 import {
   hasUnsettledDestructiveOldTransportStop,
+  isSelfStampedPluginCaller,
   type ConversationConnectionPollFailureEvidenceV1,
   type ConversationConnectionPollFailureV1,
   type ConversationConnectionLifecycleStateV1,
@@ -224,9 +229,21 @@ type FrozenSessionTarget = Readonly<{
   sessionId: string;
   idempotencyKey: string;
   requestedPermissionCeiling: Extract<ConversationBindingTargetV1, Readonly<{ kind: 'session' }>>['policy']['permissionCeiling'];
+  /**
+   * The owner-configured remote-approval ceiling, frozen with the rest of the
+   * target so a retry after the first attempt stamps the same disclosure the
+   * admitted revision carried instead of re-reading mutable binding policy.
+   */
+  remoteApprovalMaxScope: 'off' | 'request' | 'session';
   newSession: Readonly<{
     recipe: ChannelSessionSpawnRecipeV1;
     initialPrompt?: string;
+  }> | null;
+  /** The one frozen chat-approval command this obligation may mediate. */
+  approval: Readonly<{
+    requestId: string;
+    decision: 'allow' | 'deny';
+    scope: 'request' | 'session';
   }> | null;
 }>;
 
@@ -406,15 +423,15 @@ function stringMember<const T extends readonly string[]>(
   return members.find((member) => member === value);
 }
 
-function readStateRow(value: unknown): StateRow | undefined {
-  if (!isJsonRecord(value)) return undefined;
-  const rowId = own(value, 'rowId');
-  const revision = own(value, 'revision');
-  const rowValue = own(value, 'value');
-  if (typeof rowId !== 'string' || !isPositiveSafeInteger(revision) || !isJsonRecord(rowValue)) {
-    return undefined;
-  }
-  return { rowId, revision, value: rowValue };
+/**
+ * Adapts an absent Collection row to this module's `undefined`. The row itself
+ * is already the host's: Account Data validates every row against the admitted
+ * `CHANNEL_STATE_COLLECTION` schema on write and again on read, so re-deriving
+ * `rowId`/`revision`/`value` here would only restate a contract the typed
+ * handle already carries. The record-kind decoders below still narrow it.
+ */
+function readStateRow(row: PluginCollectionRow<JsonRecord> | null | undefined): StateRow | undefined {
+  return row ?? undefined;
 }
 
 /**
@@ -462,8 +479,7 @@ function readConnectionProviderTransport(
 }
 
 function stampedPluginCaller(context: PluginInvocationContext): PluginCaller | undefined {
-  if (context.surface !== 'plugin' || context.caller?.kind !== 'plugin') return undefined;
-  return context.caller.materialization.pluginId === context.caller.pluginId
+  return context.surface === 'plugin' && isSelfStampedPluginCaller(context.caller)
     ? context.caller
     : undefined;
 }
@@ -558,6 +574,11 @@ function readFrozenIngressTarget(value: JsonValue | undefined): FrozenIngressTar
       || typeof idempotencyKey !== 'string'
       || requestedPermissionCeiling === undefined
     ) return undefined;
+    const remoteApprovalMaxScope = stringMember(
+      own(value, 'remoteApprovalMaxScope'),
+      ['off', 'request', 'session'] as const,
+    );
+    if (remoteApprovalMaxScope === undefined) return undefined;
     const frozenNewSession = own(value, 'newSession');
     let newSession: FrozenSessionTarget['newSession'];
     if (frozenNewSession === undefined || frozenNewSession === null) {
@@ -575,7 +596,30 @@ function readFrozenIngressTarget(value: JsonValue | undefined): FrozenIngressTar
     } else {
       return undefined;
     }
-    return { kind, sessionId, idempotencyKey, requestedPermissionCeiling, newSession };
+    const frozenApproval = own(value, 'approval');
+    let approval: FrozenSessionTarget['approval'];
+    if (frozenApproval === undefined || frozenApproval === null) {
+      approval = null;
+    } else if (isJsonRecord(frozenApproval)) {
+      const requestId = own(frozenApproval, 'requestId');
+      const decision = stringMember(own(frozenApproval, 'decision'), ['allow', 'deny'] as const);
+      const scope = stringMember(own(frozenApproval, 'scope'), ['request', 'session'] as const);
+      if (typeof requestId !== 'string' || decision === undefined || scope === undefined) {
+        return undefined;
+      }
+      approval = { requestId, decision, scope };
+    } else {
+      return undefined;
+    }
+    return {
+      kind,
+      sessionId,
+      idempotencyKey,
+      requestedPermissionCeiling,
+      remoteApprovalMaxScope,
+      newSession,
+      approval,
+    };
   }
   if (kind !== 'automation') return undefined;
   const automationId = own(value, 'automationId');
@@ -1045,6 +1089,7 @@ function sessionDisplayNameSnapshot(label: string | undefined): string | undefin
 type IngressAdmissionDecision = Readonly<{
   terminalOutcome: Readonly<{ disposition: IngressDisposition; nonAdmission: IngressNonAdmission }> | undefined;
   newSession: FrozenSessionTarget['newSession'];
+  approval: FrozenSessionTarget['approval'];
 }>;
 
 /**
@@ -1069,6 +1114,15 @@ function ingressAdmissionDecision(input: Readonly<{
     && shell.actor.principalId !== null
     && (newSessionPolicy.principalIds === undefined
       || newSessionPolicy.principalIds.includes(shell.actor.principalId));
+  // An Automation target has no Session permission surface, so it reads as the
+  // same persisted `off` the Session arm uses.
+  const approvalPolicy = binding.payload.target.kind === 'session'
+    ? binding.payload.target.policy.approvals
+    : { kind: 'off' as const };
+  const approvalCommandsEnabled = approvalPolicy.kind === 'enabled'
+    && shell.actor.principalId !== null
+    && (approvalPolicy.principalIds === undefined
+      || approvalPolicy.principalIds.includes(shell.actor.principalId));
   const command = classifyConversationCommand(fullText?.message.text ?? '');
   const policy = decideConversationCommandPolicy({
     command,
@@ -1077,7 +1131,7 @@ function ingressAdmissionDecision(input: Readonly<{
     actorAllowed,
     allowBotSenders: binding.payload.allowBotSenders,
     targetKind: binding.payload.target.kind,
-    approvalCommandsEnabled: false,
+    approvalCommandsEnabled,
     newSessionEnabled,
     senderFeedback: binding.payload.senderFeedback,
   });
@@ -1091,6 +1145,18 @@ function ingressAdmissionDecision(input: Readonly<{
         },
       },
       newSession: null,
+      approval: null,
+    };
+  }
+  if (policy.kind === 'approve') {
+    return {
+      terminalOutcome: undefined,
+      newSession: null,
+      approval: {
+        requestId: policy.requestId,
+        decision: policy.decision,
+        scope: policy.scope,
+      },
     };
   }
   if (policy.kind === 'newSession') {
@@ -1106,15 +1172,7 @@ function ingressAdmissionDecision(input: Readonly<{
         recipe: newSessionPolicy.recipe,
         ...(policy.initialPrompt === undefined ? {} : { initialPrompt: policy.initialPrompt }),
       },
-    };
-  }
-  if (policy.kind !== 'ordinaryText') {
-    return {
-      terminalOutcome: {
-        disposition: 'rejected',
-        nonAdmission: { reason: 'commandNotAuthorized', senderFeedbackEligible: false },
-      },
-      newSession: null,
+      approval: null,
     };
   }
   if (ingress.kind === 'routableNonAdmission') {
@@ -1133,6 +1191,7 @@ function ingressAdmissionDecision(input: Readonly<{
         },
       },
       newSession: null,
+      approval: null,
     };
   }
   if (!isAddressedForBinding(binding, shell)) {
@@ -1150,9 +1209,10 @@ function ingressAdmissionDecision(input: Readonly<{
         },
       },
       newSession: null,
+      approval: null,
     };
   }
-  return { terminalOutcome: undefined, newSession: null };
+  return { terminalOutcome: undefined, newSession: null, approval: null };
 }
 
 function decodeBase64Url(value: string): Uint8Array {
@@ -1352,15 +1412,19 @@ function frozenTargetForBinding(input: Readonly<{
   bindingRevision: number;
   ingress: ConversationNormalizedIngressV1;
   newSession: FrozenSessionTarget['newSession'];
+  approval: FrozenSessionTarget['approval'];
 }>): FrozenIngressTarget {
   const { binding } = input;
   if (binding.payload.target.kind === 'session') {
+    const approvals = binding.payload.target.policy.approvals;
     const target: FrozenSessionTarget = {
       kind: 'session',
       sessionId: binding.payload.target.sessionId,
       idempotencyKey: `channels:input:v1:${input.obligationId}`,
       requestedPermissionCeiling: binding.payload.target.policy.permissionCeiling,
+      remoteApprovalMaxScope: approvals.kind === 'enabled' ? approvals.maximumScope : 'off',
       newSession: input.newSession,
+      approval: input.approval,
     };
     if (!isCanonicalChannelStateRecordIdentity({
       rowId: input.obligationId,
@@ -2541,7 +2605,7 @@ async function admitNewSessionInitialPrompt(input: Readonly<{
     source: {
       sourceRef: `channels:binding:${binding.value.id}`,
       sourceRevisionOrEpoch: `${input.obligation.payload.sourceAuthority.connectionAuthorityEpoch}:${input.obligation.payload.sourceAuthority.bindingAuthorityEpoch}`,
-      remoteApprovalMaxScope: 'off',
+      remoteApprovalMaxScope: input.target.remoteApprovalMaxScope,
       requestedPermissionCeiling: input.target.requestedPermissionCeiling,
       ...(externalActor === undefined ? {} : { externalActor }),
       contentProvenance: fullText.message.contentProvenance,
@@ -2817,10 +2881,6 @@ async function dispatchNewSessionRotation(input: Readonly<{
   }) ? 'checkpointSafe' : 'unsettled';
 }
 
-function terminalCheckpointOutcome(obligation: IngressObligationRecord): IngressCheckpointOutcome {
-  return 'checkpointSafe';
-}
-
 async function acceptIngressControlResponseCustody(input: Readonly<{
   context: PluginInvocationContext;
   outward: ConversationControlResponseObligation;
@@ -2852,6 +2912,256 @@ async function acceptIngressControlResponseCustody(input: Readonly<{
     case 'invalid':
       throw pluginError(input.invalidCode, input.invalidMessage);
   }
+}
+
+/**
+ * The one sender-visible acknowledgement vocabulary for a mediated chat
+ * approval. It states only whether the decision was recorded; PERM-14 keeps
+ * the rule, prompt, tool, and grant detail inside owner-encrypted Session
+ * content, so no part of the permission body is echoed to the channel.
+ */
+const APPROVAL_CONTROL_RESPONSE_TEXT = {
+  allowed: 'Approved the pending permission request.',
+  denied: 'Denied the pending permission request.',
+  notPending: 'That permission request is no longer pending.',
+  refused: 'That permission decision was not accepted.',
+} as const;
+
+type ApprovalControlResponseText =
+  (typeof APPROVAL_CONTROL_RESPONSE_TEXT)[keyof typeof APPROVAL_CONTROL_RESPONSE_TEXT];
+
+async function writeApprovalControlResponseCustody(input: Readonly<{
+  context: PluginInvocationContext;
+  obligation: Readonly<{ row: StateRow; value: IngressObligationRecord }>;
+  content: ApprovalControlResponseText;
+}>): Promise<IngressCheckpointOutcome> {
+  const shell = ingressShell(await readPreparedIngressForObligation({
+    context: input.context,
+    obligation: input.obligation.value,
+  }));
+  const outward: ConversationControlResponseObligation = {
+    connectionId: input.obligation.value['connection-id'],
+    bindingId: input.obligation.value['binding-id'],
+    routeAuthority: {
+      connectionAuthorityEpoch: input.obligation.value.payload.sourceAuthority.connectionAuthorityEpoch,
+      bindingRevision: input.obligation.value.payload.sourceAuthority.bindingRevision,
+      bindingAuthorityEpoch: input.obligation.value.payload.sourceAuthority.bindingAuthorityEpoch,
+    },
+    source: {
+      kind: 'controlResponse',
+      controlId: input.obligation.value.id,
+      controlKind: 'approval',
+    },
+    endpoint: shell.endpoint,
+    content: input.content,
+    deliveryKey: `ingress-approval:${input.obligation.value.id}`,
+    replyContext: { replyToMessageId: shell.message.id },
+    mentionPolicy: 'suppress',
+    linkPreviewPolicy: 'suppress',
+  };
+  return await acceptIngressControlResponseCustody({
+    context: input.context,
+    outward,
+    invalidCode: 'channels_ingress_approval_custody_invalid',
+    invalidMessage: 'The chat-approval control-response custody obligation is invalid.',
+  });
+}
+
+/**
+ * A canonical-owner outcome that cannot be settled now. The obligation keeps
+ * the incumbent bounded attempt/backoff ladder instead of a mediation-local
+ * timer, queue, or retry ledger.
+ */
+async function retryApprovalMediation(input: Readonly<{
+  context: PluginInvocationContext;
+  obligation: Readonly<{ row: StateRow; value: IngressObligationRecord }>;
+}>): Promise<IngressCheckpointOutcome> {
+  const exhausted = input.obligation.value.payload.lifecycle.attemptCount
+    >= MAX_CONVERSATION_DELIVERY_ATTEMPTS;
+  await putIngressObligationLifecycle({
+    context: input.context,
+    obligation: input.obligation,
+    value: exhausted
+      ? blockedIngressObligationValue({ obligation: input.obligation.value, now: Date.now() })
+      : retryDueIngressObligationValue({ obligation: input.obligation.value, now: Date.now() }),
+    knownNoEffectCleanup: true,
+  });
+  return exhausted ? 'checkpointSafe' : 'unsettled';
+}
+
+async function settleApprovalMediationTerminal(input: Readonly<{
+  context: PluginInvocationContext;
+  authority: IngressAuthorityFence | undefined;
+  obligation: Readonly<{ row: StateRow; value: IngressObligationRecord }>;
+  disposition: Extract<IngressDisposition, 'approvalConsumed' | 'rejected'>;
+  content: ApprovalControlResponseText;
+}>): Promise<IngressCheckpointOutcome> {
+  const custody = await writeApprovalControlResponseCustody({
+    context: input.context,
+    obligation: input.obligation,
+    content: input.content,
+  });
+  if (custody !== 'checkpointSafe') return custody;
+  await settleIngressEffectTerminal({
+    context: input.context,
+    authority: input.authority,
+    obligation: input.obligation,
+    disposition: input.disposition,
+    ...(input.disposition === 'rejected'
+      ? {
+        nonAdmission: {
+          reason: 'targetUnavailable' as const,
+          senderFeedbackEligible: false,
+        },
+      }
+      : {}),
+  });
+  return 'checkpointSafe';
+}
+
+/**
+ * Settles one frozen `/allow`/`/deny` through the canonical Session permission
+ * owner. Channels contributes only the attributed external principal and the
+ * exact binding source authority: the request tuple comes from the generic
+ * pending projection, the scope is passed through unnarrowed so the one
+ * mediation owner applies or refuses it, and no local grant, queue, decision
+ * store, or inferred turn exists here.
+ */
+async function dispatchApprovalMediation(input: Readonly<{
+  context: PluginInvocationContext;
+  connectionId: string;
+  bindingId: string;
+  obligation: Readonly<{ row: StateRow; value: IngressObligationRecord }>;
+  authority: IngressAuthorityFence | undefined;
+  target: FrozenSessionTarget;
+  approval: NonNullable<FrozenSessionTarget['approval']>;
+  actorPrincipalId: string | null;
+}>): Promise<IngressCheckpointOutcome> {
+  const { approval, target } = input;
+  if (input.actorPrincipalId === null) {
+    // The admission owner only freezes an approval for an attributable actor,
+    // so a frozen command beside an unattributable census is corrupt state
+    // rather than a product outcome.
+    throw pluginError(
+      'channels_ingress_approval_actor_invalid',
+      'The frozen chat-approval command has no attributable external principal.',
+    );
+  }
+  const connection = input.authority?.connection ?? asConnection(readStateRow(
+    await requireChannelsAccountStorage(input.context)
+      .collection(CHANNEL_STATE_COLLECTION)
+      .get(input.connectionId, { signal: input.context.signal }),
+  ) ?? null);
+  if (connection === undefined) {
+    return await retryApprovalMediation({ context: input.context, obligation: input.obligation });
+  }
+  const sourceAuthority = input.obligation.value.payload.sourceAuthority;
+  const source = {
+    sessionId: target.sessionId,
+    sourceRef: `channels:binding:${input.bindingId}`,
+    sourceRevisionOrEpoch: `${sourceAuthority.connectionAuthorityEpoch}:${sourceAuthority.bindingAuthorityEpoch}`,
+  } as const;
+
+  let pending: PluginActionResultById['session.permission.remote.pending.list'];
+  try {
+    pending = await input.context.services.actions.execute(
+      'session.permission.remote.pending.list',
+      source,
+      { signal: input.context.signal },
+    );
+  } catch (error) {
+    assertNotAborted(input.context.signal);
+    // A definite refusal from the canonical owner cannot become a permanent
+    // ingest throw: that would re-observe the same message forever and hold
+    // the connection checkpoint. Settle it truthfully instead.
+    if (isPluginError(error) && error.retryable === false) {
+      return await settleApprovalMediationTerminal({
+        context: input.context,
+        authority: input.authority,
+        obligation: input.obligation,
+        disposition: 'rejected',
+        content: APPROVAL_CONTROL_RESPONSE_TEXT.refused,
+      });
+    }
+    return await retryApprovalMediation({ context: input.context, obligation: input.obligation });
+  }
+  const match = pending.requests.find((request) => request.requestId === approval.requestId);
+  if (match === undefined) {
+    // A truncated projection cannot prove absence, so the obligation stays on
+    // its bounded retry ladder rather than settling a request that may still
+    // be pending behind the host's bound.
+    if (pending.truncated) {
+      return await retryApprovalMediation({ context: input.context, obligation: input.obligation });
+    }
+    return await settleApprovalMediationTerminal({
+      context: input.context,
+      authority: input.authority,
+      obligation: input.obligation,
+      disposition: 'rejected',
+      content: APPROVAL_CONTROL_RESPONSE_TEXT.notPending,
+    });
+  }
+
+  let responded: PluginActionResultById['session.permission.remote.respond'];
+  try {
+    responded = await input.context.services.actions.execute(
+      'session.permission.remote.respond',
+      {
+        ...source,
+        turnId: match.turnId,
+        requestId: approval.requestId,
+        idempotencyKey: `channels:approval:v1:${input.obligation.value.id}`,
+        actor: {
+          namespace: connection.value.payload.providerPluginId,
+          principalId: input.actorPrincipalId,
+        },
+        decision: approval.decision,
+        scope: approval.scope,
+      },
+      { signal: input.context.signal },
+    );
+  } catch (error) {
+    assertNotAborted(input.context.signal);
+    if (isPluginError(error) && error.retryable === false) {
+      return await settleApprovalMediationTerminal({
+        context: input.context,
+        authority: input.authority,
+        obligation: input.obligation,
+        disposition: 'rejected',
+        content: APPROVAL_CONTROL_RESPONSE_TEXT.refused,
+      });
+    }
+    return await retryApprovalMediation({ context: input.context, obligation: input.obligation });
+  }
+
+  if (responded.status === 'rejected') {
+    if (
+      responded.code === 'mediationStateUnavailable'
+      || responded.code === 'sessionUnavailable'
+      || responded.code === 'ownerMachineUnavailable'
+      || responded.code === 'canceled'
+    ) {
+      return await retryApprovalMediation({ context: input.context, obligation: input.obligation });
+    }
+    return await settleApprovalMediationTerminal({
+      context: input.context,
+      authority: input.authority,
+      obligation: input.obligation,
+      disposition: 'rejected',
+      content: responded.code === 'requestNotFound' || responded.code === 'requestNotPending'
+        ? APPROVAL_CONTROL_RESPONSE_TEXT.notPending
+        : APPROVAL_CONTROL_RESPONSE_TEXT.refused,
+    });
+  }
+  return await settleApprovalMediationTerminal({
+    context: input.context,
+    authority: input.authority,
+    obligation: input.obligation,
+    disposition: 'approvalConsumed',
+    content: responded.decision === 'allow'
+      ? APPROVAL_CONTROL_RESPONSE_TEXT.allowed
+      : APPROVAL_CONTROL_RESPONSE_TEXT.denied,
+  });
 }
 
 async function settleTerminalRefusalCustody(input: Readonly<{
@@ -2905,7 +3215,7 @@ async function terminalizeReadyAsStaleAuthority(input: Readonly<{
 }>): Promise<IngressCheckpointOutcome> {
   if (!['ready', 'debounceDue', 'retryDue'].includes(input.obligation.value.payload.lifecycle.phase)) {
     return input.obligation.value.payload.lifecycle.phase === 'terminal'
-      ? terminalCheckpointOutcome(input.obligation.value)
+      ? 'checkpointSafe'
       : 'unsettled';
   }
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
@@ -2925,7 +3235,7 @@ async function terminalizeReadyAsStaleAuthority(input: Readonly<{
   )) ?? null);
   if (current === undefined) return 'unsettled';
   return current.value.payload.lifecycle.phase === 'terminal'
-    ? terminalCheckpointOutcome(current.value)
+    ? 'checkpointSafe'
     : 'unsettled';
 }
 
@@ -3017,6 +3327,18 @@ async function dispatchIngressObligation(input: Readonly<{
         firstAuthority: authority,
       });
     }
+    if (target.approval !== null) {
+      return await dispatchApprovalMediation({
+        context: input.context,
+        connectionId: input.connectionId,
+        bindingId: input.bindingId,
+        obligation,
+        authority,
+        target,
+        approval: target.approval,
+        actorPrincipalId: fullText.actor.principalId,
+      });
+    }
     const displayNameSnapshot = sessionDisplayNameSnapshot(fullText.actor.label);
     const actorKind = fullText.actor.kind;
     const externalActor = actorKind === 'human' || actorKind === 'bot'
@@ -3042,7 +3364,7 @@ async function dispatchIngressObligation(input: Readonly<{
       source: {
         sourceRef: `channels:binding:${input.bindingId}`,
         sourceRevisionOrEpoch: `${obligation.value.payload.sourceAuthority.connectionAuthorityEpoch}:${obligation.value.payload.sourceAuthority.bindingAuthorityEpoch}`,
-        remoteApprovalMaxScope: 'off',
+        remoteApprovalMaxScope: target.remoteApprovalMaxScope,
         requestedPermissionCeiling: target.requestedPermissionCeiling,
         ...(externalActor === undefined ? {} : { externalActor }),
         contentProvenance: fullText.message.contentProvenance,
@@ -3195,14 +3517,26 @@ async function ingestConversationObservationForInvocation(
   // a connection-local expansion floor also keeps a later wider setting from
   // reauthorizing an occurrence that had already aged out. The poll remains
   // safe to checkpoint without recording census coverage.
-  if (!isObservationFresh(
-    census?.value.payload.maximumObservationAgeMs
-      ?? connectionState.value.payload.maximumObservationAgeMs,
-    shell,
-  ) || (
-    census === undefined
-    && connectionState.value.payload.observationAgeExpansionFloorOccurredAt !== null
-    && shell.occurredAt < connectionState.value.payload.observationAgeExpansionFloorOccurredAt
+  //
+  // The one exception is a census still in `preparing`: that is admitted work
+  // this Account accepted and never finished writing, and it holds the only
+  // copy of the captured inbound message. Wall-clock age cannot decide that
+  // unit, because nothing else can ever finish it — preparation is reachable
+  // only from this path. A replay therefore rejoins it however late, which
+  // completes work already accepted rather than resurrecting an aged-out
+  // occurrence. An already-`prepared` unit needs nothing from a late replay and
+  // stays behind the window, so retention races cannot change what a late
+  // replay does.
+  if (census?.value.payload.phase !== 'preparing' && (
+    !isObservationFresh(
+      census?.value.payload.maximumObservationAgeMs
+        ?? connectionState.value.payload.maximumObservationAgeMs,
+      shell,
+    ) || (
+      census === undefined
+      && connectionState.value.payload.observationAgeExpansionFloorOccurredAt !== null
+      && shell.occurredAt < connectionState.value.payload.observationAgeExpansionFloorOccurredAt
+    )
   )) return 'checkpointSafeNoCensus';
 
   let pairingReservation:
@@ -3403,6 +3737,7 @@ async function ingestConversationObservationForInvocation(
           bindingRevision: binding.row.revision,
           ingress: census.value.payload.normalizedIngress,
           newSession: decision.newSession,
+          approval: decision.approval,
         }),
         terminalOutcome: decision.terminalOutcome,
         now: Date.now(),
@@ -3547,7 +3882,7 @@ async function settleFailedIngressDueWork(input: Readonly<{
     { signal: input.context.signal },
   )) ?? null);
   if (current === undefined) return 'unsettled';
-  if (current.value.terminal) return terminalCheckpointOutcome(current.value);
+  if (current.value.terminal) return 'checkpointSafe';
   if (current.value.payload.lifecycle.phase === 'blocked') return 'checkpointSafe';
   if (current.value.payload.lifecycle.phase !== 'attempting') return 'unsettled';
   const exhausted = current.value.payload.lifecycle.attemptCount >= MAX_CONVERSATION_DELIVERY_ATTEMPTS;
@@ -3670,12 +4005,16 @@ async function readIngressRetentionCandidate(input: Readonly<{
 }>): Promise<IngressRetentionCandidate | undefined> {
   const { census } = input;
   if (
-    census.value.payload.phase !== 'prepared'
     // Contradictory occurrence evidence is the ingress analogue of unresolved
     // outward ambiguity: it names a fact an owner still has to reconcile, so it
     // is retained indefinitely rather than expiring with the horizon.
-    || census.value.attention
+    census.value.attention
     || census.value.payload.conflict !== null
+    // A `preparing` census is unfinished admitted work, not expired evidence.
+    // Its members may not all exist yet and it still holds the only copy of the
+    // captured inbound message, so the horizon may never reclaim it: a replay
+    // rejoins the census and finishes preparation instead.
+    || census.value.payload.phase !== 'prepared'
     || (requiresIngressCensusCheckpointCoverage(census.value)
       && census.value.payload.checkpointCoveredAt === null)
     || !isIngressCensusPastFrozenRetentionHorizon({ census: census.value, now: input.now })
@@ -3701,14 +4040,13 @@ async function readIngressRetentionCandidate(input: Readonly<{
     )) ?? null);
     // Members are only ever deleted by this same unit-wide sweep, so an absent
     // row is a completed prior deletion of an already-eligible unit. A retained
-    // row must still satisfy the monotonic terminal invariant itself.
+    // row must still satisfy the monotonic terminal invariant itself: a member
+    // that has not settled is unfinished work, never expired evidence.
     if (obligation === undefined) continue;
-    if (
-      obligation.value.payload.censusId !== census.value.id
-      || !obligation.value.terminal
-      || obligation.value.payload.lifecycle.phase !== 'terminal'
-      || terminalCheckpointOutcome(obligation.value) !== 'checkpointSafe'
-    ) return undefined;
+    if (obligation.value.payload.censusId !== census.value.id) return undefined;
+    if (!obligation.value.terminal || obligation.value.payload.lifecycle.phase !== 'terminal') {
+      return undefined;
+    }
     obligations.push(obligation);
   }
   return { census, obligations };

@@ -67,7 +67,13 @@ function routeSegments(route: AzureDevOpsRoute): readonly string[] {
     case 'commits':
       return [...pullRequestSubResource(route), 'commits'];
     case 'threads':
-      return [...pullRequestSubResource(route), 'threads'];
+      return [
+        ...pullRequestSubResource(route),
+        'threads',
+        ...(route.threadId === undefined ? [] : [String(route.threadId)]),
+      ];
+    case 'reviewers':
+      return [...pullRequestSubResource(route), 'reviewers'];
     case 'statuses':
       return [...pullRequestSubResource(route), 'statuses'];
     case 'policyEvaluations':

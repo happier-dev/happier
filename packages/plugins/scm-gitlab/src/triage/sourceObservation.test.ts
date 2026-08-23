@@ -35,6 +35,7 @@ function mergeRequestRow(projectPath: string): Readonly<Record<string, unknown>>
     state: 'opened',
     references: { full: `${projectPath}!7` },
     web_url: `https://gitlab.com/${projectPath}/-/merge_requests/7`,
+    sha: 'b3f1c0a9d2e4a7b6c5d40918273645aabbccddee',
     updated_at: '2026-08-01T10:00:00Z',
     created_at: '2026-07-30T10:00:00Z',
   };
@@ -90,5 +91,65 @@ describe('projectGitlabPresentObservation locator bounds', () => {
     expect(observation.locator.webUrl).not.toBeUndefined();
     expect(observation.locator.displayPath).toBe(`${nestedGroupPath(7)}!7`);
     expect(observation.snapshot.projectionTruncated).toBe(true);
+  });
+});
+
+/**
+ * The native revision is the pin every GitLab merge-request write carries back.
+ *
+ * For a merge request it is GitLab's own `sha` — the head commit the read
+ * observed — carried back **as it was read**. `sources/SCM.md` §2.6 requires that
+ * exact value for merge and mark-ready, and GitLab's merge endpoint consumes it as
+ * its own `sha` precondition, so any reshaping here turns a provider-side
+ * conditional write into an unconditional one.
+ *
+ * The display clock stays its own field. `sourceUpdatedAtMs` is a parsed instant
+ * for ordering and display and decides nothing; the pin is an opaque token
+ * compared only for equality.
+ */
+describe('projectGitlabPresentObservation native revision', () => {
+  it('publishes GitLab’s own head commit byte for byte', () => {
+    const observation = projectRow('example-group/example-project');
+
+    expect(TriageSourceScanObservationV1Schema.parse(observation)).toEqual(observation);
+    expect(observation.nativeRevision).toBe('b3f1c0a9d2e4a7b6c5d40918273645aabbccddee');
+    // The clock is a different fact and is not the pin.
+    expect(observation.sourceUpdatedAtMs).toBe(Date.parse('2026-08-01T10:00:00Z'));
+  });
+
+  it('never lets an edit that touched no commit move the pin', () => {
+    // GitLab's entity revision moves on a title edit; its head does not. A pin
+    // that moved here would refuse a merge nothing invalidated.
+    const decoded = decodeGitlabRow({
+      kindId: 'merge-request',
+      origin: GITLAB_COM,
+      row: {
+        ...mergeRequestRow('example-group/example-project'),
+        title: 'Consolidate the duplicated normalizer (take two)',
+        updated_at: '2026-08-01T12:00:00+02:00',
+      },
+      laneInvolvement: 'author',
+    });
+    if (decoded.kind !== 'mapped') throw new Error(decoded.reason);
+    const observation = projectGitlabPresentObservation(decoded.entry);
+
+    expect(observation.nativeRevision).toBe('b3f1c0a9d2e4a7b6c5d40918273645aabbccddee');
+    expect(observation.sourceUpdatedAtMs).toBe(Date.parse('2026-08-01T10:00:00Z'));
+  });
+
+  it('omits the revision when GitLab reported none, rather than inventing one', () => {
+    const row = { ...mergeRequestRow('example-group/example-project') };
+    delete (row as Record<string, unknown>).sha;
+    const decoded = decodeGitlabRow({
+      kindId: 'merge-request',
+      origin: GITLAB_COM,
+      row,
+      laneInvolvement: 'author',
+    });
+    if (decoded.kind !== 'mapped') throw new Error(decoded.reason);
+    const observation = projectGitlabPresentObservation(decoded.entry);
+
+    expect(TriageSourceScanObservationV1Schema.parse(observation)).toEqual(observation);
+    expect(observation.nativeRevision).toBeUndefined();
   });
 });

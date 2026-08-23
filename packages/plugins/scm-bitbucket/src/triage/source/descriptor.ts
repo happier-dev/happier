@@ -49,6 +49,11 @@ export const BITBUCKET_TRIAGE_SETTINGS_ARTIFACT_ID = 'bitbucket-triage-sources-n
 export const BITBUCKET_TRIAGE_DESCRIPTOR: TriageSourceDescriptorV1 = Object.freeze({
   v: 1,
   purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE,
+  // The page this source's own Settings contribution ships, so the PRs & Issues
+  // surface can offer a working Configure action rather than naming Settings and
+  // leaving the reader to find it. A BARE local id: the target qualifies it with the
+  // contributor identity the host already admitted.
+  settingsPageId: BITBUCKET_TRIAGE_SETTINGS_PAGE_ID,
   displayName: 'Bitbucket Cloud',
   kinds: Object.freeze([
     Object.freeze({

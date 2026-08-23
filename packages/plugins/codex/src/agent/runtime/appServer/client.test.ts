@@ -363,6 +363,29 @@ describe('createCodexAppServerClient', () => {
         }));
     });
 
+    it('forwards a caller AbortSignal to the native protocol client request', async () => {
+        const request = vi.fn(async () => ({ ok: true }));
+        const capture = createCapturingExec({ request });
+        const client = await createCodexNativeAppServerClient({
+            exec: capture.exec,
+            processEnv: {},
+        });
+        const controller = new AbortController();
+
+        await client.request(
+            'thread/fork',
+            { threadId: 'parent-thread', persistExtendedHistory: true },
+            { timeoutMs: null, signal: controller.signal },
+        );
+        await client.dispose();
+
+        expect(request).toHaveBeenLastCalledWith(
+            'thread/fork',
+            { threadId: 'parent-thread', persistExtendedHistory: true },
+            { timeoutMs: null, signal: controller.signal },
+        );
+    });
+
     it.each([
         '0.145.0',
         '0.146.0',

@@ -102,6 +102,7 @@ function loadConversationAccountLocalBindingPolicyModule(): Promise<Conversation
 export type ConversationControlResponseKind =
   | 'pairing'
   | 'newSession'
+  | 'approval'
   | 'refusal'
   | 'recovery';
 
@@ -2482,7 +2483,12 @@ async function createConversationPermissionWaitOutwardDeliveryObligation(input: 
       requestId: input.requestId,
     },
     endpoint: input.current.endpoint,
-    content: 'This Session is waiting for an approval in Happier.',
+    // The exact request identity is the only thing an admitted approver needs
+    // to answer, and the inbound `/allow`/`/deny` grammar requires it. It is
+    // the same opaque identifier the host's own pending projection handed this
+    // mediator; no rule, tool, prompt, or decision detail is disclosed.
+    content: 'This Session is waiting for an approval in Happier. '
+      + `Reply /allow ${input.requestId} or /deny ${input.requestId}.`,
     // The existing custody HMAC is length-prefixed over the exact source
     // tuple. Reusing it makes the provider key bounded, opaque, and immune to
     // delimiter collisions in provider-native request identifiers.
@@ -2618,6 +2624,7 @@ export async function acceptConversationOutwardDeliveryReady(input: Readonly<{
 const CONVERSATION_CONTROL_RESPONSE_KINDS = new Set<ConversationControlResponseKind>([
   'pairing',
   'newSession',
+  'approval',
   'refusal',
   'recovery',
 ]);

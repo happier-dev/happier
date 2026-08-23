@@ -57,7 +57,6 @@ const OPENCODE_CONNECTED_SERVICE_STATE_SHARING_DESCRIPTOR = Object.freeze({
 
 export const OPENCODE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'opencode',
-  builtInAcpCatalog: true,
   agentCliSystemTool: {
     toolId: OPEN_CODE_SYSTEM_TOOL_ID,
   },

@@ -1724,6 +1724,56 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     });
   });
 
+  it('leaves a selector-rotated predecessor checkpoint retained, because absence is not a retirement fact', async () => {
+    // The row key is derived from (automationId, eventRef, sourceSelectorId),
+    // so rotating the selector produces a NEW row and the predecessor simply
+    // vanishes from the caller-scoped catalog. Refusing to infer deletion from
+    // absence is correct — it is how one watcher avoids deleting another's
+    // continuity — but it means an actual retirement has no positive fact and
+    // the predecessor row occupies Account Collection capacity indefinitely.
+    // This pins the real contract so the "rotated identities are CAS-deleted"
+    // claim cannot be restated without a positive retirement signal existing.
+    const rotated = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorB });
+    const predecessorRowId = createGithubAutomationEventCheckpointRowId({
+      automationId: 'automation-a',
+      eventRef: rotated.eventRef,
+      sourceSelectorId: sourceSelectorA,
+    });
+    const checkpoints = createCheckpointCollection([
+      checkpointRow({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA }),
+    ]);
+    const actions = {
+      execute: vi.fn(async (actionId: string) => {
+        if (actionId === 'automation.event.sources.list') {
+          return {
+            kind: 'page', revision: '7', definitions: [rotated], nextCursor: null,
+          } satisfies PluginActionResultById['automation.event.sources.list'];
+        }
+        if (actionId === 'automation.event.source.status.report') {
+          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
+        }
+        throw new Error(`unexpected Action ${actionId}`);
+      }),
+    };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+    const context = observerBackgroundContext({
+      actions,
+      collection: checkpoints.collection,
+      http: {
+        request: vi.fn(async () => ({
+          status: 200,
+          headers: { etag: 'selector-rotated' },
+          body: new TextEncoder().encode(JSON.stringify([])),
+        })),
+      },
+    });
+
+    await observer.runCycle(sourceAttemptContext(observer, context));
+
+    expect(checkpoints.delete).not.toHaveBeenCalled();
+    expect(checkpoints.read(predecessorRowId)).not.toBeNull();
+  });
+
   it('retires a retained checkpoint when its source contract is no longer compatible', async () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const rowId = createGithubAutomationEventCheckpointRowId({

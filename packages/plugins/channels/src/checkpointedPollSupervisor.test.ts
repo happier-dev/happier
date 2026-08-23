@@ -1,10 +1,14 @@
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type { PluginServices } from '@happier-dev/plugin-sdk';
-import { MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT } from '@happier-dev/channels-protocol/v1';
+import {
+  MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
+  MIN_CONVERSATION_OBSERVATION_AGE_MS,
+} from '@happier-dev/channels-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createIngressSupervisor } from './checkpointedPollSupervisor.js';
 
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 function backgroundContext(
   signal: AbortSignal,
   query?: () => Promise<Readonly<{
@@ -14,7 +18,8 @@ function backgroundContext(
   logger?: Pick<PluginServices['logger'], 'warn'>,
 ): BackgroundServiceContext {
   const collection = {
-    async query() {
+    async query(request: Readonly<{ limit?: number }>) {
+      assertChannelsTestCollectionQueryLimit(request.limit);
       if (query !== undefined) return await query();
       return {
         rows: [{
@@ -107,6 +112,78 @@ describe('Checkpointed poll supervisor', () => {
       { now: 2_000_000, limit: MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT },
       { now: 2_001_000, limit: MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT, cursor: 'retention:next' },
     ]);
+    await supervisor.dispose();
+  });
+
+  it('sweeps ingress retention once per shortest enforceable horizon instead of on every wake', async () => {
+    const wakesPerSweep = MIN_CONVERSATION_OBSERVATION_AGE_MS / 1_000;
+    let now = 3_000_000;
+    const generation = new AbortController();
+    const retentionAt: number[] = [];
+    let pollCalls = 0;
+    const supervisor = createIngressSupervisor({
+      runDueWork: async () => 0,
+      runRetention: async (input) => {
+        retentionAt.push(input.now);
+        return {};
+      },
+      runPoll: async () => {
+        pollCalls += 1;
+        if (pollCalls > wakesPerSweep) generation.abort(new Error('test complete'));
+        return { kind: 'ineligible' as const };
+      },
+      reconciliationIntervalMs: 1_000,
+      clock: {
+        now: () => now,
+        async sleep(delayMs) { now += delayMs; },
+      },
+    });
+
+    await supervisor.run(backgroundContext(generation.signal));
+
+    // Every one of those wakes polled; only the startup pass and the wake that
+    // reached the next coarse deadline re-scanned the census collection.
+    expect(pollCalls).toBe(wakesPerSweep + 1);
+    expect(retentionAt).toEqual([3_000_000, 3_000_000 + MIN_CONVERSATION_OBSERVATION_AGE_MS]);
+    await supervisor.dispose();
+  });
+
+  it('holds a failed retention page to the next coarse deadline instead of re-failing every wake', async () => {
+    let now = 4_000_000;
+    const generation = new AbortController();
+    const logger = { warn: vi.fn() };
+    let retentionCalls = 0;
+    let pollCalls = 0;
+    const supervisor = createIngressSupervisor({
+      runDueWork: async () => 0,
+      runRetention: async () => {
+        retentionCalls += 1;
+        throw new Error('secret retention detail');
+      },
+      runPoll: async () => {
+        pollCalls += 1;
+        if (pollCalls > MIN_CONVERSATION_OBSERVATION_AGE_MS / 1_000) {
+          generation.abort(new Error('test complete'));
+        }
+        return { kind: 'ineligible' as const };
+      },
+      reconciliationIntervalMs: 1_000,
+      clock: {
+        now: () => now,
+        async sleep(delayMs) { now += delayMs; },
+      },
+    });
+
+    await supervisor.run(backgroundContext(generation.signal, undefined, logger));
+
+    expect(retentionCalls).toBe(2);
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenNthCalledWith(
+      1,
+      '[Channels] ingress supervisor work failed',
+      { boundary: 'retention' },
+    );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('secret');
     await supervisor.dispose();
   });
 

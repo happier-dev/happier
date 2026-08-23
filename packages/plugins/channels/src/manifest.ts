@@ -49,6 +49,7 @@ import {
   reportConversationTransportFactForInvocation,
   resolveConversationBindingForInvocation,
   resolveConversationDeliveryForInvocation,
+  retestConversationConnectionForInvocation,
   retryConversationConnectionPollForInvocation,
   rotateConversationBindingTargetForInvocation,
   setConversationBindingEnabledForInvocation,
@@ -184,6 +185,7 @@ export const CHANNELS_UI = {
                       'plugins.channels.surface.bindingCreatePairingRequiredSummary': 'Pairing challenge required',
                       'plugins.channels.surface.bindingCreateConnectionUnavailable': 'Connection unavailable',
                       'plugins.channels.surface.bindingCreateInputMode': 'Incoming messages',
+                      'plugins.channels.surface.bindingInputModeCapability': 'This integration only delivers messages that address it in a shared conversation, so broader incoming message policies are unavailable.',
                       'plugins.channels.surface.bindingCreateDeliveryMode': 'Session delivery',
                       'plugins.channels.surface.bindingCreatePermissionCeiling': 'Permission ceiling',
                       'plugins.channels.surface.bindingCreateApprovals': 'Approvals',
@@ -221,6 +223,10 @@ export const CHANNELS_UI = {
                       'plugins.channels.surface.providerSetupTitle': 'Add a conversation provider',
                       'plugins.channels.surface.providerSetupDescription': 'Choose an installed provider to begin setup.',
                       'plugins.channels.surface.providerSetupAction': 'Set up',
+                      'plugins.channels.surface.providerSetupNoneTitle': 'No conversation providers are available',
+                      'plugins.channels.surface.providerSetupNoneDescription': 'Install and enable a conversation integration plugin on your selected machine, then refresh to begin setup.',
+                      'plugins.channels.surface.providerSetupHostUnsupportedTitle': 'Conversation providers cannot be set up here',
+                      'plugins.channels.surface.providerSetupHostUnsupportedDescription': 'This app cannot collect provider setup details. Open Conversation Channels from an app version that supports guided setup to add a connection.',
                       'plugins.channels.surface.providerSetupUnavailableTitle': 'Provider setup is unavailable',
                       'plugins.channels.surface.providerSetupUnavailableDescription': 'The available provider selection is no longer current. Refresh this page and try again.',
                       'plugins.channels.surface.providerPreparationUnavailableTitle': 'Could not prepare the provider',
@@ -3415,6 +3421,20 @@ function createChannelsPlugin() {
         dangerLevel: 'safe',
         execution: { target: 'daemon' },
         run: prepareConversationConnectionForInvocation,
+      },
+      [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionRetest]: {
+        ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionRetest,
+        title: 'Retest conversation connection',
+        scopes: ['global'],
+        surfaces: ['cli', 'ui'],
+        placementBindings: ['secondary'],
+        // The only Account write a retest can make is clearing the retained
+        // readiness attention the provider itself just contradicted, so it
+        // stays a diagnostic the user can run without a confirmation step.
+        dangerLevel: 'safe',
+        execution: { target: 'daemon' },
+        hostAccess: ['account-storage'],
+        run: retestConversationConnectionForInvocation,
       },
       [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate]: {
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionUpdate,

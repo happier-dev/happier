@@ -29,6 +29,8 @@ import type {
   TriageLinkedSessionProjectionV1,
 } from '@happier-dev/triage-protocol/v1';
 
+import { GITHUB_DETAIL_FIELD_LABELS_V1 } from './vocabulary.js';
+
 /**
  * One provider-native detail row.
  *
@@ -55,20 +57,6 @@ export type GithubDetailBodyV1 = Readonly<{
 }>;
 
 
-/** The GitHub fact vocabulary `triage/mapping/facts.ts` emits. */
-const FIELD_LABELS: Readonly<Record<string, string | undefined>> = Object.freeze({
-  'github/number': 'Number',
-  'github/repository': 'Repository',
-  'github/author': 'Author',
-  'github/updated': 'Updated',
-  'github/comments': 'Comments',
-  'github/labels': 'Labels',
-  'github/review-decision': 'Review',
-  'github/checks': 'Checks',
-  'github/mergeability': 'Mergeability',
-  'github/additions-deletions': 'Changes',
-});
-
 /**
  * Projects one mounted GitHub detail input into the source-owned body model.
  *
@@ -82,7 +70,7 @@ export function projectGithubDetailBody(
   const { snapshot, entryRef } = input.observation;
   return {
     kindId: entryRef.kindId,
-    fields: projectTriageDetailFieldsV1(snapshot.facts, FIELD_LABELS),
+    fields: projectTriageDetailFieldsV1(snapshot.facts, GITHUB_DETAIL_FIELD_LABELS_V1),
     linkedSessions: input.linkedSessions,
   };
 }

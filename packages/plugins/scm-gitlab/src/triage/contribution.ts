@@ -22,6 +22,20 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import {
+  GitlabIssueCloseInputV1Schema,
+  GitlabIssueCloseResultV1Schema,
+  GitlabIssueReopenInputV1Schema,
+  GitlabIssueReopenResultV1Schema,
+  GitlabMergeRequestCloseInputV1Schema,
+  GitlabMergeRequestCloseResultV1Schema,
+  GitlabMergeRequestMarkReadyInputV1Schema,
+  GitlabMergeRequestMarkReadyResultV1Schema,
+  GitlabMergeRequestMergeInputV1Schema,
+  GitlabMergeRequestMergeResultV1Schema,
+  GitlabMergeRequestReopenInputV1Schema,
+  GitlabMergeRequestReopenResultV1Schema,
+} from './mutations/contracts.js';
+import {
   GitlabActivityEventsInputV1Schema,
   GitlabActivityEventsResultV1Schema,
   GitlabApprovalsInputV1Schema,
@@ -68,6 +82,34 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_IDS = Object.freeze({
   readApprovals: 'triage/read-gitlab-approvals',
   listPipelines: 'triage/list-gitlab-pipelines',
   listChanges: 'triage/list-gitlab-changes',
+});
+
+/**
+ * The exact GitLab mutation Actions.
+ *
+ * `sources/SCM.md` §3.8: every externally visible write is its own named Action.
+ * There is no generic `mutate({ operation, payload })` and there will not be
+ * one, so each id below names one effect a person asked for and the host admits
+ * exactly that.
+ *
+ * The ids are the contract's own spelling rather than this package's
+ * `triage/…` read prefix, because a write is not a Triage role: `scan` and `get`
+ * implement a shared operation the aggregate binds, while these are GitLab's own
+ * verbs invoked from GitLab's own detail surface.
+ *
+ * `gitlab/issue/{close,reopen}` are the first writes this source declares for a
+ * kind other than `merge-request`, and they are separate ids rather than a kind
+ * parameter on the merge-request pair for the reason §4.7 states: an issue and a
+ * merge request can share a project and an IID, so one id addressing both would
+ * be one Action that can transition either of two different items.
+ */
+export const GITLAB_TRIAGE_MUTATION_ACTION_IDS = Object.freeze({
+  mergeRequestMerge: 'gitlab/merge-request/merge',
+  mergeRequestMarkReady: 'gitlab/merge-request/mark-ready',
+  mergeRequestClose: 'gitlab/merge-request/close',
+  mergeRequestReopen: 'gitlab/merge-request/reopen',
+  issueClose: 'gitlab/issue/close',
+  issueReopen: 'gitlab/issue/reopen',
 });
 
 /**
@@ -124,6 +166,12 @@ export const GITLAB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
   TriageSourceDescriptorV1Schema.parse({
     v: 1,
     purpose: GITLAB_CONNECTED_ACCOUNT_PURPOSE,
+    // The page this source's own Settings contribution ships, so the PRs & Issues
+    // surface can offer a working Configure action instead of naming Settings and
+    // leaving the reader to find it. A BARE local id: the target qualifies it with
+    // the contributor identity the host already admitted, so a descriptor can never
+    // name another plugin's page.
+    settingsPageId: GITLAB_TRIAGE_SETTINGS_PAGE_ID,
     displayName: 'GitLab',
     kinds: [
       { id: 'merge-request', ...KIND_DISPLAY['merge-request'] },
@@ -179,6 +227,32 @@ type TriageActionDeclaration = Readonly<{
   resultSchema: PluginJsonSchema;
   hostAccess: readonly string[];
   connectedAccountPurposeBindings?: readonly Readonly<{ path: string; purpose: string }>[];
+}>;
+
+/**
+ * A mutation Action declaration. It is deliberately NOT the read declaration
+ * type widened: a read has no danger level to choose, no confirmation to author
+ * and no placement to bind, and one shared shape with four optional members
+ * would let a write be declared as though it were a read.
+ */
+type GitlabMutationActionDeclaration = Readonly<{
+  id: string;
+  title: string;
+  description: string;
+  scopes: readonly ['global'];
+  surfaces: readonly ['ui', 'plugin'];
+  placementBindings: readonly ['detailsPanel'];
+  execution: Readonly<{ target: 'daemon' }>;
+  dangerLevel: 'destructive' | 'externalSideEffect' | 'writesRemote';
+  confirmation: Readonly<{
+    title: Readonly<{ key: string; fallback: string }>;
+    body: Readonly<{ key: string; fallback: string }>;
+    confirmLabel: Readonly<{ key: string; fallback: string }>;
+  }>;
+  inputSchema: PluginJsonSchema;
+  resultSchema: PluginJsonSchema;
+  hostAccess: readonly string[];
+  connectedAccountPurposeBindings: readonly Readonly<{ path: string; purpose: string }>[];
 }>;
 
 function declareOperationAction(input: Readonly<{
@@ -302,6 +376,190 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDecl
     surfaces: ['plugin'] as const,
     execution: { target: 'daemon' as const },
     dangerLevel: 'safe' as const,
+    hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
+    connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+  })));
+
+/**
+ * The six mutation Action declarations.
+ *
+ * Four properties of these declarations are load-bearing rather than
+ * decorative, and each is a rule from `sources/SCM.md` §3.8:
+ *
+ * - **`surfaces: ['ui', 'plugin']`, and the OMISSIONS are the gate.** The human
+ *   gate is *reachability*, not a prompt: with no `agent` and no `mcp` surface no
+ *   agent can reach these Actions at all — no tool, no prompt, no exposure —
+ *   where a danger level plus `agent: true` would only *floor* them to an
+ *   approval prompt, which is not the required guarantee.
+ *
+ *   `plugin` is not a relaxation of that gate, it is what makes the `ui` half
+ *   reachable. The only thing that renders these controls is this source's own
+ *   mounted detail artifact, and a mounted plugin surface dispatches as a PLUGIN
+ *   caller: `evaluateTargetActionPolicy` refuses any Action whose declared
+ *   `surfaces` omit the calling surface with `plugin_action_surface_unavailable`,
+ *   before the handler is entered. Declaring `ui` alone therefore does not
+ *   produce a human-only write — it produces a write **nobody** can perform.
+ *   The present-user confirmation is unaffected and still fires, because it keys
+ *   off the separate `invocationSurface`, which this dispatch stamps as `ui`.
+ * - **The declared danger level is the contract's, row for row.** `merge` is
+ *   `destructive` because it is irreversible on the forge; `mark-ready` is
+ *   `externalSideEffect` because its reviewer notification fan-out *is* the
+ *   write; `close` is `writesRemote`.
+ * - **Confirmation metadata is required by the manifest grammar** for a non-safe
+ *   Action on a human surface, and it is authored per Action: "GitLab notifies
+ *   every reviewer" is the fact that makes mark-ready worth confirming, and a
+ *   shared string could not say it.
+ * - **Both resources are declared.** A write Action that names neither the
+ *   network grant nor the connected-account purpose is a manifest defect, not a
+ *   runtime one — the host revalidates the exact origin *and method* at dispatch.
+ */
+export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
+  readonly GitlabMutationActionDeclaration[] = Object.freeze([
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMerge,
+      title: 'Merge a GitLab merge request',
+      description: 'Merges one merge request at the exact commit the user observed, and reports'
+        + ' whether GitLab merged it or scheduled it.',
+      dangerLevel: 'destructive' as const,
+      confirmation: {
+        title: {
+          key: 'plugins.gitlab.actions.mergeRequestMerge.confirm.title',
+          fallback: 'Merge this merge request?',
+        },
+        body: {
+          key: 'plugins.gitlab.actions.mergeRequestMerge.confirm.body',
+          fallback: 'GitLab merges it into the target branch. Happier cannot undo that.',
+        },
+        confirmLabel: {
+          key: 'plugins.gitlab.actions.mergeRequestMerge.confirm.label',
+          fallback: 'Merge',
+        },
+      },
+      inputSchema: GitlabMergeRequestMergeInputV1Schema.jsonSchema,
+      resultSchema: GitlabMergeRequestMergeResultV1Schema.jsonSchema,
+    },
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMarkReady,
+      title: 'Mark a GitLab merge request ready for review',
+      description: 'Clears the draft flag of one merge request through GitLab’s own draft'
+        + ' transition, which notifies every named reviewer.',
+      dangerLevel: 'externalSideEffect' as const,
+      confirmation: {
+        title: {
+          key: 'plugins.gitlab.actions.mergeRequestMarkReady.confirm.title',
+          fallback: 'Mark as ready for review?',
+        },
+        body: {
+          key: 'plugins.gitlab.actions.mergeRequestMarkReady.confirm.body',
+          fallback: 'GitLab notifies every reviewer of this merge request.',
+        },
+        confirmLabel: {
+          key: 'plugins.gitlab.actions.mergeRequestMarkReady.confirm.label',
+          fallback: 'Mark ready',
+        },
+      },
+      inputSchema: GitlabMergeRequestMarkReadyInputV1Schema.jsonSchema,
+      resultSchema: GitlabMergeRequestMarkReadyResultV1Schema.jsonSchema,
+    },
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestClose,
+      title: 'Close a GitLab merge request',
+      description: 'Closes one open merge request through GitLab’s own state transition and'
+        + ' proves the new state with a fresh read.',
+      dangerLevel: 'writesRemote' as const,
+      confirmation: {
+        title: {
+          key: 'plugins.gitlab.actions.mergeRequestClose.confirm.title',
+          fallback: 'Close this merge request?',
+        },
+        body: {
+          key: 'plugins.gitlab.actions.mergeRequestClose.confirm.body',
+          fallback: 'It stays on GitLab and can be reopened there.',
+        },
+        confirmLabel: {
+          key: 'plugins.gitlab.actions.mergeRequestClose.confirm.label',
+          fallback: 'Close',
+        },
+      },
+      inputSchema: GitlabMergeRequestCloseInputV1Schema.jsonSchema,
+      resultSchema: GitlabMergeRequestCloseResultV1Schema.jsonSchema,
+    },
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReopen,
+      title: 'Reopen a GitLab merge request',
+      description: 'Reopens one closed merge request through GitLab\u2019s own state transition'
+        + ' and proves the new state with a fresh read.',
+      dangerLevel: 'writesRemote' as const,
+      confirmation: {
+        title: {
+          key: 'plugins.gitlab.actions.mergeRequestReopen.confirm.title',
+          fallback: 'Reopen this merge request?',
+        },
+        body: {
+          key: 'plugins.gitlab.actions.mergeRequestReopen.confirm.body',
+          fallback: 'GitLab puts it back in review and notifies the people watching it.',
+        },
+        confirmLabel: {
+          key: 'plugins.gitlab.actions.mergeRequestReopen.confirm.label',
+          fallback: 'Reopen',
+        },
+      },
+      inputSchema: GitlabMergeRequestReopenInputV1Schema.jsonSchema,
+      resultSchema: GitlabMergeRequestReopenResultV1Schema.jsonSchema,
+    },
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueClose,
+      title: 'Close a GitLab issue',
+      description: 'Closes one open issue through GitLab\u2019s own state transition, sending'
+        + ' nothing that could overwrite a concurrent edit, and proves the new state with a'
+        + ' fresh read.',
+      dangerLevel: 'writesRemote' as const,
+      confirmation: {
+        title: {
+          key: 'plugins.gitlab.actions.issueClose.confirm.title',
+          fallback: 'Close this issue?',
+        },
+        body: {
+          key: 'plugins.gitlab.actions.issueClose.confirm.body',
+          fallback: 'It stays on GitLab and can be reopened there.',
+        },
+        confirmLabel: {
+          key: 'plugins.gitlab.actions.issueClose.confirm.label',
+          fallback: 'Close',
+        },
+      },
+      inputSchema: GitlabIssueCloseInputV1Schema.jsonSchema,
+      resultSchema: GitlabIssueCloseResultV1Schema.jsonSchema,
+    },
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueReopen,
+      title: 'Reopen a GitLab issue',
+      description: 'Reopens one closed issue through GitLab\u2019s own state transition and'
+        + ' proves the new state with a fresh read.',
+      dangerLevel: 'writesRemote' as const,
+      confirmation: {
+        title: {
+          key: 'plugins.gitlab.actions.issueReopen.confirm.title',
+          fallback: 'Reopen this issue?',
+        },
+        body: {
+          key: 'plugins.gitlab.actions.issueReopen.confirm.body',
+          fallback: 'GitLab reopens it and notifies the people watching it.',
+        },
+        confirmLabel: {
+          key: 'plugins.gitlab.actions.issueReopen.confirm.label',
+          fallback: 'Reopen',
+        },
+      },
+      inputSchema: GitlabIssueReopenInputV1Schema.jsonSchema,
+      resultSchema: GitlabIssueReopenResultV1Schema.jsonSchema,
+    },
+  ].map((declaration) => Object.freeze({
+    ...declaration,
+    scopes: ['global'] as const,
+    surfaces: ['ui', 'plugin'] as const,
+    placementBindings: ['detailsPanel'] as const,
+    execution: { target: 'daemon' as const },
     hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
     connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
   })));

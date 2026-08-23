@@ -12,11 +12,13 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   CHANNEL_STATE_FIELD,
   CHANNEL_STATE_FIXED_ROW_ID,
+  CHANNEL_STATE_INDEX_ID,
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
 import {
   createConversationConnectionForInvocation,
   prepareConversationConnectionForInvocation,
+  retestConversationConnectionForInvocation,
   setConversationConnectionEnabledForInvocation,
   updateConversationConnectionForInvocation,
   transferConversationConnectionForInvocation,
@@ -204,6 +206,19 @@ function createMutableConnectionStateCollection() {
   return {
     rows,
     get: async (rowId: string) => rows.get(rowId) ?? null,
+    async query(request: Readonly<{ index: string; prefix?: readonly unknown[] }>) {
+      if (request.index !== CHANNEL_STATE_INDEX_ID.byKind) {
+        throw new Error(`Unexpected owner query index: ${request.index}`);
+      }
+      const kind = request.prefix?.[0];
+      return {
+        rows: [...rows.values()].filter((row) => (
+          (row.value as Readonly<Record<string, unknown>>)[CHANNEL_STATE_FIELD.recordKind] === kind
+        )),
+        changeCursor: 1,
+        nextCursor: undefined,
+      };
+    },
     batch,
     loseNextUpdatedBatchResponse() {
       loseNextUpdatedBatchResponse = true;
@@ -1149,6 +1164,145 @@ describe('createConversationConnectionForInvocation targeted provider selection'
 });
 
 describe('transferConversationConnectionForInvocation targeted provider selection', () => {
+  it('refuses a transfer whose replacement credential can no longer deliver an enabled shared binding', async () => {
+    // Same bot, narrower credential: the replacement authenticates the same
+    // immutable identity but its platform now withholds ordinary shared
+    // messages. Committing this transfer would leave the saved
+    // `allAllowedMessages` binding apparently intact and permanently silent.
+    const connectionId = 'connection-transfer-narrowed-capability';
+    const executionOrigin = {
+      serverIdentityId: 'srv-example',
+      materializationRef: {
+        pluginId: providerSelection.contributor.pluginId,
+        machineId: 'machine-old',
+        materializationId: 'materialization-old',
+      },
+    } as const;
+    const replacementExecutionOrigin = {
+      serverIdentityId: 'srv-example',
+      materializationRef: {
+        pluginId: providerSelection.contributor.pluginId,
+        machineId: 'machine-replacement',
+        materializationId: 'materialization-replacement',
+      },
+    } as const;
+    const collection = createMutableConnectionStateCollection();
+    const authority = {
+      providerPluginId: providerSelection.contributor.pluginId,
+      providerContributionSelection: {
+        contributionId: providerSelection.contributor.contributionId,
+        immutableGenerationId: providerSelection.contributor.immutableGenerationId,
+      },
+      providerSetupInput: { source: 'same' },
+      credentialRef: null,
+      transportOrigin: executionOrigin,
+      providerConnectionKey: 'example:connection',
+      providerConfig: { source: 'same' },
+      routingIdentityKey: 'r'.repeat(43),
+      integrationPrincipal: { id: 'example-bot' },
+      authorityEpoch: 4,
+    } as const satisfies ConversationConnectionFixtureAuthority;
+    collection.rows.set(connectionId, {
+      rowId: connectionId,
+      revision: 4,
+      value: createCurrentConversationConnectionFixture({
+        connectionId,
+        authority,
+        transport: { kind: 'socket' },
+        overlapSafety: 'safe',
+        replayContinuity: 'none',
+        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+        sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages', 'allAllowedMessages'],
+      }),
+    });
+    const bindingId = 'binding-shared-all';
+    collection.rows.set(bindingId, {
+      rowId: bindingId,
+      revision: 1,
+      value: {
+        [CHANNEL_STATE_FIELD.id]: bindingId,
+        [CHANNEL_STATE_FIELD.recordKind]: CHANNEL_STATE_RECORD_KIND.binding,
+        [CHANNEL_STATE_FIELD.connectionId]: connectionId,
+        [CHANNEL_STATE_FIELD.bindingId]: bindingId,
+        v: 1,
+        payload: {
+          enabled: true,
+          endpoint: { audience: 'shared' },
+          inputMode: 'allAllowedMessages',
+        },
+      },
+    });
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown) => {
+      if (action === setupAction) {
+        return {
+          result: {
+            v: 1,
+            credentialRef: null,
+            providerConnectionKey: 'example:connection',
+            providerConfigVersion: 1,
+            providerConfig: { source: 'same' },
+            integrationPrincipal: { id: 'example-bot' },
+            supportedTransports: ['socket'],
+            recommendedTransport: 'socket',
+            overlapSafety: 'safe',
+            replayContinuity: 'none',
+            outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+            sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
+          },
+          executionOrigin: replacementExecutionOrigin,
+        };
+      }
+      if (action === connectionTestAction) {
+        return {
+          result: {
+            kind: 'ready',
+            integrationPrincipal: { id: 'example-bot' },
+            providerConnectionKey: 'example:connection',
+            sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
+          },
+          executionOrigin: replacementExecutionOrigin,
+        };
+      }
+      throw new Error('A refused transfer must never reach the old-transport stop.');
+    });
+    const context = invocationContext({
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+        operations: {
+          setup: setupAction,
+          connectionTest: connectionTestAction,
+          messageDeliver: messageDeliverAction,
+          connectionStop: connectionStopAction,
+        },
+      }),
+      stateCollection: collection,
+    });
+
+    await expect(transferConversationConnectionForInvocation({
+      connectionId,
+      expectedRevision: 4,
+      providerSelection,
+      providerSetupInput: { source: 'same' },
+      credentialRef: null,
+      selectedTransport: 'socket',
+    }, context)).resolves.toMatchObject({
+      kind: 'notReady',
+      reason: 'permissionMissing',
+    });
+    // Nothing was committed: the incumbent authority and its wider retained
+    // capability are untouched.
+    expect(collection.rows.get(connectionId)).toMatchObject({
+      revision: 4,
+      value: {
+        payload: {
+          authorityEpoch: 4,
+          sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages', 'allAllowedMessages'],
+        },
+      },
+    });
+  });
+
   it('re-runs setup/test, then stops the frozen old socket transport through its exact retired origin', async () => {
     const connectionId = 'connection-transfer-same-config-new-origin';
     const oldExecutionOrigin = {
@@ -2147,5 +2301,375 @@ describe('setConversationConnectionEnabledForInvocation targeted provider stop',
     });
     expect(row.value.payload.enabled).toBe(false);
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
+  });
+});
+
+describe('retestConversationConnectionForInvocation', () => {
+  const retestPersistedAuthority = {
+    providerPluginId: providerSelection.contributor.pluginId,
+    providerContributionSelection: {
+      contributionId: providerSelection.contributor.contributionId,
+      immutableGenerationId: providerSelection.contributor.immutableGenerationId,
+    },
+    providerSetupInput: { source: 'persisted' },
+    credentialRef: selectedCredentialRef,
+    transportOrigin: {
+      serverIdentityId: 'server-example',
+      materializationRef: {
+        pluginId: providerSelection.contributor.pluginId,
+        machineId: 'machine-example',
+        materializationId: 'materialization-example',
+      },
+    },
+    providerConnectionKey: 'example:connection',
+    providerConfig: { opaque: true },
+    routingIdentityKey: 'r'.repeat(43),
+    integrationPrincipal: { id: 'example-bot' },
+    authorityEpoch: 4,
+  } as const satisfies ConversationConnectionFixtureAuthority;
+
+  /** One attention-carrying saved connection plus the Account boundary it lives in. */
+  function retestFixture(input?: Readonly<{
+    providerReadiness?: unknown;
+    bindings?: readonly Readonly<{
+      bindingId: string;
+      connectionId?: string;
+      enabled: boolean;
+      audience: 'direct' | 'shared';
+      inputMode: 'directMentionsOnly' | 'addressedMessages' | 'allAllowedMessages';
+    }>[];
+  }>) {
+    const connectionId = 'connection-retest';
+    let row = {
+      rowId: connectionId,
+      revision: 4,
+      value: createCurrentConversationConnectionFixture({
+        connectionId,
+        authority: retestPersistedAuthority,
+        transport: { kind: 'socket' },
+        overlapSafety: 'safe',
+        replayContinuity: 'none',
+        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+        providerReadiness: (input?.providerReadiness ?? {
+          code: 'providerConfigurationInvalid',
+          diagnostic: 'The saved bot token was rejected.',
+        }) as never,
+      }),
+    };
+    const bindingRows = (input?.bindings ?? []).map((binding) => ({
+      rowId: binding.bindingId,
+      revision: 1,
+      value: {
+        [CHANNEL_STATE_FIELD.id]: binding.bindingId,
+        [CHANNEL_STATE_FIELD.recordKind]: CHANNEL_STATE_RECORD_KIND.binding,
+        [CHANNEL_STATE_FIELD.connectionId]: binding.connectionId ?? connectionId,
+        [CHANNEL_STATE_FIELD.bindingId]: binding.bindingId,
+        v: 1,
+        payload: {
+          enabled: binding.enabled,
+          endpoint: { audience: binding.audience },
+          inputMode: binding.inputMode,
+        },
+      },
+    }));
+    const batches: unknown[][] = [];
+    const stateCollection = {
+      async get() { return row; },
+      async query(request: Readonly<{ index: string; prefix?: readonly unknown[] }>) {
+        if (
+          request.index !== CHANNEL_STATE_INDEX_ID.byKind
+          || request.prefix?.[0] !== CHANNEL_STATE_RECORD_KIND.binding
+        ) {
+          throw new Error(`Unexpected retest query: ${JSON.stringify(request)}`);
+        }
+        return { rows: bindingRows, changeCursor: 7, nextCursor: undefined };
+      },
+      async batch(operations: readonly Readonly<{
+        kind: string;
+        value?: typeof row.value;
+        expectedRevision?: number | 'absent';
+      }>[]) {
+        batches.push([...operations]);
+        const mutation = operations[0];
+        if (mutation?.kind !== 'put' || mutation.expectedRevision !== row.revision || mutation.value === undefined) {
+          return { status: 'conflict' as const, conflicts: [] };
+        }
+        row = { rowId: connectionId, revision: row.revision + 1, value: mutation.value };
+        return {
+          status: 'updated' as const,
+          results: [{ rowId: connectionId, revision: row.revision, deleted: false }],
+        };
+      },
+    };
+    return {
+      connectionId,
+      batches,
+      stateCollection,
+      readRow: () => row,
+    };
+  }
+
+  it('re-probes the saved connection through the persisted provider test and clears its retained readiness attention', async () => {
+    const fixture = retestFixture();
+    const connectionTest = admittedProviderOperation({ role: 'connectionTest' });
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
+      action: unknown,
+      actionInput: unknown,
+      options: unknown,
+    ) => {
+      expect(action).toBe(connectionTest);
+      // Exactly the retained connection facts. A retest that re-ran setup, or
+      // rebuilt the request from caller input, would be a second connection
+      // writer rather than a re-observation of the saved one.
+      expect(actionInput).toEqual({
+        v: 1,
+        connectionId: fixture.connectionId,
+        providerConnectionKey: 'example:connection',
+        providerConfigVersion: 1,
+        providerConfig: { opaque: true },
+        credentialRef: selectedCredentialRef,
+        selectedTransport: 'socket',
+      });
+      expect(options).toMatchObject({
+        expectedExecutionOrigin: retestPersistedAuthority.transportOrigin,
+      });
+      return {
+        result: {
+          kind: 'ready',
+          integrationPrincipal: { id: 'example-bot' },
+          providerConnectionKey: 'example:connection',
+        },
+        executionOrigin: retestPersistedAuthority.transportOrigin,
+      };
+    });
+    const context = invocationContext({
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+        operations: { setup: setupAction, connectionTest },
+      }),
+      stateCollection: fixture.stateCollection,
+    });
+
+    await expect(retestConversationConnectionForInvocation({
+      connectionId: fixture.connectionId,
+      expectedRevision: 4,
+      authorityEpoch: 4,
+    }, context)).resolves.toEqual({
+      kind: 'ready',
+      connectionId: fixture.connectionId,
+      revision: 5,
+      authorityEpoch: 4,
+    });
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
+    // The one canonical readiness field is settled; the retest owns no second
+    // health record of its own.
+    expect(fixture.readRow().value.payload.providerReadiness).toBeNull();
+  });
+
+  it('reports a still-failing probe without writing any Account state or superseding the retained attention', async () => {
+    const fixture = retestFixture();
+    const connectionTest = admittedProviderOperation({ role: 'connectionTest' });
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+      result: {
+        kind: 'notReady',
+        reason: 'credentialInvalid',
+        retryAfterMs: 30_000,
+        diagnostic: 'The saved bot token was rejected.',
+      },
+      executionOrigin: retestPersistedAuthority.transportOrigin,
+    }));
+    const context = invocationContext({
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+        operations: { setup: setupAction, connectionTest },
+      }),
+      stateCollection: fixture.stateCollection,
+    });
+
+    await expect(retestConversationConnectionForInvocation({
+      connectionId: fixture.connectionId,
+      expectedRevision: 4,
+      authorityEpoch: 4,
+    }, context)).resolves.toEqual({
+      kind: 'notReady',
+      reason: 'credentialInvalid',
+      retryAfterMs: 30_000,
+      diagnostic: 'The saved bot token was rejected.',
+    });
+    expect(fixture.batches).toHaveLength(0);
+    expect(fixture.readRow().revision).toBe(4);
+    expect(fixture.readRow().value.payload.providerReadiness).toEqual({
+      code: 'providerConfigurationInvalid',
+      diagnostic: 'The saved bot token was rejected.',
+    });
+  });
+
+  it('fails readiness truthfully when the current provider capability can no longer deliver an enabled shared binding', async () => {
+    // A Telegram bot whose BotFather group privacy was re-enabled after setup
+    // still answers `getMe` for the same bot: identity is unchanged, the probe
+    // is "ready", and the saved `allAllowedMessages` binding is nonetheless
+    // impossible to observe. Reporting ready here is total silent message loss.
+    const fixture = retestFixture({
+      bindings: [
+        { bindingId: 'binding-shared-all', enabled: true, audience: 'shared', inputMode: 'allAllowedMessages' },
+      ],
+    });
+    const connectionTest = admittedProviderOperation({ role: 'connectionTest' });
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+      result: {
+        kind: 'ready',
+        integrationPrincipal: { id: 'example-bot' },
+        providerConnectionKey: 'example:connection',
+        sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
+      },
+      executionOrigin: retestPersistedAuthority.transportOrigin,
+    }));
+    const context = invocationContext({
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+        operations: { setup: setupAction, connectionTest },
+      }),
+      stateCollection: fixture.stateCollection,
+    });
+
+    await expect(retestConversationConnectionForInvocation({
+      connectionId: fixture.connectionId,
+      expectedRevision: 4,
+      authorityEpoch: 4,
+    }, context)).resolves.toMatchObject({
+      kind: 'notReady',
+      reason: 'permissionMissing',
+    });
+    // The one canonical readiness field now names the narrowing instead of
+    // being cleared by a probe that only proved identity.
+    expect(fixture.readRow().value.payload.providerReadiness).toMatchObject({
+      code: 'providerPermissionMissing',
+    });
+  });
+
+  it('clears readiness when the current provider capability still covers every enabled binding', async () => {
+    const fixture = retestFixture({
+      bindings: [
+        { bindingId: 'binding-shared-mentions', enabled: true, audience: 'shared', inputMode: 'directMentionsOnly' },
+        // A disabled binding promises nothing today, and a direct endpoint is
+        // outside the shared-endpoint capability entirely.
+        { bindingId: 'binding-shared-off', enabled: false, audience: 'shared', inputMode: 'allAllowedMessages' },
+        { bindingId: 'binding-direct', enabled: true, audience: 'direct', inputMode: 'allAllowedMessages' },
+        // Another connection's binding is not this connection's promise.
+        {
+          bindingId: 'binding-other-connection',
+          connectionId: 'connection-other',
+          enabled: true,
+          audience: 'shared',
+          inputMode: 'allAllowedMessages',
+        },
+      ],
+    });
+    const connectionTest = admittedProviderOperation({ role: 'connectionTest' });
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+      result: {
+        kind: 'ready',
+        integrationPrincipal: { id: 'example-bot' },
+        providerConnectionKey: 'example:connection',
+        sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
+      },
+      executionOrigin: retestPersistedAuthority.transportOrigin,
+    }));
+    const context = invocationContext({
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+        operations: { setup: setupAction, connectionTest },
+      }),
+      stateCollection: fixture.stateCollection,
+    });
+
+    await expect(retestConversationConnectionForInvocation({
+      connectionId: fixture.connectionId,
+      expectedRevision: 4,
+      authorityEpoch: 4,
+    }, context)).resolves.toEqual({
+      kind: 'ready',
+      connectionId: fixture.connectionId,
+      revision: 5,
+      authorityEpoch: 4,
+    });
+    expect(fixture.readRow().value.payload.providerReadiness).toBeNull();
+  });
+
+  it('refuses a probe whose credential now resolves to a different immutable integration principal', async () => {
+    const fixture = retestFixture();
+    const connectionTest = admittedProviderOperation({ role: 'connectionTest' });
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+      // The saved provider connection key still matches, but the credential
+      // behind it now answers for a different immutable integration principal.
+      result: {
+        kind: 'ready',
+        integrationPrincipal: { id: 'someone-elses-bot' },
+        providerConnectionKey: 'example:connection',
+      },
+      executionOrigin: retestPersistedAuthority.transportOrigin,
+    }));
+    const context = invocationContext({
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+        operations: { setup: setupAction, connectionTest },
+      }),
+      stateCollection: fixture.stateCollection,
+    });
+
+    await expect(retestConversationConnectionForInvocation({
+      connectionId: fixture.connectionId,
+      expectedRevision: 4,
+      authorityEpoch: 4,
+    }, context)).rejects.toMatchObject({
+      code: 'channels_connection_test_identity_mismatch',
+    });
+    // Zero writes: the retained readiness attention still names the failure.
+    expect(fixture.batches).toHaveLength(0);
+    expect(fixture.readRow().revision).toBe(4);
+    expect(fixture.readRow().value.payload.providerReadiness).toEqual({
+      code: 'providerConfigurationInvalid',
+      diagnostic: 'The saved bot token was rejected.',
+    });
+  });
+
+  it('refuses to touch the provider at all once the caller no longer holds current connection authority', async () => {
+    const fixture = retestFixture();
+    const connectionTest = admittedProviderOperation({ role: 'connectionTest' });
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => {
+      throw new Error('The provider must not be probed under retired authority.');
+    });
+    const context = invocationContext({
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+        operations: { setup: setupAction, connectionTest },
+      }),
+      stateCollection: fixture.stateCollection,
+    });
+
+    await expect(retestConversationConnectionForInvocation({
+      connectionId: fixture.connectionId,
+      expectedRevision: 4,
+      authorityEpoch: 3,
+    }, context)).rejects.toMatchObject({
+      code: 'channels_connection_retest_conflict',
+      retryable: true,
+    });
+    await expect(retestConversationConnectionForInvocation({
+      connectionId: fixture.connectionId,
+      expectedRevision: 3,
+      authorityEpoch: 4,
+    }, context)).rejects.toMatchObject({
+      code: 'channels_connection_retest_conflict',
+      retryable: true,
+    });
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
+    expect(fixture.batches).toHaveLength(0);
   });
 });

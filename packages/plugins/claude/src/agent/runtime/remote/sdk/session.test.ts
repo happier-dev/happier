@@ -40,6 +40,59 @@ type SessionParamsWithCredentials =
   }>;
 
 describe('bindClaudeAgentSdkFallbackSession', () => {
+  it('uses the supplied host delivery id for one SDK lifecycle start and successful terminal', async () => {
+    const terminalHost = createTerminalHostFixture();
+    const events = createEventsFixture();
+    const exec = createSdkExecFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, events.service, {
+      exec: exec.service,
+      sessionHooks: createSessionHooksFixture().service,
+    });
+    const operations = createClaudeAgentSdkProviderOperations({
+      ctx,
+      directory: '/tmp/claude-project',
+      launchEnv: {},
+      permissionMode: 'default',
+      happierSessionId: 'happy-host-turn-id',
+    });
+    const providerEvents: Array<{ kind: string; turnId?: string; startedBy?: string }> = [];
+    operations.subscribeProviderEvents((event) => providerEvents.push(event));
+
+    try {
+      operations.beginProviderTurn('host-delivery-turn');
+      await expect(operations.sendProviderTurnPrompt('complete with host id')).resolves.toEqual({
+        kind: 'accepted',
+      });
+      await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledOnce());
+      await exec.emit({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        session_id: 'claude-provider-host-turn',
+        result: 'done',
+        num_turns: 1,
+        total_cost_usd: 0,
+        duration_ms: 10,
+        duration_api_ms: 8,
+      });
+      await operations.waitForProviderTurnCompletion({ timeoutMs: 1_000 });
+
+      const lifecycle = providerEvents.filter((event) => (
+        event.kind === 'turn-start' || event.kind === 'turn-complete' || event.kind === 'turn-failed'
+      ));
+      expect(lifecycle).toEqual([
+        expect.objectContaining({
+          kind: 'turn-start',
+          turnId: 'host-delivery-turn',
+          startedBy: 'host',
+        }),
+        expect.objectContaining({ kind: 'turn-complete', turnId: 'host-delivery-turn' }),
+      ]);
+    } finally {
+      await operations.disposeProviderSession();
+    }
+  });
+
   it('writes an exact steer into the active Agent SDK query instead of starting a second turn', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
@@ -2763,7 +2816,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
     }
   });
 
-  it('does not publish SDK host status records as session runtime events', async () => {
+  it('does not project SDK host status records beyond the started lifecycle', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const exec = createSdkExecFixture();
@@ -2796,7 +2849,13 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
         status: 'running',
       });
 
-      expect(runtimeEvents).toEqual([]);
+      expect(runtimeEvents).toEqual([
+        expect.objectContaining({
+          kind: 'turn-start',
+          turnId: 'claude-agent-sdk-turn-1',
+          startedBy: 'host',
+        }),
+      ]);
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }
@@ -3266,6 +3325,12 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
 
       expect(runtimeEvents).toEqual(expect.arrayContaining([
         expect.objectContaining({
+          kind: 'turn-start',
+          sessionId: 'happy-session-1',
+          turnId: 'claude-agent-sdk-turn-1',
+          startedBy: 'host',
+        }),
+        expect.objectContaining({
           kind: 'transcript-agent-message-committed',
           sessionId: 'happy-session-1',
           agentId: 'claude',
@@ -3287,6 +3352,14 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       expect(runtimeEvents.filter((event) => (
         event as { kind?: string }
       ).kind === 'turn-failed')).toHaveLength(1);
+      const lifecycle = runtimeEvents.filter((event) => (
+        (event as { kind?: string }).kind === 'turn-start'
+        || (event as { kind?: string }).kind === 'turn-failed'
+      )) as Array<{ kind: string; turnId?: string }>;
+      expect(lifecycle).toEqual([
+        expect.objectContaining({ kind: 'turn-start', turnId: 'claude-agent-sdk-turn-1' }),
+        expect.objectContaining({ kind: 'turn-failed', turnId: 'claude-agent-sdk-turn-1' }),
+      ]);
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }

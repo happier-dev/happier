@@ -1555,9 +1555,19 @@ export function createClaudeAgentSdkTurnOperations(
             usageObservationListeners.add(listener);
             return () => usageObservationListeners.delete(listener);
         },
-        beginProviderTurn() {
-            turnSequence += 1;
-            currentTurnId = `claude-agent-sdk-turn-${turnSequence}`;
+        beginProviderTurn(turnId) {
+            currentTurnId = readString(turnId);
+            if (!currentTurnId) {
+                turnSequence += 1;
+                currentTurnId = `claude-agent-sdk-turn-${turnSequence}`;
+            }
+            publishRuntimeEvent(ClaudeProviderEventSchema.parse({
+                sessionId: readRuntimeEventSessionId(),
+                emittedAtMs: Date.now(),
+                kind: 'turn-start',
+                turnId: currentTurnId,
+                startedBy: 'host',
+            }));
         },
         async startProviderSession(opts) {
             const requestedResumeId = readString(opts?.resumeId);

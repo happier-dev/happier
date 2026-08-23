@@ -51,6 +51,20 @@ function buildOpenCodeMetadataPatch(params: Readonly<{
   };
 }
 
+/**
+ * The exact External Sessions source the host admitted and persisted is the
+ * identity authority. A runtime descriptor is data this leaf derived from that
+ * source for runtime connection semantics; letting it win here rewrites the
+ * source the host is about to compare against, and the host then correctly
+ * refuses its own link as `source_invalid`.
+ */
+function readAdmittedServerBaseUrl(
+  source: OpenCodeExternalSessionSource,
+): string | undefined {
+  const admitted = typeof source.baseUrl === 'string' ? source.baseUrl.trim() : '';
+  return admitted || undefined;
+}
+
 export function resolveOpenCodeExternalSessionIdentity(params: Readonly<{
   providerSessionId: string;
   source: OpenCodeExternalSessionSource;
@@ -64,13 +78,10 @@ export function resolveOpenCodeExternalSessionIdentity(params: Readonly<{
 
   const serverBaseUrl = managedEndpoint
     ? undefined
-    : canonicalRuntimeDescriptor?.serverBaseUrl
-      ?? (typeof params.source.baseUrl === 'string'
-        && params.source.baseUrl.trim().length > 0
-        ? params.source.baseUrl.trim()
-        : undefined);
-  const serverBaseUrlExplicit = !managedEndpoint
-    && (canonicalRuntimeDescriptor?.serverBaseUrlExplicit ?? Boolean(serverBaseUrl));
+    : readAdmittedServerBaseUrl(params.source)
+      ?? canonicalRuntimeDescriptor?.serverBaseUrl
+      ?? undefined;
+  const serverBaseUrlExplicit = Boolean(serverBaseUrl);
   const directory =
     typeof params.source.directory === 'string'
       ? params.source.directory.trim()
@@ -118,11 +129,10 @@ export function resolveOpenCodeLinkedExternalSessionIdentity(params: Readonly<{
   const managedEndpoint = params.source.managedEndpoint === true;
   const baseUrl = managedEndpoint
     ? ''
-    : canonicalRuntimeDescriptor?.serverBaseUrl
+    : readAdmittedServerBaseUrl(params.source)
+      ?? canonicalRuntimeDescriptor?.serverBaseUrl
       ?? runtimeHandle.serverBaseUrl
-      ?? (typeof params.source.baseUrl === 'string'
-        ? params.source.baseUrl.trim()
-        : '');
+      ?? '';
   const directory =
     typeof params.source.directory === 'string'
       ? params.source.directory.trim()

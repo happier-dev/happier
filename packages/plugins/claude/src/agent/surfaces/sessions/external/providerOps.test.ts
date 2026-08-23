@@ -1026,15 +1026,21 @@ describe('Claude native External Sessions contribution', () => {
             configDir,
             projectId: 'forward-budget-project',
         };
-        const tail = await contribution.readAfterTranscript({
+        // `readAfterTranscript` answers an up-to-date follow with a bare
+        // `already_current` — the public read-after DTO carries no cursor in that
+        // shape — so the forward starting point is the page DTO's tail cursor.
+        // Reading it off the read-after result instead is how this case used to
+        // skip itself entirely.
+        const tail = await contribution.pageTranscript({
             ...invocation(),
             source,
             remoteSessionId: 'forward-budget-session',
-            cursor: 'tail',
-            maxItems: 10,
+            direction: 'older',
+            maxItems: 1,
         });
-        expect(tail.ok).toBe(true);
-        if (!tail.ok || !tail.value.nextCursor) return;
+        expect(tail).toMatchObject({ ok: true, value: { tailCursor: expect.any(String) } });
+        if (!tail.ok || !tail.value.tailCursor) throw new Error('expected a forward tail cursor');
+        const tailCursor = tail.value.tailCursor;
         for (let index = 0; index < 4; index += 1) {
             await appendFile(transcriptPath, `${JSON.stringify({
                 type: 'assistant',
@@ -1047,22 +1053,28 @@ describe('Claude native External Sessions contribution', () => {
             ...invocation(),
             source,
             remoteSessionId: 'forward-budget-session',
-            cursor: tail.value.nextCursor,
+            cursor: tailCursor,
             maxItems: 1,
         });
-        expect(reference.ok).toBe(true);
+        expect(reference).toMatchObject({
+            ok: true,
+            value: { outcome: 'advanced', items: [expect.anything()] },
+        });
         const maxSerializedBytes = Buffer.byteLength(JSON.stringify(reference), 'utf8') + 128;
 
         const first = await contribution.readAfterTranscript({
             ...invocation(maxSerializedBytes),
             source,
             remoteSessionId: 'forward-budget-session',
-            cursor: tail.value.nextCursor,
+            cursor: tailCursor,
             maxItems: 10,
         });
-        expect(first.ok).toBe(true);
+        expect(first).toMatchObject({
+            ok: true,
+            value: { outcome: 'advanced', nextCursor: expect.any(String) },
+        });
         expect(Buffer.byteLength(JSON.stringify(first), 'utf8')).toBeLessThanOrEqual(maxSerializedBytes);
-        if (!first.ok || !first.value.nextCursor) return;
+        if (!first.ok || !first.value.nextCursor) throw new Error('expected a forward continuation cursor');
         expect(first.value.items).toHaveLength(1);
 
         const second = await contribution.readAfterTranscript({
@@ -1074,7 +1086,7 @@ describe('Claude native External Sessions contribution', () => {
         });
         expect(second.ok).toBe(true);
         expect(Buffer.byteLength(JSON.stringify(second), 'utf8')).toBeLessThanOrEqual(maxSerializedBytes);
-        if (!second.ok) return;
+        if (!second.ok) throw new Error('expected a second forward page');
         expect(second.value.items).not.toHaveLength(0);
         expect(second.value.items[0]?.id).not.toBe(first.value.items[0]?.id);
     });

@@ -32,6 +32,7 @@ import type {
 import { POSTHOG_ACTION_IDS, POSTHOG_PLUGIN_ID } from '../../posthogContracts.js';
 import {
     PosthogIssueActivityResultV1Schema,
+    type PosthogActivityIncompleteV1,
     type PosthogIssueActivityResultV1,
 } from '../../source/detail/issueActivityContract.js';
 import {
@@ -51,12 +52,14 @@ export const POSTHOG_ACTIVITY_PAGE_SIZE = POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT;
  * genuinely PostHog's own is the provider's stated total, which is carried beside
  * the reduced state rather than inside it.
  */
-export type PosthogActivityStateV1 =
-    TriagePagedPanelStateV1<PosthogProjectedActivityRecord, TriageSourceFailureV1>
-    & Readonly<{
-        /** The provider's stated total, or `null` when it stated none. */
-        totalCount: number | null;
-    }>;
+export type PosthogActivityStateV1 = TriagePagedPanelStateV1<
+    PosthogProjectedActivityRecord,
+    TriageSourceFailureV1,
+    PosthogActivityIncompleteV1
+> & Readonly<{
+    /** The provider's stated total, or `null` when it stated none. */
+    totalCount: number | null;
+}>;
 
 export type PosthogActivityEventV1 =
     | Readonly<{ kind: 'requestStarted'; token: number }>
@@ -67,13 +70,22 @@ export type PosthogActivityEventV1 =
         omittedRowCount: number;
         totalCount: number | null;
         continuation: string | null;
+        /**
+         * Why the walk stopped short of the whole collection, when it did. A page with
+         * neither this nor a continuation is the provider's own exhaustion.
+         */
+        incomplete: PosthogActivityIncompleteV1 | null;
     }>
     | Readonly<{ kind: 'pageFailed'; token: number; failure: TriageSourceFailureV1 }>
     /** The panel was left. This plane declares `discard`, so nothing survives it. */
     | Readonly<{ kind: 'panelLeft' }>;
 
 const INITIAL: PosthogActivityStateV1 = Object.freeze({
-    ...triagePagedPanelInitialState<PosthogProjectedActivityRecord, TriageSourceFailureV1>(),
+    ...triagePagedPanelInitialState<
+        PosthogProjectedActivityRecord,
+        TriageSourceFailureV1,
+        PosthogActivityIncompleteV1
+    >(),
     totalCount: null,
 });
 
@@ -84,7 +96,11 @@ export function posthogActivityInitialState(): PosthogActivityStateV1 {
 /** Translates this plane's flat event into the shared reducer's page envelope. */
 function toPagedEvent(
     event: PosthogActivityEventV1,
-): TriagePagedPanelEventV1<PosthogProjectedActivityRecord, TriageSourceFailureV1> {
+): TriagePagedPanelEventV1<
+    PosthogProjectedActivityRecord,
+    TriageSourceFailureV1,
+    PosthogActivityIncompleteV1
+> {
     return event.kind === 'pageSettled'
         ? {
             kind: 'pageSettled',
@@ -95,7 +111,7 @@ function toPagedEvent(
                 // This plane shortens no content of its own; the source states it.
                 projectionTruncated: false,
                 continuation: event.continuation,
-                incomplete: null,
+                incomplete: event.incomplete,
             },
         }
         : event;
@@ -107,7 +123,8 @@ export function posthogActivityReducer(
 ): PosthogActivityStateV1 {
     const paged = triagePagedPanelReducer<
         PosthogProjectedActivityRecord,
-        TriageSourceFailureV1
+        TriageSourceFailureV1,
+        PosthogActivityIncompleteV1
     >(state, toPagedEvent(event));
     if (event.kind === 'panelLeft') return INITIAL;
     // A stated total survives a later page that states none, and a rejected
@@ -203,6 +220,7 @@ export function usePosthogActivityController(
             omittedRowCount: parsed.omittedRowCount,
             totalCount: parsed.totalCount ?? null,
             continuation: parsed.continuation ?? null,
+            incomplete: parsed.incomplete ?? null,
         });
     }, [execute, input.instance, input.observation.entryRef]);
 

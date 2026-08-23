@@ -30,23 +30,6 @@
               },
               {
                 "direction": "asc",
-                "field": "id"
-              }
-            ],
-            "id": "by-connection-binding"
-          },
-          {
-            "fields": [
-              {
-                "direction": "asc",
-                "field": "connection-id"
-              },
-              {
-                "direction": "asc",
-                "field": "binding-id"
-              },
-              {
-                "direction": "asc",
                 "field": "record-kind"
               },
               {
@@ -1893,6 +1876,20 @@
                           "minLength": 43,
                           "pattern": "^[A-Za-z0-9_-]{43}$",
                           "type": "string"
+                        },
+                        "sharedEndpointInputModes": {
+                          "items": {
+                            "enum": [
+                              "directMentionsOnly",
+                              "addressedMessages",
+                              "allAllowedMessages"
+                            ],
+                            "type": "string"
+                          },
+                          "maxItems": 3,
+                          "minItems": 1,
+                          "type": "array",
+                          "uniqueItems": true
                         },
                         "transport": {
                           "oneOf": [
@@ -10110,6 +10107,25 @@
                     }
                   ]
                 },
+                "sharedEndpointInputModes": {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "const": "directMentionsOnly"
+                      },
+                      {
+                        "const": "addressedMessages"
+                      },
+                      {
+                        "const": "allAllowedMessages"
+                      }
+                    ]
+                  },
+                  "maxItems": 3,
+                  "minItems": 1,
+                  "type": "array",
+                  "uniqueItems": true
+                },
                 "supportedTransports": {
                   "items": {
                     "anyOf": [
@@ -10159,6 +10175,139 @@
           "ui"
         ],
         "title": "Prepare conversation connection"
+      },
+      {
+        "dangerLevel": "safe",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "account-storage"
+        ],
+        "id": "connection/retest-v1",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "authorityEpoch": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "connectionId": {
+              "maxLength": 96,
+              "minLength": 1,
+              "pattern": "^[\\x21-\\x7E]+$",
+              "type": "string"
+            },
+            "expectedRevision": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "connectionId",
+            "expectedRevision",
+            "authorityEpoch"
+          ],
+          "type": "object"
+        },
+        "placementBindings": [
+          "secondary"
+        ],
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "authorityEpoch": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "connectionId": {
+                  "maxLength": 96,
+                  "minLength": 1,
+                  "pattern": "^[\\x21-\\x7E]+$",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "ready"
+                },
+                "revision": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connectionId",
+                "revision",
+                "authorityEpoch"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "diagnostic": {
+                  "minLength": 1,
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 1024
+                },
+                "kind": {
+                  "const": "notReady"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "credentialInvalid"
+                    },
+                    {
+                      "const": "permissionMissing"
+                    },
+                    {
+                      "const": "network"
+                    },
+                    {
+                      "const": "rateLimited"
+                    },
+                    {
+                      "const": "providerConflict"
+                    },
+                    {
+                      "const": "unsupported"
+                    },
+                    {
+                      "const": "invalidConfiguration"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "maximum": 86400000,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "cli",
+          "ui"
+        ],
+        "title": "Retest conversation connection"
       },
       {
         "confirmation": {
@@ -22833,6 +22982,25 @@
                             }
                           ]
                         },
+                        "sharedEndpointInputModes": {
+                          "items": {
+                            "anyOf": [
+                              {
+                                "const": "directMentionsOnly"
+                              },
+                              {
+                                "const": "addressedMessages"
+                              },
+                              {
+                                "const": "allAllowedMessages"
+                              }
+                            ]
+                          },
+                          "maxItems": 3,
+                          "minItems": 1,
+                          "type": "array",
+                          "uniqueItems": true
+                        },
                         "supportedTransports": {
                           "items": {
                             "anyOf": [
@@ -23315,6 +23483,7 @@
             "plugins.channels.surface.bindingInputAddressedMessages": "Addressed messages",
             "plugins.channels.surface.bindingInputAllAllowedMessages": "All allowed messages",
             "plugins.channels.surface.bindingInputDirectMentionsOnly": "Direct mentions only",
+            "plugins.channels.surface.bindingInputModeCapability": "This integration only delivers messages that address it in a shared conversation, so broader incoming message policies are unavailable.",
             "plugins.channels.surface.bindingProviderFilterAll": "All",
             "plugins.channels.surface.bindingProviderFilterFallback": "Integration",
             "plugins.channels.surface.bindingProviderFilters": "Filter conversation bindings by integration",
@@ -23501,6 +23670,10 @@
             "plugins.channels.surface.providerPreparationUnavailableTitle": "Could not prepare the provider",
             "plugins.channels.surface.providerSetupAction": "Set up",
             "plugins.channels.surface.providerSetupDescription": "Choose an installed provider to begin setup.",
+            "plugins.channels.surface.providerSetupHostUnsupportedDescription": "This app cannot collect provider setup details. Open Conversation Channels from an app version that supports guided setup to add a connection.",
+            "plugins.channels.surface.providerSetupHostUnsupportedTitle": "Conversation providers cannot be set up here",
+            "plugins.channels.surface.providerSetupNoneDescription": "Install and enable a conversation integration plugin on your selected machine, then refresh to begin setup.",
+            "plugins.channels.surface.providerSetupNoneTitle": "No conversation providers are available",
             "plugins.channels.surface.providerSetupReady": "Provider setup is ready. Choose a supported transport and create the connection.",
             "plugins.channels.surface.providerSetupRemediationAction": "Resolve provider setup",
             "plugins.channels.surface.providerSetupRemediationDescription": "Finish the provider setup before creating a connection.",

@@ -158,6 +158,43 @@ describe('Telegram Channel provider actions', () => {
     expect(http.request).not.toHaveBeenCalled();
   });
 
+  it('restates the CURRENT shared-endpoint delivery capability on every connection test', async () => {
+    // BotFather group privacy is re-enabled after setup: identity is unchanged,
+    // but ordinary supergroup messages stop arriving. Core can only refuse a
+    // stranded `allAllowedMessages` binding if this probe restates the current
+    // truth rather than only proving who the bot is.
+    const http = {
+      request: vi.fn(async () => response(botIdentity())),
+    };
+
+    await expect(testTelegramConnection(
+      { ...connection, selectedTransport: 'checkpointedPull' },
+      coreContext(http),
+    )).resolves.toEqual({
+      kind: 'ready',
+      integrationPrincipal: { id: '123', label: 'Happier Bot' },
+      providerConnectionKey: 'telegram-bot:123',
+      sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
+    });
+  });
+
+  it('restates the widened capability when Telegram group privacy is off', async () => {
+    const http = {
+      request: vi.fn(async () => response({
+        ok: true,
+        result: { ...botIdentity().result, can_read_all_group_messages: true },
+      })),
+    };
+
+    await expect(testTelegramConnection(
+      { ...connection, providerConfig: { botUsername: 'HappierBot', canReadAllGroupMessages: true }, selectedTransport: 'checkpointedPull' },
+      coreContext(http),
+    )).resolves.toMatchObject({
+      kind: 'ready',
+      sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages', 'allAllowedMessages'],
+    });
+  });
+
   it('establishes a no-history baseline without admitting the retained Telegram update', async () => {
     const http = {
       request: vi.fn(async (input: Readonly<{ url: string }>) => response(
@@ -1236,6 +1273,49 @@ describe('Telegram Channel provider actions', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('reaches no Automation authority from the live poll while the Telegram Event is withheld', async () => {
+    // The Event is WITHHELD from `plugin.ts`, so the host builds no adopted-
+    // definition owner for this plugin and every `automation.event.sources.list`
+    // fails with `automation_event_adopted_definitions_unavailable` — once per
+    // observed batch, on every Machine, forever.
+    const executeAction = vi.fn(async (actionId: string) => {
+      throw new PluginError({
+        code: 'automation_event_adopted_definitions_unavailable',
+        message: actionId,
+      });
+    });
+    const http = {
+      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+        input.url.endsWith('/getMe') ? botIdentity() : {
+          ok: true,
+          result: [{
+            update_id: 42,
+            message: {
+              message_id: 1,
+              date: 1_700_000_000,
+              chat: { id: 456, type: 'private' },
+              from: { id: 789, is_bot: false },
+              text: 'hello',
+            },
+          }],
+        },
+      )),
+    };
+
+    const result = await pollTelegramObservations({
+      ...connection,
+      checkpoint: { v: 1, offset: '41', caughtUpAtMs: Date.now() },
+      limit: 10,
+      waitMs: 0,
+    }, coreContext(http, { executeAction }));
+
+    expect(result).toMatchObject({
+      kind: 'batch',
+      checkpointAfterBatch: { v: 1, offset: '43' },
+    });
+    expect(executeAction).not.toHaveBeenCalled();
   });
 
   it('bounds a core maximum wait to Telegram’s long-poll limit while preserving a longer HTTP deadline', async () => {

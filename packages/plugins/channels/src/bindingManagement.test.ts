@@ -8,6 +8,7 @@ import {
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 type StateValue = Readonly<Record<string, JsonValue>>
   & Readonly<{ id: string; payload?: Readonly<Record<string, JsonValue>> }>;
 type StateRow = Readonly<{ rowId: string; revision: number; value: StateValue }>;
@@ -157,6 +158,7 @@ function createCollection(initial: readonly StateRow[]) {
       return rows.get(rowId) ?? null;
     },
     async query(input: StateQueryInput) {
+      assertChannelsTestCollectionQueryLimit(input.limit);
       queries.push(input);
       if (input.index !== 'by-kind' || input.order !== 'asc') {
         throw new Error('Expected the canonical ascending Channel binding index.');
@@ -733,7 +735,7 @@ describe('Channels target-persisting binding management', () => {
     expect(absent.batches).toEqual([]);
   });
 
-  it('fails closed before create persistence when the unavailable approval producer is requested', async () => {
+  it('persists the owner-chosen enabled approval policy on create', async () => {
     const create = Reflect.get(management, 'createConversationBindingForInvocation');
     expect(create).toEqual(expect.any(Function));
     if (typeof create !== 'function') return;
@@ -752,11 +754,105 @@ describe('Channels target-persisting binding management', () => {
     await expect(create(
       bindingCreateInput(approvalEnabledSessionTarget),
       context(collection, execute),
-    )).rejects.toMatchObject({ code: 'plugin_action_unavailable' });
+    )).resolves.toMatchObject({ kind: 'created' });
 
-    expect(execute).not.toHaveBeenCalled();
+    // The persisted policy is the only chat-approval control, so the writer
+    // stores the owner's exact ceiling instead of clamping it away.
+    const created = [...collection.rows.values()].find(
+      (row) => row.value['record-kind'] === 'binding',
+    );
+    expect(created?.value.payload).toMatchObject({
+      target: {
+        kind: 'session',
+        policy: { approvals: { kind: 'enabled', maximumScope: 'request' } },
+      },
+    });
+  });
+
+  it('refuses to persist an incoming message policy the integration cannot deliver in a shared conversation', async () => {
+    // Telegram's group privacy mode is the real case: the platform withholds
+    // ordinary supergroup messages, so `allAllowedMessages` is a promise it
+    // will silently never keep.
+    const create = Reflect.get(management, 'createConversationBindingForInvocation');
+    expect(create).toEqual(expect.any(Function));
+    if (typeof create !== 'function') return;
+
+    const sharedEndpoint = Object.freeze({
+      kind: 'shared' as const,
+      audience: 'shared' as const,
+      id: 'room-1',
+      label: 'Project room',
+    });
+    const collection = createCollection([connectionRow({
+      sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
+    })]);
+    const execute = vi.fn();
+    const resolveShared = vi.fn(async (action: unknown) => ({
+      result: action === endpointResolveAction
+        ? { kind: 'resolved' as const, candidates: [sharedEndpoint] }
+        : { kind: 'resolved' as const, candidates: [bindingResolutionPrincipal] },
+      executionOrigin: { serverIdentityId: 'server-1', materializationRef: materialization },
+    }));
+
+    await expect(create({
+      ...bindingCreateInput(sessionTarget),
+      endpointSelection: {
+        query: 'Project room',
+        selected: { kind: 'shared' as const, audience: 'shared' as const, id: 'room-1' },
+      },
+      inputMode: 'allAllowedMessages',
+    }, context(collection, execute, resolveShared))).rejects.toMatchObject({
+      code: 'channels_binding_create_input_mode_unsupported',
+      details: {
+        inputMode: 'allAllowedMessages',
+        deliverableInputModes: ['directMentionsOnly', 'addressedMessages'],
+      },
+    });
     expect(collection.batches).toHaveLength(0);
     expect([...collection.rows.keys()]).toEqual(['connection-1']);
+  });
+
+  it('persists a shared-conversation policy the integration proved it can deliver', async () => {
+    const create = Reflect.get(management, 'createConversationBindingForInvocation');
+    expect(create).toEqual(expect.any(Function));
+    if (typeof create !== 'function') return;
+
+    const sharedEndpoint = Object.freeze({
+      kind: 'shared' as const,
+      audience: 'shared' as const,
+      id: 'room-1',
+      label: 'Project room',
+    });
+    const collection = createCollection([connectionRow({
+      sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
+    })]);
+    const execute = vi.fn(async () => ({
+      ok: true,
+      projection: 'externalShareableV1',
+      sessionId: 'session-1',
+      scannedThroughSeq: 12,
+      nextCursor: 'cursor-12',
+      hasMore: false,
+      items: [],
+    }));
+    const resolveShared = vi.fn(async (action: unknown) => ({
+      result: action === endpointResolveAction
+        ? { kind: 'resolved' as const, candidates: [sharedEndpoint] }
+        : { kind: 'resolved' as const, candidates: [bindingResolutionPrincipal] },
+      executionOrigin: { serverIdentityId: 'server-1', materializationRef: materialization },
+    }));
+
+    await expect(create({
+      ...bindingCreateInput(sessionTarget),
+      endpointSelection: {
+        query: 'Project room',
+        selected: { kind: 'shared' as const, audience: 'shared' as const, id: 'room-1' },
+      },
+      inputMode: 'addressedMessages',
+    }, context(collection, execute, resolveShared))).resolves.toMatchObject({
+      kind: 'created',
+      binding: { inputMode: 'addressedMessages' },
+    });
   });
 
   it('creates a Session target with its public no-history frontier in the same guarded binding batch', async () => {
@@ -1108,7 +1204,7 @@ describe('Channels target-persisting binding management', () => {
   it.each([
     ['updateConversationBindingForInvocation', 'binding update'],
     ['rotateConversationBindingTargetForInvocation', 'target rotation'],
-  ] as const)('fails closed before %s persistence when approvals are enabled', async (exportName, _label) => {
+  ] as const)('persists an owner-enabled approval policy through %s', async (exportName, _label) => {
     const mutate = Reflect.get(management, exportName);
     expect(mutate).toEqual(expect.any(Function));
     if (typeof mutate !== 'function') return;
@@ -1120,14 +1216,14 @@ describe('Channels target-persisting binding management', () => {
       bindingId: 'binding-1',
       expectedRevision: 5,
       target: approvalEnabledSessionTarget,
-    }, context(collection, execute))).rejects.toMatchObject({ code: 'plugin_action_unavailable' });
+    }, context(collection, execute))).resolves.toMatchObject({ kind: 'updated' });
 
-    expect(execute).not.toHaveBeenCalled();
-    expect(collection.batches).toHaveLength(0);
-    expect(collection.rows.get('binding-1')?.value.payload).toMatchObject({ target: sessionTarget });
+    expect(collection.rows.get('binding-1')?.value.payload).toMatchObject({
+      target: approvalEnabledSessionTarget,
+    });
   });
 
-  it('does not rewrite a retained enabled approval policy through an unrelated binding update', async () => {
+  it('carries a retained enabled approval policy unchanged through an unrelated binding update', async () => {
     const update = Reflect.get(management, 'updateConversationBindingForInvocation');
     expect(update).toEqual(expect.any(Function));
     if (typeof update !== 'function') return;
@@ -1139,13 +1235,13 @@ describe('Channels target-persisting binding management', () => {
       bindingId: 'binding-1',
       expectedRevision: 5,
       senderFeedback: 'eligibleRefusals',
-    }, context(collection, execute))).rejects.toMatchObject({ code: 'plugin_action_unavailable' });
+    }, context(collection, execute))).resolves.toMatchObject({ kind: 'updated' });
 
-    expect(execute).not.toHaveBeenCalled();
-    expect(collection.batches).toHaveLength(0);
+    // An unrelated field edit must neither reset nor widen the retained
+    // approval ceiling: the target is carried, not rebuilt.
     expect(collection.rows.get('binding-1')?.value.payload).toMatchObject({
       target: approvalEnabledSessionTarget,
-      senderFeedback: 'off',
+      senderFeedback: 'eligibleRefusals',
     });
   });
 
@@ -1516,7 +1612,7 @@ describe('Channels target-persisting binding management', () => {
     });
   });
 
-  it('does not rewrite a retained enabled approval policy through Account-local enablement', async () => {
+  it('carries a retained enabled approval policy unchanged through Account-local enablement', async () => {
     const setEnabled = Reflect.get(management, 'setConversationBindingEnabledInAccountCollection');
     expect(setEnabled).toEqual(expect.any(Function));
     if (typeof setEnabled !== 'function') return;
@@ -1528,12 +1624,11 @@ describe('Channels target-persisting binding management', () => {
       expectedRevision: 5,
       enabled: true,
       signal: new AbortController().signal,
-    })).rejects.toMatchObject({ code: 'plugin_action_unavailable' });
+    })).resolves.toMatchObject({ kind: 'updated', bindingId: 'binding-1', revision: 6 });
 
-    expect(collection.batches).toHaveLength(0);
     expect(collection.rows.get('binding-1')?.value.payload).toMatchObject({
       target: approvalEnabledSessionTarget,
-      enabled: false,
+      enabled: true,
     });
   });
 

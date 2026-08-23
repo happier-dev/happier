@@ -327,6 +327,84 @@ describe('pageOhMyPiSessionTranscript', () => {
     ]);
   });
 
+  it('fails an orphaned branch at physical source start instead of publishing its reachable suffix', async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-orphan-branch-'));
+    tempDirs.add(agentDir);
+    const sessionRoot = join(agentDir, 'sessions', '-repo');
+    await mkdir(sessionRoot, { recursive: true });
+    const transcriptPath = join(sessionRoot, '2026-04-10T10-00-00-000Z_orphan-session.jsonl');
+    await writeFile(transcriptPath, [
+      jsonlLine({ type: 'session', id: 'orphan-session', timestamp: '2026-04-10T10:00:00.000Z' }),
+      // The oldest surviving entry names a parent no byte of this file carries.
+      ...Array.from({ length: 3 }, (_, index) => jsonlLine({
+        type: 'message',
+        id: `orphan-${index}`,
+        parentId: index === 0 ? 'orphan-missing-root' : `orphan-${index - 1}`,
+        timestamp: `2026-04-10T10:00:0${index + 1}.000Z`,
+        message: { role: 'user', content: `prompt ${index}` },
+      })),
+    ].join(''), 'utf8');
+
+    const page = (cursor?: string) => pageOhMyPiSessionTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      providerSessionId: 'orphan-session',
+      direction: 'older' as const,
+      ...(cursor ? { cursor } : {}),
+      maxBytes: 4096,
+      maxItems: 1,
+    });
+
+    // While older bytes remain, an unresolved parent is the ordinary paging
+    // handoff and must keep the continuation alive.
+    const first = await page();
+    expect(first.hasMore).toBe(true);
+    expect(first.nextCursor).not.toBeNull();
+
+    // At physical source start the parent is still absent, so the reachable
+    // suffix is not the whole branch and must not be published as complete.
+    let cursor = first.nextCursor ?? undefined;
+    let failure: unknown = null;
+    for (let invocation = 0; invocation < 8 && cursor; invocation += 1) {
+      try {
+        const next = await page(cursor);
+        cursor = next.nextCursor ?? undefined;
+      } catch (error) {
+        failure = error;
+        break;
+      }
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).name).toBe('OhMyPiExternalSessionIncompleteBranchError');
+  });
+
+  it('fails a whole-file orphaned branch instead of reporting ordinary completion', async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-orphan-whole-'));
+    tempDirs.add(agentDir);
+    const sessionRoot = join(agentDir, 'sessions', '-repo');
+    await mkdir(sessionRoot, { recursive: true });
+    const transcriptPath = join(sessionRoot, '2026-04-10T10-00-00-000Z_orphan-whole.jsonl');
+    await writeFile(transcriptPath, [
+      jsonlLine({ type: 'session', id: 'orphan-whole', timestamp: '2026-04-10T10:00:00.000Z' }),
+      jsonlLine({
+        type: 'message',
+        id: 'orphan-whole-leaf',
+        parentId: 'orphan-whole-missing',
+        timestamp: '2026-04-10T10:00:01.000Z',
+        message: { role: 'user', content: 'only surviving prompt' },
+      }),
+    ].join(''), 'utf8');
+
+    await expect(pageOhMyPiSessionTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      providerSessionId: 'orphan-whole',
+      direction: 'older',
+      maxBytes: 4096,
+      maxItems: 50,
+    })).rejects.toMatchObject({ name: 'OhMyPiExternalSessionIncompleteBranchError' });
+  });
+
   it('rejects a page cursor after atomic source replacement', async () => {
     const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-page-replacement-'));
     tempDirs.add(agentDir);

@@ -38,11 +38,6 @@ export {
     readClaudeJsonlSessionTitle as readClaudeExternalSessionTitle,
     readClaudeJsonlSessionWorkingDirectory as readClaudeExternalSessionWorkingDirectory,
 } from './metadata.js';
-export {
-    pageClaudeRawExternalSessionTranscript,
-    readAfterClaudeRawExternalSessionTranscript,
-    readClaudeRawJsonlSessionMessages,
-} from './rawTranscript.js';
 
 function ok<T>(value: T): AgentExternalSessionsResult<T> {
     return { ok: true, value };

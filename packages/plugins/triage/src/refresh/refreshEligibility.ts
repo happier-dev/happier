@@ -11,8 +11,9 @@ import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
  * facts and an injected clock.
  *
  * It deliberately owns no timers, no promises, and no provider access. The
- * coordinator owns lifecycle; the SDK's `createCoalescedScheduler` owns
- * single-flight; this file owns only pacing.
+ * coordinator owns lifecycle; single-flight is the list-window store's own
+ * `createCoalescedScheduler` cycle above it, not anything under this pacing
+ * rule; this file owns only pacing.
  */
 
 /**

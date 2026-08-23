@@ -127,6 +127,63 @@ export function mapCodexRolloutLineToExternalMessages(params: Readonly<{
       continue;
     }
 
+    // A Codex sub-agent is a real nested run, so it projects through the
+    // transcript's ONE nested-run presentation: the canonical `SubAgent` tool
+    // call whose tool id is the child thread id. The child rollout file's rows
+    // carry `sidechainId = <thread id>`, and the host attaches a sidechain to
+    // the parent tool call with the matching id — so keying the pair on
+    // `threadId` is what makes the child transcript render under its spawn.
+    if (action.type === 'subagent-spawn') {
+      out.push({
+        id: stableId,
+        localId: stableId,
+        createdAtMs,
+        raw: {
+          role: 'agent',
+          content: {
+            type: 'codex',
+            data: {
+              type: 'tool-call',
+              callId: action.threadId,
+              name: 'SubAgent',
+              input: {
+                ...(action.prompt === null ? {} : { prompt: action.prompt }),
+                ...(action.nickname === null ? {} : { nickname: action.nickname }),
+                ...(action.role === null ? {} : { role: action.role }),
+              },
+              id: stableId,
+            },
+          },
+        },
+      });
+      continue;
+    }
+
+    if (action.type === 'subagent-complete') {
+      out.push({
+        id: stableId,
+        localId: stableId,
+        createdAtMs,
+        raw: {
+          role: 'agent',
+          content: {
+            type: 'codex',
+            data: {
+              type: 'tool-call-result',
+              callId: action.threadId,
+              output: {
+                status: action.status,
+                ...(action.summaryText === null ? {} : { summary: action.summaryText }),
+              },
+              id: stableId,
+              ...(action.status === 'interrupted' ? { isError: true } : {}),
+            },
+          },
+        },
+      });
+      continue;
+    }
+
     if (action.type === 'tool-result') {
       out.push({
         id: stableId,

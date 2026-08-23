@@ -79,6 +79,17 @@ describe('Claude plugin manifest', () => {
     ]);
   });
 
+  it('binds the Claude Agent CLI to the declared claude-cli system tool through the public catalog block', () => {
+    const agent = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'claude');
+
+    expect(agent?.catalog?.agentCliSystemTool).toEqual({ toolId: 'claude-cli' });
+    // The binding is only resolvable against a system tool this same plugin
+    // declares and this Agent's own CLI metadata.
+    expect(PLUGIN_MANIFEST.contributes.systemTools.map((tool) => tool.id))
+      .toContain('claude-cli');
+    expect(agent?.cli?.executable.binaryName).toBe('claude');
+  });
+
   it('declares the process, terminal, and session host access consumed by the Claude runtime', () => {
     expect(PLUGIN_MANIFEST.hostAccess.required).toEqual(expect.arrayContaining([
       expect.objectContaining({

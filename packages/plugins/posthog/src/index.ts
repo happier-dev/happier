@@ -55,16 +55,20 @@ export type { PosthogSampledEventsReader } from './source/operations.js';
 
 export {
     MAX_POSTHOG_SAMPLED_EVENTS_CONTINUATION_UTF8_BYTES,
+    POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1,
     PosthogSampledEventsInputV1Schema,
     PosthogSampledEventsResultV1Schema,
     decodePosthogSampledEventsContinuation,
     encodePosthogSampledEventsContinuation,
 } from './source/detail/issueEventsContract.js';
 export type {
+    PosthogSampleIncompleteV1,
     PosthogSampledEventsFrontier,
     PosthogSampledEventsInputV1,
     PosthogSampledEventsResultV1,
 } from './source/detail/issueEventsContract.js';
+
+export type { PosthogPageWalkV1 } from './source/detail/pageWalk.js';
 
 export {
     buildPosthogIssueEventsQueryBody,
@@ -94,16 +98,14 @@ export type {
 export { buildPosthogPresentObservation } from './source/map/observation.js';
 export type { PosthogObservationInput } from './source/map/observation.js';
 
-export {
-    POSTHOG_MATERIALIZED_HEADER_NAMES,
-    createPosthogApiClient,
-} from './api/client.js';
+export { createPosthogApiClient } from './api/client.js';
 export type {
     PosthogApiClient,
     PosthogApiClientDependencies,
     PosthogBodyParser,
     PosthogHeaderMaterializer,
     PosthogJsonRequest,
+    PosthogMaterializationOutcome,
     PosthogMaterializationRequest,
     PosthogRequestOptions,
     PosthogResult,
@@ -195,7 +197,7 @@ export type {
 export { resolvePosthogCrudFailure } from './source/issueResolution.js';
 export type {
     PosthogIssueResolution,
-    PosthogUnresolvedReason,
+    PosthogUnresolvedIssue,
 } from './source/issueResolution.js';
 
 export { utf8ByteLength } from './source/map/bounds.js';

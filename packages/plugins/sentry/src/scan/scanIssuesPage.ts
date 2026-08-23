@@ -18,6 +18,10 @@
 
 import { SENTRY_FAILURE_CODES, type SentryFailureV1 } from '../sentryContracts.js';
 import type { SentryApiClientV1 } from '../api/sentryApiClient.js';
+import {
+  advanceSentryCursorWalk,
+  type SentryCursorWalkV1,
+} from '../api/sentryCursorCycle.js';
 import { classifySentryFailure } from '../api/sentryFailure.js';
 import { parseSentryLinkHeader } from '../api/sentryLinkHeader.js';
 import { mapSentryIssueForInvokedInstance } from '../entries/sentryIssueMapping.js';
@@ -88,7 +92,12 @@ export async function executeSentryScanPage(
 ): Promise<SentryScanPageResultV1> {
   let scanLimit: number;
   let nativeLimit: number;
-  let requestCursor: string | undefined;
+  /**
+   * Where this walk stands: the position it is about to request, and the earlier
+   * one it is watching for. The initial page has requested nothing, so it starts
+   * at `null` rather than at a cursor the walk never used.
+   */
+  let position: SentryCursorWalkV1 | null = null;
 
   if (input.page.kind === 'initial') {
     scanLimit = input.page.scanLimit;
@@ -103,7 +112,10 @@ export async function executeSentryScanPage(
     }
     scanLimit = decoded.continuation.scanLimit;
     nativeLimit = decoded.continuation.nativeLimit;
-    requestCursor = decoded.continuation.cursor;
+    position = {
+      cursor: decoded.continuation.cursor,
+      probe: decoded.continuation.probe,
+    };
   }
 
   let url: string;
@@ -111,7 +123,7 @@ export async function executeSentryScanPage(
     url = buildSentryScanIssuesUrl({
       instance: input.configured,
       nativeLimit,
-      ...(requestCursor === undefined ? {} : { cursor: requestCursor }),
+      ...(position === null ? {} : { cursor: position.cursor }),
     });
   } catch {
     return failedResult(Object.freeze({
@@ -201,7 +213,14 @@ export async function executeSentryScanPage(
   if (next.cursor === null || next.cursor === '') {
     return page(sentryPartialHealth(SENTRY_FAILURE_CODES.paginationCursorMalformed), null);
   }
-  if (requestCursor !== undefined && next.cursor === requestCursor) {
+  // Non-progress is "this walk has been here already", not merely "this page
+  // pointed at itself". The shared cycle owner watches both the position that
+  // produced this response and one earlier saved position, so the one-step
+  // repeat and an `A → B → A` alternation — invisible to a comparison that can
+  // only see the current request — are both caught, without an evidence record
+  // that grows with the walk.
+  const advanced = advanceSentryCursorWalk(position, next.cursor);
+  if (advanced.kind === 'revisited') {
     return page(sentryPartialHealth(SENTRY_FAILURE_CODES.paginationCursorNotAdvancing), null);
   }
 
@@ -209,7 +228,8 @@ export async function executeSentryScanPage(
     v: 1,
     scanLimit,
     nativeLimit,
-    cursor: next.cursor,
+    cursor: advanced.walk.cursor,
+    probe: advanced.walk.probe,
     query: SENTRY_SCAN_QUERY,
     statsPeriod: '90d',
     sort: SENTRY_SCAN_SORT,

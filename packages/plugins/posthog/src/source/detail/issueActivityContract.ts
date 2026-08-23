@@ -37,6 +37,23 @@ import {
 /** The largest continuation this source will mint or accept, in UTF-8 bytes. */
 export const MAX_POSTHOG_ISSUE_ACTIVITY_CONTINUATION_UTF8_BYTES = 256;
 
+/**
+ * Why an Activity walk stopped without reaching the end of the collection.
+ *
+ * It is one value because the provider deviations that produce it are one fact for a
+ * reader: PostHog stated another page of activity, and this build would not request it —
+ * because the `next` it named does not address this exact route, does not parse, or does
+ * not strictly advance. Naming each deviation separately would publish provider
+ * internals a reader cannot act on, and it is not a failure: the rows on screen are
+ * real and the page succeeded.
+ *
+ * Exhaustion has NO value here. A page with neither a continuation nor this field is the
+ * provider's own statement that there is nothing further.
+ */
+export const POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1 = 'posthog/activity-next-unverifiable';
+
+export type PosthogActivityIncompleteV1 = typeof POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1;
+
 const CONTINUATION_VERSION = 1;
 
 const PosthogActivityBooleanSchema = defineProtocolUnion([
@@ -117,6 +134,12 @@ export const PosthogIssueActivityResultV1Schema = defineProtocolUnion([
             maxUtf8Bytes: MAX_POSTHOG_ISSUE_ACTIVITY_CONTINUATION_UTF8_BYTES,
             minLength: 1,
         }).optional(),
+        /**
+         * Present only when the walk stopped short of the whole collection. Absent
+         * together with `continuation` is exhaustion; present without one is a list
+         * that stops here and says why.
+         */
+        incomplete: defineProtocolLiteral(POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1).optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('unavailable'),

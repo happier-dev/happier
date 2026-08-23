@@ -329,6 +329,22 @@ function SampleFooter({
                     : `${SAMPLE_DISCLOSURE} {count} row(s) in this sample could not be read.`}
                 values={{ count: controller.state.omittedRowCount }}
             />
+            {/*
+                The sample disclosure above says PostHog returns a sample, which is
+                always true. This says something else: PostHog offered MORE of that
+                sample and this build would not page to it. Without it the missing
+                Load more reads as the end of what was offered.
+            */}
+            {controller.state.incomplete === null
+                ? null
+                : (
+                    <Text
+                        variant="caption"
+                        tone="warning"
+                        valueKey="plugins.posthog.ui.sampleStoppedShort"
+                        fallback="PostHog offered more of this sample than this build could page, so it stops here."
+                    />
+                )}
             {controller.state.canLoadMore
                 ? (
                     <Button
@@ -577,6 +593,21 @@ function ActivityFooter({
                         values={{ count: state.omittedRowCount }}
                     />
                 )}
+            {/*
+                A walk that stopped short has exactly the shape of an exhausted one —
+                no continuation, so no Load more — and the opposite meaning. Without
+                this line the count above reads as the whole of what PostHog recorded.
+            */}
+            {state.incomplete === null
+                ? null
+                : (
+                    <Text
+                        variant="caption"
+                        tone="warning"
+                        valueKey="plugins.posthog.ui.activityStoppedShort"
+                        fallback="PostHog recorded more activity than this list could read, so it stops here."
+                    />
+                )}
             {state.canLoadMore
                 ? (
                     <Button
@@ -651,14 +682,26 @@ function ActivityPanel({
                         />
                     ),
                 })}
-            empty={(
-                <EmptyState
-                    title="No recorded activity"
-                    titleKey="plugins.posthog.ui.noActivity"
-                    description="PostHog has recorded no changes to this issue."
-                    descriptionKey="plugins.posthog.ui.noActivity.description"
-                />
-            )}
+            empty={state.omittedRowCount === 0 && state.incomplete === null
+                ? (
+                    <EmptyState
+                        title="No recorded activity"
+                        titleKey="plugins.posthog.ui.noActivity"
+                        description="PostHog has recorded no changes to this issue."
+                        descriptionKey="plugins.posthog.ui.noActivity.description"
+                    />
+                )
+                : (
+                    // Rows the page consumed but could not read, or a walk that stopped
+                    // before the end, are not "PostHog has recorded no changes": that
+                    // sentence is a claim about the provider that this read cannot make.
+                    <EmptyState
+                        title="No readable activity"
+                        titleKey="plugins.posthog.ui.noReadableActivity"
+                        description="PostHog answered for this issue, but none of the records on the pages read could be shown here."
+                        descriptionKey="plugins.posthog.ui.noReadableActivity.description"
+                    />
+                )}
             footer={<ActivityFooter controller={controller} />}
             renderItem={(row) => (
                 <Item

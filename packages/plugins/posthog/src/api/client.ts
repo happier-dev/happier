@@ -11,26 +11,42 @@
  * view-driven refresh may consult.
  */
 
-import { isSameNormalizedOrigin, type PosthogApiOrigin } from '../connect/origin.js';
-import { classifyPosthogResponseStatus, type PosthogFailure } from './errors.js';
+import { admitForgeRequestUrl } from '@happier-dev/triage-sources/runtime';
 
-/** The exact header set the source ever asks the Connected Account to materialize. */
-export const POSTHOG_MATERIALIZED_HEADER_NAMES: readonly string[] = ['authorization'];
+import type { PosthogApiOrigin } from '../connect/origin.js';
+import { classifyPosthogResponseStatus, type PosthogFailure } from './errors.js';
 
 export type PosthogMaterializationRequest = Readonly<{
     origin: string;
-    headerNames: readonly string[];
 }>;
 
 /**
- * The Connected-Accounts-owned credential seam. The shape mirrors the host
- * `httpHeaders` materialization request/result so that binding it to the canonical
- * service is mechanical; the source never stores, logs, or inspects the value.
+ * What one credential materialization settled as.
+ *
+ * It is a result rather than a bare header bag because the four ways a
+ * materialization can fail are not one condition: a withdrawn call is a
+ * cancellation, a materialization of the wrong kind is a contract refusal, and a
+ * host rejection is an account failure. `@happier-dev/triage-sources` owns that
+ * distinction for every first-party source — including which header name this
+ * source asks for — so nothing here re-derives it from a `catch`.
+ */
+export type PosthogMaterializationOutcome =
+    | Readonly<{ ok: true; authorization: string }>
+    | Readonly<{ ok: false; failure: PosthogFailure }>;
+
+/**
+ * The Connected-Accounts-owned credential seam. The source never stores, logs, or
+ * inspects the value; it reaches only the outbound authorization header.
+ *
+ * The signal it receives is the request's own composed boundary — caller
+ * cancellation OR this path's private deadline — so a materialization that outlives
+ * the request this source already abandoned is ended rather than left running
+ * against the account.
  */
 export type PosthogHeaderMaterializer = (
     request: PosthogMaterializationRequest,
-    options: Readonly<{ signal?: AbortSignal }>,
-) => Promise<Readonly<Record<string, string>>>;
+    options: Readonly<{ signal: AbortSignal }>,
+) => Promise<PosthogMaterializationOutcome>;
 
 export type PosthogTransportRequest = Readonly<{
     method: 'GET' | 'POST';
@@ -175,11 +191,11 @@ export function createPosthogApiClient(
         };
 
         try {
-            let headers: Readonly<Record<string, string>>;
+            let materialized: PosthogMaterializationOutcome;
             try {
-                headers = await Promise.race([
+                materialized = await Promise.race([
                     materializeHeaders(
-                        { origin: origin as string, headerNames: POSTHOG_MATERIALIZED_HEADER_NAMES },
+                        { origin: origin as string },
                         { signal: controller.signal },
                     ),
                     boundary.then((reached): never => {
@@ -193,15 +209,18 @@ export function createPosthogApiClient(
                 if (error !== null && typeof error === 'object' && 'kind' in error) {
                     return { ok: false, failure: error as Settlement };
                 }
-                // Credential materialization is the account boundary, not a transport
-                // fault: an unavailable or rejected connection is an auth failure.
+                // The materializer settles its own failures, so reaching here means it
+                // threw outside its contract. That is still the account boundary rather
+                // than a transport fault.
                 return { ok: false, failure: { kind: 'unauthorized', status: 0 } };
             }
-
-            const authorization = headers['authorization'];
-            if (typeof authorization !== 'string' || authorization.length === 0) {
-                return { ok: false, failure: { kind: 'unauthorized', status: 0 } };
+            if (settlement !== null) {
+                return { ok: false, failure: settlement };
             }
+            if (!materialized.ok) {
+                return { ok: false, failure: materialized.failure };
+            }
+            const authorization = materialized.authorization;
 
             const requestHeaders: Record<string, string> = {
                 authorization,
@@ -276,12 +295,17 @@ export function createPosthogApiClient(
             );
         },
         async followJson(absoluteUrl, parse, options) {
-            if (!isSameNormalizedOrigin(origin, absoluteUrl)) {
+            // The admission rule for a URL a source did not build is identical on
+            // every forge, so it has one owner. PostHog's own origin comparison was
+            // a weaker second copy of it: it admitted userinfo and a fragment,
+            // because `URL.origin` carries neither.
+            const admitted = admitForgeRequestUrl(absoluteUrl, origin as string);
+            if (admitted === null) {
                 return { ok: false, failure: { kind: 'originMismatch' } };
             }
             return await send(
-                absoluteUrl,
-                { method: 'GET', path: absoluteUrl },
+                admitted,
+                { method: 'GET', path: admitted },
                 parse,
                 options,
             );

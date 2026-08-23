@@ -12,6 +12,7 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 import {
   arePluginMachineExecutionOriginsEqual,
+  type PluginInvocationCaller,
   type PluginMachineMaterializationRefV1,
 } from '@happier-dev/plugin-sdk';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
@@ -34,6 +35,27 @@ export function areConversationMaterializationRefsEqual(
   return left.pluginId === right.pluginId
     && left.machineId === right.machineId
     && left.materializationId === right.materializationId;
+}
+
+type SelfStampedPluginCaller = Extract<PluginInvocationCaller, Readonly<{ kind: 'plugin' }>>;
+
+/**
+ * Whether a host-stamped caller's materialization names the caller's own
+ * plugin. Ingress admission and reconciliation projection both start from this
+ * one rule instead of each restating the self-consistency check; what each then
+ * compares the proven ref against stays with its own owner.
+ *
+ * The materialization is re-checked as a value because a malformed direct
+ * invocation must fail closed here rather than throw one level down.
+ */
+export function isSelfStampedPluginCaller(
+  caller: PluginInvocationCaller | undefined,
+): caller is SelfStampedPluginCaller {
+  if (caller?.kind !== 'plugin') return false;
+  const materialization: unknown = caller.materialization;
+  return materialization !== null
+    && typeof materialization === 'object'
+    && (materialization as PluginMachineMaterializationRefV1).pluginId === caller.pluginId;
 }
 
 /**
@@ -426,11 +448,14 @@ export function hasAcceptedConversationTransferLoss(input: Readonly<{
     // not turn settled disclosure back into stranded live-stop custody.
     // A schema-valid marker that is not past its frozen request remains
     // unresolved custody rather than authorizing an update or replacement.
+    //
+    // The strict advance below is the whole rule: with both epochs proven safe
+    // integers and the frozen request at least 1, it already implies the
+    // connection epoch is above 1 and the frozen request below the safe-integer
+    // ceiling, so restating either as its own conjunct only looks like a bound.
     && Number.isSafeInteger(input.authorityEpoch)
-    && input.authorityEpoch > 1
     && Number.isSafeInteger(pending.stopRequest.authorityEpoch)
     && pending.stopRequest.authorityEpoch >= 1
-    && pending.stopRequest.authorityEpoch < MAX_SAFE_INTEGER
     && input.authorityEpoch > pending.stopRequest.authorityEpoch;
 }
 

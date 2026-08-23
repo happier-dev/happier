@@ -64,19 +64,32 @@ function dispatchFailure(status: string, code: string): TriageSourceFailureV1 {
 
 type ExecuteResult = Readonly<{ status: string; result?: unknown; code?: string }>;
 
+/**
+ * The entry the mounted surface is about, as the three fields every source Action addresses it by.
+ *
+ * Exported because the writes address the same entry the reads do, and they carry no routing
+ * token. A second derivation beside this one is how a mutation could end up addressing a different
+ * pull request than the panel showing it.
+ */
+export function useAzureEntryLocalRef(input: TriageDetailSurfaceInputV1) {
+  const { entryRef } = input.observation;
+  return useMemo(() => ({
+    kindId: entryRef.kindId,
+    collisionScope: entryRef.collisionScope,
+    entryId: entryRef.entryId,
+  }), [entryRef.collisionScope, entryRef.entryId, entryRef.kindId]);
+}
+
 function useEntryInput(input: TriageDetailSurfaceInputV1) {
-  const { entryRef, locator } = input.observation;
+  const { locator } = input.observation;
   const { instance } = input;
+  const localRef = useAzureEntryLocalRef(input);
   return useMemo(() => ({
     v: 1 as const,
     instance,
-    localRef: {
-      kindId: entryRef.kindId,
-      collisionScope: entryRef.collisionScope,
-      entryId: entryRef.entryId,
-    },
+    localRef,
     routingToken: locator.routingToken ?? '',
-  }), [entryRef.collisionScope, entryRef.entryId, entryRef.kindId, instance, locator.routingToken]);
+  }), [instance, localRef, locator.routingToken]);
 }
 
 /* ------------------------------------------------------------- settled reads */

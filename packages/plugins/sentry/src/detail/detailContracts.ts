@@ -37,6 +37,10 @@ import {
   TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
+import {
+  readSentryCursorProbe,
+  type SentryCursorProbeV1,
+} from '../api/sentryCursorCycle.js';
 import { SENTRY_MAX_DETAIL_PAGE_SIZE } from '../api/sentryRoutes.js';
 import { SENTRY_EVENT_BOUNDS_V1 } from '../privacy/sentryEventProjection.js';
 
@@ -56,6 +60,13 @@ export const SENTRY_DETAIL_PAGE_SIZE = SENTRY_MAX_DETAIL_PAGE_SIZE;
  * A Sentry cursor is a compact `offset:limit:is_prev` triple, but it is provider
  * text: the bound is stated here so an unexpectedly long one is refused at the
  * boundary rather than carried into panel state.
+ *
+ * The token carries exactly two of those cursors — the position to request and
+ * the one the cycle probe is watching — plus two small integers, so its width is
+ * a constant of the walk rather than a function of how many pages it has read.
+ * The predecessor evidence, the complete requested-position history, made this
+ * bound a page ceiling instead: with real keyset cursors the 23rd `Load more`
+ * stopped fitting and settled `continuationUnavailable`.
  */
 export const MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES = 512;
 
@@ -67,6 +78,24 @@ export type SentryDetailFrontierV1 = Readonly<{
   /** The `cursor` value taken verbatim from a validated `rel="next"` link. */
   cursor: string;
   limit: number;
+  /**
+   * The earlier position this walk is watching for, and the schedule that moves
+   * it (`api/sentryCursorCycle.ts`).
+   *
+   * It is the walk's own non-progress evidence, and it lives here because a walk
+   * whose pages are separate Action invocations has nowhere else to keep it.
+   * Comparing an advertised next cursor against the single cursor that produced
+   * it only sees `A → A`; a provider alternating `A → B → A` advertises a cursor
+   * that differs from the one just requested on every page, so the panel keeps
+   * offering "Load more" and the walk never ends. The walk seeing its own cycle
+   * settles a truthful stopped-short list instead, and keeps the rows it read.
+   *
+   * It is a within-panel position, exactly like `cursor`: no route, no
+   * credential, no clock, and nothing that outlives the mounted panel — and it
+   * is one saved cursor rather than every requested one, because this token is
+   * bounded and a reader may press "Load more" as long as there are pages.
+   */
+  probe: SentryCursorProbeV1;
 }>;
 
 export function encodeSentryDetailContinuation(
@@ -77,6 +106,7 @@ export function encodeSentryDetailContinuation(
     || !Number.isSafeInteger(frontier.limit)
     || frontier.limit < 1
     || frontier.limit > SENTRY_DETAIL_PAGE_SIZE
+    || readSentryCursorProbe(frontier.probe) === null
   ) {
     return null;
   }
@@ -84,6 +114,7 @@ export function encodeSentryDetailContinuation(
     v: CONTINUATION_VERSION,
     cursor: frontier.cursor,
     limit: frontier.limit,
+    probe: { ...frontier.probe },
   });
   return new TextEncoder().encode(token).length > MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES
     ? null
@@ -110,6 +141,7 @@ export function decodeSentryDetailContinuation(token: string): SentryDetailFront
   const raw = decoded as Readonly<Record<string, unknown>>;
   const cursor = raw['cursor'];
   const limit = raw['limit'];
+  const probe = readSentryCursorProbe(raw['probe']);
   if (
     raw['v'] !== CONTINUATION_VERSION
     || typeof cursor !== 'string'
@@ -118,10 +150,16 @@ export function decodeSentryDetailContinuation(token: string): SentryDetailFront
     || !Number.isSafeInteger(limit)
     || limit < 1
     || limit > SENTRY_DETAIL_PAGE_SIZE
+    || probe === null
   ) {
     return null;
   }
-  return Object.freeze({ v: 1 as const, cursor, limit });
+  return Object.freeze({
+    v: 1 as const,
+    cursor,
+    limit,
+    probe,
+  });
 }
 
 /**
@@ -130,13 +168,18 @@ export function decodeSentryDetailContinuation(token: string): SentryDetailFront
  * A page that ends the walk carries neither this nor a continuation; a page that
  * carries this ended the walk WITHOUT reaching the end of the collection, and the
  * panel must say so rather than presenting a truncated list as a complete one
- * (`REQ-04`). The three names are the scan plane's own, because a cursor this
- * source will not follow means the same thing on both planes.
+ * (`REQ-04`). The names are the scan plane's own, because a cursor this source
+ * will not follow means the same thing on both planes — including the last one,
+ * which is emphatically not a cursor verdict: the provider's cursor can be
+ * perfectly well formed and simply not fit the bounded token beside the walk's
+ * own cycle evidence, and blaming the provider for a bound this side owns is a
+ * different and false claim.
  */
 const SentryIncompleteReasonSchema = defineProtocolUnion([
   defineProtocolLiteral('paginationHeaderAbsent'),
   defineProtocolLiteral('paginationCursorMalformed'),
   defineProtocolLiteral('paginationCursorNotAdvancing'),
+  defineProtocolLiteral('continuationUnavailable'),
 ]);
 
 const SentryBooleanSchema = defineProtocolUnion([

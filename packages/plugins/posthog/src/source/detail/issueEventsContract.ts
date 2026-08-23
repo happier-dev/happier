@@ -37,6 +37,20 @@ import { POSTHOG_SAMPLED_EVENT_BOUNDS_V1 } from '../../ui/detail/issueEventProje
 /** The largest continuation this source will mint or accept, in UTF-8 bytes. */
 export const MAX_POSTHOG_SAMPLED_EVENTS_CONTINUATION_UTF8_BYTES = 512;
 
+/**
+ * Why a sample walk stopped without reaching the end of what the provider offered.
+ *
+ * PostHog said `hasMore` and then named an offset this source will not request, because
+ * it does not strictly advance. Reading it again would loop on the same rows, so the
+ * walk stops — and this is the value that keeps stopping from reading as finishing.
+ *
+ * Exhaustion has no value here: a page with neither a continuation nor this field is
+ * the provider's own `hasMore: false`.
+ */
+export const POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1 = 'posthog/sampled-offset-non-advancing';
+
+export type PosthogSampleIncompleteV1 = typeof POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1;
+
 const CONTINUATION_VERSION = 1;
 
 const PosthogSampledBooleanSchema = defineProtocolUnion([
@@ -134,6 +148,11 @@ export const PosthogSampledEventsResultV1Schema = defineProtocolUnion([
             maxUtf8Bytes: MAX_POSTHOG_SAMPLED_EVENTS_CONTINUATION_UTF8_BYTES,
             minLength: 1,
         }).optional(),
+        /**
+         * Present only when the walk stopped short of what the provider offered. Absent
+         * together with `continuation` is the provider's own end of the sample.
+         */
+        incomplete: defineProtocolLiteral(POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1).optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('unavailable'),

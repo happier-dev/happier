@@ -26,6 +26,8 @@ import {
   GITLAB_TRIAGE_DETAIL_ACTION_IDS,
   GITLAB_TRIAGE_DETAIL_ARTIFACT_ID,
   GITLAB_TRIAGE_DETAIL_RENDERER_ID,
+  GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS,
+  GITLAB_TRIAGE_MUTATION_ACTION_IDS,
   GITLAB_PLUGIN_ID,
   GITLAB_TRIAGE_SETTINGS_ARTIFACT_ID,
   GITLAB_TRIAGE_SETTINGS_GROUP_ID,
@@ -45,10 +47,19 @@ import {
   listGitlabInstancesAction,
   scanGitlabSourceAction,
 } from './triage/operations.js';
+import {
+  closeGitlabIssue,
+  closeGitlabMergeRequest,
+  markGitlabMergeRequestReady,
+  mergeGitlabMergeRequest,
+  reopenGitlabIssue,
+  reopenGitlabMergeRequest,
+} from './triage/mutations/operations.js';
 
 const GITLAB_ACTION_DECLARATIONS = [
   ...GITLAB_TRIAGE_ACTION_DECLARATIONS,
   ...GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS,
+  ...GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS,
 ];
 
 function readGitlabActionDeclaration(id: string) {
@@ -76,13 +87,14 @@ export const GITLAB_PLUGIN = definePlugin({
           { kind: 'scmProviderOrigin', provider: 'gitlab' },
           { kind: 'connectedAccountOrigin', service: GITLAB_CONNECTED_ACCOUNT_ID },
         ],
-        // Read-only. Every host-network call this plugin makes hard-codes `GET`
-        // (`triage/invocation.ts`, `auth/connectedAccountRuntime.ts`), and the
-        // one merge-request write it performs runs through the declared `glab`
-        // process capability below, not through this grant. A write verb is
-        // added here only together with the exact human-confirmed mutation
-        // Action that needs it.
-        methods: ['GET'],
+        // Exactly the verbs the declared Actions consume, and no others. The
+        // host revalidates the origin AND the method at dispatch and refuses an
+        // ungranted verb before it reaches GitLab, so a write missing from this
+        // list fails at the host authority boundary where no unit test can see
+        // it. `PUT` is the merge and the state transition; `POST` is the
+        // GraphQL draft transition. A verb with no declaring Action is not
+        // granted for symmetry.
+        methods: ['GET', 'POST', 'PUT'],
       },
     }, {
       id: 'gitlab-cli-process',
@@ -198,6 +210,30 @@ export const GITLAB_PLUGIN = definePlugin({
     [GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges]: {
       ...readGitlabActionDeclaration(GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges),
       run: listGitlabChanges,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMerge]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMerge),
+      run: mergeGitlabMergeRequest,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMarkReady]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMarkReady),
+      run: markGitlabMergeRequestReady,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestClose]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestClose),
+      run: closeGitlabMergeRequest,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReopen]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReopen),
+      run: reopenGitlabMergeRequest,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueClose]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueClose),
+      run: closeGitlabIssue,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueReopen]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueReopen),
+      run: reopenGitlabIssue,
     },
   },
   ui: {

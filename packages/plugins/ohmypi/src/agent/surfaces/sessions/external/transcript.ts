@@ -65,6 +65,20 @@ export class OhMyPiExternalSessionSourceUnavailableError extends Error {
   }
 }
 
+/**
+ * The branch reached the first byte of its source with a parent entry that no
+ * record in the file supplies. The reachable suffix is not the transcript, and
+ * publishing it as ordinary completion presents a partial history as complete.
+ */
+export class OhMyPiExternalSessionIncompleteBranchError extends Error {
+  constructor(
+    message = 'Oh My Pi transcript branch reaches the start of its source with an unresolved parent entry.',
+  ) {
+    super(message);
+    this.name = 'OhMyPiExternalSessionIncompleteBranchError';
+  }
+}
+
 export class OhMyPiExternalSessionInvalidCursorError extends Error {
   constructor(message = 'Oh My Pi external-session cursor is invalid.') {
     super(message);
@@ -287,23 +301,29 @@ export async function pageOhMyPiSessionTranscript(params: Readonly<{
   env?: NodeJS.ProcessEnv;
   providerSessionId: string;
   sessionFilePath?: string | null;
-  direction: 'older' | 'newer';
+  /**
+   * This leaf pages Oh My Pi's entry tree from the active leaf backwards. There
+   * is no forward page; the contribution refuses that direction rather than
+   * reporting an empty one, so nothing here reinterprets it.
+   */
+  direction: 'older';
   cursor?: string;
   maxBytes: number;
   maxItems: number;
   scannerFileSystem?: JsonlScannerFileSystemV1;
 }>): Promise<OhMyPiRawTranscriptPage> {
-  if (params.direction !== 'older') {
-    return { items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false };
-  }
   const resolved = await resolveOhMyPiSessionFile({
     source: params.source,
     env: params.env,
     remoteSessionId: params.providerSessionId,
     sessionFilePath: params.sessionFilePath,
   });
-  if (!resolved) {
-    return { items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false };
+  if (!resolved.ok) {
+    // A source that is gone, unreadable, out of the granted roots, or now holds
+    // a different session is not an authoritatively empty history.
+    throw resolved.reason === 'source_replaced'
+      ? new OhMyPiExternalSessionSourceChangedError()
+      : new OhMyPiExternalSessionSourceUnavailableError();
   }
   const before = await stat(resolved.filePath);
   const generation = formatOhMyPiSessionFileGeneration(before);
@@ -424,6 +444,12 @@ export async function pageOhMyPiSessionTranscript(params: Readonly<{
     }
   }
 
+  // A missing parent inside a bounded scan window is the paging handoff and must
+  // keep the continuation alive. Once the backward scan has consumed the first
+  // byte of the source the parent is not coming, so this is not completion.
+  if (!stoppedForOutputBound && scan.reachedStart && targetEntryId !== null) {
+    throw new OhMyPiExternalSessionIncompleteBranchError();
+  }
   const reachedTreeStart =
     (matchedEntry && targetEntryId === null && nextItemEndExclusive === undefined)
     || (!stoppedForOutputBound && scan.reachedStart);
@@ -486,8 +512,10 @@ export async function readAfterOhMyPiSessionTranscript(params: Readonly<{
     remoteSessionId: params.providerSessionId,
     sessionFilePath: params.sessionFilePath,
   });
-  if (!resolved) {
-    throw new OhMyPiExternalSessionSourceUnavailableError();
+  if (!resolved.ok) {
+    throw resolved.reason === 'source_replaced'
+      ? new OhMyPiExternalSessionSourceChangedError()
+      : new OhMyPiExternalSessionSourceUnavailableError();
   }
   const cursor = decodeOhMyPiTreeCursor(params.cursor);
   if (!cursor || cursor.mode !== 'tail') {

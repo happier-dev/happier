@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { SENTRY_ACTION_IDS, SENTRY_PLUGIN_ID } from '../sentryContracts.js';
 
 import { renderSurface } from './renderSurface.js';
+import { SENTRY_UI_TRANSLATIONS } from './translations.js';
 
 /**
  * The Sentry detail body, mounted the way the host mounts it.
@@ -196,7 +197,10 @@ function createHarness(options: Readonly<{
 
 const mounted: PluginUiTestkit[] = [];
 
-async function mountDetail(harness: ReturnType<typeof createHarness>): Promise<PluginUiTestkit> {
+async function mountDetail(
+  harness: ReturnType<typeof createHarness>,
+  surfaceContext = createSurfaceContextFixture(),
+): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
@@ -207,7 +211,7 @@ async function mountDetail(harness: ReturnType<typeof createHarness>): Promise<P
         generation: 'sentry-detail-mount',
       },
       surface: renderSurface,
-      surfaceContext: createSurfaceContextFixture(),
+      surfaceContext,
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: DETAIL_INPUT as unknown as JsonValue,
       handlers: {
@@ -338,6 +342,33 @@ describe('the mounted Sentry issue detail body', () => {
     expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(2);
     expect(harness.invocations.at(-1)?.input)
       .toMatchObject({ selector: { kind: 'event', eventId: 'b'.repeat(32) } });
+  });
+
+  it('names its tab strip and every tab in the reader’s own locale', async () => {
+    // The shared tab primitive takes plain strings and no keys, so an
+    // untranslated declaration renders English on ten of the eleven locales
+    // this plugin ships and NOTHING fails — the silent half of a missing
+    // translation, and worst of all on the strip's accessible name.
+    const harness = createHarness();
+    const page = await mountDetail(harness, createSurfaceContextFixture({
+      locale: 'ja',
+      translations: SENTRY_UI_TRANSLATIONS.ja,
+    }));
+
+    for (const [key, english] of [
+      ['plugins.sentry.ui.tab.overview', 'Overview'],
+      ['plugins.sentry.ui.tab.occurrences', 'Occurrences'],
+      ['plugins.sentry.ui.tab.stackTrace', 'Stack Trace'],
+      ['plugins.sentry.ui.tab.activity', 'Activity'],
+    ] as const) {
+      const translated = SENTRY_UI_TRANSLATIONS.ja[key];
+      expect(translated).not.toBe(english);
+      await expect(page.getByRole('tab', { name: translated })).resolves.toBeDefined();
+      await expect(page.queryByRole('tab', { name: english })).resolves.toBeUndefined();
+    }
+
+    const strip = await page.getByRole('tablist');
+    expect(strip.name).toBe(SENTRY_UI_TRANSLATIONS.ja['plugins.sentry.ui.tabsLabel']);
   });
 
   it('states a refused occurrence read without blanking the rest of the detail', async () => {

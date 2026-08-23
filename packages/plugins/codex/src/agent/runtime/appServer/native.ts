@@ -232,6 +232,14 @@ function createSanitizedNativeRuntimeError(message: string, error: unknown): Err
   if (classification) {
     Object.assign(sanitized, { runtimeAuthClassification: classification });
   }
+  if (
+    typeof error === 'object'
+    && error !== null
+    && (error as Readonly<{ happierNativeResumeIdentityMismatch?: unknown }>)
+      .happierNativeResumeIdentityMismatch === true
+  ) {
+    Object.assign(sanitized, { happierNativeResumeIdentityMismatch: true });
+  }
   return sanitized;
 }
 
@@ -657,6 +665,7 @@ export async function openCodexNativeAppServerSession(
       const forked = await forkCodexNativeAppServerConversation({
         client: forkClient,
         parentCodexSessionId: request.source.providerSessionId,
+        signal: context.signal,
       });
       if (!forked) throw new Error('Codex app-server could not fork the requested provider session.');
       providerSessionId = forked.providerSessionId;
@@ -681,6 +690,9 @@ export async function openCodexNativeAppServerSession(
       await startCodexAppServerRuntime(runtime, {
         ...(providerSessionId ? { resumeId: providerSessionId } : {}),
         preserveRequestedThreadId: Boolean(providerSessionId),
+        ...(request.kind === 'resume' && request.strictNativeResumeIdentity === true
+          ? { strictNativeResumeIdentity: true }
+          : {}),
         ...(request.kind !== 'fork' && request.startupInstructions
           ? { developerInstructions: request.startupInstructions.instructions }
           : {}),

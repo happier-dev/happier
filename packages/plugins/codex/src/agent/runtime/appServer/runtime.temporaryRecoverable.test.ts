@@ -45,6 +45,7 @@ const clientState = vi.hoisted(() => {
   let accountReadResult: unknown = { account: null };
   let threadReadResult: unknown = { thread: { id: 'thread-1', turns: [] } };
   let rejectNextThreadResume: Error | null = null;
+  let nextThreadResumeResult: unknown | null = null;
   let rejectNextThreadRead: Error | null = null;
   let deferNextLoginStart = false;
   let deferredLoginStart: {
@@ -106,6 +107,7 @@ const clientState = vi.hoisted(() => {
       accountReadResult = { account: null };
       threadReadResult = { thread: { id: 'thread-1', turns: [] } };
       rejectNextThreadResume = null;
+      nextThreadResumeResult = null;
       rejectNextThreadRead = null;
       deferNextLoginStart = false;
       deferredLoginStart = null;
@@ -164,6 +166,9 @@ const clientState = vi.hoisted(() => {
     rejectNextThreadResume(error: Error) {
       rejectNextThreadResume = error;
     },
+    setNextThreadResumeResult(result: unknown) {
+      nextThreadResumeResult = result;
+    },
     rejectNextThreadRead(error: Error) {
       rejectNextThreadRead = error;
     },
@@ -204,6 +209,11 @@ const clientState = vi.hoisted(() => {
           const error = rejectNextThreadResume;
           rejectNextThreadResume = null;
           throw error;
+        }
+        if (nextThreadResumeResult !== null) {
+          const result = nextThreadResumeResult;
+          nextThreadResumeResult = null;
+          return result;
         }
         const record = params && typeof params === 'object'
           ? params as Readonly<Record<string, unknown>>
@@ -711,6 +721,24 @@ describe('Codex app-server temporary recoverable turn failures', () => {
           developerInstructions: 'Global Voice developer instructions.',
         }),
       });
+  });
+
+  it('rejects a strict native resume that returns a different thread without publishing either id', async () => {
+    const runtime = createRuntime();
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.events.subscribe((event) => events.push(event));
+    clientState.setNextThreadResumeResult({ threadId: 'thread-other' });
+
+    await expect(startCodexAppServerRuntime(runtime, {
+      resumeId: 'thread-requested',
+      strictNativeResumeIdentity: true,
+    })).rejects.toMatchObject({
+      name: 'CodexAppServerResumeIdentityMismatchError',
+      happierNativeResumeIdentityMismatch: true,
+    });
+
+    expect(runtime.identity.read()).toEqual({ providerSessionId: null });
+    expect(events.filter((event) => event.kind === 'session-id-publish')).toEqual([]);
   });
 
   it.each([

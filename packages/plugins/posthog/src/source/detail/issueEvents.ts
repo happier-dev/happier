@@ -22,6 +22,11 @@
 import type { PosthogApiClient, PosthogRequestOptions, PosthogResult } from '../../api/client.js';
 import { errorTrackingIssueEventsQueryPath, resolvePosthogTeamRouteId } from '../../api/paths.js';
 import {
+    POSTHOG_WALK_EXHAUSTED,
+    POSTHOG_WALK_STOPPED_SHORT,
+    type PosthogPageWalkV1,
+} from './pageWalk.js';
+import {
     POSTHOG_ISSUE_EVENTS_INCLUDE,
     POSTHOG_ISSUE_EVENTS_MAX_LIMIT,
     parsePosthogIssueEventsEnvelope,
@@ -63,11 +68,11 @@ export type PosthogSampledEventsPage = Readonly<{
      */
     omittedRowCount: number;
     /**
-     * The next offset, or `null` when this page ends the sample. A provider that claims
-     * more rows without moving its offset cannot be paged, so it ends the sample here
-     * rather than being read again at the same position.
+     * Where the sample walk stands. A provider that claims more rows without moving its
+     * offset cannot be paged, so this page is the last one requested — but it is
+     * `stoppedShort`, not `exhausted`: the provider said there was more.
      */
-    nextOffset: number | null;
+    walk: PosthogPageWalkV1;
     /** The exact request that produced this page. */
     request: PosthogIssueEventsQueryBody;
 }>;
@@ -135,21 +140,25 @@ export async function readPosthogSampledIssueEvents(
 
     const envelope = page.value;
     const acceptedRowCount = envelope.rawEvents.length;
+    // Only the provider's own `hasMore: false` ends the sample. Everything else it
+    // advertised is a position: usable when it strictly advances, and a stated gap when
+    // it does not, because a stuck offset is a provider that still has rows this source
+    // will not reach.
     const nextOffsetCandidate = envelope.hasMore
         ? envelope.nextOffset ?? input.offset + acceptedRowCount + envelope.skippedRowCount
         : null;
-    const nextOffset = nextOffsetCandidate !== null
-        && Number.isSafeInteger(nextOffsetCandidate)
-        && nextOffsetCandidate > input.offset
-        ? nextOffsetCandidate
-        : null;
+    const walk: PosthogPageWalkV1 = nextOffsetCandidate === null
+        ? POSTHOG_WALK_EXHAUSTED
+        : Number.isSafeInteger(nextOffsetCandidate) && nextOffsetCandidate > input.offset
+            ? { kind: 'continues', position: nextOffsetCandidate }
+            : POSTHOG_WALK_STOPPED_SHORT;
 
     return {
         ok: true,
         value: {
             events: projectPosthogIssueEvents(envelope.rawEvents, POSTHOG_SAMPLED_EVENT_BOUNDS_V1),
             omittedRowCount: envelope.skippedRowCount,
-            nextOffset,
+            walk,
             request,
         },
     };

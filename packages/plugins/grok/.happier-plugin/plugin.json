@@ -19,7 +19,6 @@
               "resume",
               "fork"
             ],
-            "runtimeActivitySnapshots": true,
             "workStateSources": [
               {
                 "id": "goals",

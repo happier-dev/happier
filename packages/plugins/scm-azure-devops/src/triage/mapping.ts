@@ -29,10 +29,20 @@ const STATE_PRESENTATION: Readonly<Record<AzurePullRequestStatus, AzurePresentat
   all: 'active',
 };
 
+/**
+ * Azure's own word for an abandoned pull request, and the one fact that separates it from a
+ * completed one once both project to the `closed` presentation.
+ *
+ * It is exported because the detail surface decides whether to offer *Reactivate* from exactly
+ * this label. Spelling it twice is how the control would keep appearing on completed pull
+ * requests after somebody reworded the table below.
+ */
+export const AZURE_ABANDONED_NATIVE_STATE_LABEL = 'Abandoned';
+
 const STATE_NATIVE_LABEL: Readonly<Record<AzurePullRequestStatus, string>> = {
   active: 'Active',
   completed: 'Completed',
-  abandoned: 'Abandoned',
+  abandoned: AZURE_ABANDONED_NATIVE_STATE_LABEL,
   notSet: 'Not set',
   all: 'All',
 };

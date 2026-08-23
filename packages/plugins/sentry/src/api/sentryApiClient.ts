@@ -25,6 +25,7 @@ import {
 import type { SentryDeploymentV1 } from '../auth/sentryOrigin.js';
 
 import { classifySentryFailure } from './sentryFailure.js';
+import { isSentryDeadlineAbort } from './sentryInvocationDeadline.js';
 
 export type SentryApiResponseV1 = Readonly<{
   status: number;
@@ -47,6 +48,16 @@ export type SentryApiClientInputV1 = Readonly<{
   account: ConnectedAccountRef;
   deployment: SentryDeploymentV1;
   nowMs: () => number;
+  /**
+   * The signal every request and the account materialization run under.
+   *
+   * Omitted by the three invocations Triage starts and bounds itself, which pass
+   * nothing and therefore run under the caller's own signal unchanged. A caller
+   * that Triage does not bound — a mounted detail read — supplies its own
+   * invocation-bounded signal here, so the materialization is inside the bound
+   * too rather than only the fetch that follows it.
+   */
+  signal?: AbortSignal;
 }>;
 
 /**
@@ -66,21 +77,22 @@ function isAbortError(error: unknown): boolean {
 /**
  * The exact-account materialization rule is the shared source contract and lives in
  * `@happier-dev/triage-protocol/v1`; Sentry's published failure vocabulary is not, so
- * the four neutral refusal reasons are mapped here and nowhere else.
+ * the three settled refusal reasons are mapped here and nowhere else.
  *
  * A host refusal is a **credential** problem the user can fix, so it is
  * `authentication` — never `transient`. Reporting it as a transport failure would
  * route it into the aggregate's provider-pacing backoff, which deliberately exempts
  * `authentication` so that reconnecting and pressing Refresh works immediately
  * (`refresh/refreshEligibility.ts`).
+ *
+ * `cancelled` is deliberately absent: the shared owner has one neutral word for
+ * every abort, and which abort it was is a fact only this side holds. It is
+ * resolved per invocation against the signal instead, so a materialization that
+ * outlived this source's own bound is not reported as somebody cancelling.
  */
 const AUTHORIZATION_FAILURES: Readonly<
-  Record<TriageSourceAuthorizationFailureReasonV1, SentryFailureV1>
+  Record<Exclude<TriageSourceAuthorizationFailureReasonV1, 'cancelled'>, SentryFailureV1>
 > = Object.freeze({
-  cancelled: {
-    class: 'transient' as const,
-    code: SENTRY_FAILURE_CODES.cancelled,
-  },
   materializationFailed: {
     class: 'authentication' as const,
     code: SENTRY_FAILURE_CODES.accountMaterializationFailed,
@@ -100,9 +112,24 @@ export async function createSentryApiClient(
   input: SentryApiClientInputV1,
 ): Promise<SentryApiClientV1> {
   const { origin } = input.deployment;
+  const signal = input.signal ?? context.signal;
   let authorization: string | SentryFailureV1 | undefined;
 
-  async function resolveAuthorization(): Promise<string | SentryFailureV1> {
+  /**
+   * An abort is not one fact. A person who navigated away cancelled; a
+   * deployment that never answered inside this source's own bound did not, and
+   * calling the second `cancelled` hides a stalled Sentry behind a word that
+   * says nothing is wrong.
+   */
+  const abortFailure = (operation: SentryOperationV1): SentryFailureV1 => classifySentryFailure(
+    isSentryDeadlineAbort(signal)
+      ? { kind: 'deadline', operation }
+      : { kind: 'cancelled', operation },
+  );
+
+  async function resolveAuthorization(
+    operation: SentryOperationV1,
+  ): Promise<string | SentryFailureV1> {
     if (authorization !== undefined) return authorization;
     // `CONTRACT.md` §3.1: every Sentry request is bound to one exact account
     // that this invocation already observed in the bounded metadata listing, so
@@ -119,9 +146,15 @@ export async function createSentryApiClient(
       purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE,
       account: input.account,
       origin,
-      signal: context.signal,
+      signal,
     });
-    authorization = outcome.ok ? outcome.authorization : AUTHORIZATION_FAILURES[outcome.reason];
+    if (outcome.ok) {
+      authorization = outcome.authorization;
+    } else {
+      authorization = outcome.reason === 'cancelled'
+        ? abortFailure(operation)
+        : AUTHORIZATION_FAILURES[outcome.reason];
+    }
     return authorization;
   }
 
@@ -148,11 +181,12 @@ export async function createSentryApiClient(
           code: SENTRY_FAILURE_CODES.responseUnparseable,
         }));
       }
-      if (context.signal.aborted) {
-        return failed(classifySentryFailure({ kind: 'cancelled', operation: request.operation }));
-      }
+      // A multi-request read whose deadline elapsed between two of its calls
+      // reaches here rather than the transport, and must still say which of the
+      // two aborts happened.
+      if (signal.aborted) return failed(abortFailure(request.operation));
 
-      const bearer = await resolveAuthorization();
+      const bearer = await resolveAuthorization(request.operation);
       if (typeof bearer !== 'string') return failed(bearer);
 
       let response: Awaited<ReturnType<typeof context.services.http.request>>;
@@ -162,13 +196,13 @@ export async function createSentryApiClient(
           method: 'GET',
           headers: { Accept: 'application/json', Authorization: bearer },
           redirect: 'error',
-        }, { signal: context.signal });
+        }, { signal });
       } catch (error) {
-        return failed(classifySentryFailure(
-          isAbortError(error) || context.signal.aborted
-            ? { kind: 'cancelled', operation: request.operation }
-            : { kind: 'transport', operation: request.operation },
-        ));
+        return failed(
+          isAbortError(error) || signal.aborted
+            ? abortFailure(request.operation)
+            : classifySentryFailure({ kind: 'transport', operation: request.operation }),
+        );
       }
 
       return Object.freeze({

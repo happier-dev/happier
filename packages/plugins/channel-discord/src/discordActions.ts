@@ -14,7 +14,11 @@ import {
   type ConversationProviderSetupResultV1,
 } from '@happier-dev/channels-protocol/v1';
 import { isPluginError, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import {
+  QualifiedConnectedAccountRefSchema,
+  type ConnectedAccountRef,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 
 import { createDiscordBotApi, type DiscordApiFailure, type DiscordBotApi, type DiscordBotIdentity } from './discordApi.js';
 import {
@@ -71,42 +75,17 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+/**
+ * The manifest declares this exact input and the host rejects anything else
+ * before the handler runs, so this is the typed read of an already-admitted
+ * value — not a second validator that can disagree with the declaration.
+ */
+export const DISCORD_SETUP_INPUT_PROTOCOL_SCHEMA = defineProtocolObject({
+  credentialRef: QualifiedConnectedAccountRefSchema,
+}, { policy: 'closed' });
+
 function readSetupInput(input: unknown): DiscordSetupInput {
-  if (
-    !isRecord(input)
-    || Object.keys(input).some((key) => key !== 'credentialRef')
-    || !Object.hasOwn(input, 'credentialRef')
-    || !isRecord(input.credentialRef)
-  ) {
-    throw new PluginError({
-      code: 'discord_setup_input_invalid',
-      message: 'Discord Channel setup requires one qualified Connected Account reference.',
-    });
-  }
-  const credentialRef = input.credentialRef;
-  if (
-    Object.keys(credentialRef).length !== 2
-    || !Object.hasOwn(credentialRef, 'service')
-    || !Object.hasOwn(credentialRef, 'accountId')
-    || !isRecord(credentialRef.service)
-    || Object.keys(credentialRef.service).length !== 2
-    || !Object.hasOwn(credentialRef.service, 'pluginId')
-    || !Object.hasOwn(credentialRef.service, 'localId')
-    || !nonEmptyString(credentialRef.service.pluginId)
-    || !nonEmptyString(credentialRef.service.localId)
-    || !nonEmptyString(credentialRef.accountId)
-  ) {
-    throw new PluginError({
-      code: 'discord_setup_input_invalid',
-      message: 'Discord Channel setup requires one qualified Connected Account reference.',
-    });
-  }
-  return {
-    credentialRef: {
-      service: { pluginId: credentialRef.service.pluginId, localId: credentialRef.service.localId },
-      accountId: credentialRef.accountId,
-    },
-  };
+  return DISCORD_SETUP_INPUT_PROTOCOL_SCHEMA.parse(input);
 }
 
 function isDiscordCredential(credentialRef: ConnectedAccountRef | null): credentialRef is ConnectedAccountRef {

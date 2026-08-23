@@ -70,6 +70,7 @@ import {
   GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1,
   GITHUB_TRIAGE_DETAIL_ARTIFACT_ID_V1,
   GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1,
+  GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1,
   GITHUB_TRIAGE_SETTINGS_ARTIFACT_ID_V1,
   GITHUB_TRIAGE_SETTINGS_GROUP_ID_V1,
   GITHUB_TRIAGE_SETTINGS_PAGE_ID_V1,
@@ -92,6 +93,45 @@ import {
   listGithubTimeline,
   readGithubChecks,
 } from './triage/detailOperations.js';
+import {
+  GithubIssueAssigneeAddInputV1Schema,
+  GithubIssueAssigneeRemoveInputV1Schema,
+  GithubIssueCloseInputV1Schema,
+  GithubIssueDeltaResultV1Schema,
+  GithubIssueLabelAddInputV1Schema,
+  GithubIssueLabelRemoveInputV1Schema,
+  GithubIssueReopenInputV1Schema,
+  GithubPullRequestAddReviewersInputV1Schema,
+  GithubPullRequestCloseInputV1Schema,
+  GithubPullRequestMarkReadyInputV1Schema,
+  GithubPullRequestMarkReadyResultV1Schema,
+  GithubPullRequestMergeInputV1Schema,
+  GithubPullRequestMergeResultV1Schema,
+  GithubPullRequestRemoveReviewersInputV1Schema,
+  GithubPullRequestReopenInputV1Schema,
+  GithubPullRequestReviewersResultV1Schema,
+  GithubPullRequestStateResultV1Schema,
+  GithubPullRequestThreadResolutionInputV1Schema,
+  GithubPullRequestThreadResolutionResultV1Schema,
+  GithubPullRequestUpdateBranchInputV1Schema,
+  GithubPullRequestUpdateBranchResultV1Schema,
+} from './triage/mutations/contracts.js';
+import {
+  addGithubIssueAssigneesAction,
+  addGithubIssueLabelsAction,
+  addGithubPullRequestReviewersAction,
+  closeGithubIssueAction,
+  closeGithubPullRequestAction,
+  markGithubPullRequestReadyAction,
+  mergeGithubPullRequestAction,
+  removeGithubIssueAssigneesAction,
+  removeGithubIssueLabelAction,
+  removeGithubPullRequestReviewersAction,
+  reopenGithubIssueAction,
+  reopenGithubPullRequestAction,
+  setGithubPullRequestThreadResolutionAction,
+  updateGithubPullRequestBranchAction,
+} from './triage/mutationOperations.js';
 import {
   getGithubTriageEntry,
   listGithubTriageInstancesOperation,
@@ -119,6 +159,7 @@ export {
   GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1,
   GITHUB_TRIAGE_DETAIL_ARTIFACT_ID_V1,
   GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1,
+  GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1,
   GITHUB_TRIAGE_SETTINGS_ARTIFACT_ID_V1,
   GITHUB_TRIAGE_SETTINGS_PAGE_ID_V1,
   GITHUB_TRIAGE_SETTINGS_RENDERER_ID_V1,
@@ -435,7 +476,15 @@ function createGithubPlugin() {
           { kind: 'scmProviderOrigin', provider: 'github' },
           { kind: 'connectedAccountOrigin', service: 'github-account' },
         ],
-        methods: ['GET', 'POST'],
+        // The host revalidates the exact origin AND method at dispatch, so a verb a
+        // declared Action consumes but this grant omits is rejected as
+        // `plugin_final_resource_not_selected` before it reaches GitHub — where no
+        // unit test with a mocked client can see it. `PUT` is merge and
+        // update-branch, `PATCH` is close/reopen, `POST` is the reviewer request
+        // and the one GraphQL transition, and `DELETE` is the reviewer
+        // withdrawal — the only declared Action that consumes it. No verb is
+        // granted "for symmetry".
+        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
       },
     }, {
       id: 'github-cli-process',
@@ -617,6 +666,447 @@ function createGithubPlugin() {
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: readGithubChecks,
     },
+    // The pull-request mutations. Omitting `agent` and `mcp` is the human
+    // gate: it makes them unreachable from an agent at all, which is a stronger
+    // guarantee than flooring a danger level to a prompt.
+    //
+    // `plugin` is present alongside `ui` and is REQUIRED for the feature to work
+    // at all, not a widening of that gate. A mounted plugin surface always
+    // dispatches as a plugin caller, so `executeContributedAction` resolves
+    // `actionSurface` to `plugin` and refuses anything that does not declare it —
+    // which is why the four detail READS already declare `['plugin']`. The human
+    // gate is untouched because it keys off `invocationSurface` ('ui' from the
+    // dispatcher), a value computed separately from `actionSurface`, so host
+    // confirmation still fires for every one of these writes.
+    // Each declares the same `github-api` grant and the same connected-account
+    // purpose as every read, and rebinds the exact configured account.
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge]: {
+      title: 'Merge this pull request',
+      description: 'Merges one GitHub pull request at the exact head revision you are looking at,'
+        + ' using a merge method this repository allows.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'destructive',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.merge.confirmation.title',
+          fallback: 'Merge this pull request?',
+        },
+        body: {
+          key: 'plugins.github.mutations.merge.confirmation.body',
+          fallback: 'This merges the commits you are looking at into the base branch on GitHub.'
+            + ' If new commits were pushed since, the merge is refused instead.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.merge.confirmation.confirmLabel',
+          fallback: 'Merge',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubPullRequestMergeInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestMergeResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: mergeGithubPullRequestAction,
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestClose]: {
+      title: 'Close this pull request',
+      description: 'Closes one open GitHub pull request without merging it. Its branch and commits'
+        + ' are left untouched.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.close.confirmation.title',
+          fallback: 'Close this pull request?',
+        },
+        body: {
+          key: 'plugins.github.mutations.close.confirmation.body',
+          fallback: 'It is closed on GitHub without merging. You can reopen it afterwards.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.close.confirmation.confirmLabel',
+          fallback: 'Close',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubPullRequestCloseInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: closeGithubPullRequestAction,
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReopen]: {
+      title: 'Reopen this pull request',
+      description: 'Reopens one closed, unmerged GitHub pull request.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.reopen.confirmation.title',
+          fallback: 'Reopen this pull request?',
+        },
+        body: {
+          key: 'plugins.github.mutations.reopen.confirmation.body',
+          fallback: 'It becomes open again on GitHub, and its checks and reviewers are notified.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.reopen.confirmation.confirmLabel',
+          fallback: 'Reopen',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubPullRequestReopenInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: reopenGithubPullRequestAction,
+    },
+    // Draft → ready and a reviewer request are `externalSideEffect` rather than
+    // `writesRemote` because the effect a person feels is the NOTIFICATION
+    // fan-out, not the field that changed. Update-branch and a withdrawal move
+    // remote state and summon nobody, so they are `writesRemote`.
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMarkReady]: {
+      title: 'Mark this pull request ready for review',
+      description: 'Takes one GitHub pull request out of draft at the exact head revision you are'
+        + ' looking at, which notifies every requested reviewer and starts its checks.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'externalSideEffect',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.markReady.confirmation.title',
+          fallback: 'Mark this pull request ready for review?',
+        },
+        body: {
+          key: 'plugins.github.mutations.markReady.confirmation.body',
+          fallback: 'Every requested reviewer is notified and its checks run against the commits'
+            + ' you are looking at. If new commits were pushed since, this is refused instead.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.markReady.confirmation.confirmLabel',
+          fallback: 'Mark ready',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubPullRequestMarkReadyInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestMarkReadyResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: markGithubPullRequestReadyAction,
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestUpdateBranch]: {
+      title: 'Update this branch',
+      description: 'Merges the base branch into one GitHub pull request’s branch, guarded by the'
+        + ' exact head revision you are looking at.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.updateBranch.confirmation.title',
+          fallback: 'Update this branch?',
+        },
+        body: {
+          key: 'plugins.github.mutations.updateBranch.confirmation.body',
+          fallback: 'GitHub merges the base branch into this pull request and adds a commit on top'
+            + ' of the ones you are looking at. If new commits were pushed since, this is refused'
+            + ' instead.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.updateBranch.confirmation.confirmLabel',
+          fallback: 'Update branch',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubPullRequestUpdateBranchInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestUpdateBranchResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: updateGithubPullRequestBranchAction,
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestAddReviewers]: {
+      title: 'Request review from people',
+      description: 'Asks exactly the named GitHub users and teams to review this pull request,'
+        + ' leaving reviewers somebody else requested untouched.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'externalSideEffect',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.addReviewers.confirmation.title',
+          fallback: 'Request review from these people?',
+        },
+        body: {
+          key: 'plugins.github.mutations.addReviewers.confirmation.body',
+          fallback: 'Everyone you named is asked to review this pull request on GitHub and is'
+            + ' notified. Reviewers somebody else requested are left alone.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.addReviewers.confirmation.confirmLabel',
+          fallback: 'Request review',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubPullRequestAddReviewersInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestReviewersResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: addGithubPullRequestReviewersAction,
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestRemoveReviewers]: {
+      title: 'Withdraw review requests',
+      description: 'Stops asking exactly the named GitHub users and teams to review this pull'
+        + ' request, leaving every reviewer you did not name untouched.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.removeReviewers.confirmation.title',
+          fallback: 'Withdraw these review requests?',
+        },
+        body: {
+          key: 'plugins.github.mutations.removeReviewers.confirmation.body',
+          fallback: 'Everyone you named stops being asked to review this pull request on GitHub.'
+            + ' Reviewers you did not name are left alone.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.removeReviewers.confirmation.confirmLabel',
+          fallback: 'Withdraw',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubPullRequestRemoveReviewersInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestReviewersResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: removeGithubPullRequestReviewersAction,
+    },
+    // Review-thread resolution is `writesRemote`, not `externalSideEffect`: it
+    // moves state everyone watching the pull request can see and summons nobody.
+    // It is ONE Action for both directions because `resolved` is the state the
+    // caller wants rather than a verb — a second call converges on the same state
+    // instead of creating a second object — and because the reopen half must
+    // exist at all: a thread resolved by mistake has to be reopenable from here.
+    // Its copy therefore names both directions instead of asserting one, which is
+    // the honest reading of a static confirmation over a two-direction Action.
+    //
+    // It carries no head pin. A thread is anchored to a comment, not to a commit,
+    // so a push between the read and the write changes nothing about which
+    // conversation this is.
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestThreadResolution]: {
+      title: 'Resolve or reopen a review conversation',
+      description: 'Marks one line-anchored review thread on this GitHub pull request resolved,'
+        + ' or reopens one that was resolved.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.threadResolution.confirmation.title',
+          fallback: 'Change this review conversation?',
+        },
+        body: {
+          key: 'plugins.github.mutations.threadResolution.confirmation.body',
+          fallback: 'Resolving a thread collapses it for everyone who can see this pull request,'
+            + ' and reopening one brings the conversation back. Whichever you chose is applied on'
+            + ' GitHub, and you can change it back afterwards.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.threadResolution.confirmation.confirmLabel',
+          fallback: 'Continue',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubPullRequestThreadResolutionInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestThreadResolutionResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: setGithubPullRequestThreadResolutionAction,
+    },
+    // The issue writes. Each is `writesRemote`: it moves remote state, summons
+    // nobody, and is reversible through the Action that undoes it. Every one of
+    // them is an exact transition or an exact delta — none can express a desired
+    // full set, so a concurrent unrelated assignee or label always survives.
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueClose]: {
+      title: 'Close this issue',
+      description: 'Closes one open GitHub issue with the reason you choose, which everyone watching it sees.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.issueClose.confirmation.title',
+          fallback: 'Close this issue?',
+        },
+        body: {
+          key: 'plugins.github.mutations.issueClose.confirmation.body',
+          fallback: 'It is closed on GitHub with the reason you chose, and everyone watching it is notified. You can reopen it afterwards.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.issueClose.confirmation.confirmLabel',
+          fallback: 'Close',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubIssueCloseInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: closeGithubIssueAction,
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueReopen]: {
+      title: 'Reopen this issue',
+      description: 'Reopens one closed GitHub issue.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.issueReopen.confirmation.title',
+          fallback: 'Reopen this issue?',
+        },
+        body: {
+          key: 'plugins.github.mutations.issueReopen.confirmation.body',
+          fallback: 'It becomes open again on GitHub, and everyone watching it is notified.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.issueReopen.confirmation.confirmLabel',
+          fallback: 'Reopen',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubIssueReopenInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: reopenGithubIssueAction,
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeAdd]: {
+      title: 'Assign people to this issue',
+      description: 'Assigns exactly the named GitHub users to this issue, leaving everyone somebody else assigned untouched.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.issueAssigneeAdd.confirmation.title',
+          fallback: 'Assign these people?',
+        },
+        body: {
+          key: 'plugins.github.mutations.issueAssigneeAdd.confirmation.body',
+          fallback: 'Everyone you named is assigned to this issue on GitHub and is notified. People somebody else assigned are left alone.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.issueAssigneeAdd.confirmation.confirmLabel',
+          fallback: 'Assign',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubIssueAssigneeAddInputV1Schema.jsonSchema,
+      resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: addGithubIssueAssigneesAction,
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeRemove]: {
+      title: 'Unassign people from this issue',
+      description: 'Unassigns exactly the named GitHub users from this issue, leaving everyone you did not name untouched.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.issueAssigneeRemove.confirmation.title',
+          fallback: 'Unassign these people?',
+        },
+        body: {
+          key: 'plugins.github.mutations.issueAssigneeRemove.confirmation.body',
+          fallback: 'Everyone you named stops being assigned to this issue on GitHub. People you did not name are left alone.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.issueAssigneeRemove.confirmation.confirmLabel',
+          fallback: 'Unassign',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubIssueAssigneeRemoveInputV1Schema.jsonSchema,
+      resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: removeGithubIssueAssigneesAction,
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelAdd]: {
+      title: 'Add labels to this issue',
+      description: 'Adds exactly the named labels to this issue, leaving every label somebody else added untouched.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.issueLabelAdd.confirmation.title',
+          fallback: 'Add these labels?',
+        },
+        body: {
+          key: 'plugins.github.mutations.issueLabelAdd.confirmation.body',
+          fallback: 'Exactly the labels you named are added to this issue on GitHub. Labels somebody else added are left alone.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.issueLabelAdd.confirmation.confirmLabel',
+          fallback: 'Add labels',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubIssueLabelAddInputV1Schema.jsonSchema,
+      resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: addGithubIssueLabelsAction,
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelRemove]: {
+      title: 'Remove a label from this issue',
+      description: 'Removes exactly one named label from this issue, leaving every other label untouched.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.issueLabelRemove.confirmation.title',
+          fallback: 'Remove this label?',
+        },
+        body: {
+          key: 'plugins.github.mutations.issueLabelRemove.confirmation.body',
+          fallback: 'Exactly the label you named is removed from this issue on GitHub. Every other label is left alone.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.mutations.issueLabelRemove.confirmation.confirmLabel',
+          fallback: 'Remove label',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubIssueLabelRemoveInputV1Schema.jsonSchema,
+      resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: removeGithubIssueLabelAction,
+    },
     [GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID]: {
       title: 'Run GitHub repository Event source attempt',
       scopes: ['global'],
@@ -797,7 +1287,7 @@ function createGithubPlugin() {
     [GITHUB_WEBHOOK_CONTRIBUTION_ID]: {
       title: 'GitHub webhook delivery',
       description: 'Receives verified GitHub webhook deliveries.',
-      verifier: { kind: 'github_hmac_sha256_v1', routing: 'providerInstallation' },
+      verifier: { kind: 'github_hmac_sha256_v1', routing: 'accountEndpoint' },
       handlerAction: { localId: GITHUB_WEBHOOK_ACTION_ID },
     },
   },

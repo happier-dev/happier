@@ -1,6 +1,9 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
-import type { ConversationProviderConnectionStopInputV1 } from '@happier-dev/channels-protocol/v1';
+import type {
+  ConversationBindingInputModeV1,
+  ConversationProviderConnectionStopInputV1,
+} from '@happier-dev/channels-protocol/v1';
 
 import {
   CHANNEL_STATE_RECORD_KIND,
@@ -65,6 +68,7 @@ export type CurrentConversationConnectionFixture = Readonly<{
       unit: 'unicodeCodePoints' | 'utf8Bytes';
     }>;
     pairingDeepLinkTemplate?: string;
+    sharedEndpointInputModes?: readonly ConversationBindingInputModeV1[];
     providerConnectionKey: ConversationProviderConnectionStopInputV1['providerConnectionKey'];
     providerConfigVersion: 1;
     providerConfig: ConversationProviderConnectionStopInputV1['providerConfig'];
@@ -94,6 +98,7 @@ export function createCurrentConversationConnectionFixture(input: Readonly<{
     unit: 'unicodeCodePoints' | 'utf8Bytes';
   }>;
   pairingDeepLinkTemplate?: string;
+  sharedEndpointInputModes?: readonly ConversationBindingInputModeV1[];
   enabled?: boolean;
   deletionState?: 'none' | 'pendingStopReconciliation' | 'finalizingDelete';
   pendingOldTransportStop?: ConversationPendingOldTransportStopV1 | null;
@@ -123,6 +128,9 @@ export function createCurrentConversationConnectionFixture(input: Readonly<{
       ...(input.pairingDeepLinkTemplate === undefined
         ? {}
         : { pairingDeepLinkTemplate: input.pairingDeepLinkTemplate }),
+      ...(input.sharedEndpointInputModes === undefined
+        ? {}
+        : { sharedEndpointInputModes: input.sharedEndpointInputModes }),
       providerConnectionKey: input.authority.providerConnectionKey,
       providerConfigVersion: 1,
       providerConfig: input.authority.providerConfig,

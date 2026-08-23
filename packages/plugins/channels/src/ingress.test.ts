@@ -46,7 +46,10 @@ import {
   retryConversationConnectionPollForInvocation,
   updateConversationConnectionForInvocation,
 } from './management.js';
-import { MAX_CHANNEL_STATE_ROW_BYTES } from './collections.js';
+import {
+  CHANNEL_STATE_COLLECTION,
+  MAX_CHANNEL_STATE_ROW_BYTES,
+} from './collections.js';
 import { isChannelStateJsonRecord, readConversationConnectionUpdateRow } from './accountLocalBindingPolicy.js';
 import { startConversationConnectionTransfer } from './connectionLifecycle.js';
 import { pollTelegramObservations } from '../../channel-telegram/src/channelActions.js';
@@ -81,6 +84,7 @@ import {
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 const telegramProviderPluginId = 'happier.channel.telegram';
 const telegramPollAction = Object.freeze({
   identity: Object.freeze({
@@ -666,7 +670,13 @@ function setBindingNewSessionEnabled(rows: Map<string, StoredStateRow>): void {
   }, existing.revision + 1));
 }
 
-function setBindingApprovalEnabled(rows: Map<string, StoredStateRow>): void {
+function setBindingApprovalEnabled(
+  rows: Map<string, StoredStateRow>,
+  approvals: Readonly<{
+    maximumScope?: 'request' | 'session';
+    principalIds?: readonly string[];
+  }> = {},
+): void {
   const existing = rows.get('binding-1');
   if (existing === undefined) throw new Error('Expected the bound Channel state row.');
   const binding = record(existing.value);
@@ -681,7 +691,13 @@ function setBindingApprovalEnabled(rows: Map<string, StoredStateRow>): void {
         ...target,
         policy: {
           ...policy,
-          approvals: { kind: 'enabled', maximumScope: 'request' },
+          approvals: {
+            kind: 'enabled',
+            maximumScope: approvals.maximumScope ?? 'request',
+            ...(approvals.principalIds === undefined
+              ? {}
+              : { principalIds: [...approvals.principalIds] }),
+          },
         },
       },
     },
@@ -875,6 +891,7 @@ function createIngressHarness(options: IngressHarnessOptions = {}) {
       cursor?: string;
       limit: number;
     }>) {
+      assertChannelsTestCollectionQueryLimit(request.limit);
       const prefix = request.prefix ?? [];
       const matched = [...rows.values()].filter((row) => {
         if (row.deleted === true) return false;
@@ -1706,9 +1723,39 @@ describe('Conversation provider observation ingress', () => {
     });
   });
 
-  it('keeps an existing enabled approval policy non-authorizing until generic mediation is source-green', async () => {
+  it('writes a mediating ingress obligation the shipped Collection schema accepts', async () => {
+    // The in-memory harness accepts any JSON, but the real Account Collection
+    // closes the frozen Session-target branch with `additionalProperties:
+    // false`. Validate the writer's own row against the shipped schema so an
+    // undeclared frozen field fails here instead of only against a live Account.
+    const validateChannelState = compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema);
+    const harness = createIngressHarness({
+      execute: async (actionId): Promise<JsonValue> => {
+        if (actionId === 'session.permission.remote.pending.list') {
+          return { requests: [], truncated: false };
+        }
+        throw new Error(`Unexpected Action '${actionId}'.`);
+      },
+    });
+    setBindingApprovalEnabled(harness.rows, { maximumScope: 'session' });
+
+    await ingestConversationProviderObservationForInvocation(observation({
+      messageRevision: 'approval-schema:1',
+      messageText: '/allow permission-request-1 session',
+    }), harness.context);
+
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(record(record(obligation?.value.payload).target)).toMatchObject({
+      remoteApprovalMaxScope: 'session',
+      approval: { requestId: 'permission-request-1', decision: 'allow', scope: 'session' },
+    });
+    expect(isValidPluginJsonSchemaValue(validateChannelState, obligation?.value)).toBe(true);
+  });
+
+  it('refuses an approval command when the persisted binding policy leaves approvals off', async () => {
     const harness = createIngressHarness();
-    setBindingApprovalEnabled(harness.rows);
 
     await expect(ingestConversationProviderObservationForInvocation(observation({
       messageRevision: 'approval:1',
@@ -1730,9 +1777,28 @@ describe('Conversation provider observation ingress', () => {
     )).toBe(false);
   });
 
-  it('keeps the binding approval ceiling off in ordinary Session admission while C5 is hard-off', async () => {
+  it('refuses an approval command from a principal outside the approval subset', async () => {
     const harness = createIngressHarness();
-    setBindingApprovalEnabled(harness.rows);
+    setBindingApprovalEnabled(harness.rows, { principalIds: ['telegram:user:99'] });
+
+    await expect(ingestConversationProviderObservationForInvocation(observation({
+      messageRevision: 'approval-subset:1',
+      messageText: '/allow permission-request-1',
+    }), harness.context)).resolves.toBeUndefined();
+
+    expect(harness.execute).not.toHaveBeenCalled();
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligation?.value.payload).toMatchObject({
+      disposition: 'rejected',
+      nonAdmission: { reason: 'commandNotAuthorized' },
+    });
+  });
+
+  it('stamps the persisted binding approval ceiling on ordinary Session admission', async () => {
+    const harness = createIngressHarness();
+    setBindingApprovalEnabled(harness.rows, { maximumScope: 'session' });
 
     await expect(ingestConversationProviderObservationForInvocation(observation({
       messageRevision: 'approval-source:1',
@@ -1742,37 +1808,412 @@ describe('Conversation provider observation ingress', () => {
       source: expect.objectContaining({
         sourceRef: 'channels:binding:binding-1',
         sourceRevisionOrEpoch: '4:7',
-        remoteApprovalMaxScope: 'off',
+        remoteApprovalMaxScope: 'session',
         requestedPermissionCeiling: 'read-only',
       }),
     }), { signal: harness.context.signal });
   });
 
-  it('keeps C5 approval commands hard-off without invoking remote Permission Actions', async () => {
+  it('stamps an off approval ceiling when the persisted policy leaves approvals off', async () => {
+    const harness = createIngressHarness();
+
+    await expect(ingestConversationProviderObservationForInvocation(observation({
+      messageRevision: 'approval-source-off:1',
+    }), harness.context)).resolves.toBeUndefined();
+
+    expect(harness.send).toHaveBeenCalledWith(expect.objectContaining({
+      source: expect.objectContaining({ remoteApprovalMaxScope: 'off' }),
+    }), { signal: harness.context.signal });
+  });
+
+  it('mediates an admitted /allow through the canonical exact-turn Permission Actions', async () => {
     const actionCalls: Array<Readonly<{ actionId: string; input: JsonValue }>> = [];
     const harness = createIngressHarness({
-      execute: async (actionId, input) => {
+      execute: async (actionId, input): Promise<JsonValue> => {
         actionCalls.push({ actionId, input });
-        throw new Error(`C5 hard-off must not invoke ${actionId}.`);
+        if (actionId === 'session.permission.remote.pending.list') {
+          return {
+            requests: [
+              {
+                requestId: 'permission-request-0',
+                turnId: 'turn-1',
+                createdAtMs: 1,
+                allowedScopes: ['request'],
+              },
+              {
+                requestId: 'permission-request-1',
+                turnId: 'turn-9',
+                createdAtMs: 2,
+                allowedScopes: ['request', 'session'],
+              },
+            ],
+            truncated: false,
+          };
+        }
+        if (actionId === 'session.permission.remote.respond') {
+          return {
+            status: 'applied',
+            settlementId: 'settlement-1',
+            requestId: 'permission-request-1',
+            decision: 'allow',
+            effect: { kind: 'allowOnce' },
+          };
+        }
+        throw new Error(`Unexpected Action '${actionId}'.`);
       },
     });
-    setBindingApprovalEnabled(harness.rows);
+    setBindingApprovalEnabled(harness.rows, { maximumScope: 'session' });
 
     await expect(ingestConversationProviderObservationForInvocation(observation({
       messageRevision: 'approval-command:1',
-      messageText: '/allow permission-request-1 request',
+      messageText: '/allow permission-request-1',
     }), harness.context)).resolves.toBeUndefined();
 
-    expect(actionCalls).toEqual([]);
+    // No Session input: an approval command is mediation, never transcript text.
     expect(harness.send).not.toHaveBeenCalled();
+    expect(actionCalls.map((call) => call.actionId)).toEqual([
+      'session.permission.remote.pending.list',
+      'session.permission.remote.respond',
+    ]);
+    expect(actionCalls[0]?.input).toEqual({
+      sessionId: 'session-1',
+      sourceRef: 'channels:binding:binding-1',
+      sourceRevisionOrEpoch: '4:7',
+    });
+    expect(actionCalls[1]?.input).toEqual({
+      sessionId: 'session-1',
+      sourceRef: 'channels:binding:binding-1',
+      sourceRevisionOrEpoch: '4:7',
+      turnId: 'turn-9',
+      requestId: 'permission-request-1',
+      idempotencyKey: expect.stringMatching(/^channels:approval:v1:[A-Za-z0-9_-]{43}$/),
+      actor: { namespace: 'happier.channel.telegram', principalId: 'telegram:user:42' },
+      decision: 'allow',
+      scope: 'request',
+    });
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligation?.value.payload).toMatchObject({
+      lifecycle: { phase: 'terminal' },
+      disposition: 'approvalConsumed',
+      nonAdmission: null,
+    });
+    const acknowledgement = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    );
+    expect(acknowledgement?.value).toMatchObject({
+      'binding-id': 'binding-1',
+      payload: {
+        source: { kind: 'controlResponse', controlKind: 'approval' },
+        state: 'ready',
+        content: 'Approved the pending permission request.',
+      },
+    });
+  });
+
+  it('does not re-answer a consumed approval when the same observation replays after restart', async () => {
+    const actionIds: string[] = [];
+    const harness = createIngressHarness({
+      execute: async (actionId): Promise<JsonValue> => {
+        actionIds.push(actionId);
+        if (actionId === 'session.permission.remote.pending.list') {
+          return {
+            requests: [{
+              requestId: 'permission-request-1',
+              turnId: 'turn-9',
+              createdAtMs: 2,
+              allowedScopes: ['request'],
+            }],
+            truncated: false,
+          };
+        }
+        return {
+          status: 'applied',
+          settlementId: 'settlement-1',
+          requestId: 'permission-request-1',
+          decision: 'allow',
+          effect: { kind: 'allowOnce' },
+        };
+      },
+    });
+    setBindingApprovalEnabled(harness.rows);
+    const replayed = observation({
+      messageRevision: 'approval-replay:1',
+      messageText: '/allow permission-request-1',
+    });
+
+    await ingestConversationProviderObservationForInvocation(replayed, harness.context);
+    expect(actionIds).toEqual([
+      'session.permission.remote.pending.list',
+      'session.permission.remote.respond',
+    ]);
+
+    // A restart replays the same durable observation. The consumed obligation
+    // is terminal, so no second verdict reaches the canonical mediation owner.
+    await ingestConversationProviderObservationForInvocation(replayed, harness.context);
+
+    expect(actionIds).toEqual([
+      'session.permission.remote.pending.list',
+      'session.permission.remote.respond',
+    ]);
+    const obligations = [...harness.rows.values()].filter(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligations).toHaveLength(1);
+    expect(obligations[0]?.value.payload).toMatchObject({
+      lifecycle: { phase: 'terminal' },
+      disposition: 'approvalConsumed',
+    });
+    expect([...harness.rows.values()].filter(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    )).toHaveLength(1);
+  });
+
+  it('passes an explicit Session scope to the mediation owner without narrowing it', async () => {
+    const respondInputs: JsonValue[] = [];
+    const harness = createIngressHarness({
+      execute: async (actionId, input): Promise<JsonValue> => {
+        if (actionId === 'session.permission.remote.pending.list') {
+          return {
+            requests: [{
+              requestId: 'permission-request-1',
+              turnId: 'turn-9',
+              createdAtMs: 2,
+              allowedScopes: ['request'],
+            }],
+            truncated: false,
+          };
+        }
+        respondInputs.push(input);
+        return { status: 'rejected', code: 'scopeExceedsPolicy' };
+      },
+    });
+    // The owner ceiling is deliberately narrower than the requested scope.
+    setBindingApprovalEnabled(harness.rows, { maximumScope: 'request' });
+
+    await expect(ingestConversationProviderObservationForInvocation(observation({
+      messageRevision: 'approval-scope:1',
+      messageText: '/allow permission-request-1 session',
+    }), harness.context)).resolves.toBeUndefined();
+
+    expect(respondInputs).toEqual([expect.objectContaining({ scope: 'session' })]);
     const obligation = [...harness.rows.values()].find(
       (row) => row.value['record-kind'] === 'ingress-obligation',
     );
     expect(obligation?.value.payload).toMatchObject({
       lifecycle: { phase: 'terminal' },
       disposition: 'rejected',
-      nonAdmission: { reason: 'commandNotAuthorized', senderFeedbackEligible: false },
+      nonAdmission: { reason: 'targetUnavailable', senderFeedbackEligible: false },
     });
+    const acknowledgement = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    );
+    expect(record(acknowledgement?.value.payload).content)
+      .toBe('That permission decision was not accepted.');
+  });
+
+  it('retries an approval whose request is absent from a truncated pending projection', async () => {
+    const actionIds: string[] = [];
+    const harness = createIngressHarness({
+      execute: async (actionId): Promise<JsonValue> => {
+        actionIds.push(actionId);
+        if (actionId === 'session.permission.remote.pending.list') {
+          return { requests: [], truncated: true };
+        }
+        throw new Error(`A truncated projection must not reach ${actionId}.`);
+      },
+    });
+    setBindingApprovalEnabled(harness.rows);
+
+    // An unsettled admission stays retryable at the ingest boundary; the
+    // obligation is what carries the bounded retry, not a mediation-local timer.
+    await expect(ingestConversationProviderObservationForInvocation(observation({
+      messageRevision: 'approval-truncated:1',
+      messageText: '/deny permission-request-1',
+    }), harness.context)).rejects.toMatchObject({
+      code: 'channels_ingress_admission_unsettled',
+      retryable: true,
+    });
+
+    expect(actionIds).toEqual(['session.permission.remote.pending.list']);
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligation?.value.payload).toMatchObject({
+      lifecycle: { phase: 'retryDue' },
+      disposition: null,
+    });
+    expect([...harness.rows.values()].some(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    )).toBe(false);
+  });
+
+  it('settles an approval as no-longer-pending on a complete negative projection', async () => {
+    const actionIds: string[] = [];
+    const harness = createIngressHarness({
+      execute: async (actionId): Promise<JsonValue> => {
+        actionIds.push(actionId);
+        if (actionId === 'session.permission.remote.pending.list') {
+          return { requests: [], truncated: false };
+        }
+        throw new Error(`A complete negative projection must not reach ${actionId}.`);
+      },
+    });
+    setBindingApprovalEnabled(harness.rows);
+
+    await expect(ingestConversationProviderObservationForInvocation(observation({
+      messageRevision: 'approval-absent:1',
+      messageText: '/deny permission-request-1',
+    }), harness.context)).resolves.toBeUndefined();
+
+    expect(actionIds).toEqual(['session.permission.remote.pending.list']);
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligation?.value.payload).toMatchObject({
+      lifecycle: { phase: 'terminal' },
+      disposition: 'rejected',
+      nonAdmission: { reason: 'targetUnavailable' },
+    });
+    const acknowledgement = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    );
+    expect(record(acknowledgement?.value.payload).content)
+      .toBe('That permission request is no longer pending.');
+  });
+
+  it('acknowledges a mediated /deny and consumes the ingress obligation', async () => {
+    const harness = createIngressHarness({
+      execute: async (actionId): Promise<JsonValue> => {
+        if (actionId === 'session.permission.remote.pending.list') {
+          return {
+            requests: [{
+              requestId: 'permission-request-1',
+              turnId: 'turn-9',
+              createdAtMs: 2,
+              allowedScopes: ['request'],
+            }],
+            truncated: false,
+          };
+        }
+        return {
+          status: 'alreadyApplied',
+          settlementId: 'settlement-2',
+          requestId: 'permission-request-1',
+          decision: 'deny',
+          effect: { kind: 'deny' },
+        };
+      },
+    });
+    setBindingApprovalEnabled(harness.rows);
+
+    await expect(ingestConversationProviderObservationForInvocation(observation({
+      messageRevision: 'approval-deny:1',
+      messageText: '/deny permission-request-1',
+    }), harness.context)).resolves.toBeUndefined();
+
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligation?.value.payload).toMatchObject({
+      lifecycle: { phase: 'terminal' },
+      disposition: 'approvalConsumed',
+    });
+    const acknowledgement = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    );
+    expect(record(acknowledgement?.value.payload).content)
+      .toBe('Denied the pending permission request.');
+  });
+
+  it('settles a definitely refused mediation call instead of re-observing the message forever', async () => {
+    let respondCalls = 0;
+    const harness = createIngressHarness({
+      execute: async (actionId): Promise<JsonValue> => {
+        if (actionId === 'session.permission.remote.pending.list') {
+          return {
+            requests: [{
+              requestId: 'permission-request-1',
+              turnId: 'turn-9',
+              createdAtMs: 2,
+              allowedScopes: ['request'],
+            }],
+            truncated: false,
+          };
+        }
+        respondCalls += 1;
+        // A definite Action-boundary refusal, e.g. an input the canonical
+        // Permission schema rejects outright.
+        throw new PluginError({
+          code: 'invalid_parameters',
+          message: 'Permission respond input is invalid.',
+          retryable: false,
+        });
+      },
+    });
+    setBindingApprovalEnabled(harness.rows);
+
+    // The ingest boundary settles rather than throwing, so the connection
+    // checkpoint can advance past a command that can never succeed.
+    await expect(ingestConversationProviderObservationForInvocation(observation({
+      messageRevision: 'approval-invalid:1',
+      messageText: '/allow permission-request-1',
+    }), harness.context)).resolves.toBeUndefined();
+
+    expect(respondCalls).toBe(1);
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligation?.value.payload).toMatchObject({
+      lifecycle: { phase: 'terminal' },
+      disposition: 'rejected',
+      nonAdmission: { reason: 'targetUnavailable' },
+    });
+    const acknowledgement = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    );
+    expect(record(acknowledgement?.value.payload).content)
+      .toBe('That permission decision was not accepted.');
+  });
+
+  it('retries an approval when the mediation owner reports its state unavailable', async () => {
+    const harness = createIngressHarness({
+      execute: async (actionId): Promise<JsonValue> => {
+        if (actionId === 'session.permission.remote.pending.list') {
+          return {
+            requests: [{
+              requestId: 'permission-request-1',
+              turnId: 'turn-9',
+              createdAtMs: 2,
+              allowedScopes: ['request'],
+            }],
+            truncated: false,
+          };
+        }
+        return { status: 'rejected', code: 'mediationStateUnavailable' };
+      },
+    });
+    setBindingApprovalEnabled(harness.rows);
+
+    await expect(ingestConversationProviderObservationForInvocation(observation({
+      messageRevision: 'approval-unavailable:1',
+      messageText: '/allow permission-request-1',
+    }), harness.context)).rejects.toMatchObject({
+      code: 'channels_ingress_admission_unsettled',
+      retryable: true,
+    });
+
+    const obligation = [...harness.rows.values()].find(
+      (row) => row.value['record-kind'] === 'ingress-obligation',
+    );
+    expect(obligation?.value.payload).toMatchObject({
+      lifecycle: { phase: 'retryDue' },
+      disposition: null,
+    });
+    expect([...harness.rows.values()].some(
+      (row) => row.value['record-kind'] === 'outward-delivery',
+    )).toBe(false);
   });
 
   it('drops an expired /new message before the census and admission owners', async () => {
@@ -2885,7 +3326,7 @@ describe('Conversation provider observation ingress', () => {
       source: expect.objectContaining({
         sourceRef: 'channels:binding:binding-1',
         sourceRevisionOrEpoch: '4:7',
-        remoteApprovalMaxScope: 'off',
+        remoteApprovalMaxScope: 'request',
         requestedPermissionCeiling: 'read-only',
       }),
     }), { signal: harness.context.signal });
@@ -3304,6 +3745,75 @@ describe('Conversation provider observation ingress', () => {
         .resolves.toMatchObject({ deletedCensuses: 1 });
       expect(harness.rows.get(census.rowId)?.deleted).toBe(true);
       expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('finishes a stranded preparing census on replay after its frozen window closed instead of deleting the captured message', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      let armed = true;
+      const harness = createIngressHarness({
+        beforeBatch: ({ operations }) => {
+          const preparesCensus = operations.some((operation) => (
+            operation.kind === 'put'
+            && record(record(operation.value).payload).phase === 'prepared'
+          ));
+          if (armed && preparesCensus) {
+            armed = false;
+            throw new Error('Simulated Account Collection failure on the prepared census write.');
+          }
+        },
+      });
+
+      await expect(ingestConversationProviderObservationForInvocation(
+        observation({ messageRevision: 'retention:preparing', occurredAt: 1_000 }),
+        harness.context,
+      )).rejects.toThrow();
+      const census = [...harness.rows.values()].find((row) => (
+        row.deleted !== true && row.value['record-kind'] === 'ingress-census'
+      ));
+      const obligation = [...harness.rows.values()].find((row) => (
+        row.deleted !== true && row.value['record-kind'] === 'ingress-obligation'
+      ));
+      if (census === undefined || obligation === undefined) {
+        throw new Error('Expected the stranded ingress census and its member.');
+      }
+      expect(record(census.value.payload).phase).toBe('preparing');
+      expect(record(record(obligation.value).payload).lifecycle).toMatchObject({ phase: 'ready' });
+      expect(harness.send).not.toHaveBeenCalled();
+
+      // The frozen observation window is a first-sighting admission bound. It
+      // may not retire a unit the Account already accepted: the census still
+      // holds the only copy of the captured inbound message and its member is
+      // still non-terminal.
+      await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ deletedCensuses: 0 });
+      expect(harness.rows.get(census.rowId)?.deleted).not.toBe(true);
+      expect(harness.rows.get(obligation.rowId)?.deleted).not.toBe(true);
+
+      // The same occurrence replays long after the horizon. An existing census
+      // is durable proof that first-observation admission already happened, so
+      // the replay rejoins it, finishes preparation, and delivers exactly once.
+      vi.setSystemTime(61_002);
+      await expect(ingestConversationProviderObservationForInvocation(
+        observation({ messageRevision: 'retention:preparing', occurredAt: 1_000 }),
+        harness.context,
+      )).resolves.toBeUndefined();
+      const prepared = harness.rows.get(census.rowId);
+      expect(record(record(prepared?.value ?? {}).payload).phase).toBe('prepared');
+      expect(harness.send).toHaveBeenCalledOnce();
+
+      // Only once the checkpoint has covered the finished unit may retention
+      // reclaim it.
+      const covered = markIngressCensusCheckpointCovered(harness.rows, 61_002);
+      await expect(runConversationIngressRetentionForInvocation({ now: 121_003, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ deletedCensuses: 1 });
+      expect(harness.rows.get(covered.rowId)?.deleted).toBe(true);
+      await expect(runConversationIngressDueWorkForInvocation({ now: 121_004 }, harness.context))
+        .resolves.toBe(0);
     } finally {
       vi.useRealTimers();
     }

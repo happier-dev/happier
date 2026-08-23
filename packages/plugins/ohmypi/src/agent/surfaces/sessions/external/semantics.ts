@@ -4,8 +4,9 @@ import type {
   AgentExternalSessionTakeoverResolveLaunchResult,
 } from '@happier-dev/plugin-sdk/sessions/external';
 
+import { scanJsonlSessionFile } from '@happier-dev/plugin-sdk/sessions/file-stores';
+
 import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../../sessionFileStoreDescriptor.js';
-import { readOhMyPiSessionSnapshot } from '../../../transcripts/snapshot.js';
 import { resolveOhMyPiSessionFile } from './files.js';
 import {
   projectOhMyPiExternalSessionSource,
@@ -95,13 +96,12 @@ async function resolveLaunch(
       });
       const afterResolve = invocationFailure(request);
       if (afterResolve) return afterResolve;
-      if (resolved) {
-        directory = (
-          await readOhMyPiSessionSnapshot({
-            sessionFilePath: resolved.filePath,
-            sessionId: request.remoteSessionId,
-          })
-        ).workingDirectory?.trim() ?? '';
+      if (resolved.ok) {
+        // The working directory lives in the session header, which the bounded
+        // JSONL scanner already reads for candidate projection. Folding the whole
+        // transcript to recover one header field re-reads the entire file.
+        const descriptor = await scanJsonlSessionFile(resolved.filePath);
+        directory = descriptor?.cwd?.trim() ?? '';
       }
       const afterSnapshot = invocationFailure(request);
       if (afterSnapshot) return afterSnapshot;

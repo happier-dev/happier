@@ -44,6 +44,47 @@ export const GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 = Object.freeze({
 });
 
 /**
+ * The GitHub pull-request mutation Action ids, spelled exactly as SCM.md 3.8
+ * names them.
+ *
+ * They are declared separately from every read above because they are a
+ * different kind of thing: each is ONE exact externally visible write with its
+ * own strict input and its own confirmation presentation, and none of them
+ * declares `agent` or `mcp` so no agent or MCP caller can reach it at all. There
+ * is no generic `mutate({ operation, payload })` Action here and there will not
+ * be one.
+ *
+ * The two reviewer ids are a pair of exact DELTAS and never one "set reviewers"
+ * id with a direction field. A single id would put the direction in the payload,
+ * where the manifest cannot classify it, cannot confirm withdrawal differently
+ * from a summons, and cannot state which of the two a user is about to do.
+ *
+ * SCM.md 3.8 also names `submit-review`, `review-comment-create`,
+ * `thread-reply` and `issue/comment`. They are absent here on purpose: they are
+ * blocked behind the Reviews dispatch barrier (SCM.md 3.9.3a) and a registered
+ * Action is a reachable external write, so declaring one early would make the
+ * barrier decorative. `thread-resolution` is NOT one of them and is declared: it
+ * publishes nothing, so it needs no dispatch barrier — it converges an existing
+ * thread on a resolution state GitHub already models.
+ */
+export const GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 = Object.freeze({
+  pullRequestMerge: 'github/pull-request/merge',
+  pullRequestClose: 'github/pull-request/close',
+  pullRequestReopen: 'github/pull-request/reopen',
+  pullRequestMarkReady: 'github/pull-request/mark-ready',
+  pullRequestUpdateBranch: 'github/pull-request/update-branch',
+  pullRequestAddReviewers: 'github/pull-request/add-reviewers',
+  pullRequestRemoveReviewers: 'github/pull-request/remove-reviewers',
+  pullRequestThreadResolution: 'github/pull-request/thread-resolution',
+  issueClose: 'github/issue/close',
+  issueReopen: 'github/issue/reopen',
+  issueAssigneeAdd: 'github/issue/assignee-add',
+  issueAssigneeRemove: 'github/issue/assignee-remove',
+  issueLabelAdd: 'github/issue/label-add',
+  issueLabelRemove: 'github/issue/label-remove',
+});
+
+/**
  * The same-plugin renderer bound to the required source-owned detail role, and the UI
  * artifact it mounts.
  *
@@ -87,6 +128,12 @@ export const GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
   // vocabulary: discovery, reauthorization and materialization all use this exact
   // string, and a candidate binding that named another purpose would be rejected.
   purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+  // The page this source's own Settings contribution ships, so the PRs & Issues
+  // surface can offer a working Configure action instead of naming Settings and
+  // leaving the reader to find it. A BARE local id: the target qualifies it with
+  // the contributor identity the host already admitted, so a descriptor can never
+  // name another plugin's page.
+  settingsPageId: GITHUB_TRIAGE_SETTINGS_PAGE_ID_V1,
   displayName: 'GitHub',
   kinds: Object.freeze([
     Object.freeze({

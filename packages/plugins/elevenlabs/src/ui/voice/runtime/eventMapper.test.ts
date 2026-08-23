@@ -30,14 +30,25 @@ describe('createElevenLabsEventMapper', () => {
     expect(mapper.map({ role: 'user', source: 'user', message: 'hello' })).toBeNull();
   });
 
-  it('maps a changed replay of the same provider item as a typed correction and drops exact duplicates', () => {
+  it("maps ElevenLabs' own correction event as a typed correction and drops exact duplicates", () => {
     const mapper = createElevenLabsEventMapper();
     mapper.beginConversation();
     const first = { event_id: 9, role: 'agent', source: 'ai', message: 'old answer' };
     expect(mapper.map(first)?.type).toBe('voice.transcript.final');
     expect(mapper.map(first)).toBeNull();
 
-    expect(mapper.map({ ...first, message: 'corrected answer' })).toEqual(expect.objectContaining({
+    // ElevenLabs never restates a corrected agent turn as a second
+    // `agent_response`; it publishes `agent_response_correction` carrying the
+    // whole corrected turn under the original turn's `event_id`.
+    const correction = {
+      type: 'agent_response_correction',
+      agent_response_correction_event: {
+        original_agent_response: 'old answer',
+        corrected_agent_response: 'corrected answer',
+        event_id: 9,
+      },
+    };
+    expect(mapper.map(correction)).toEqual(expect.objectContaining({
       type: 'voice.transcript.corrected',
       epoch: 1,
       sequence: 2,
@@ -47,6 +58,7 @@ describe('createElevenLabsEventMapper', () => {
       role: 'assistant',
       text: 'corrected answer',
     }));
+    expect(mapper.map(correction)).toBeNull();
   });
 
   it('refuses a provider identity too long to become a canonical transcript identity', () => {

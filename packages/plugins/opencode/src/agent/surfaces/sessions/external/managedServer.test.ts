@@ -112,6 +112,61 @@ describe('OpenCode External Sessions managed server declaration', () => {
     expect(first?.id).not.toEqual(differentScheme?.id);
   });
 
+  // One matrix over the endpoint policy this leaf actually decides. Each row is
+  // a distinct decision, not a restatement: which service shape is declared,
+  // and — for every rejection — that the leaf declares NOTHING rather than
+  // quietly falling back to a server pointed at a different corpus.
+  it('fails closed on a malformed override instead of falling back to the managed default', () => {
+    // The same request also asks for the managed endpoint. Declaring the owned
+    // spawn here would browse Happier's own data root while the user believes
+    // they are attached to the server they named.
+    expect(resolveOpenCodeExternalSessionsManagedService({
+      source: {
+        kind: 'opencodeServer',
+        baseUrl: 'not-a-url',
+        managedEndpoint: true,
+      },
+      signal,
+    })).toBeNull();
+  });
+
+  it('refuses a non-loopback plain-HTTP override', () => {
+    // `https:` reaches any host; plain `http:` stays on this machine, because a
+    // Basic credential over cleartext to a remote host is the one shape the
+    // shared endpoint policy will not dial.
+    expect(resolveOpenCodeExternalSessionsManagedService({
+      source: { kind: 'opencodeServer', baseUrl: 'http://opencode.example.test:4096' },
+      signal,
+    })).toBeNull();
+    expect(resolveOpenCodeExternalSessionsManagedService({
+      source: { kind: 'opencodeServer', baseUrl: 'https://opencode.example.test:4096' },
+      signal,
+    })).toMatchObject({
+      mode: { kind: 'attach', baseUrl: 'https://opencode.example.test:4096' },
+    });
+  });
+
+  it('keeps the attach credential bound to the service instead of the URL', () => {
+    // A URL-embedded credential is refused outright: it would otherwise be
+    // normalized into the attach `baseUrl`, hashed into the service id, and
+    // carried through every snapshot and log of that service.
+    expect(resolveOpenCodeExternalSessionsManagedService({
+      source: { kind: 'opencodeServer', baseUrl: 'https://opencode:hunter2@opencode.example.test' },
+      signal,
+    })).toBeNull();
+
+    const spec = resolveOpenCodeExternalSessionsManagedService({
+      source: { kind: 'opencodeServer', baseUrl: 'https://opencode.example.test' },
+      signal,
+    });
+    expect(spec?.mode).toEqual({ kind: 'attach', baseUrl: 'https://opencode.example.test' });
+    expect(spec?.clientAccess).toEqual({
+      kind: 'declaredSecretBasic',
+      username: 'opencode',
+      passwordSecretId: 'opencodeServerPassword',
+    });
+  });
+
   it('declares no service for a source another Agent owns', () => {
     expect(resolveOpenCodeExternalSessionsManagedService({
       source: { kind: 'claudeCode' },

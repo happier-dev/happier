@@ -614,7 +614,51 @@ export async function runAzureTriageGet(input: Readonly<{
   const client = await openClient({ services, instance: request.instance, origin, signal });
   if (!client.ok) return { kind: 'unresolved', localRef, failure: client.failure };
 
-  const response = await client.client.request({
+  return (await observeAzureEntry({
+    client: client.client,
+    viewerId: client.viewerId,
+    origin,
+    address,
+    localRef,
+    signal,
+  })).observation;
+}
+
+/**
+ * One authoritative observation of a single Azure pull request, given an authorized client.
+ *
+ * `get` publishes it as a Triage role; a mutation reaches it twice — once as the fresh pre-write
+ * currentness proof and once as the confirming read that says what actually happened. All three
+ * must agree about what "this pull request, as this viewer sees it" means, so there is one reader
+ * rather than one per caller.
+ *
+ * The decoded row travels back beside the published observation because Azure's confirming read is
+ * a **field-level comparison of the values we sent**, not a status check: a `PATCH` may silently
+ * ignore a property it does not accept, and the observation deliberately does not expose `status`,
+ * `mergeStatus`, `lastMergeCommit` or the completion options as separate fields. Reading the row a
+ * second time to get them would be a second race.
+ */
+export type AzureEntryObservation = Readonly<{
+  observation: TriageGetResultV1;
+  /** `null` exactly when the observation is `unresolved`. */
+  row: AzurePullRequestRow | null;
+}>;
+
+export async function observeAzureEntry(input: Readonly<{
+  client: AzureDevOpsApiClient;
+  viewerId: string;
+  origin: AzureDevOpsOrigin;
+  address: Readonly<{ repositoryId: string; pullRequestId: number }>;
+  localRef: TriageGetInputV1['localRef'];
+  signal: AbortSignal;
+}>): Promise<AzureEntryObservation> {
+  const { address, localRef, origin, viewerId } = input;
+  const unresolved = (failure: TriageSourceFailureV1): AzureEntryObservation => ({
+    observation: { kind: 'unresolved', localRef, failure },
+    row: null,
+  });
+
+  const response = await input.client.request({
     // The Git area addresses a repository by GUID with no project segment, which is the only
     // route this input can build: it carries no project name and must not guess one.
     route: {
@@ -622,39 +666,33 @@ export async function runAzureTriageGet(input: Readonly<{
       repositoryId: address.repositoryId,
       pullRequestId: address.pullRequestId,
     },
-    signal,
+    signal: input.signal,
   });
-  if (!response.ok) {
-    return { kind: 'unresolved', localRef, failure: projectAzureSourceFailure(response.failure) };
-  }
+  if (!response.ok) return unresolved(projectAzureSourceFailure(response.failure));
 
   const row = decodeAzurePullRequestRow(response.body);
   const scope = readPullRequestScope(response.body);
-  if (row === null || scope === null) {
-    return { kind: 'unresolved', localRef, failure: malformedPullRequest() };
-  }
+  if (row === null || scope === null) return unresolved(malformedPullRequest());
   if (row.repositoryId !== address.repositoryId || row.pullRequestId !== address.pullRequestId) {
     // A body that names another repository or number is a routing error, never a redirect.
-    return { kind: 'unresolved', localRef, failure: malformedPullRequest() };
+    return unresolved(malformedPullRequest());
   }
 
-  const involvement = readViewerInvolvement(row, client.viewerId);
+  const involvement = readViewerInvolvement(row, viewerId);
   const entry = mapAzurePullRequestEntry({
     origin,
     project: { id: scope.projectId, name: scope.projectName, state: null },
     repository: scope.repository,
     row,
     lane: involvement.includes('author') ? 'authored' : 'reviewer',
-    viewerId: client.viewerId,
+    viewerId,
   });
-  if (entry === null) return { kind: 'unresolved', localRef, failure: malformedPullRequest() };
+  if (entry === null) return unresolved(malformedPullRequest());
 
   const observation = projectAzurePresentObservation({ entry, involvement });
-  if (observation.kind !== 'present') {
-    return { kind: 'unresolved', localRef, failure: malformedPullRequest() };
-  }
+  if (observation.kind !== 'present') return unresolved(malformedPullRequest());
   // The result's ref must equal the exact input ref; a different one is invalid, not a redirect.
-  return { ...observation, localRef };
+  return { observation: { ...observation, localRef }, row };
 }
 
 /**
