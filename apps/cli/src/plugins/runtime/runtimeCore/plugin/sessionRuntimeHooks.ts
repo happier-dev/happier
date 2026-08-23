@@ -38,7 +38,6 @@ export type PluginRuntimeApplyConfigDeltaInFlight = (
 
 export type PluginRuntimeHookOperations = RuntimeTurnOperations & Readonly<{
     models?: AgentSessionModelsSource;
-    isProviderNativeCommand?: (prompt: string) => boolean;
     supportsInFlightSteer?: () => boolean;
     isTurnInFlight?: () => boolean;
     canSteerPrompt?: () => boolean;

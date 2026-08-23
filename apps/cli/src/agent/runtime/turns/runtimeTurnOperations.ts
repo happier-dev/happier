@@ -130,6 +130,7 @@ export type RuntimeTurnDisposeReason = NonNullable<
 
 export type RuntimeTurnOperations = Readonly<{
   permissionCapability?: RuntimePermissionCapability;
+  isProviderNativeCommand?: (prompt: string) => boolean;
   beginTurnLifecycle: () => void;
   /**
    * Dispatch a prompt batch. Committed user-row seqs place runtime output against exact transcript

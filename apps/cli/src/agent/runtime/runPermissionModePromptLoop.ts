@@ -124,7 +124,6 @@ export type RuntimePromptWithAcceptanceMeta = {
 } & RuntimeTurnPromptMeta;
 
 export type PermissionModePromptLoopTurnOperations = RuntimeTurnOperations & Readonly<{
-  isProviderNativeCommand?: (prompt: string) => boolean;
   supportsInFlightSteer?: () => boolean;
   canSteerPrompt?: () => boolean;
   compactContext?: (command: string) => Promise<void>;
