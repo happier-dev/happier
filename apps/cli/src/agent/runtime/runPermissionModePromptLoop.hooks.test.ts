@@ -59,6 +59,7 @@ function createRuntime() {
     compactContext: vi.fn(async () => undefined),
     resetOrDisposeRuntime: vi.fn(async () => undefined),
     shouldResumeAfterPermissionModeChange: vi.fn(() => true),
+    isProviderNativeCommand: vi.fn((_prompt: string) => false),
   };
 }
 
@@ -127,6 +128,76 @@ async function runSingleSpecialCommand(params: Readonly<{
 describe('runPermissionModePromptLoop hook dispatch', () => {
   beforeEach(() => {
     loggerDebugMock.mockClear();
+  });
+
+  it('dispatches an advertised provider command verbatim without consuming fresh-session composition', async () => {
+    const session = createMutableApiSessionClientFixture<Metadata>({
+      overrides: { sessionId: 'session-provider-command' } as Partial<Parameters<typeof runPermissionModePromptLoop>[0]['session']>,
+    });
+    session.__setMetadata(createTestMetadata({
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+      slashCommands: ['goal'],
+    }));
+    const queue = createModeQueue();
+    queue.push({ text: '/goal fix authentication', localId: 'local-goal' }, { permissionMode: 'default' });
+    const runtime = createRuntime();
+    runtime.isProviderNativeCommand.mockImplementation((prompt: string) => prompt.startsWith('/goal'));
+    const resolveFreshSessionSystemPrompt = vi.fn(async () => 'SYSTEM');
+    const resolveAgentCompositionBeforeDispatch = vi.fn(async () => ({
+      managedPluginIds: [],
+      selectedTools: [],
+      selectedToolBindings: [],
+      prompt: 'COMPOSITION',
+    }));
+    const transformAgentContextBeforeDispatch = vi.fn(async (payload: Record<string, unknown>) => payload);
+    let dispatchCount = 0;
+    runtime.sendTurnPrompt.mockImplementation(async () => {
+      dispatchCount += 1;
+      if (dispatchCount === 1) {
+        queue.push({ text: 'continue normally', localId: 'local-normal' }, { permissionMode: 'default' });
+      }
+    });
+    let shouldExit = false;
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'pi',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler: { setPermissionMode: vi.fn(), reset: vi.fn() },
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({
+        syncFromMetadata: () => undefined,
+        flushPendingAfterStart: async () => undefined,
+      }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => undefined,
+      setThinking: () => undefined,
+      sendReady: () => { if (dispatchCount === 2) shouldExit = true; },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => undefined,
+      setCurrentPermissionModeUpdatedAt: () => undefined,
+      resolveFreshSessionSystemPrompt,
+      resolveAgentCompositionBeforeDispatch,
+      transformAgentContextBeforeDispatch,
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    } as Parameters<typeof runPermissionModePromptLoop>[0]);
+
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('/goal fix authentication', {
+      localId: 'local-goal',
+      localIds: ['local-goal'],
+    });
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('SYSTEM\n\nCOMPOSITION\n\ncontinue normally', {
+      localId: 'local-normal',
+      localIds: ['local-normal'],
+    });
+    expect(resolveFreshSessionSystemPrompt).toHaveBeenCalledTimes(1);
+    expect(resolveAgentCompositionBeforeDispatch).toHaveBeenCalledTimes(1);
+    expect(transformAgentContextBeforeDispatch).toHaveBeenCalledTimes(1);
   });
 
   it('settles a successful local clear command as accepted with its exact opaque local id', async () => {

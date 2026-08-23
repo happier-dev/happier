@@ -296,6 +296,7 @@ export type HostSessionRuntimeHookRuntime = Readonly<{
   // retire the replay seed at acceptance. `RuntimePromptWithAcceptanceMeta` is the one owner.
   sendPromptWithMeta?: (params: RuntimePromptWithAcceptanceMeta) => Promise<void>;
   shouldResumeAfterPermissionModeChange?: () => boolean;
+  isProviderNativeCommand?: (prompt: string) => boolean;
   supportsInFlightSteer?: () => boolean;
   isTurnInFlight?: () => boolean;
   canSteerPrompt?: () => boolean;

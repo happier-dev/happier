@@ -124,6 +124,7 @@ export type RuntimePromptWithAcceptanceMeta = {
 } & RuntimeTurnPromptMeta;
 
 export type PermissionModePromptLoopTurnOperations = RuntimeTurnOperations & Readonly<{
+  isProviderNativeCommand?: (prompt: string) => boolean;
   supportsInFlightSteer?: () => boolean;
   canSteerPrompt?: () => boolean;
   compactContext?: (command: string) => Promise<void>;
@@ -1082,6 +1083,12 @@ export async function runPermissionModePromptLoop(opts: {
         await opts.runtime.updateSessionRuntimeConfig({ permissionMode: message.mode.permissionMode });
         runtimePermissionModeApplied = message.mode.permissionMode;
       }
+      const providerNativeCommand = special.type === null
+        && opts.runtime.isProviderNativeCommand?.(message.message.text) === true;
+      if (providerNativeCommand) {
+        pendingFreshSessionSystemPrompt ||= shouldApplyFreshSessionSystemPrompt;
+        shouldApplyFreshSessionSystemPrompt = false;
+      }
       const runProviderInputDispatch = async (
         dispatch: () => Promise<void>,
       ): Promise<'dispatched' | 'cancelled'> => {
@@ -1180,7 +1187,7 @@ export async function runPermissionModePromptLoop(opts: {
         activeCheckpointFinalStatus = 'unknown';
         const nowMs = Date.now();
         const dispatchAbortSignal = opts.getAbortSignal();
-        const resolvedReplaySeed = providerPromptAlreadyResolved
+        const resolvedReplaySeed = providerPromptAlreadyResolved || providerNativeCommand
           ? null
           : await resolveProviderPromptWithReplaySeed({
               session: opts.session,
@@ -1239,9 +1246,11 @@ export async function runPermissionModePromptLoop(opts: {
             providerPrompt: `${fittedSeedText}\n\n${message.message.text}`,
           };
         })();
-        const agentComposition = await opts.resolveAgentCompositionBeforeDispatch?.({
-          signal: dispatchAbortSignal,
-        });
+        const agentComposition = providerNativeCommand
+          ? undefined
+          : await opts.resolveAgentCompositionBeforeDispatch?.({
+              signal: dispatchAbortSignal,
+            });
         const effectiveAgentCompositionPrompt =
           typeof agentComposition?.prompt === 'string'
             ? agentComposition.prompt.trim()
@@ -1268,21 +1277,24 @@ export async function runPermissionModePromptLoop(opts: {
           effectiveAgentCompositionPrompt,
           seedResolution.providerPrompt,
         ].filter((part) => part.length > 0).join('\n\n');
-        const transformedDispatchPrompt = await transformAgentContextPromptBeforeDispatch({
-          transformAgentContextBeforeDispatch: opts.transformAgentContextBeforeDispatch,
-          errorPolicy: opts.transformAgentContextErrorPolicy,
-          sessionId: opts.session.sessionId,
-          agentId: opts.agentMessageType,
-          prompt: providerPrompt,
-          timestampMs: nowMs,
-        });
+        const transformedDispatchPrompt = providerNativeCommand
+          ? message.message.text
+          : await transformAgentContextPromptBeforeDispatch({
+              transformAgentContextBeforeDispatch: opts.transformAgentContextBeforeDispatch,
+              errorPolicy: opts.transformAgentContextErrorPolicy,
+              sessionId: opts.session.sessionId,
+              agentId: opts.agentMessageType,
+              prompt: providerPrompt,
+              timestampMs: nowMs,
+            });
         // Composer references and attachments carry durable identity only, so their current
         // provider projection is reconstructed here — at the single host dispatch choke
         // point, after the queue has drained and immediately before the provider call.
         // Resolving at admission would freeze a snapshot for however long the message sits
         // in the permission-mode queue.
         const composerAttachmentDispatch =
-          typeof opts.resolveComposerAttachmentForDispatch === 'function'
+          !providerNativeCommand
+          && typeof opts.resolveComposerAttachmentForDispatch === 'function'
           && localIds.length === 1
           && localId !== null
             ? {
@@ -1305,7 +1317,7 @@ export async function runPermissionModePromptLoop(opts: {
                 signal: dispatchAbortSignal,
               }
             : undefined;
-        const resolvedDispatchContext = await resolveStructuredInputProviderDispatchContext({
+        const resolvedDispatchContext = providerNativeCommand ? null : await resolveStructuredInputProviderDispatchContext({
           structuredInput: message.message.structuredInput,
           sessionMedia: message.message.sessionMedia,
           catalogs: {
@@ -1334,11 +1346,13 @@ export async function runPermissionModePromptLoop(opts: {
             );
           },
         });
-        const dispatchPrompt = renderSessionInputContextPromptV1({
-          provenanceBlock: message.message.inputContextBlock ?? '',
-          ...resolvedDispatchContext.promptContext,
-          transformedUserText: transformedDispatchPrompt,
-        });
+        const dispatchPrompt = providerNativeCommand
+          ? message.message.text
+          : renderSessionInputContextPromptV1({
+              provenanceBlock: message.message.inputContextBlock ?? '',
+              ...resolvedDispatchContext!.promptContext,
+              transformedUserText: transformedDispatchPrompt,
+            });
 
         await runCheckpointHook(() => opts.checkpointLifecycle?.onBeforePromptDispatch?.({
           messageId: currentCheckpointMessageId!,
@@ -1351,7 +1365,7 @@ export async function runPermissionModePromptLoop(opts: {
             selection: opts.readActiveModelSelection(),
           });
         }
-        const resolvedStructuredInput = resolvedDispatchContext.structuredInput;
+        const resolvedStructuredInput = resolvedDispatchContext?.structuredInput;
         const promptDeliveryMeta = {
           ...(localId === null ? {} : { localId }),
           ...(localIds.length === 0 ? {} : { localIds }),
