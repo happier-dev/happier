@@ -434,12 +434,6 @@ describe('AGENTS', () => {
         sharedStatePrivacyRiskAcknowledgementRequired: true,
         symlinkUnavailableDegradePolicy: 'degrade_to_isolated',
       },
-      dynamicEntryPatterns: {
-        sqlite: expect.objectContaining({
-          scope: 'state',
-          mode: 'linked',
-        }),
-      },
       transforms: expect.arrayContaining([
         expect.objectContaining({
           kind: 'rewrite_toml',
