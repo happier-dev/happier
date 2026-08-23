@@ -610,6 +610,7 @@ export class PiRpcBackend implements AgentBackend {
   private process: ChildProcessWithoutNullStreams | null = null;
   private appendSystemPromptArtifact: ProtectedTempTextArtifact | null = null;
   private toolsBridgeConfigArtifact: ProtectedTempTextArtifact | null = null;
+  private readonly availableCommandNames = new Set<string>();
   private stdoutLineReader: PiRpcJsonlLineReader | null = null;
   private stderrLineReader: PiRpcJsonlLineReader | null = null;
   private readonly messageHandlers = new Set<AgentMessageHandler>();
@@ -940,6 +941,13 @@ export class PiRpcBackend implements AgentBackend {
     await this.sendPromptWithAdmission(sessionId, prompt).completion;
   }
 
+  isProviderNativeCommand(prompt: string): boolean {
+    const trimmed = prompt.trimStart();
+    if (!trimmed.startsWith('/')) return false;
+    const name = trimmed.slice(1).split(/\s/u, 1)[0]?.trim().toLowerCase() ?? '';
+    return name.length > 0 && this.availableCommandNames.has(name);
+  }
+
   async sendPromptWithEvidence(
     sessionId: SessionId,
     prompt: string,
@@ -1036,7 +1044,9 @@ export class PiRpcBackend implements AgentBackend {
       }
 
       await this.ensureConnectedBrokerReadyForProviderCommand();
+      const providerNativeCommand = this.isProviderNativeCommand(message);
       const turn = this.createPendingTurn(this.getPendingTurnStallTimeoutMs());
+      const pendingTurn = this.pendingTurn;
       providerSendAttempted = true;
       try {
         await this.sendCommand({ type: 'prompt', message }, 30_000, { processAlreadyEnsured: true });
@@ -1050,6 +1060,22 @@ export class PiRpcBackend implements AgentBackend {
         throw promptError;
       }
       settleAdmission({ status: 'accepted' });
+      if (
+        providerNativeCommand
+        && pendingTurn
+        && this.pendingTurn === pendingTurn
+        && !pendingTurn.agentStartObserved
+      ) {
+        const state = await this.getState().catch(() => null);
+        if (
+          this.pendingTurn === pendingTurn
+          && !pendingTurn.agentStartObserved
+          && state?.isStreaming !== true
+          && state?.isCompacting !== true
+        ) {
+          this.resolvePendingTurn();
+        }
+      }
       await turn;
       return;
     } catch (error) {
@@ -2866,6 +2892,7 @@ export class PiRpcBackend implements AgentBackend {
       },
     });
 
+    this.availableCommandNames.clear();
     try {
       const commands = await this.getCommands();
       const commandList = Array.isArray(commands.commands) ? commands.commands : [];
@@ -2881,6 +2908,11 @@ export class PiRpcBackend implements AgentBackend {
           };
         })
         .filter((entry): entry is { name: string; description?: string } => entry !== null);
+
+      for (const command of availableCommands) {
+        const name = command.name.slice(1).trim().toLowerCase();
+        if (name) this.availableCommandNames.add(name);
+      }
 
       this.emitMessage({
         type: 'event',

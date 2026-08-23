@@ -133,6 +133,12 @@ export interface AgentBackend {
   sendPromptPayload?(sessionId: SessionId, payload: AgentPromptPayload): Promise<void>;
 
   /**
+   * Whether the text addresses a command advertised by the live provider session.
+   * Providers without a native command catalog omit this method.
+   */
+  isProviderNativeCommand?(prompt: string): boolean;
+
+  /**
    * Trigger provider-native context compaction when supported.
    *
    * Backends that expose a native control command should implement this instead of relying
