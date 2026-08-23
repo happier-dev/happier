@@ -471,6 +471,8 @@ import {
 } from './engine/socket/socket';
 
 const SESSION_LIST_BACKGROUND_HYDRATION_SCROLL_SETTLE_MS = 180;
+const WEB_INITIAL_SESSION_MESSAGES_PAGE_SIZE = 12;
+const WEB_INITIAL_SESSION_HISTORY_BACKFILL_DELAY_MS = 250;
 
 /**
  * How long a successful `/v1/version` answer stays fresh.
@@ -5138,6 +5140,9 @@ class Sync {
               await fetchAndApplyMessages({
                   sessionId,
                   sessionEncryptionMode,
+                  limit: Platform.OS === 'web'
+                      ? WEB_INITIAL_SESSION_MESSAGES_PAGE_SIZE
+                      : this.getSessionMessagesPageSize(),
                   getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
                   isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
                   request: requestMessages,
@@ -5151,6 +5156,12 @@ class Sync {
                   ...this.getMessageDecryptBatchOptions(),
                   log,
               });
+              if (Platform.OS === 'web') {
+                  setTimeout(() => {
+                      if (!resolveSessionLiveConsumption(sessionId).isFullContentConsumer) return;
+                      void this.loadOlderMessages(sessionId);
+                  }, WEB_INITIAL_SESSION_HISTORY_BACKFILL_DELAY_MS);
+              }
               return;
           }
 
@@ -5188,7 +5199,9 @@ class Sync {
                       sessionId,
                       sessionEncryptionMode,
                       afterSeq: cursor,
-                      limit: this.getSessionMessagesPageSize(),
+                      limit: Platform.OS === 'web'
+                          ? WEB_INITIAL_SESSION_MESSAGES_PAGE_SIZE
+                          : this.getSessionMessagesPageSize(),
                       getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
                       isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
                       request: requestMessages,
@@ -5215,6 +5228,7 @@ class Sync {
                   await fetchAndApplyMessages({
                       sessionId,
                       sessionEncryptionMode,
+                      limit: this.getSessionMessagesPageSize(),
                       getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
                       isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
                       request: requestMessages,

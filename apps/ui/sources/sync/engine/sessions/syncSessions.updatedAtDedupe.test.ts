@@ -31,6 +31,29 @@ function buildPlainApiMessage(params: { id: string; seq: number; text: string })
 }
 
 describe('fetchAndApplyMessages (updatedAt dedupe)', () => {
+    it('adds an explicit limit to the initial transcript request', async () => {
+        const request = vi.fn(async () => new Response(JSON.stringify({
+            messages: [],
+            hasMore: false,
+            nextBeforeSeq: null,
+            nextAfterSeq: null,
+        }), { status: 200 }));
+
+        await fetchAndApplyMessages({
+            sessionId: 's1',
+            limit: 40,
+            getSessionEncryption: () => null,
+            request,
+            sessionReceivedMessages: new Map(),
+            applyMessages: vi.fn(),
+            markMessagesLoaded: vi.fn(),
+            log: { log: vi.fn() },
+            sessionEncryptionMode: 'plain',
+        });
+
+        expect(request).toHaveBeenCalledWith('/v1/sessions/s1/messages?scope=main&limit=40');
+    });
+
     afterEach(() => {
         syncPerformanceTelemetry.configure({ enabled: false });
         syncPerformanceTelemetry.reset();
