@@ -76,7 +76,7 @@ export function captureConsoleLogAndMuteStdout(): {
   restore: () => void
 } {
   const stdout = captureStdout()
-  const logs: string[] = []
+  const logs = stdout.chunks
   const logSpy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
     logs.push(formatConsoleArgs(args))
   })

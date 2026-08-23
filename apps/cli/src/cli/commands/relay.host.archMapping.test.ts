@@ -166,7 +166,17 @@ describe('happier relay host arch resolution', () => {
         const fakeSsh = createFakeSsh({
             outputs: [
                 { status: 0, stdout: `${JSON.stringify({ platform: 'linux', arch: 'aarch64' })}\n` },
-                { status: 0, stdout: 'yes\n' },
+                { status: 0 },
+                { status: 0 },
+                {
+                    status: 0,
+                    stdout: `${JSON.stringify({
+                        v: 1,
+                        ok: true,
+                        kind: 'relay_host_install',
+                        data: { relayUrl: 'http://127.0.0.1:5353', mode: 'user' },
+                    })}\n`,
+                },
             ],
         });
 
@@ -191,8 +201,10 @@ describe('happier relay host arch resolution', () => {
             expect(preparedRoots.some((root) => root.includes('happier-first-party-mock-arm64-'))).toBe(true);
 
             const parsed = JSON.parse(output.logs.join('\n').trim());
-            expect(parsed.ok).toBe(true);
-            expect(parsed.kind).toBe('relay_host_install');
+            expect(parsed).toMatchObject({
+                ok: true,
+                kind: 'relay_host_install',
+            });
         } finally {
             output.restore();
             process.exitCode = prevExitCode;

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 
 import { reloadConfiguration } from '@/configuration';
 import { getActiveServerProfile } from '@/server/serverProfiles';
@@ -43,7 +43,16 @@ const next = outputs.length > 0 ? outputs.shift() : { status: 0, stdout: '', std
 state.outputs = outputs;
 writeFileSync(statePath, JSON.stringify(state), 'utf8');
 
-if (next.stdout) process.stdout.write(String(next.stdout));
+const isRelayHostInstall = argv.some((part) => String(part).includes(' relay host install '));
+const stdout = Number(next.status ?? 0) === 0 && isRelayHostInstall && !String(next.stdout ?? '').trim()
+  ? JSON.stringify({
+      v: 1,
+      ok: true,
+      kind: 'relay_host_install',
+      data: { relayUrl: 'http://127.0.0.1:3005', mode: 'user' },
+    }) + '\\n'
+  : next.stdout;
+if (stdout) process.stdout.write(String(stdout));
 if (next.stderr) process.stderr.write(String(next.stderr));
 process.exit(Number(next.status ?? 0));
 `,
@@ -503,7 +512,7 @@ describe('happier relay --json', () => {
             expect(parsed.kind).toBe('relay_host_install');
 
             const invocations = fakeSsh.readInvocations().map((invocation) => invocation.join(' '));
-            expect(invocations.some((invocation) => invocation.includes('happier-server-preview.service'))).toBe(true);
+            expect(invocations.some((invocation) => invocation.includes('relay host install') && invocation.includes('preview'))).toBe(true);
         } finally {
             output.restore();
             process.exitCode = prevExitCode;
@@ -913,7 +922,8 @@ describe('happier relay --json', () => {
             expect(parsed.ok).toBe(true);
             expect(parsed.kind).toBe('relay_host_install');
             expect(parsed.data?.relayUrl).toBe('http://127.0.0.1:3005');
-            expect(scpInvocations.some((invocation) => invocation.some((part) => part.includes(`happier-server-${basename(serverPayloadRoot)}-`)))).toBe(true);
+            expect(scpInvocations).toHaveLength(2);
+            expect(scpInvocations.some((invocation) => invocation.some((part) => part.includes('happier-server-local-')))).toBe(true);
             expect(scpInvocations.some((invocation) => invocation.some((part) => part.includes('happier-server-test-ssh-server-override-1-')))).toBe(false);
             expect(process.exitCode).toBe(0);
         } finally {
@@ -973,8 +983,8 @@ describe('happier relay --json', () => {
             const scpInvocations = fakeSsh.readInvocations().filter((invocation) => invocation[0] === 'scp');
             expect(parsed.ok).toBe(true);
             expect(parsed.kind).toBe('relay_host_install');
-            expect(scpInvocations.some((invocation) => invocation.some((part) => part.includes(`happier-server-${basename(serverPayloadRoot)}-`)))).toBe(true);
-            expect(scpInvocations.some((invocation) => invocation.some((part) => part.includes(`happier-server-${basename(serverBinDir)}-`)))).toBe(false);
+            expect(scpInvocations).toHaveLength(2);
+            expect(scpInvocations.some((invocation) => invocation.some((part) => part.includes('happier-server-local-')))).toBe(true);
             expect(process.exitCode).toBe(0);
         } finally {
             output.restore();
