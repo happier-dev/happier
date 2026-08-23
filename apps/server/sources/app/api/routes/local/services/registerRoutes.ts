@@ -78,7 +78,8 @@ export type LocalServiceRouteSessionAccessPurpose =
     | LocalServicePreviewSessionAccessPurpose
     | "public_exposure"
     | "public_revoke"
-    | "public_status";
+    | "public_status"
+    | "public_access";
 
 export type LocalServiceRouteSessionAccessAuthorizer = (input: Readonly<{
     userId: string;
@@ -148,6 +149,8 @@ export function createLocalServiceRouteRuntimes(env: NodeJS.ProcessEnv): LocalSe
         preview,
         public: createLocalServicePublicRuntime({
             publicBaseUrl,
+            // S-3: public exposures are minted on their own isolated origin under this domain.
+            hostOriginBaseDomain: featureEnv.previewHostOriginBaseDomain,
             tokenSecret: resolvePublicTokenSecret(env),
             policy: featureEnv.publicPolicy,
             resolvePreview: (previewId) => preview.resolvePreview(previewId),
@@ -161,6 +164,10 @@ export function resolveLocalServiceRouteRequiredAccessLevel(
     purpose: LocalServiceRouteSessionAccessPurpose,
 ): AccessLevel {
     if (purpose === "proxy") return "view";
+    // S-2: reaching an `authenticated` exposure is a read of someone's session-bound service, so
+    // it needs the same level as the private preview data plane — not the `admin` level that
+    // creating or revoking the exposure needs.
+    if (purpose === "public_access") return "view";
     if (purpose === "public_exposure" || purpose === "public_revoke" || purpose === "public_status") return "admin";
     return "edit";
 }

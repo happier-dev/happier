@@ -1,11 +1,20 @@
 import {
     BROWSER_RECORDING_CAPTURE_PROFILES,
+    BrowserAutomationFidelityV1Schema,
+    BrowserAutomationImplementedActionKindV1Schema,
+    BrowserContextKindV1Schema,
+    BrowserDiagnosticFamilyV1Schema,
+    BrowserDiagnosticFidelityV1Schema,
+    BrowserPermissionKindV1Schema,
+    BrowserProfileStorageModeV1Schema,
+    BrowserRecordingRetentionClassV1Schema,
+    BrowserSemanticAdapterKindV1Schema,
+    BrowserViewTargetKindV1Schema,
     DEFAULT_BROWSER_AUTOMATION_CAPABILITIES,
     DEFAULT_BROWSER_CONTEXT_CAPABILITIES,
     DEFAULT_BROWSER_DIAGNOSTICS_CAPABILITIES,
     DEFAULT_BROWSER_RECORDING_CAPABILITIES,
     readServerEnabledBit,
-    type BrowserAutomationActionKindV1,
     type BrowserCapabilities,
     type FeaturesResponse,
 } from "@happier-dev/protocol";
@@ -15,99 +24,51 @@ import { readBrowserFeatureEnv, type BrowserFeatureEnv } from "./catalog/readFea
 
 const FEATURE_DISABLED_REASON = "feature_disabled";
 
-const BROWSER_TARGET_KINDS = [
-    "localServicePreview",
-    "hostedPluginWeb",
-    "externalUrl",
-    "simulatorPreview",
-] as const;
+/**
+ * G19: every published browser enum is derived from the protocol schema that owns it. The server
+ * previously hand-maintained nine copies of these lists; only one carried a type tie, and that tie
+ * (`as const satisfies readonly T[]`) rejects an invalid member while being completely blind to an
+ * omitted one. `BROWSER_TARGET_KINDS` had already drifted — it omitted `streamedBrowser`, which the
+ * protocol declares — and the automation list silently stopped publishing every verb added to the
+ * action union after it was written.
+ *
+ * Reading `.options` off the owning schema removes the copy outright: a member added to the protocol
+ * is published automatically, and a member removed from it stops being published. The two places
+ * where the server must publish *less* than the protocol declares are expressed as a checked
+ * `.exclude(...)` with the reason, so the exclusion is a decision on the record rather than an
+ * omission nobody notices.
+ */
 
-const BROWSER_ADAPTER_KINDS = [
-    "localPreview",
-    "hostedPlugin",
-    "externalUrl",
-    "chromiumSidecar",
-    "streamedBrowserSurface",
-    "simulatorPreview",
-] as const;
+/**
+ * `streamedBrowser` is deliberately withheld: there is no streamed renderer or producer for the
+ * human browser view surface, which is the same fact `streamedSurfaceAvailable: false` publishes
+ * below. Headless managed Chromium is represented by the `sidecar` + `automation` capabilities.
+ */
+const BROWSER_TARGET_KINDS = BrowserViewTargetKindV1Schema.exclude(["streamedBrowser"]).options;
 
-const BROWSER_PERMISSION_KINDS = [
-    "origin",
-    "downloads",
-    "uploads",
-    "clipboard",
-    "camera",
-    "microphone",
-    "fileAccess",
-    "popups",
-    "browserUse",
-] as const;
+const BROWSER_ADAPTER_KINDS = BrowserSemanticAdapterKindV1Schema.options;
 
-const BROWSER_DIAGNOSTIC_FAMILIES = [
-    "console",
-    "pageError",
-    "network",
-    "elements",
-    "resources",
-    "storage",
-    "pageInfo",
-    "performance",
-    "screenshot",
-    "proxyTunnel",
-] as const;
+const BROWSER_STORAGE_MODES = BrowserProfileStorageModeV1Schema.options;
 
-const BROWSER_DIAGNOSTIC_FIDELITIES = [
-    "cdp",
-    "previewProxy",
-    "injectedPage",
-    "nativeCallback",
-    "streamFrame",
-] as const;
+const BROWSER_PERMISSION_KINDS = BrowserPermissionKindV1Schema.options;
 
-const BROWSER_CONTEXT_KINDS = [
-    "browserPageReference",
-    "browserScreenshot",
-    "browserTextSelection",
-    "browserPageTextSummary",
-    "browserDomSnapshotSummary",
-    "browserSelectedElement",
-    "browserAnnotation",
-    "browserRecordingEvidence",
-    "browserNetworkSummary",
-    "browserConsoleSummary",
-] as const;
+const BROWSER_DIAGNOSTIC_FAMILIES = BrowserDiagnosticFamilyV1Schema.options;
 
-const BROWSER_AUTOMATION_ACTIONS = [
-    "getStatus",
-    "snapshot",
-    "semanticSnapshot",
-    "queryElements",
-    "getDiagnosticsSummary",
-    "getActionTimeline",
-    "waitFor",
-    "navigate",
-    "reload",
-    "goBack",
-    "goForward",
-    "click",
-    "tap",
-    "type",
-    "press",
-    "scroll",
-    "hover",
-    "focus",
-    "select",
-    "setValue",
-] as const satisfies readonly BrowserAutomationActionKindV1[];
+/** `unavailable` is the absent-fidelity sentinel, not a fidelity the server can offer. */
+const BROWSER_DIAGNOSTIC_FIDELITIES = BrowserDiagnosticFidelityV1Schema.exclude(["unavailable"]).options;
 
-const BROWSER_AUTOMATION_FIDELITIES = [
-    "cdp",
-    "nativeWebView",
-    "injectedPage",
-    "previewProxy",
-    "streamedSurface",
-    "webIframe",
-] as const;
+const BROWSER_CONTEXT_KINDS = BrowserContextKindV1Schema.options;
+
+/**
+ * The action union minus the verbs the daemon answers with `not_implemented`. Both sides read the
+ * one protocol-owned list, so a verb can never be refused by the daemon while advertised here.
+ */
+const BROWSER_AUTOMATION_ACTIONS = BrowserAutomationImplementedActionKindV1Schema.options;
+
+/** `unavailable` is the absent-fidelity sentinel, not a fidelity the server can offer. */
+const BROWSER_AUTOMATION_FIDELITIES = BrowserAutomationFidelityV1Schema.exclude(["unavailable"]).options;
+
+const BROWSER_RECORDING_RETENTION_CLASSES = BrowserRecordingRetentionClassV1Schema.options;
 
 function uniqueProfileValues<T extends string>(values: Iterable<T>): T[] {
     return [...new Set(values)];
@@ -124,14 +85,6 @@ const BROWSER_RECORDING_ADAPTER_KINDS = uniqueProfileValues(
 const BROWSER_RECORDING_MIME_TYPES = uniqueProfileValues(
     BROWSER_RECORDING_CAPTURE_PROFILES.flatMap((profile) => profile.mimeTypes),
 );
-
-const BROWSER_RECORDING_RETENTION_CLASSES = [
-    "preSend",
-    "attached",
-    "clearOnClose",
-    "clearOnSend",
-    "diagnosticsOnly",
-] as const;
 
 function disabledReasons(enabled: boolean): string[] {
     return enabled ? [] : [FEATURE_DISABLED_REASON];
@@ -165,7 +118,7 @@ function resolveBrowserCapabilities(config: BrowserFeatureEnv): BrowserCapabilit
         },
         internal: {
             enabled: internalEnabled,
-            supportedStorageModes: valuesWhenEnabled(internalEnabled, ["ephemeral", "session", "user", "plugin"] as const),
+            supportedStorageModes: valuesWhenEnabled(internalEnabled, BROWSER_STORAGE_MODES),
             supportedPermissionKinds: valuesWhenEnabled(internalEnabled, BROWSER_PERMISSION_KINDS),
             disabledReasons: disabledReasons(internalEnabled),
         },

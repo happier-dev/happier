@@ -29,6 +29,11 @@ import { LaunchTargetStatusDot } from './ServiceStatusDot';
 export type ServiceRowOpenHandler = (target: LocalServiceLaunchTarget) => void | Promise<unknown>;
 export type ServiceRowStartHandler = (target: LocalServiceLaunchTarget) => void | Promise<unknown>;
 export type ServiceRowTerminateHandler = (target: LocalServiceLaunchTarget) => void | Promise<unknown>;
+export type ServiceRowForgetHandler = (target: LocalServiceLaunchTarget) => void | Promise<unknown>;
+export type ServiceRowCopyUrlHandler = (
+    target: LocalServiceLaunchTarget,
+    value: string,
+) => Promise<boolean>;
 
 const stylesheet = StyleSheet.create((theme) => ({
     titleRow: {
@@ -138,16 +143,24 @@ function ServiceRowTitle(props: Readonly<{
 
 function ServiceAddressFact(props: Readonly<{
     addressValue: string;
+    target: LocalServiceLaunchTarget;
+    onCopyServiceUrl?: ServiceRowCopyUrlHandler;
     testID: string;
 }>): React.ReactElement {
     const styles = stylesheet;
     const copyFeedback = useTemporaryCopyFeedback();
+    const { addressValue, onCopyServiceUrl, target } = props;
     const copyAddress = React.useCallback(async () => {
-        const copied = await setClipboardStringSafe(props.addressValue);
+        // G14: one owner for "copy a local service URL". The handler dispatches the audited
+        // `localServices.actions.copyUrl` where the row has a target the action can address, so the
+        // button no longer bypasses the policy that exists for exactly this.
+        const copied = onCopyServiceUrl
+            ? await onCopyServiceUrl(target, addressValue)
+            : await setClipboardStringSafe(addressValue);
         if (copied) {
             copyFeedback.markCopied('address');
         }
-    }, [copyFeedback, props.addressValue]);
+    }, [addressValue, copyFeedback, onCopyServiceUrl, target]);
     return (
         <View style={styles.factRow}>
             <Text style={styles.factText}>{t('localServices.inventory.address', { value: props.addressValue })}</Text>
@@ -169,7 +182,11 @@ function ServiceAddressFact(props: Readonly<{
     );
 }
 
-function ServiceRowFacts(props: Readonly<{ row: ServiceRow; testID: string }>): React.ReactElement {
+function ServiceRowFacts(props: Readonly<{
+    row: ServiceRow;
+    onCopyServiceUrl?: ServiceRowCopyUrlHandler;
+    testID: string;
+}>): React.ReactElement {
     const styles = stylesheet;
     const { row } = props;
     const reason = row.reasonCode
@@ -181,7 +198,12 @@ function ServiceRowFacts(props: Readonly<{ row: ServiceRow; testID: string }>): 
     return (
         <View style={styles.facts}>
             {addressValue ? (
-                <ServiceAddressFact addressValue={addressValue} testID={props.testID} />
+                <ServiceAddressFact
+                    addressValue={addressValue}
+                    target={row.target}
+                    onCopyServiceUrl={props.onCopyServiceUrl}
+                    testID={props.testID}
+                />
             ) : null}
             {row.workspaceLabel ? (
                 <Text style={styles.factText}>{t('localServices.inventory.workspace', { value: row.workspaceLabel })}</Text>
@@ -213,6 +235,8 @@ export function ServiceRowView(props: Readonly<{
     onOpenServiceInBrowser?: ServiceRowOpenHandler;
     onStartLauncherTarget?: ServiceRowStartHandler;
     onTerminateDetectedService?: ServiceRowTerminateHandler;
+    onForgetDetectedService?: ServiceRowForgetHandler;
+    onCopyServiceUrl?: ServiceRowCopyUrlHandler;
     onStopManagedService?: ManagedLocalServiceStopHandler;
     onRestartManagedService?: ManagedLocalServiceRestartHandler;
     publicPreviewState?: LocalServicePublicPreviewState | null;
@@ -237,6 +261,10 @@ export function ServiceRowView(props: Readonly<{
     const canTerminate = row.target.source === 'inventory_entry'
         && row.target.actions.includes('terminate_detected')
         && Boolean(props.onTerminateDetectedService);
+    // `forget` hides a detected row; it needs no daemon capability bit because the registry
+    // suppression is always available for an inventory entry.
+    const canForget = row.target.source === 'inventory_entry'
+        && Boolean(props.onForgetDetectedService);
 
     const handleOpen = React.useCallback(() => (
         primary?.kind === 'open' ? props.onOpenServiceInBrowser?.(primary.openTarget) : undefined
@@ -266,12 +294,16 @@ export function ServiceRowView(props: Readonly<{
             await props.onTerminateDetectedService(row.target);
         }
     }, [props, row.target, row.title]);
+    const handleForget = React.useCallback(async () => {
+        if (!props.onForgetDetectedService) return;
+        await props.onForgetDetectedService(row.target);
+    }, [props, row.target]);
     const handleRestart = React.useCallback(
         () => (managed ? props.onRestartManagedService?.(managed) : undefined),
         [managed, props],
     );
 
-    const hasActions = canOpen || canStart || canTerminate || canRestart || canStop;
+    const hasActions = canOpen || canStart || canTerminate || canForget || canRestart || canStop;
     const showPublicPreview = targetHasPublicPreviewState(row.target)
         && Boolean(props.publicPreviewState)
         && Boolean(props.publicPreviewActions);
@@ -283,7 +315,13 @@ export function ServiceRowView(props: Readonly<{
                 title={(
                     <ServiceRowTitle row={row} animationEnabled={props.animationEnabled} testID={props.testID} />
                 )}
-                subtitle={<ServiceRowFacts row={row} testID={props.testID} />}
+                subtitle={(
+                    <ServiceRowFacts
+                        row={row}
+                        onCopyServiceUrl={props.onCopyServiceUrl}
+                        testID={props.testID}
+                    />
+                )}
                 subtitleLines={0}
                 mode="info"
                 showChevron={false}
@@ -323,6 +361,16 @@ export function ServiceRowView(props: Readonly<{
                                         tone="danger"
                                         animationEnabled={props.animationEnabled}
                                         onPress={handleTerminate}
+                                    />
+                                ) : null}
+                                {canForget ? (
+                                    <IconButton
+                                        testID={`${props.testID}-forget`}
+                                        iconName="eye-slash"
+                                        accessibilityLabel={t('localServices.actions.forgetA11y')}
+                                        tooltip={t('localServices.actions.forgetA11y')}
+                                        animationEnabled={props.animationEnabled}
+                                        onPress={handleForget}
                                     />
                                 ) : null}
                                 {canRestart ? (

@@ -33,8 +33,13 @@ export type PeerMediationObservabilityScopeState = Readonly<{
     scope: PeerMediationObservabilityScopeV1;
     scopeKey: string;
     status: PeerMediationObservabilityScopeStatus;
+    /**
+     * A sequence gap or scope mismatch was observed, so this scope's flows may be incomplete until a
+     * fresh snapshot lands. PMS-9 REQ "resubscribe-on-gap" is NOT implemented: nothing re-emits
+     * `subscribe`. The predecessor carried a second boolean, `resubscribeRequired`, that was assigned
+     * exactly this value at all five write sites and read by nothing — one concept, two fields.
+     */
     stale: boolean;
-    resubscribeRequired: boolean;
     unavailableReasonCode: string | null;
     lastAppliedSequenceBySource: Partial<Record<PeerMediationObservabilitySource, number>>;
     staleSourceBySource: Partial<Record<PeerMediationObservabilitySource, boolean>>;

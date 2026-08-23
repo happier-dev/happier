@@ -28,15 +28,15 @@ function mergeProcessFact(
     if (!current) return next;
     const ppid = next.ppid ?? current.ppid;
     const processStartTimeMs = next.processStartTimeMs ?? current.processStartTimeMs;
-    const executablePath = next.executablePath ?? current.executablePath;
     const cwd = next.cwd ?? current.cwd;
+    const processOwnership = next.processOwnership ?? current.processOwnership;
     return {
         pid: current.pid,
         ...(ppid ? { ppid } : {}),
         ...(typeof processStartTimeMs === 'number' ? { processStartTimeMs } : {}),
         command: next.command && next.command !== 'unknown' ? next.command : current.command,
-        ...(executablePath ? { executablePath } : {}),
         ...(cwd ? { cwd } : {}),
+        ...(processOwnership ? { processOwnership } : {}),
     };
 }
 

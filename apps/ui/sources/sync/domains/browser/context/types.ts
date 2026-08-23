@@ -8,6 +8,7 @@ import type {
     BrowserContextKindV1,
     BrowserContextLifecycleStateV1,
     BrowserDiagnosticsElementPickerResultV1,
+    BrowserDiagnosticsElementSourceLocationV1,
     BrowserScreenshotMediaReferenceV1,
     BrowserViewTargetV1,
 } from '@happier-dev/protocol';

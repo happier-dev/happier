@@ -285,7 +285,7 @@ export const INJECTED_ELEMENTS_RUNTIME = `
         try {
           window[originals[restoreIndex].kind] = originals[restoreIndex].original;
         } catch (_error) {
-          // A page that froze `window.alert` keeps our stub; nothing else we can do.
+          // A page that froze 'window.alert' keeps our stub; nothing else we can do.
         }
       }
       automationDialogLog = null;
@@ -524,7 +524,7 @@ export const INJECTED_ELEMENTS_RUNTIME = `
     if (!descriptor || typeof descriptor !== 'object') return null;
     var name = String(descriptor.name || 'upload.bin').slice(0, 255);
     var mimeType = String(descriptor.mimeType || 'application/octet-stream').slice(0, 128);
-    // `text` is the only content field: the egress redactor already reduces that key to a length,
+    // 'text' is the only content field: the egress redactor already reduces that key to a length,
     // so uploaded content can never reach a timeline. Binary is carried base64-encoded in it.
     var text = typeof descriptor.text === 'string' ? descriptor.text : '';
     try {

@@ -96,3 +96,59 @@ export function createDaemonPeerMediationFlowEvent(input: Readonly<{
         },
     });
 }
+
+/**
+ * Scope-bound flow observer for the DIRECT routes (P1-9).
+ *
+ * Before this, the observability emitter reached only the two relay terminators, so the direct
+ * loopback route — the substrate's entire reason to exist — produced no observability facts at all:
+ * a user could open a direct tunnel, RPC call or live stream and the flow list stayed empty.
+ *
+ * The route registrars sit behind one composition root (`createPeerMediationLoopbackApp`), which
+ * already knows the account, machine, route kind and clock, so the binding happens once there and
+ * each registrar keeps one-line emit calls. When no emitter is supplied the observer is inert, so
+ * registrars need no null checks and narrow unit callers are unaffected.
+ */
+export type DaemonPeerMediationDirectFlowObserver = Readonly<{
+    emit(input: Readonly<{
+        flowKind: PeerFlowKindV1;
+        flowId: string;
+        kind: PeerMediationObservabilityEventKindV1;
+        reasonCode?: string;
+        routeGrantId?: string;
+        bytesIn?: number;
+        bytesOut?: number;
+        metadata?: Readonly<Record<string, unknown>>;
+    }>): void;
+}>;
+
+const INERT_DIRECT_FLOW_OBSERVER: DaemonPeerMediationDirectFlowObserver = { emit: () => undefined };
+
+export function createDaemonPeerMediationDirectFlowObserver(input: Readonly<{
+    observability?: DaemonPeerMediationObservabilityEmitter | undefined;
+    accountId: string;
+    machineId: string;
+    routeKind: PeerRouteKindV1;
+    nowMs: () => number;
+}>): DaemonPeerMediationDirectFlowObserver {
+    const emitter = input.observability;
+    if (!emitter) return INERT_DIRECT_FLOW_OBSERVER;
+    return {
+        emit: (event) => {
+            emitter.emit(createDaemonPeerMediationFlowEvent({
+                accountId: input.accountId,
+                machineId: input.machineId,
+                flowKind: event.flowKind,
+                flowId: event.flowId,
+                kind: event.kind,
+                nowMs: input.nowMs(),
+                routeKind: input.routeKind,
+                ...(event.reasonCode ? { reasonCode: event.reasonCode } : {}),
+                ...(event.routeGrantId ? { routeGrantId: event.routeGrantId } : {}),
+                ...(event.bytesIn !== undefined ? { bytesIn: event.bytesIn } : {}),
+                ...(event.bytesOut !== undefined ? { bytesOut: event.bytesOut } : {}),
+                ...(event.metadata ? { metadata: event.metadata } : {}),
+            }));
+        },
+    };
+}

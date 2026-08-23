@@ -240,13 +240,25 @@ describe("local services server feature resolver", () => {
 
     it.each([
         {
-            name: "audit disabled",
+            // OE-4: `…__AUDIT_REQUIRED` is gone; a durable audit sink is unconditional, so the
+            // observable dependency is the sink itself.
+            name: "audit sink missing",
             env: {
-                HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__AUDIT_REQUIRED: "0",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_PROFILE_IDS: "default",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_RATE_LIMIT_CHECKER: "1",
             },
-            reason: "audit_required_disabled",
+            reason: "audit_sink_unavailable",
+        },
+        {
+            // S-3: an isolated exposure origin is a hard prerequisite, independent of
+            // `…__DNS_TLS_REQUIRED`, because `createExposure` now refuses without one.
+            name: "isolated exposure origin unavailable",
+            env: {
+                HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_AUDIT_SINK: "1",
+                HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_PROFILE_IDS: "default",
+                HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_RATE_LIMIT_CHECKER: "1",
+            },
+            reason: "dns_tls_unavailable",
         },
         {
             name: "maximum TTL missing",

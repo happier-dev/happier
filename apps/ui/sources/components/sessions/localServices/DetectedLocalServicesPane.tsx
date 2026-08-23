@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -32,6 +33,8 @@ import type {
 } from './ManagedLocalServiceRow';
 import {
     ServiceRowView,
+    type ServiceRowCopyUrlHandler,
+    type ServiceRowForgetHandler,
     type ServiceRowOpenHandler,
     type ServiceRowStartHandler,
     type ServiceRowTerminateHandler,
@@ -64,6 +67,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginBottom: 4,
         flexDirection: 'row',
         alignItems: 'center',
+        gap: 8,
+    },
+    countBadgeSpacer: {
+        flex: 1,
     },
     countBadgeText: {
         ...Typography.tabular(),
@@ -84,6 +91,9 @@ const BAND_ORDER: readonly ServiceRowScope[] = ['thisSession', 'workspace', 'mac
 function ServiceCountBadge(props: Readonly<{
     total: number;
     running: number;
+    isRefreshing: boolean;
+    onRefresh?: (() => void) | undefined;
+    animationEnabled?: boolean;
     testID: string;
 }>): React.ReactElement {
     const styles = stylesheet;
@@ -92,6 +102,23 @@ function ServiceCountBadge(props: Readonly<{
             <Text style={styles.countBadgeText}>
                 {t('localServices.inventory.countBadge', { total: String(props.total), running: String(props.running) })}
             </Text>
+            {props.onRefresh ? (
+                <>
+                    <View style={styles.countBadgeSpacer} />
+                    <IconButton
+                        testID={`${props.testID}-refresh`}
+                        iconName="arrow-clockwise"
+                        accessibilityLabel={t('common.refresh')}
+                        tooltip={t('common.refresh')}
+                        size={28}
+                        iconSize={14}
+                        variant="plain"
+                        disabled={props.isRefreshing}
+                        animationEnabled={props.animationEnabled}
+                        onPress={props.onRefresh}
+                    />
+                </>
+            ) : null}
         </View>
     );
 }
@@ -145,8 +172,15 @@ export function DetectedLocalServicesPane(props: Readonly<{
     onRestartManagedService?: ManagedLocalServiceRestartHandler;
     onStartLauncherTarget?: ServiceRowStartHandler;
     onTerminateDetectedService?: ServiceRowTerminateHandler;
+    onForgetDetectedService?: ServiceRowForgetHandler;
+    onCopyServiceUrl?: ServiceRowCopyUrlHandler;
     onOpenServiceInBrowser?: ServiceRowOpenHandler;
     publicPreviewActions?: LocalServicePublicPreviewActions;
+    /**
+     * User-initiated re-read. Freshness is normally pushed by the daemon inventory watch; this is
+     * the explicit control and the recovery path when that watch is unavailable.
+     */
+    onRefresh?: () => void;
     testID?: string;
 }>): React.ReactElement {
     const testID = props.testID ?? 'detected-local-services-pane';
@@ -208,6 +242,8 @@ export function DetectedLocalServicesPane(props: Readonly<{
             onOpenServiceInBrowser={props.onOpenServiceInBrowser}
             onStartLauncherTarget={props.onStartLauncherTarget}
             onTerminateDetectedService={props.onTerminateDetectedService}
+            onForgetDetectedService={props.onForgetDetectedService}
+            onCopyServiceUrl={props.onCopyServiceUrl}
             onStopManagedService={props.onStopManagedService}
             onRestartManagedService={props.onRestartManagedService}
             publicPreviewState={props.publicPreviewState}
@@ -217,6 +253,8 @@ export function DetectedLocalServicesPane(props: Readonly<{
         />
     ), [
         animationEnabled,
+        props.onCopyServiceUrl,
+        props.onForgetDetectedService,
         props.onOpenServiceInBrowser,
         props.onRestartManagedService,
         props.onStartLauncherTarget,
@@ -246,18 +284,26 @@ export function DetectedLocalServicesPane(props: Readonly<{
                 testID={`${testID}-empty`}
                 kind="empty"
                 title={t('localServices.inventory.emptyTitle')}
+                {...(props.onRefresh
+                    ? { action: { label: t('common.refresh'), onPress: props.onRefresh } }
+                    : {})}
             />
         );
     }
 
     if (viewModel.status === 'error' && !hasLauncherTargets) {
         const diagnosticCopy = firstInventoryDiagnosticCopy(viewModel.diagnostics);
+        // G16: a failed first read used to be terminal. The card's own primary-action slot is the
+        // retry, so the failure recovers through the same invalidation the refresh control uses.
         return (
             <SurfaceStateCard
                 testID={`${testID}-error`}
                 kind="error"
                 title={t('localServices.inventory.errorTitle')}
                 diagnosticCode={diagnosticCopy?.diagnosticCode}
+                {...(props.onRefresh
+                    ? { action: { label: t('common.retry'), onPress: props.onRefresh } }
+                    : {})}
             />
         );
     }
@@ -266,7 +312,14 @@ export function DetectedLocalServicesPane(props: Readonly<{
         <View testID={testID} style={styles.root}>
             <DiagnosticsBanner diagnostics={viewModel.diagnostics} testID={`${testID}-error`} />
             {counts.total > 0 ? (
-                <ServiceCountBadge total={counts.total} running={counts.running} testID={`${testID}-count-badge`} />
+                <ServiceCountBadge
+                    total={counts.total}
+                    running={counts.running}
+                    isRefreshing={viewModel.isRefreshing}
+                    onRefresh={props.onRefresh}
+                    animationEnabled={animationEnabled}
+                    testID={`${testID}-count-badge`}
+                />
             ) : null}
             {props.onChangeScope ? (
                 <ServicesScopeToggle

@@ -604,6 +604,80 @@ describe('daemon local-services runtime action executor', () => {
         expect(publicPreviewRoutes.getStatus).toHaveBeenCalledOnce();
     });
 
+    // INV-1 / DEC-2: the egress predicate resolves the SAME way as the consent layer — an
+    // unknown or missing surface is treated as agent-reachable, so the secret public URL is
+    // redacted rather than egressed raw. Previously this branch tested `surface === 'agent'`
+    // and handed the raw URL to every other value, including `undefined`.
+    it('redacts public-preview status URLs when the caller stamps no surface (fail closed)', async () => {
+        const mod = await import('./runtimeActionExecutor');
+
+        const publicPreviewRoutes = {
+            getStatus: vi.fn(async () => publicPreviewSnapshot),
+            createExposure: vi.fn(async () => ({
+                protocolVersion: 1 as const,
+                exposure: publicExposure,
+                snapshot: publicPreviewSnapshot,
+            })),
+            revokeExposure: vi.fn(async () => ({
+                protocolVersion: 1 as const,
+                exposureId: 'public_preview_1',
+                revokedAt: 3_100,
+                snapshot: publicPreviewSnapshot,
+            })),
+            copyUrl: vi.fn(),
+        };
+        const execute = mod.createLocalServicesDaemonRuntimeActionExecutor({
+            featureGate: allowAllFeatureGate,
+            routes: { publicPreviewRoutes } as never,
+        });
+
+        const unattributed = await execute(runtimeArgs({
+            actionId: 'localServices.publicPreview.status',
+            input: { machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1' },
+        })) as LocalServicePublicPreviewSnapshotV1;
+        expect(unattributed.exposures[0]?.publicUrl).toBe(REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL);
+
+        const unknownSurface = await execute(runtimeArgs({
+            actionId: 'localServices.publicPreview.status',
+            input: { machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1' },
+            context: { surface: 'not_a_surface' as never },
+        })) as LocalServicePublicPreviewSnapshotV1;
+        expect(unknownSurface.exposures[0]?.publicUrl).toBe(REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL);
+
+        const createResult = await execute(runtimeArgs({
+            actionId: 'localServices.publicPreview.create',
+            input: {
+                machineId: 'machine_1',
+                sessionId: 'session_1',
+                previewId: 'preview_1',
+                mode: 'secret_link',
+                ttlMs: 600_000,
+                confirmation: { acknowledged: true },
+            },
+        })) as { exposure: LocalServicePublicExposureV1 };
+        expect(createResult.exposure.publicUrl).toBe(REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL);
+
+        const revokeResult = await execute(runtimeArgs({
+            actionId: 'localServices.publicPreview.revoke',
+            input: {
+                machineId: 'machine_1',
+                sessionId: 'session_1',
+                previewId: 'preview_1',
+                exposureId: 'public_preview_1',
+            },
+        })) as { snapshot: LocalServicePublicPreviewSnapshotV1 };
+        expect(revokeResult.snapshot.exposures[0]?.publicUrl).toBe(REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL);
+
+        // A known non-agent surface still receives the real URL — the fix must not redact
+        // everything unconditionally.
+        const uiResult = await execute(runtimeArgs({
+            actionId: 'localServices.publicPreview.status',
+            input: { machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1' },
+            context: { surface: 'ui' },
+        })) as LocalServicePublicPreviewSnapshotV1;
+        expect(uiResult.exposures[0]?.publicUrl).toBe('https://preview.example.test/s/public_preview_1');
+    });
+
     it('redacts public-preview create and revoke response URLs for agent-surface egress', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 

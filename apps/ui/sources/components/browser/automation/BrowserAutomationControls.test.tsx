@@ -82,11 +82,9 @@ function createControlService(
         unregisterOwner: vi.fn(),
         closeView: vi.fn(),
         updateNavigationGeneration: vi.fn(),
-        acquireLease: vi.fn(),
         executeAction: vi.fn(),
         cancelActiveAction: vi.fn(),
         recordHumanInput: vi.fn(),
-        recordSyntheticInput: vi.fn(),
         getActionTimeline: vi.fn(() => timeline),
         subscribe: vi.fn(() => () => undefined),
         getSnapshot: vi.fn(() => ({

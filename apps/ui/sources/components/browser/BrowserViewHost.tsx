@@ -2,6 +2,7 @@ import type {
     BrowserAutomationActionKindV1,
     BrowserAutomationAdapterCapabilityKindV1,
     BrowserProfileV1,
+    BrowserRenderEngineKindV1,
 } from '@happier-dev/protocol';
 import * as React from 'react';
 import { View } from 'react-native';
@@ -221,15 +222,35 @@ function resolveClientLocalNavigationEffect(input: Readonly<{
     return effect;
 }
 
-function resolveFrameNavigationKey(effect: BrowserClientLocalNavigationEffect | null): string | undefined {
-    if (!effect || effect.command.kind !== 'reload') {
+/**
+ * `reload` is fulfilled differently per engine, and this is the one place that decides which.
+ *
+ * The sandboxed `webIframe` engine reloads by REMOUNTING on a fresh `navigationKey`: a cross-origin
+ * frame rejects `contentWindow.location.reload()`, so the key is the only reliable route. Every
+ * command-driven engine (the RN `WebView`, the Wry desktop child view) reloads through its own
+ * navigation command and has no `navigationKey` at all — routing their reload to the key was why
+ * the toolbar Reload button dispatched nothing on iOS, Android and desktop.
+ */
+function resolveFrameNavigationKey(
+    effect: BrowserClientLocalNavigationEffect | null,
+    engineKind: BrowserRenderEngineKindV1,
+): string | undefined {
+    if (!effect || effect.command.kind !== 'reload' || engineKind !== 'webIframe') {
         return undefined;
     }
     return effect.command.commandId;
 }
 
-function resolveFrameNavigationCommand(effect: BrowserClientLocalNavigationEffect | null) {
-    if (!effect || effect.command.kind === 'navigate' || effect.command.kind === 'reload') {
+function resolveFrameNavigationCommand(
+    effect: BrowserClientLocalNavigationEffect | null,
+    engineKind: BrowserRenderEngineKindV1,
+) {
+    if (!effect || effect.command.kind === 'navigate') {
+        return undefined;
+    }
+    if (effect.command.kind === 'reload' && engineKind === 'webIframe') {
+        // Already fulfilled by the remount key above; dispatching it as well would fire
+        // `location.reload()` at the freshly mounted frame.
         return undefined;
     }
     return {
@@ -289,8 +310,8 @@ export function BrowserViewHost(props: Readonly<{
         view,
         navigationEffect: props.navigationEffect,
     });
-    const frameNavigationKey = resolveFrameNavigationKey(navigationEffect);
-    const frameNavigationCommand = resolveFrameNavigationCommand(navigationEffect);
+    const frameNavigationKey = resolveFrameNavigationKey(navigationEffect, view.engineKind);
+    const frameNavigationCommand = resolveFrameNavigationCommand(navigationEffect, view.engineKind);
     const diagnosticsBridge = resolveViewDiagnosticsBridge({
         view,
         bridge: props.diagnosticsBridge,

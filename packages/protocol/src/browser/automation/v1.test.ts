@@ -20,7 +20,7 @@ const baseRequest = {
 } as const;
 
 describe('browser automation protocol contracts', () => {
-  it('requires active leases for mutating actions while allowing bound read-only requests', async () => {
+  it('admits mutating and read-only requests alike, and refuses a resurrected action lease', async () => {
     const mod = await loadAutomationModule();
 
     expect(mod?.BrowserAutomationActionRequestV1Schema).toBeTypeOf('object');
@@ -35,6 +35,9 @@ describe('browser automation protocol contracts', () => {
       actionKind: 'snapshot',
     }).success).toBe(true);
 
+    // R-1. Until 2026-08-23 this rejected with `leaseId: 'Mutating browser automation actions
+    // require an active action lease.'`, and no production code path could mint one — every
+    // mutating verb was undispatchable. Re-adding that superRefine turns this assertion red.
     expect(schema.safeParse({
       ...baseRequest,
       actionKind: 'click',
@@ -44,25 +47,50 @@ describe('browser automation protocol contracts', () => {
           value: 'button[type=submit]',
         },
       },
-    }).success).toBe(false);
+    }).success).toBe(true);
 
-    const mutating = schema.safeParse({
-      ...baseRequest,
-      actionKind: 'click',
-      leaseId: 'lease_1',
-      expectedControlEpoch: 8,
-      payload: {
-        locator: {
-          kind: 'css',
-          value: 'button[type=submit]',
-        },
-      },
-    });
-
-    expect(mutating.success).toBe(true);
+    // The request schema is strict, so the removed lease/epoch fields cannot come back by
+    // accident: a caller still sending them is refused rather than silently ignored.
+    for (const removedField of ['leaseId', 'expectedControlEpoch', 'idempotencyKey', 'expectedSyntheticInputWindowMs']) {
+      expect(schema.safeParse({
+        ...baseRequest,
+        actionKind: 'click',
+        [removedField]: removedField === 'expectedControlEpoch' || removedField === 'expectedSyntheticInputWindowMs' ? 1 : 'x',
+        payload: { locator: { kind: 'css', value: 'button[type=submit]' } },
+      }).success).toBe(false);
+    }
   });
 
-  it('models eval actions as BRW-10 eval requests carried by a BRW-14 lease', async () => {
+  it('admits the upload and drag verbs as mutating actions (UB-2)', async () => {
+    const mod = await loadAutomationModule();
+
+    expect(mod?.BrowserAutomationActionRequestV1Schema).toBeTypeOf('object');
+    if (!mod?.BrowserAutomationActionRequestV1Schema) return;
+
+    const schema = mod.BrowserAutomationActionRequestV1Schema as {
+      safeParse: (value: unknown) => { success: boolean; data?: unknown };
+    };
+
+    expect(schema.safeParse({
+      ...baseRequest,
+      actionKind: 'upload',
+      payload: {
+        locator: { kind: 'css', value: 'input[type=file]' },
+        files: [{ name: 'report.csv', mimeType: 'text/csv', text: 'a,b\n1,2\n' }],
+      },
+    }).success).toBe(true);
+
+    expect(schema.safeParse({
+      ...baseRequest,
+      actionKind: 'drag',
+      payload: {
+        from: { kind: 'css', value: '#card' },
+        to: { kind: 'css', value: '#done-column' },
+      },
+    }).success).toBe(true);
+  });
+
+  it('models eval actions as BRW-10 eval requests', async () => {
     const mod = await loadAutomationModule();
 
     expect(mod?.BrowserAutomationActionRequestV1Schema).toBeTypeOf('object');
@@ -75,8 +103,6 @@ describe('browser automation protocol contracts', () => {
     const parsed = schema.safeParse({
       ...baseRequest,
       actionKind: 'evaluate',
-      leaseId: 'lease_eval_1',
-      expectedControlEpoch: 1,
       payload: {
         diagnosticsEvalRequest: {
           v: 1,
@@ -96,8 +122,6 @@ describe('browser automation protocol contracts', () => {
     const invalid = schema.safeParse({
       ...baseRequest,
       actionKind: 'evaluate',
-      leaseId: 'lease_eval_1',
-      expectedControlEpoch: 1,
       payload: {
         expression: 'document.cookie',
       },

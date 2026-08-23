@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
+import type { DaemonPeerMediationDirectFlowObserver } from '../observability/events';
 import type { DirectRouteGrantTrustRoot } from '../verifyDirectRouteGrantV1';
 import { createAtomicRouteGrantConsumption } from '../tunnel/grantConsumption';
 import {
@@ -44,6 +45,8 @@ export type PeerMachineRpcDirectRuntimeOptions = Readonly<{
     replayKeyCache?: PeerMachineRpcReplayKeyCache;
     localPerPeerMaxConcurrentCalls?: number;
     revokeGrant?: (input: Readonly<{ grantId: string; grantFamilyId?: string }>) => void;
+    /** Scope-bound PMS-9 observer supplied by the loopback composition root (P1-9). */
+    observability?: DaemonPeerMediationDirectFlowObserver;
 }>;
 
 export type RegisterPeerMediationMachineRpcDirectRoutesOptions = PeerMachineRpcDirectRuntimeOptions & Readonly<{
@@ -129,6 +132,19 @@ export function registerPeerMediationMachineRpcDirectRoutes(
         grantConsumption.clear();
     });
 
+    const observe = (input: Readonly<{
+        flowId: string;
+        kind: Parameters<DaemonPeerMediationDirectFlowObserver['emit']>[0]['kind'];
+        reasonCode?: string;
+    }>): void => {
+        options.observability?.emit({
+            flowKind: 'machine_rpc',
+            flowId: input.flowId,
+            kind: input.kind,
+            ...(input.reasonCode ? { reasonCode: input.reasonCode } : {}),
+        });
+    };
+
     const handleRequest = async (
         body: unknown,
         signal: AbortSignal,
@@ -151,8 +167,14 @@ export function registerPeerMediationMachineRpcDirectRoutes(
                     ...(validation.grant.grantFamilyId ? { grantFamilyId: validation.grant.grantFamilyId } : {}),
                 });
             }
+            observe({
+                flowId: validation.response.requestId,
+                kind: 'flow.denied',
+                reasonCode: validation.response.reasonCode,
+            });
             return validation.response;
         }
+        observe({ flowId: validation.request.requestId, kind: 'flow.started' });
 
         const reservation = validation.request.v === 2
             ? grantConsumption.reserve({
@@ -163,6 +185,11 @@ export function registerPeerMediationMachineRpcDirectRoutes(
             : null;
         if (validation.request.v === 2 && !reservation) {
             validation.releaseCallLimit();
+            observe({
+                flowId: validation.request.requestId,
+                kind: 'cap.exceeded',
+                reasonCode: 'direct_call_limit_exceeded',
+            });
             return {
                 v: 2,
                 ok: false,
@@ -183,6 +210,11 @@ export function registerPeerMediationMachineRpcDirectRoutes(
                     { signal },
                 );
             } catch (error) {
+                observe({
+                    flowId: validation.request.requestId,
+                    kind: 'flow.errored',
+                    reasonCode: 'handler_unavailable',
+                });
                 if (validation.request.v === 1) throw error;
                 return {
                     v: 2,
@@ -194,6 +226,11 @@ export function registerPeerMediationMachineRpcDirectRoutes(
                 };
             }
             if (isMethodNotFoundResult(result)) {
+                observe({
+                    flowId: validation.request.requestId,
+                    kind: 'flow.errored',
+                    reasonCode: 'handler_unavailable',
+                });
                 return {
                     v: validation.request.v,
                     ok: false,
@@ -204,6 +241,7 @@ export function registerPeerMediationMachineRpcDirectRoutes(
                 };
             }
 
+            observe({ flowId: validation.request.requestId, kind: 'flow.closed' });
             return {
                 v: validation.request.v,
                 ok: true,

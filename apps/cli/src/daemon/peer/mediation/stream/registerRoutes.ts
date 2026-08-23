@@ -13,6 +13,7 @@ import {
     type SignedDirectRouteGrantV2,
 } from '@happier-dev/protocol';
 
+import type { DaemonPeerMediationDirectFlowObserver } from '../observability/events';
 import {
     verifyDirectRouteGrantV1,
     verifyDirectRouteGrantV2,
@@ -46,6 +47,8 @@ export type PeerMachineLiveStreamDirectExpectedBinding = Readonly<{
 }>;
 
 export type RegisterMachineLiveStreamRoutesOptions = PeerMachineLiveStreamDirectRuntimeOptions & Readonly<{
+    /** Scope-bound PMS-9 observer supplied by the loopback composition root (P1-9). */
+    observability?: DaemonPeerMediationDirectFlowObserver;
     nowMs: () => number;
     expected: PeerMachineLiveStreamDirectExpectedBinding;
     trustRoots: readonly DirectRouteGrantTrustRoot[];
@@ -149,7 +152,7 @@ export function registerMachineLiveStreamRoutes(
         grantConsumption.clear();
     });
 
-    const handleStart = async (requestBody: unknown, version: 1 | 2): Promise<LiveStreamDirectStartResponse> => {
+    const startDirectStream = async (requestBody: unknown, version: 1 | 2): Promise<LiveStreamDirectStartResponse> => {
         const parsed = version === 2
             ? PeerMachineLiveStreamDirectStartRequestV2Schema.safeParse(requestBody)
             : LiveStreamDirectStartRequestSchema.safeParse(requestBody);
@@ -291,6 +294,31 @@ export function registerMachineLiveStreamRoutes(
             expiresAtMs: session.session.expiresAtMs,
         } as const;
         return version === 2 ? { v: 2, ...response } : { v: 1, ...response };
+    };
+
+    /**
+     * PMS-9 / P1-9: the direct live-stream start is a flow lifecycle boundary, so it publishes
+     * `flow.ready` on admission and `flow.denied` carrying the real reason code on refusal.
+     * Observing the outcome here leaves the decision logic above untouched.
+     */
+    const readRequestedStreamId = (requestBody: unknown): string | null => {
+        const startRequest = (requestBody as { startRequest?: { streamId?: unknown } } | null | undefined)?.startRequest;
+        const streamId = startRequest?.streamId;
+        return typeof streamId === 'string' && streamId.trim().length > 0 ? streamId : null;
+    };
+
+    const handleStart = async (requestBody: unknown, version: 1 | 2): Promise<LiveStreamDirectStartResponse> => {
+        const response = await startDirectStream(requestBody, version);
+        const streamId = response.ok ? response.streamId : readRequestedStreamId(requestBody);
+        if (streamId) {
+            options.observability?.emit({
+                flowKind: 'live_stream',
+                flowId: streamId,
+                kind: response.ok ? 'flow.ready' : 'flow.denied',
+                ...(response.ok ? {} : { reasonCode: response.reasonCode }),
+            });
+        }
+        return response;
     };
 
     app.post(PEER_MACHINE_LIVE_STREAM_DIRECT_START_PATH_V1, async (request) => await handleStart(request.body, 1));

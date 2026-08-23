@@ -35,6 +35,10 @@ import { selectActiveBrowserView } from '@/sync/domains/browser/shell';
 import { resolveBrowserViewIdForTarget } from '@/sync/domains/browser/store';
 import type { DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
 import { useDesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/useDesktopWebViewNativeAvailability';
+import {
+    openBrowserExternalTabSelection,
+    selectBrowserTargetAdapter,
+} from '@/sync/domains/browser/adapters/selection';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
@@ -528,6 +532,26 @@ export function BrowserSurfaceHost(props: Readonly<{
                     allowExternalUrlBrowsing: props.allowExternalUrlBrowsing ?? true,
                 })
                 : undefined);
+
+        // R-3 (G9): resolve the adapter BEFORE materializing a view. Where the platform cannot host
+        // an ALLOWED site in-app, the selector returns the fulfilled `openExternalTab` outcome and
+        // this is the one production caller that performs it — the contract `selection.ts` already
+        // documents but nothing implemented. Without it the `openView` below is rejected as
+        // `adapter_unavailable`, so on Windows, Linux and pre-14 macOS a typed URL silently does
+        // nothing and the launchpad row is dead. Only external sites can resolve to an OS-tab
+        // handoff, so the check is scoped to them and never re-derives streamed-surface liveness.
+        if (target.kind === 'externalUrl') {
+            const selection = selectBrowserTargetAdapter({
+                target,
+                platform: options?.platform ?? props.platform,
+                targetPolicyDecision,
+                desktopWebViewAvailability: options?.desktopWebViewAvailability ?? desktopWebViewAvailability,
+            });
+            if (selection.ok && selection.outcome === 'openExternalTab') {
+                void openBrowserExternalTabSelection(selection);
+                return;
+            }
+        }
 
         const viewId = resolveBrowserViewIdForTarget(target);
         const result = dispatchBrowserControlCommand(surfaceStateRef.current.browserState, {

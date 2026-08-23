@@ -123,15 +123,24 @@ describe('browser automation routes', () => {
     expect((timeline as { entries?: unknown[] }).entries?.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('returns a controller-state result for browser.automation.status', async () => {
-    const { routes: r, service } = routes();
-    service.acquireLease({
-      browserSessionId: 'browser_session_1',
-      viewId: 'view_1',
-      holder: 'agent',
-      requesterRef: agentRef,
-      leaseTtlMs: 5_000,
+  it('reports the live controller and in-flight request for browser.automation.status', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
     });
+    const service = createBrowserAutomationDaemonService({
+      adapter: {
+        adapterKind: 'chromiumSidecar',
+        execute: vi.fn(async () => {
+          await gate;
+          return { status: 'succeeded' as const, fidelity: 'cdp' as const, trustedInput: true };
+        }),
+      },
+    });
+    const { routes: r } = routes(service);
+
+    const pending = r.dispatch('browser.automation.click', clickRequest());
+    await Promise.resolve();
 
     const result = await r.dispatch('browser.automation.status', {
       browserSessionId: 'browser_session_1',
@@ -139,7 +148,13 @@ describe('browser automation routes', () => {
     });
 
     expect(BrowserAutomationActionResultV1Schema.safeParse(result).success).toBe(true);
-    expect((result as { status?: string }).status).toBe('succeeded');
+    expect(result).toMatchObject({
+      status: 'succeeded',
+      resultSummary: { controller: 'agent', activeAutomationRequestId: 'req_click' },
+    });
+
+    release();
+    await pending;
   });
 
   it('returns invalid_parameters when status input lacks a view id', async () => {

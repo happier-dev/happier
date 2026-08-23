@@ -423,14 +423,6 @@ describe('browser runtime action executor', () => {
 
         for (const [actionId, actionKind] of actions) {
             now += 10;
-            const lease = controlService.acquireLease({
-                browserSessionId: 'browser_session_1',
-                viewId: 'view_1',
-                requestedBy: 'agent',
-                requesterRef: { kind: 'session', id: 'session_1' },
-                ttlMs: 1_000,
-            });
-            if (!lease.ok) throw new Error(`expected lease for ${actionKind}`);
 
             const result = await execute(runtimeArgs({
                 actionId,
@@ -447,8 +439,6 @@ describe('browser runtime action executor', () => {
                         ? { url: 'https://browser.example.test/next' }
                         : {},
                     timeoutMs: 1_000,
-                    leaseId: lease.leaseId,
-                    expectedControlEpoch: lease.controlEpoch,
                 },
             }));
 
@@ -550,14 +540,6 @@ describe('browser runtime action executor', () => {
             supportedActions: ['snapshot'],
             executeAction,
         });
-        const lease = controlService.acquireLease({
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-            requestedBy: 'agent',
-            requesterRef: { kind: 'session', id: 'session_1' },
-            ttlMs: 1_000,
-        });
-        if (!lease.ok) throw new Error('expected automation lease');
         const execute = mod.createBrowserRuntimeActionExecutor({
             automation: { controlService },
         });
@@ -575,8 +557,6 @@ describe('browser runtime action executor', () => {
                 actionKind: 'reload',
                 payload: {},
                 timeoutMs: 1_000,
-                leaseId: lease.leaseId,
-                expectedControlEpoch: lease.controlEpoch,
             },
         }))).resolves.toMatchObject({
             v: 1,

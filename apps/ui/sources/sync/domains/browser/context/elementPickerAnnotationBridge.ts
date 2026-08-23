@@ -16,6 +16,7 @@ export function buildCaptureElementRequestFromPickerResult(
     const selectorPath = result.selectorPath?.trim();
     if (!selectorPath) return null;
     const accessibleName = result.accessibleName?.trim();
+    const componentName = result.componentName?.trim();
     return {
         kind: 'captureElement',
         target: {
@@ -23,6 +24,10 @@ export function buildCaptureElementRequestFromPickerResult(
             selectorPath: selectorPath.slice(0, 1024),
             ...(accessibleName ? { accessibleName: accessibleName.slice(0, 512) } : {}),
             ...(result.rect ? { rect: result.rect } : {}),
+            // UB-7: the component/source the picker resolved rides along, so an attached element
+            // tells the agent which file to edit rather than only which node was clicked.
+            ...(componentName ? { componentName: componentName.slice(0, 128) } : {}),
+            ...(result.sourceLocation ? { sourceLocation: result.sourceLocation } : {}),
         },
     };
 }

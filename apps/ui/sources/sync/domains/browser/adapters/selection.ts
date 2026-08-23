@@ -117,19 +117,44 @@ function unavailable(
     };
 }
 
-function selectFrameEngine(
+/**
+ * The engine that ACTUALLY renders a first-party embedded target — a local-service preview or a
+ * hosted plugin UI, both of which the app serves itself.
+ *
+ * G17: on Tauri desktop these render through the WEB bundle. `LocalPreviewTarget.web.tsx` and
+ * `HostedPluginTarget.web.tsx` hard-code `kind: 'webIframe'` and never mount the Wry child view —
+ * that engine is reserved for arbitrary third-party sites, which a sandboxed iframe cannot host.
+ * Claiming `desktopWebView` here made `buildBrowserAdapterCapabilities` hit its desktop-webview
+ * gate with no `desktopWebViewSupport`, collapsing the WHOLE capability set to
+ * `supportedRenderEngines: ['unavailable']`, so a Local Services preview tab on desktop shipped a
+ * dead address bar and reload while the identical tab on web worked.
+ */
+function selectEmbeddedFrameEngine(
     platform: BrowserAdapterPlatform,
-): 'webIframe' | 'nativeWebView' | 'desktopWebView' | null {
+): 'webIframe' | 'nativeWebView' | null {
+    if (platform === 'web' || platform === 'desktop') return 'webIframe';
+    if (platform === 'ios' || platform === 'android') return 'nativeWebView';
+    return null;
+}
+
+/**
+ * The engine that can host an ARBITRARY third-party site. Deliberately has no `desktop` arm: the
+ * desktop route is the Wry child view (or the system-browser handoff), both resolved earlier in the
+ * `externalUrl` branch. Desktop reaching this helper means the target policy was never resolved,
+ * which fails closed.
+ */
+function selectExternalSiteFrameEngine(
+    platform: BrowserAdapterPlatform,
+): 'webIframe' | 'nativeWebView' | null {
     if (platform === 'web') return 'webIframe';
     if (platform === 'ios' || platform === 'android') return 'nativeWebView';
-    if (platform === 'desktop') return 'desktopWebView';
     return null;
 }
 
 export function selectBrowserTargetAdapter(input: SelectBrowserTargetAdapterInput): BrowserAdapterSelection {
     switch (input.target.kind) {
         case 'localServicePreview': {
-            const engineKind = selectFrameEngine(input.platform);
+            const engineKind = selectEmbeddedFrameEngine(input.platform);
             return engineKind
                 ? success('localPreview', input.target.kind, engineKind)
                 : unavailable('localPreview', resolveBrowserAdapterUnavailableReason({
@@ -138,7 +163,7 @@ export function selectBrowserTargetAdapter(input: SelectBrowserTargetAdapterInpu
                 }));
         }
         case 'hostedPluginWeb': {
-            const engineKind = selectFrameEngine(input.platform);
+            const engineKind = selectEmbeddedFrameEngine(input.platform);
             return engineKind
                 ? success('hostedPlugin', input.target.kind, engineKind)
                 : unavailable('hostedPlugin', resolveBrowserAdapterUnavailableReason({
@@ -156,11 +181,19 @@ export function selectBrowserTargetAdapter(input: SelectBrowserTargetAdapterInpu
                         desktopWebViewAvailability: input.desktopWebViewAvailability,
                     });
                 }
-                if (input.desktopWebViewAvailability && input.desktopWebViewAvailability.disabledReasons.length > 0) {
-                    return unavailable('externalUrl', resolveDesktopWebViewUnavailableReason(
-                        input.target.kind,
-                        input.desktopWebViewAvailability.disabledReasons[0],
-                    ));
+                // R-3: the in-app engine cannot host this site here, but the user asked for an
+                // ALLOWED page — hand it to their system browser instead of dead-ending. Windows,
+                // X11, Wayland, headless Linux and pre-14 macOS all land here, and until now every
+                // one of them disabled the launchpad row and silently dropped a typed URL. This is
+                // the SAME fulfilled `openExternalTab` outcome the web build already uses for a
+                // non-framable site — one owner, one escape.
+                //
+                // Gated on a RESOLVED availability: a null availability means the native probe has
+                // not answered yet (or the Tauri host is missing), and silently opening an OS tab
+                // during that window would be a wrong, invisible action. That case still fails
+                // closed.
+                if (input.desktopWebViewAvailability) {
+                    return buildOpenExternalTabSelection(input.target.url);
                 }
                 return unavailable('externalUrl', resolveDesktopWebViewUnavailableReason(input.target.kind));
             }

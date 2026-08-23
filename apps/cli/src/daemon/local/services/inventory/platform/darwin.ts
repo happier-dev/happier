@@ -2,6 +2,7 @@ import type { LocalServiceListenerFact } from '../scanner';
 import type { LocalServiceInventoryDiagnostic } from '../scanner';
 import { LOCAL_SERVICE_PROCESS_LINEAGE_MAX_DEPTH, type LocalServiceProcessFact } from '../provenance';
 import { collectLocalServiceProcessLineageFacts } from './processLineage';
+import { classifyPosixProcessOwnership, resolveDaemonPosixUserId } from './processOwnership';
 
 export type DarwinExecFileBoundary = (
     command: string,
@@ -93,93 +94,55 @@ function parseDarwinLstartDate(value: string): number | undefined {
     return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : undefined;
 }
 
-export function parseDarwinPsProcessOutput(output: string): ReadonlyMap<number, LocalServiceProcessFact> {
+/**
+ * `ps -o pid=,ppid=,uid=,lstart=,command=`. The uid column rides along on the call the scan
+ * already makes, so process ownership costs nothing extra on darwin.
+ */
+function parseDarwinPsProcessOutput(
+    output: string,
+    daemonUserId: string | undefined,
+): ReadonlyMap<number, LocalServiceProcessFact> {
     const processes = new Map<number, LocalServiceProcessFact>();
     for (const line of output.split(/\r?\n/u)) {
-        const withLstart = /^\s*(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+?)\s*$/u.exec(line);
-        const legacy = withLstart ? null : /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/u.exec(line);
+        const withLstart = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+?)\s*$/u.exec(line);
+        const legacy = withLstart ? null : /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/u.exec(line);
         const pidRaw = withLstart?.[1] ?? legacy?.[1];
         const ppidRaw = withLstart?.[2] ?? legacy?.[2];
-        const processStartTimeMs = withLstart?.[3] ? parseDarwinLstartDate(withLstart[3]) : undefined;
-        const command = withLstart?.[4] ?? legacy?.[3];
+        const uidRaw = withLstart?.[3] ?? legacy?.[3];
+        const processStartTimeMs = withLstart?.[4] ? parseDarwinLstartDate(withLstart[4]) : undefined;
+        const command = withLstart?.[5] ?? legacy?.[4];
         if (!pidRaw || !command) continue;
         const pid = Number(pidRaw);
         const ppid = Number(ppidRaw);
         if (!Number.isInteger(pid) || pid <= 0) continue;
+        const processOwnership = classifyPosixProcessOwnership(uidRaw, daemonUserId);
         processes.set(pid, {
             pid,
             ...(Number.isInteger(ppid) && ppid > 0 ? { ppid } : {}),
             ...(typeof processStartTimeMs === 'number' ? { processStartTimeMs } : {}),
             command: command.slice(0, 1_000),
+            ...(processOwnership ? { processOwnership } : {}),
         });
     }
     return processes;
 }
 
-function parseDarwinLsofExecutablePathOutput(output: string): ReadonlyMap<number, string> {
-    const executablePathByPid = new Map<number, string>();
-    let pid: number | undefined;
-    let isProgramText = false;
-    for (const line of output.split(/\r?\n/u)) {
-        if (!line) continue;
-        const tag = line[0];
-        const value = line.slice(1);
-        if (tag === 'p') {
-            const parsedPid = Number(value);
-            pid = Number.isInteger(parsedPid) && parsedPid > 0 ? parsedPid : undefined;
-            isProgramText = false;
-            continue;
-        }
-        if (tag === 'f') {
-            isProgramText = value.trim() === 'txt';
-            continue;
-        }
-        if (tag !== 'n' || !pid || !isProgramText || executablePathByPid.has(pid)) continue;
-        const executablePath = value.trim();
-        if (executablePath) {
-            // Darwin reports the process image as the first `txt` vnode, followed
-            // by other mapped program-text objects such as dyld and shared data.
-            executablePathByPid.set(pid, executablePath.slice(0, 1_000));
-        }
-    }
-    return executablePathByPid;
-}
-
 export async function readDarwinProcessFacts(input: Readonly<{
     execFile: DarwinExecFileBoundary;
     pids: readonly number[];
+    daemonUserId?: string;
 }>): Promise<ReadonlyMap<number, LocalServiceProcessFact>> {
     const pids = [...new Set(input.pids.filter((pid) => Number.isInteger(pid) && pid > 0))];
     if (pids.length === 0) return new Map();
-    const pidList = pids.join(',');
-    const [result, executablePathByPid] = await Promise.all([
-        input.execFile(
-            'ps',
-            ['-o', 'pid=,ppid=,lstart=,command=', '-p', pidList],
-            { timeout: 2_000, maxBuffer: 1024 * 1024 },
-        ),
-        input.execFile(
-            'lsof',
-            ['-nP', '-a', '-d', 'txt', '-p', pidList, '-F', 'pfn'],
-            { timeout: 2_000, maxBuffer: 1024 * 1024 },
-        ).then(
-            (executableResult) => parseDarwinLsofExecutablePathOutput(
-                stdoutTextFromExecFileResult(executableResult),
-            ),
-            () => new Map<number, string>(),
-        ),
-    ]);
-    const processes = parseDarwinPsProcessOutput(stdoutTextFromExecFileResult(result));
-    return new Map([...processes].map(([pid, process]) => {
-        const executablePath = executablePathByPid.get(pid);
-        return [
-            pid,
-            {
-                ...process,
-                ...(executablePath ? { executablePath } : {}),
-            },
-        ];
-    }));
+    const result = await input.execFile(
+        'ps',
+        ['-o', 'pid=,ppid=,uid=,lstart=,command=', '-p', pids.join(',')],
+        { timeout: 2_000, maxBuffer: 1024 * 1024 },
+    );
+    return parseDarwinPsProcessOutput(
+        stdoutTextFromExecFileResult(result),
+        input.daemonUserId ?? resolveDaemonPosixUserId(),
+    );
 }
 
 function parseDarwinLsofCwdOutput(output: string): ReadonlyMap<number, string> {
@@ -229,8 +192,8 @@ function mergeDarwinCwdFacts(input: Readonly<{
                 ? { processStartTimeMs: process.processStartTimeMs }
                 : {}),
             command: process?.command ?? 'unknown',
-            ...(process?.executablePath ? { executablePath: process.executablePath } : {}),
             ...(cwd ? { cwd } : process?.cwd ? { cwd: process.cwd } : {}),
+            ...(process?.processOwnership ? { processOwnership: process.processOwnership } : {}),
         });
     }
     return processes;
@@ -256,75 +219,41 @@ function mergeDarwinProcessFacts(input: Readonly<{
                 ? { processStartTimeMs: process.processStartTimeMs }
                 : {}),
             command: process?.command ?? 'unknown',
-            ...(process?.executablePath ? { executablePath: process.executablePath } : {}),
             ...(cwd ? { cwd } : process?.cwd ? { cwd: process.cwd } : {}),
+            ...(process?.processOwnership ? { processOwnership: process.processOwnership } : {}),
         });
     }
     return processes;
 }
 
-export async function readDarwinLocalServiceListeners(input: Readonly<{
-    execFile: DarwinExecFileBoundary;
-}>): Promise<DarwinLocalServiceScanResult> {
+/**
+ * `lsof` exits non-zero whenever *any* file could not be accessed while still printing every
+ * listener it did resolve. Discarding that stdout turned a degraded scan into a successful
+ * empty one, which is worse than the failure: the inventory's stale-while-revalidate design
+ * reads an authoritative empty result as "every service went away".
+ */
+async function readDarwinTcpListenOutput(
+    execFile: DarwinExecFileBoundary,
+): Promise<Readonly<{ output: string; degraded: boolean }>> {
     try {
-        const result = await input.execFile('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'pcn'], {
+        const result = await execFile('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'pcn'], {
             timeout: 2_000,
             maxBuffer: 1024 * 1024,
         });
-        const parsed = parseDarwinLsofTcpListenFacts(stdoutTextFromExecFileResult(result));
-        const listenerPids = [...new Set(parsed.listeners
-            .map((listener) => listener.pid)
-            .filter((pid): pid is number => typeof pid === 'number' && Number.isInteger(pid) && pid > 0))];
-        const diagnostics: LocalServiceInventoryDiagnostic[] = [];
-        let processes: ReadonlyMap<number, LocalServiceProcessFact> = parsed.processes;
-        let cwdByPid: ReadonlyMap<number, string> = new Map();
-        let processPids = listenerPids;
-        if (listenerPids.length > 0) {
-            processes = await collectLocalServiceProcessLineageFacts({
-                seedPids: listenerPids,
-                seedProcesses: parsed.processes,
-                maxDepth: LOCAL_SERVICE_PROCESS_LINEAGE_MAX_DEPTH,
-                readProcessFacts: async (pids) => await readDarwinProcessFacts({
-                    execFile: input.execFile,
-                    pids,
-                }),
-                onReadFailure: () => {
-                    diagnostics.push({
-                        code: 'darwin_process_fact_scan_failed',
-                        severity: 'warning',
-                        message: 'Darwin process fact scan failed.',
-                    });
-                },
-            });
-            processPids = [...new Set([...listenerPids, ...processes.keys()])];
-            try {
-                const cwdResult = await input.execFile('lsof', ['-nP', '-a', '-d', 'cwd', '-p', processPids.join(','), '-F', 'pn'], {
-                    timeout: 2_000,
-                    maxBuffer: 1024 * 1024,
-                });
-                cwdByPid = parseDarwinLsofCwdOutput(stdoutTextFromExecFileResult(cwdResult));
-            } catch (error) {
-                const partialStdout = stdoutTextFromExecFileError(error);
-                cwdByPid = partialStdout ? parseDarwinLsofCwdOutput(partialStdout) : new Map();
-                if (cwdByPid.size === 0) {
-                    diagnostics.push({
-                        code: 'darwin_cwd_fact_scan_failed',
-                        severity: 'warning',
-                        message: 'Darwin cwd fact scan failed.',
-                    });
-                }
-            }
-        }
-        return {
-            listeners: parsed.listeners,
-            processes: mergeDarwinProcessFacts({
-                pids: processPids,
-                processes,
-                cwdByPid,
-            }),
-            diagnostics,
-        };
-    } catch {
+        return { output: stdoutTextFromExecFileResult(result), degraded: false };
+    } catch (error) {
+        return { output: stdoutTextFromExecFileError(error), degraded: true };
+    }
+}
+
+export async function readDarwinLocalServiceListeners(input: Readonly<{
+    execFile: DarwinExecFileBoundary;
+    daemonUserId?: string;
+}>): Promise<DarwinLocalServiceScanResult> {
+    const daemonUserId = input.daemonUserId ?? resolveDaemonPosixUserId();
+    const listenOutput = await readDarwinTcpListenOutput(input.execFile);
+    const parsed = parseDarwinLsofTcpListenFacts(listenOutput.output);
+    if (parsed.listeners.length === 0 && listenOutput.degraded) {
         return {
             listeners: [],
             processes: new Map(),
@@ -335,4 +264,64 @@ export async function readDarwinLocalServiceListeners(input: Readonly<{
             }],
         };
     }
+
+    const diagnostics: LocalServiceInventoryDiagnostic[] = listenOutput.degraded
+        ? [{
+            code: 'darwin_lsof_scan_partial',
+            severity: 'warning',
+            message: 'Darwin local-service listener scan was incomplete; recovered partial output.',
+        }]
+        : [];
+    const listenerPids = [...new Set(parsed.listeners
+        .map((listener) => listener.pid)
+        .filter((pid): pid is number => typeof pid === 'number' && Number.isInteger(pid) && pid > 0))];
+    let processes: ReadonlyMap<number, LocalServiceProcessFact> = parsed.processes;
+    let cwdByPid: ReadonlyMap<number, string> = new Map();
+    let processPids = listenerPids;
+    if (listenerPids.length > 0) {
+        processes = await collectLocalServiceProcessLineageFacts({
+            seedPids: listenerPids,
+            seedProcesses: parsed.processes,
+            maxDepth: LOCAL_SERVICE_PROCESS_LINEAGE_MAX_DEPTH,
+            readProcessFacts: async (pids) => await readDarwinProcessFacts({
+                execFile: input.execFile,
+                pids,
+                ...(daemonUserId ? { daemonUserId } : {}),
+            }),
+            onReadFailure: () => {
+                diagnostics.push({
+                    code: 'darwin_process_fact_scan_failed',
+                    severity: 'warning',
+                    message: 'Darwin process fact scan failed.',
+                });
+            },
+        });
+        processPids = [...new Set([...listenerPids, ...processes.keys()])];
+        try {
+            const cwdResult = await input.execFile('lsof', ['-nP', '-a', '-d', 'cwd', '-p', processPids.join(','), '-F', 'pn'], {
+                timeout: 2_000,
+                maxBuffer: 1024 * 1024,
+            });
+            cwdByPid = parseDarwinLsofCwdOutput(stdoutTextFromExecFileResult(cwdResult));
+        } catch (error) {
+            const partialStdout = stdoutTextFromExecFileError(error);
+            cwdByPid = partialStdout ? parseDarwinLsofCwdOutput(partialStdout) : new Map();
+            if (cwdByPid.size === 0) {
+                diagnostics.push({
+                    code: 'darwin_cwd_fact_scan_failed',
+                    severity: 'warning',
+                    message: 'Darwin cwd fact scan failed.',
+                });
+            }
+        }
+    }
+    return {
+        listeners: parsed.listeners,
+        processes: mergeDarwinProcessFacts({
+            pids: processPids,
+            processes,
+            cwdByPid,
+        }),
+        diagnostics,
+    };
 }

@@ -38,6 +38,23 @@ export const PEER_MEDIATION_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<Runti
   'peerMediation.observability.unsubscribe': 'Unsubscribe from peer mediation observability',
 });
 
+/**
+ * Honest per-id capability copy. `subscribe` is a SNAPSHOT-CURSOR contract, not a push stream: the
+ * daemon control surface is request/response, so the leaf returns the current snapshot plus its
+ * `sequence` and the caller advances by re-reading. A live delta push happens only when an
+ * out-of-band delta sink is wired, and no dead listener is registered when one is absent. The
+ * implementing owner records the same disposition at
+ * `apps/cli/src/daemon/peer/mediation/observability/runtimeActionExecutor.ts`.
+ */
+export const PEER_MEDIATION_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
+  'peerMediation.observability.snapshot':
+    'Read the current peer mediation observability counters for an authorized machine scope.',
+  'peerMediation.observability.subscribe':
+    'Open a poll-backed peer mediation observability cursor: returns the current snapshot and its sequence, which the caller advances by re-reading the snapshot. Live deltas are pushed only when an out-of-band delta sink is wired.',
+  'peerMediation.observability.unsubscribe':
+    'Close a peer mediation observability cursor and release any wired delta listener.',
+});
+
 export const PEER_MEDIATION_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
   'peerMediation.observability.snapshot': RuntimePeerMediationObservabilitySnapshotInputSchema,
   'peerMediation.observability.subscribe': PeerMediationObservabilitySubscribeRequestV1Schema,
@@ -52,6 +69,7 @@ export const PEER_MEDIATION_RUNTIME_ACTION_OUTPUT_SCHEMAS = Object.freeze({
 
 export const PEER_MEDIATION_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
   titles: PEER_MEDIATION_RUNTIME_ACTION_TITLES,
+  descriptions: PEER_MEDIATION_RUNTIME_ACTION_DESCRIPTIONS,
   inputSchemas: PEER_MEDIATION_RUNTIME_ACTION_INPUT_SCHEMAS,
   outputSchemas: PEER_MEDIATION_RUNTIME_ACTION_OUTPUT_SCHEMAS,
 } satisfies RuntimeActionSpecFamily);

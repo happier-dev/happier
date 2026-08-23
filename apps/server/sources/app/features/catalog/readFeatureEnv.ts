@@ -742,7 +742,10 @@ export function readLocalServicesFeatureEnv(env: NodeJS.ProcessEnv): LocalServic
       maxTtlMs: readOptionalPositiveInt(env[FEATURE_ENV_KEYS.localServicesPublicPreviewMaxTtlMs]),
       maxConcurrentExposures: readOptionalPositiveInt(env[FEATURE_ENV_KEYS.localServicesPublicPreviewMaxConcurrentExposures]),
       dnsTlsRequired: parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesPublicPreviewDnsTlsRequired], true),
-      auditRequired: parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesPublicPreviewAuditRequired], true),
+      // OE-4: not operator-configurable. The only non-default value (`false`) emitted the
+      // `audit_required_disabled` DISABLED reason, so the knob could only ever be set to its
+      // default. A public exposure always requires a durable audit sink.
+      auditRequired: true,
       rateLimitProfileIds: parseCsvList(env[FEATURE_ENV_KEYS.localServicesPublicPreviewRateLimitProfileIds]),
     },
     publicAuditDependency,

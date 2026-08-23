@@ -16,6 +16,12 @@ import {
     readLocalServicePublicQueryToken,
     readLocalServicePublicTokenCookie,
 } from "@/app/local/services/public/accessToken";
+import {
+    readLocalServicePublicClientKey,
+    resolveLocalServicePublicAccessIdentity,
+    type LocalServicePublicAccessPurpose,
+} from "@/app/local/services/public/accessAuthorization";
+import type { LocalServicePublicExposureV1 } from "@happier-dev/protocol";
 
 type UpgradeRequest = Readonly<{
     url?: string;
@@ -38,7 +44,15 @@ export type LocalServicePublicWebSocketUpgradeOptions = Readonly<{
         exposureId: string;
         rawToken: string | null;
         authenticated: boolean;
+        sessionAuthorized: boolean;
+        clientKey: string;
     }>) => LocalServicePublicRuntimeAccessResult;
+    resolveExposure?: (exposureId: string) => LocalServicePublicExposureV1 | null | undefined;
+    authorizeSessionAccess?: (input: Readonly<{
+        userId: string;
+        sessionId: string;
+        purpose: LocalServicePublicAccessPurpose | string;
+    }>) => boolean | Promise<boolean>;
     readOptionalUserId?: (request: unknown) => Promise<string | null>;
     openTunnel?: OpenLocalServicePreviewTunnel;
     featureEnabled?: () => boolean;
@@ -178,10 +192,22 @@ export async function handleLocalServicePublicWebSocketUpgrade(
     const userId = options.readOptionalUserId
         ? await options.readOptionalUserId({ headers })
         : await readOptionalBearerUserId(headers);
+    // S-2/S-5: the WebSocket data plane resolves the same access identity and client bucket as
+    // the HTTP data plane; a co-tenant must not reach an authenticated exposure over either.
+    const identity = await resolveLocalServicePublicAccessIdentity({
+        exposureId: route.exposureId,
+        userId,
+        resolveExposure: options.resolveExposure,
+        authorizeSessionAccess: options.authorizeSessionAccess,
+    });
     const access = options.validateAccess({
         exposureId: route.exposureId,
         rawToken: route.rawToken,
-        authenticated: Boolean(userId),
+        authenticated: identity.authenticated,
+        sessionAuthorized: identity.sessionAuthorized,
+        clientKey: readLocalServicePublicClientKey([
+            (socket as Readonly<{ remoteAddress?: string }>).remoteAddress,
+        ]),
     });
     if (!access.ok) {
         await sendUpgradeError(socket, 403, "Forbidden");

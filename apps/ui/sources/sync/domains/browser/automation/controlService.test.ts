@@ -14,9 +14,6 @@ type AutomationRequest = Readonly<{
     }>;
     actionKind: string;
     timeoutMs: number;
-    leaseId?: string;
-    expectedControlEpoch?: number;
-    expectedSyntheticInputWindowMs?: number;
     payload?: Readonly<Record<string, unknown>>;
 }>;
 
@@ -53,30 +50,12 @@ type BrowserAutomationControlService = Readonly<{
     updateNavigationGeneration: (
         input: Readonly<{ browserSessionId: string; viewId: string; navigationGeneration: number }>,
     ) => void;
-    acquireLease: (
-        input: Readonly<{
-            browserSessionId: string;
-            viewId: string;
-            requestedBy: 'agent' | 'plugin' | 'system' | 'user';
-            requesterRef: Readonly<{ kind: string; id: string }>;
-            ttlMs: number;
-        }>,
-    ) => Readonly<{ ok: true; leaseId: string; controlEpoch: number } | { ok: false; result: AutomationResult }>;
     executeAction: (request: AutomationRequest) => Promise<AutomationResult>;
     cancelActiveAction: (
         input: Readonly<{ browserSessionId: string; viewId: string; reasonCode?: string }>,
     ) => AutomationCancelActiveResult;
     recordHumanInput: (
         input: Readonly<{ browserSessionId: string; viewId: string; inputKind: string; occurredAtMs: number }>,
-    ) => void;
-    recordSyntheticInput: (
-        input: Readonly<{
-            browserSessionId: string;
-            viewId: string;
-            automationRequestId: string;
-            inputKind: string;
-            occurredAtMs: number;
-        }>,
     ) => void;
     getActionTimeline: (
         input: Readonly<{ browserSessionId: string; viewId: string }>,
@@ -149,7 +128,7 @@ function createPendingResult(): Readonly<{
 }
 
 describe('browser automation control service', () => {
-    it('registers one automation authority per view and rejects stale or lease-less mutating actions', async () => {
+    it('registers one automation authority per view, rejects stale actions, and dispatches mutating ones', async () => {
         let now = 1_000;
         const mod = await loadControlServiceModule();
 
@@ -178,42 +157,56 @@ describe('browser automation control service', () => {
             errorCode: 'stale_navigation',
         });
 
-        const clickWithoutLease = await service.executeAction(createRequest({
-            automationRequestId: 'automation_request_click',
-            actionKind: 'click',
-        }));
-        expect(clickWithoutLease).toMatchObject({
-            status: 'policy_denied',
-            errorCode: 'lease_required',
-        });
-
-        const lease = service.acquireLease({
-            browserSessionId: 'browser_session_1',
-            viewId: 'browser_view_1',
-            requestedBy: 'agent',
-            requesterRef: {
-                kind: 'session',
-                id: 'session_1',
-            },
-            ttlMs: 1_000,
-        });
-        expect(lease).toMatchObject({
-            ok: true,
-            controlEpoch: 0,
-        });
-        if (!lease.ok) return;
-
+        // R-1 at the UI owner: a mutating verb reaches the engine owner with nothing to acquire
+        // first. This returned `policy_denied`/`lease_required` until the lease was removed.
         now += 1;
         const click = await service.executeAction(createRequest({
-            automationRequestId: 'automation_request_click_with_lease',
+            automationRequestId: 'automation_request_click',
             actionKind: 'click',
-            leaseId: lease.leaseId,
-            expectedControlEpoch: lease.controlEpoch,
         }));
         expect(click.status).toBe('succeeded');
     });
 
-    it('lets expected synthetic input pass but interrupts agent actions on human input', async () => {
+    it('admits one mutating action per view and releases the view when it settles', async () => {
+        const mod = await loadControlServiceModule();
+
+        expect(mod?.createBrowserAutomationControlService).toBeTypeOf('function');
+        if (!mod?.createBrowserAutomationControlService) return;
+
+        const pending = createPendingResult();
+        const service = mod.createBrowserAutomationControlService({ nowMs: () => 1_500 });
+        service.registerOwner(createOwner({
+            executeAction: async () => pending.promise,
+        }));
+
+        const first = service.executeAction(createRequest({
+            automationRequestId: 'automation_request_first_click',
+            actionKind: 'click',
+        }));
+        await Promise.resolve();
+
+        // Single-flight is the whole arbitration. It replaced a lease conflict check that could
+        // never fire, because `acquireLease` had no caller anywhere in the product.
+        const second = await service.executeAction(createRequest({
+            automationRequestId: 'automation_request_second_click',
+            actionKind: 'click',
+        }));
+        expect(second).toMatchObject({
+            status: 'policy_denied',
+            errorCode: 'automation_busy',
+        });
+
+        pending.resolve({ status: 'succeeded' });
+        await expect(first).resolves.toMatchObject({ status: 'succeeded' });
+
+        const third = await service.executeAction(createRequest({
+            automationRequestId: 'automation_request_third_click',
+            actionKind: 'click',
+        }));
+        expect(third.status).toBe('succeeded');
+    });
+
+    it('interrupts an in-flight agent action when a human takes over the view', async () => {
         let now = 2_000;
         const mod = await loadControlServiceModule();
 
@@ -229,35 +222,11 @@ describe('browser automation control service', () => {
                 return pending.promise;
             },
         }));
-        const lease = service.acquireLease({
-            browserSessionId: 'browser_session_1',
-            viewId: 'browser_view_1',
-            requestedBy: 'agent',
-            requesterRef: {
-                kind: 'session',
-                id: 'session_1',
-            },
-            ttlMs: 1_000,
-        });
-        expect(lease).toMatchObject({ ok: true });
-        if (!lease.ok) return;
-
         const action = service.executeAction(createRequest({
             automationRequestId: 'automation_request_click_pending',
             actionKind: 'click',
-            leaseId: lease.leaseId,
-            expectedControlEpoch: lease.controlEpoch,
-            expectedSyntheticInputWindowMs: 100,
         }));
         await Promise.resolve();
-
-        service.recordSyntheticInput({
-            browserSessionId: 'browser_session_1',
-            viewId: 'browser_view_1',
-            automationRequestId: 'automation_request_click_pending',
-            inputKind: 'pointer',
-            occurredAtMs: now + 10,
-        });
         expect(JSON.stringify(service.getSnapshot())).toContain('"controlEpoch":0');
 
         now += 20;
@@ -366,18 +335,6 @@ describe('browser automation control service', () => {
             maxTimelineEntries: 2,
         });
         service.registerOwner(createOwner());
-        const lease = service.acquireLease({
-            browserSessionId: 'browser_session_1',
-            viewId: 'browser_view_1',
-            requestedBy: 'agent',
-            requesterRef: {
-                kind: 'session',
-                id: 'session_1',
-            },
-            ttlMs: 1_000,
-        });
-        expect(lease).toMatchObject({ ok: true });
-        if (!lease.ok) return;
 
         await service.executeAction(createRequest({
             automationRequestId: 'automation_request_snapshot_1',
@@ -386,8 +343,6 @@ describe('browser automation control service', () => {
         await service.executeAction(createRequest({
             automationRequestId: 'automation_request_type_1',
             actionKind: 'type',
-            leaseId: lease.leaseId,
-            expectedControlEpoch: lease.controlEpoch,
             payload: {
                 selector: '#password',
                 text: 'hunter2',
@@ -441,26 +396,16 @@ describe('browser automation control service', () => {
             });
         }
 
-        expect(service.acquireLease({
-            browserSessionId: 'browser_session_1',
+        // The tombstone set is bounded, so the oldest closed views are forgotten and degrade to
+        // `owner_disconnected` while recent ones still report the precise `view_closed`.
+        expect(await service.executeAction(createRequest({
+            automationRequestId: 'automation_request_evicted_view',
             viewId: 'closed_view_0',
-            requestedBy: 'agent',
-            requesterRef: { kind: 'session', id: 'session_1' },
-            ttlMs: 1_000,
-        })).toMatchObject({
-            ok: false,
-            result: { errorCode: 'owner_disconnected' },
-        });
-        expect(service.acquireLease({
-            browserSessionId: 'browser_session_1',
+        }))).toMatchObject({ status: 'canceled', errorCode: 'owner_disconnected' });
+        expect(await service.executeAction(createRequest({
+            automationRequestId: 'automation_request_recent_closed_view',
             viewId: 'closed_view_519',
-            requestedBy: 'agent',
-            requesterRef: { kind: 'session', id: 'session_1' },
-            ttlMs: 1_000,
-        })).toMatchObject({
-            ok: false,
-            result: { errorCode: 'view_closed' },
-        });
+        }))).toMatchObject({ status: 'canceled', errorCode: 'view_closed' });
     });
 
     it('preserves known automation error codes from owner rejections and records the redacted raw failure', async () => {
@@ -498,41 +443,42 @@ describe('browser automation control service', () => {
         expect(JSON.stringify(lastEntry?.resultSummary)).not.toContain('secret-token');
     });
 
-    it('does not let a system action consume an agent lease or clear the agent controller', async () => {
+    it('does not let a system action displace an in-flight agent action on the same view', async () => {
         const mod = await loadControlServiceModule();
 
         expect(mod?.createBrowserAutomationControlService).toBeTypeOf('function');
         if (!mod?.createBrowserAutomationControlService) return;
 
+        const pending = createPendingResult();
         const service = mod.createBrowserAutomationControlService({ nowMs: () => 4_900 });
-        service.registerOwner(createOwner());
-        const lease = service.acquireLease({
-            browserSessionId: 'browser_session_1',
-            viewId: 'browser_view_1',
-            requestedBy: 'agent',
-            requesterRef: { kind: 'session', id: 'session_1' },
-            ttlMs: 1_000,
-        });
-        expect(lease).toMatchObject({ ok: true });
-        if (!lease.ok) return;
+        service.registerOwner(createOwner({
+            executeAction: async () => pending.promise,
+        }));
+
+        const agentAction = service.executeAction(createRequest({
+            automationRequestId: 'automation_request_agent_click',
+            actionKind: 'click',
+        }));
+        await Promise.resolve();
 
         const result = await service.executeAction(createRequest({
-            automationRequestId: 'automation_request_system_wrong_lease',
+            automationRequestId: 'automation_request_system_click',
             actionKind: 'click',
             requestedBy: 'system',
             requesterRef: { kind: 'system', id: 'scheduler' },
-            leaseId: lease.leaseId,
-            expectedControlEpoch: lease.controlEpoch,
         }));
 
-        expect(result).toMatchObject({ status: 'policy_denied', errorCode: 'owner_mismatch' });
+        expect(result).toMatchObject({ status: 'policy_denied', errorCode: 'automation_busy' });
         const snapshot = service.getSnapshot() as {
-            controllerByViewKey?: Record<string, { controller?: string; activeLeaseId?: string | null }>;
+            controllerByViewKey?: Record<string, { controller?: string; activeAutomationRequestId?: string | null }>;
         };
         expect(snapshot.controllerByViewKey?.[viewKey('browser_session_1', 'browser_view_1')]).toMatchObject({
             controller: 'agent',
-            activeLeaseId: lease.leaseId,
+            activeAutomationRequestId: 'automation_request_agent_click',
         });
+
+        pending.resolve({ status: 'succeeded' });
+        await expect(agentAction).resolves.toMatchObject({ status: 'succeeded' });
     });
 
     it('keeps an agent controller claim when a system snapshot finishes concurrently', async () => {
@@ -546,16 +492,9 @@ describe('browser automation control service', () => {
         service.registerOwner(createOwner({
             executeAction: async () => pending.promise,
         }));
-        const lease = service.acquireLease({
-            browserSessionId: 'browser_session_1',
-            viewId: 'browser_view_1',
-            requestedBy: 'agent',
-            requesterRef: { kind: 'session', id: 'session_1' },
-            ttlMs: 1_000,
-        });
-        expect(lease).toMatchObject({ ok: true });
-        if (!lease.ok) return;
 
+        // A read-only snapshot is not a mutating action: it registers as the active request but
+        // must not claim the view as a controller, and finishing it must clear the claim.
         const snapshotAction = service.executeAction(createRequest({
             automationRequestId: 'automation_request_system_snapshot',
             actionKind: 'snapshot',
@@ -565,11 +504,10 @@ describe('browser automation control service', () => {
         await Promise.resolve();
 
         const snapshotWhilePending = service.getSnapshot() as {
-            controllerByViewKey?: Record<string, { controller?: string; activeLeaseId?: string | null; activeAutomationRequestId?: string | null }>;
+            controllerByViewKey?: Record<string, { controller?: string; activeAutomationRequestId?: string | null }>;
         };
         expect(snapshotWhilePending.controllerByViewKey?.[viewKey('browser_session_1', 'browser_view_1')]).toMatchObject({
-            controller: 'agent',
-            activeLeaseId: lease.leaseId,
+            controller: 'none',
             activeAutomationRequestId: 'automation_request_system_snapshot',
         });
 
@@ -577,11 +515,10 @@ describe('browser automation control service', () => {
         await expect(snapshotAction).resolves.toMatchObject({ status: 'succeeded' });
 
         const snapshotAfterFinish = service.getSnapshot() as {
-            controllerByViewKey?: Record<string, { controller?: string; activeLeaseId?: string | null; activeAutomationRequestId?: string | null }>;
+            controllerByViewKey?: Record<string, { controller?: string; activeAutomationRequestId?: string | null }>;
         };
         expect(snapshotAfterFinish.controllerByViewKey?.[viewKey('browser_session_1', 'browser_view_1')]).toMatchObject({
-            controller: 'agent',
-            activeLeaseId: lease.leaseId,
+            controller: 'none',
             activeAutomationRequestId: null,
         });
     });
@@ -603,20 +540,6 @@ describe('browser automation control service', () => {
             browserSessionId: 'browser_session_2',
             viewId: 'browser_view_2',
         }));
-        service.acquireLease({
-            browserSessionId: 'browser_session_1',
-            viewId: 'browser_view_1',
-            requestedBy: 'agent',
-            requesterRef: { kind: 'session', id: 'session_1' },
-            ttlMs: 1_000,
-        });
-        service.acquireLease({
-            browserSessionId: 'browser_session_2',
-            viewId: 'browser_view_2',
-            requestedBy: 'agent',
-            requesterRef: { kind: 'session', id: 'session_2' },
-            ttlMs: 1_000,
-        });
 
         const snapshot = service.getSnapshot() as {
             controllerByViewKey?: Record<string, unknown>;
@@ -646,23 +569,6 @@ describe('browser automation control service', () => {
             browserSessionId: 'browser_session_2',
             viewId: 'shared_view',
         }));
-        const firstLease = service.acquireLease({
-            browserSessionId: 'browser_session_1',
-            viewId: 'shared_view',
-            requestedBy: 'agent',
-            requesterRef: { kind: 'session', id: 'session_1' },
-            ttlMs: 1_000,
-        });
-        const secondLease = service.acquireLease({
-            browserSessionId: 'browser_session_2',
-            viewId: 'shared_view',
-            requestedBy: 'agent',
-            requesterRef: { kind: 'session', id: 'session_2' },
-            ttlMs: 1_000,
-        });
-        expect(firstLease).toMatchObject({ ok: true });
-        expect(secondLease).toMatchObject({ ok: true });
-
         const snapshot = service.getSnapshot() as {
             ownersByViewId?: Record<string, unknown>;
             ownersByViewKey?: Record<string, unknown>;

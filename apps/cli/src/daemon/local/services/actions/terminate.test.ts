@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     createTerminateDetectedService,
+    type TerminateListenerProbeResult,
     type TerminateProcessControl,
     type TerminateProcessIdentity,
+    type TerminateProcessSignalOutcome,
 } from './terminate';
 import type { LocalServiceActionRequestV1 } from '@happier-dev/protocol';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
@@ -52,20 +54,37 @@ function request(): LocalServiceActionRequestV1 {
 
 type ControlOverrides = Partial<TerminateProcessControl> & {
     /** Sequence of probe results returned in order; last value repeats. */
-    probeResults?: ReadonlyArray<TerminateProcessIdentity | null>;
+    probeResults?: readonly TerminateListenerProbeResult[];
     aliveResults?: readonly boolean[];
+    signalResults?: readonly TerminateProcessSignalOutcome[];
+    descendantPids?: readonly number[];
 };
 
+function held(identity: TerminateProcessIdentity): TerminateListenerProbeResult {
+    return { status: 'held', identity };
+}
+
 function fakeControl(overrides: ControlOverrides = {}): TerminateProcessControl & {
+    resolveDescendantPids: ReturnType<typeof vi.fn>;
     signal: ReturnType<typeof vi.fn>;
     terminateWindowsTree: ReturnType<typeof vi.fn>;
 } {
-    const probeResults = overrides.probeResults ?? [{ pid: 4_321, startTime: 1_717_171_717_000 }, null];
+    const probeResults = overrides.probeResults ?? [
+        held({ pid: 4_321, startTime: 1_717_171_717_000 }),
+        { status: 'free' },
+    ];
     let probeIndex = 0;
     const aliveResults = overrides.aliveResults ?? [false];
     let aliveIndex = 0;
+    const signalResults = overrides.signalResults ?? [{ status: 'delivered', deliveredPids: [4_321] }];
+    let signalIndex = 0;
 
-    const signal = vi.fn(async () => {});
+    const resolveDescendantPids = vi.fn(async () => overrides.descendantPids ?? [4_322, 4_323]);
+    const signal = vi.fn(async () => {
+        const value = signalResults[Math.min(signalIndex, signalResults.length - 1)];
+        signalIndex += 1;
+        return value;
+    });
     const terminateWindowsTree = vi.fn(async () => {});
 
     return {
@@ -80,6 +99,7 @@ function fakeControl(overrides: ControlOverrides = {}): TerminateProcessControl 
             aliveIndex += 1;
             return value;
         }),
+        resolveDescendantPids,
         signal,
         terminateWindowsTree,
         wait: overrides.wait ?? (async () => {}),
@@ -106,7 +126,7 @@ describe('createTerminateDetectedService', () => {
     });
 
     it('refuses to signal when the port was rebound by a DIFFERENT pid (TOCTOU)', async () => {
-        const control = fakeControl({ probeResults: [{ pid: 9_999 }] });
+        const control = fakeControl({ probeResults: [held({ pid: 9_999 })] });
         const terminate = createTerminateDetectedService(control);
 
         const result = await terminate({ request: request(), entry: entry(), now: 0 });
@@ -117,7 +137,7 @@ describe('createTerminateDetectedService', () => {
 
     it('refuses to signal when the same pid was reused with a different process start time', async () => {
         const control = fakeControl({
-            probeResults: [{ pid: 4_321, startTime: 1_717_171_999_000 }],
+            probeResults: [held({ pid: 4_321, startTime: 1_717_171_999_000 })],
         });
         const terminate = createTerminateDetectedService(control);
 
@@ -129,7 +149,7 @@ describe('createTerminateDetectedService', () => {
 
     it('refuses to signal a full-identity row when the action-time probe cannot reverify start time', async () => {
         const control = fakeControl({
-            probeResults: [{ pid: 4_321 }],
+            probeResults: [held({ pid: 4_321 })],
         });
         const terminate = createTerminateDetectedService(control);
 
@@ -141,12 +161,12 @@ describe('createTerminateDetectedService', () => {
 
     it('refuses to signal when the same pid/start time resolves to different process provenance', async () => {
         const control = fakeControl({
-            probeResults: [{
+            probeResults: [held({
                 pid: 4_321,
                 startTime: 1_717_171_717_000,
                 command: 'node other-server.js',
                 cwd: '/repo/web',
-            }],
+            })],
         });
         const terminate = createTerminateDetectedService(control);
 
@@ -157,7 +177,7 @@ describe('createTerminateDetectedService', () => {
     });
 
     it('treats an already-gone listener as idempotent success', async () => {
-        const control = fakeControl({ probeResults: [null] });
+        const control = fakeControl({ probeResults: [{ status: 'free' }] });
         const terminate = createTerminateDetectedService(control);
 
         const result = await terminate({ request: request(), entry: entry(), now: 0 });
@@ -166,52 +186,65 @@ describe('createTerminateDetectedService', () => {
         expect(control.signal).not.toHaveBeenCalled();
     });
 
-    it('sends a group SIGTERM for a run-wrapped child and succeeds without SIGKILL when it exits in grace', async () => {
+    it('refuses to signal when listener identity cannot be authoritatively revalidated', async () => {
+        const control = fakeControl({ probeResults: [{ status: 'indeterminate' }] });
+        const terminate = createTerminateDetectedService(control);
+
+        const result = await terminate({ request: request(), entry: entry(), now: 0 });
+
+        expect(result).toEqual({ status: 'failed', reasonCode: 'listener_state_unverifiable' });
+        expect(control.resolveDescendantPids).not.toHaveBeenCalled();
+        expect(control.signal).not.toHaveBeenCalled();
+    });
+
+    it('resolves descendants once and sends SIGTERM to the captured process tree', async () => {
         const control = fakeControl({
-            probeResults: [{ pid: 4_321, startTime: 1_717_171_717_000 }, null],
+            probeResults: [held({ pid: 4_321, startTime: 1_717_171_717_000 }), { status: 'free' }],
             aliveResults: [false],
+            descendantPids: [4_322, 4_323],
         });
         const terminate = createTerminateDetectedService(control, { graceMs: 1 });
 
         const result = await terminate({ request: request(), entry: entry(), now: 0 });
 
         expect(result).toEqual({ status: 'succeeded' });
+        expect(control.resolveDescendantPids).toHaveBeenCalledOnce();
+        expect(control.resolveDescendantPids).toHaveBeenCalledWith(4_321);
         expect(control.signal).toHaveBeenCalledTimes(1);
-        expect(control.signal).toHaveBeenCalledWith({ pid: 4_321, signal: 'SIGTERM', group: true });
+        expect(control.signal).toHaveBeenCalledWith({
+            pid: 4_321,
+            signal: 'SIGTERM',
+            descendantPids: [4_322, 4_323],
+        });
     });
 
     it('escalates to SIGKILL when the process is still alive after grace', async () => {
         const control = fakeControl({
-            probeResults: [{ pid: 4_321, startTime: 1_717_171_717_000 }, null],
+            probeResults: [held({ pid: 4_321, startTime: 1_717_171_717_000 }), { status: 'free' }],
             aliveResults: [true],
+            descendantPids: [4_322],
         });
         const terminate = createTerminateDetectedService(control, { graceMs: 1 });
 
         const result = await terminate({ request: request(), entry: entry(), now: 0 });
 
         expect(result).toEqual({ status: 'succeeded' });
-        expect(control.signal).toHaveBeenNthCalledWith(1, { pid: 4_321, signal: 'SIGTERM', group: true });
-        expect(control.signal).toHaveBeenNthCalledWith(2, { pid: 4_321, signal: 'SIGKILL', group: true });
-    });
-
-    it('signals the bare pid (not the group) for a non-wrapped single-pid process', async () => {
-        const control = fakeControl({ probeResults: [{ pid: 4_321, startTime: 1_717_171_717_000 }, null], aliveResults: [false] });
-        const terminate = createTerminateDetectedService(control, { graceMs: 1 });
-
-        await terminate({
-            request: request(),
-            entry: entry({
-                provenance: { process: { pid: 4_321, processStartTimeMs: 1_717_171_717_000, lineagePids: [4_321], command: 'server', redacted: true } },
-            }),
-            now: 0,
+        expect(control.resolveDescendantPids).toHaveBeenCalledTimes(1);
+        expect(control.signal).toHaveBeenNthCalledWith(1, {
+            pid: 4_321,
+            signal: 'SIGTERM',
+            descendantPids: [4_322],
         });
-
-        expect(control.signal).toHaveBeenCalledWith({ pid: 4_321, signal: 'SIGTERM', group: false });
+        expect(control.signal).toHaveBeenNthCalledWith(2, {
+            pid: 4_321,
+            signal: 'SIGKILL',
+            descendantPids: [4_322],
+        });
     });
 
     it('reports port_not_released when our pid still holds the port after the kill', async () => {
         const control = fakeControl({
-            probeResults: [{ pid: 4_321, startTime: 1_717_171_717_000 }],
+            probeResults: [held({ pid: 4_321, startTime: 1_717_171_717_000 })],
             aliveResults: [false],
         });
         const terminate = createTerminateDetectedService(control, { graceMs: 1, verifyPollMs: 0, verifyAttempts: 3 });
@@ -221,10 +254,39 @@ describe('createTerminateDetectedService', () => {
         expect(result).toEqual({ status: 'failed', reasonCode: 'port_not_released' });
     });
 
+    it('reports when no addressed process received a signal', async () => {
+        const control = fakeControl({
+            probeResults: [held({ pid: 4_321, startTime: 1_717_171_717_000 })],
+            aliveResults: [false],
+            signalResults: [{ status: 'no_process_signaled' }],
+        });
+        const terminate = createTerminateDetectedService(control, {
+            graceMs: 1,
+            verifyPollMs: 0,
+            verifyAttempts: 1,
+        });
+
+        const result = await terminate({ request: request(), entry: entry(), now: 0 });
+
+        expect(result).toEqual({ status: 'failed', reasonCode: 'terminate_no_process_signaled' });
+    });
+
+    it('maps a refused POSIX signal to terminate_permission_denied', async () => {
+        const control = fakeControl({
+            probeResults: [held({ pid: 4_321, startTime: 1_717_171_717_000 })],
+            signalResults: [{ status: 'permission_denied' }],
+        });
+        const terminate = createTerminateDetectedService(control);
+
+        const result = await terminate({ request: request(), entry: entry(), now: 0 });
+
+        expect(result).toEqual({ status: 'failed', reasonCode: 'terminate_permission_denied' });
+    });
+
     it('uses taskkill /T then /F on Windows', async () => {
         const control = fakeControl({
             platform: 'windows',
-            probeResults: [{ pid: 4_321, startTime: 1_717_171_717_000 }, null],
+            probeResults: [held({ pid: 4_321, startTime: 1_717_171_717_000 }), { status: 'free' }],
             aliveResults: [true],
         });
         const terminate = createTerminateDetectedService(control, { graceMs: 1 });
@@ -234,6 +296,7 @@ describe('createTerminateDetectedService', () => {
         expect(result).toEqual({ status: 'succeeded' });
         expect(control.terminateWindowsTree).toHaveBeenNthCalledWith(1, { pid: 4_321, force: false });
         expect(control.terminateWindowsTree).toHaveBeenNthCalledWith(2, { pid: 4_321, force: true });
+        expect(control.resolveDescendantPids).not.toHaveBeenCalled();
         expect(control.signal).not.toHaveBeenCalled();
     });
 });

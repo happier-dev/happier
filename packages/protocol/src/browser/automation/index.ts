@@ -1,4 +1,10 @@
 export {
+  BROWSER_AUTOMATION_NOT_IMPLEMENTED_ACTION_KINDS,
+  BrowserAutomationImplementedActionKindV1Schema,
+  type BrowserAutomationImplementedActionKindV1,
+} from './notImplemented.js';
+
+export {
   BrowserAutomationActionCapabilityMapV1Schema,
   BrowserAutomationActionCapabilityV1Schema,
   BrowserAutomationActionKindV1Schema,

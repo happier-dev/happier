@@ -31,7 +31,9 @@ import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDo
 import { DetectedLocalServicesPane } from './DetectedLocalServicesPane';
 import { useLocalServiceLauncherStartAction } from './launcherStartAction';
 import {
+    useDetectedLocalServiceForgetAction,
     useDetectedLocalServiceTerminateAction,
+    useLocalServiceCopyUrlAction,
     useManagedLocalServiceRestartAction,
     useManagedLocalServiceStopAction,
 } from './lifecycleActions';
@@ -128,6 +130,18 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
         serverId,
         sessionId,
     });
+    const onForgetDetectedService = useDetectedLocalServiceForgetAction({
+        runtimeActionExecute,
+        machineId,
+        serverId,
+        sessionId,
+    });
+    const onCopyServiceUrl = useLocalServiceCopyUrlAction({
+        runtimeActionExecute,
+        machineId,
+        serverId,
+        sessionId,
+    });
     const onStartLauncherTarget = useLocalServiceLauncherStartAction({
         runtimeActionExecute,
         machineId,
@@ -175,9 +189,12 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
                 onStopManagedService={onStopManagedService}
                 onRestartManagedService={onRestartManagedService}
                 onTerminateDetectedService={onTerminateDetectedService}
+                onForgetDetectedService={onForgetDetectedService}
+                onCopyServiceUrl={onCopyServiceUrl}
                 onStartLauncherTarget={onStartLauncherTarget}
                 onOpenServiceInBrowser={props.onOpenServiceInBrowser}
                 publicPreviewActions={publicPreviewActions}
+                onRefresh={props.inventoryState === undefined ? liveInventoryState.refresh : undefined}
                 testID={props.testID}
             />
             <PluginSurfacePlacementStack

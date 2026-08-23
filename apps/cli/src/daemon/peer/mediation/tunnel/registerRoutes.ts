@@ -11,6 +11,7 @@ import {
     PEER_TCP_TUNNEL_STREAM_PATH,
     PeerTcpTunnelOpenV1Schema,
     PeerTcpTunnelOpenV2Schema,
+    type PeerFlowKindV1,
     type VoiceMediaApplicationAuthorityV1,
 } from '@happier-dev/protocol';
 
@@ -23,6 +24,7 @@ import {
     encodePeerTcpTunnelBinaryFrameForSession,
 } from './frames';
 import { connectPeerTcpTunnelTcp } from './open';
+import type { DaemonPeerMediationDirectFlowObserver } from '../observability/events';
 import { createAtomicRouteGrantConsumption } from './grantConsumption';
 import {
     decodePeerTcpTunnelBinaryRoutingHeaderV2,
@@ -49,6 +51,8 @@ const DEFAULT_OPEN_STREAM_TIMEOUT_MS = 30_000;
 
 export type RegisterPeerTcpTunnelLoopbackRoutesOptions = Omit<OpenPeerTcpTunnelInput, 'open' | 'nowMs' | 'grantConsumption'> & Readonly<{
     nowMs: () => number;
+    /** Scope-bound PMS-9 observer supplied by the loopback composition root (P1-9). */
+    observability?: DaemonPeerMediationDirectFlowObserver;
     openTunnel?: (input: OpenPeerTcpTunnelInput) => Promise<OpenPeerTcpTunnelResult>;
     maxActiveTunnels?: number;
     openStreamTimeoutMs?: number;
@@ -385,10 +389,30 @@ export function registerPeerTcpTunnelLoopbackRoutes(
         grantConsumption.clear();
     });
 
+    /**
+     * PMS-9 / P1-9: the direct tunnel open is a flow lifecycle boundary. Denials carry the real
+     * reason code (`tunnel_id_already_open`, `direct_tunnel_cap_exceeded`, or the open result's own
+     * code) instead of vanishing, and an admitted tunnel publishes `flow.ready`.
+     */
+    const observeTunnel = (input: Readonly<{
+        tunnelId: string;
+        kind: Parameters<DaemonPeerMediationDirectFlowObserver['emit']>[0]['kind'];
+        flowKind?: PeerFlowKindV1;
+        reasonCode?: string;
+    }>): void => {
+        options.observability?.emit({
+            flowKind: input.flowKind ?? 'tcp_tunnel',
+            flowId: input.tunnelId,
+            kind: input.kind,
+            ...(input.reasonCode ? { reasonCode: input.reasonCode } : {}),
+        });
+    };
+
     const handleOpen = async (request: FastifyRequest, reply: FastifyReply) => {
         const tunnelId = readOpenTunnelId(request.body);
         if (tunnelId && activeTunnels.has(tunnelId)) {
             reply.code(409);
+            observeTunnel({ tunnelId, kind: 'flow.denied', reasonCode: 'tunnel_id_already_open' });
             return {
                 ok: false,
                 reasonCode: 'tunnel_id_already_open',
@@ -396,6 +420,7 @@ export function registerPeerTcpTunnelLoopbackRoutes(
         }
         if (tunnelId && activeTunnels.size >= maxActiveTunnels) {
             reply.code(429);
+            observeTunnel({ tunnelId, kind: 'cap.exceeded', reasonCode: 'direct_tunnel_cap_exceeded' });
             return {
                 ok: false,
                 reasonCode: 'direct_tunnel_cap_exceeded',
@@ -409,6 +434,9 @@ export function registerPeerTcpTunnelLoopbackRoutes(
         });
         if (!result.ok) {
             reply.code(400);
+            if (tunnelId) {
+                observeTunnel({ tunnelId, kind: 'flow.denied', reasonCode: result.reasonCode });
+            }
             return result;
         }
         const openStreamTimeout = openStreamTimeoutMs == null
@@ -427,6 +455,12 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                     reasonCode: 'tunnel_open_timeout',
                     voiceMediaApplicationAuthority: activeTunnel.voiceMediaApplicationAuthority,
                 }).catch(() => undefined);
+                observeTunnel({
+                    tunnelId: result.response.tunnelId,
+                    kind: 'flow.aborted',
+                    reasonCode: 'tunnel_open_timeout',
+                    ...(activeTunnel.flowKind ? { flowKind: activeTunnel.flowKind } : {}),
+                });
             }, openStreamTimeoutMs);
         openStreamTimeout?.unref?.();
         activeTunnels.set(result.response.tunnelId, {
@@ -435,6 +469,11 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                 ? PeerTcpTunnelOpenV2Schema.parse(request.body)
                 : PeerTcpTunnelOpenV1Schema.parse(request.body),
             ...(openStreamTimeout ? { openStreamTimeout } : {}),
+        });
+        observeTunnel({
+            tunnelId: result.response.tunnelId,
+            kind: 'flow.ready',
+            ...(result.flowKind ? { flowKind: result.flowKind } : {}),
         });
         return result.response;
     };

@@ -136,7 +136,7 @@ function controlAdapter(): BrowserDaemonControlAdapter {
   };
 }
 
-function automationRequest(actionKind: string, payload: Record<string, unknown> = {}, leaseId?: string) {
+function automationRequest(actionKind: string, payload: Record<string, unknown> = {}) {
   return {
     v: 1,
     automationRequestId: `req_${actionKind}`,
@@ -147,7 +147,6 @@ function automationRequest(actionKind: string, payload: Record<string, unknown> 
     actionKind,
     payload,
     timeoutMs: 5_000,
-    ...(leaseId ? { leaseId } : {}),
   };
 }
 
@@ -435,13 +434,6 @@ describe('daemon browser runtime action executor', () => {
         }),
       }),
     });
-    const lease = service.acquireLease({
-      ...browserAutomationView,
-      holder: 'agent',
-      requesterRef: browserAutomationAgentRef,
-      leaseTtlMs: 5_000,
-    });
-    if (!lease.ok) throw new Error('expected browser automation lease');
     const execute = realMod.createBrowserDaemonRuntimeActionExecutor({
       automation: createBrowserAutomationRoutes({ service }),
       featureGate: allowAllBrowserGate(),
@@ -449,7 +441,7 @@ describe('daemon browser runtime action executor', () => {
 
     const result = await execute(runtimeArgs({
       actionId: 'browser.automation.click',
-      input: automationRequest('click', { selector: 'role=button[name="Save"]' }, lease.lease.leaseId),
+      input: automationRequest('click', { selector: 'role=button[name="Save"]' }),
     }));
 
     expect(result).toMatchObject({ status: 'succeeded' });

@@ -35,7 +35,6 @@ function createEmptyScopeState(
         scopeKey,
         status: 'idle',
         stale: false,
-        resubscribeRequired: false,
         unavailableReasonCode: null,
         lastAppliedSequenceBySource: {},
         staleSourceBySource: {},
@@ -79,7 +78,6 @@ function markSourceStale(
                 ...scopeState,
                 status: 'stale',
                 stale: true,
-                resubscribeRequired: true,
                 staleSourceBySource: {
                     ...scopeState.staleSourceBySource,
                     [source]: true,
@@ -170,7 +168,6 @@ export function applyPeerMediationObservabilitySnapshot(
                 scopeKey,
                 status: stale ? 'stale' : 'ready',
                 stale,
-                resubscribeRequired: stale,
                 unavailableReasonCode: null,
                 lastAppliedSequenceBySource: {
                     ...previousScope.lastAppliedSequenceBySource,
@@ -210,7 +207,6 @@ export function applyPeerMediationObservabilityDelta(
         }),
         status: 'stale' as const,
         stale: true,
-        resubscribeRequired: true,
     };
     const lastApplied = previousScope.lastAppliedSequenceBySource[input.source];
     if (lastApplied === undefined || input.delta.sequence !== lastApplied + 1) {
@@ -253,7 +249,6 @@ export function applyPeerMediationObservabilityDelta(
                 ...previousScope,
                 status: stale ? 'stale' : 'ready',
                 stale,
-                resubscribeRequired: stale,
                 unavailableReasonCode: null,
                 lastAppliedSequenceBySource: {
                     ...previousScope.lastAppliedSequenceBySource,

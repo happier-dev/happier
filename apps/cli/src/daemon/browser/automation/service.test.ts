@@ -10,6 +10,7 @@ import type { BrowserAutomationAdapter } from './adapters/types';
 
 const view = { browserSessionId: 'browser_session_1', viewId: 'view_1' } as const;
 const agentRef = { kind: 'agent', id: 'agent_1' } as const;
+const pluginRef = { kind: 'plugin', id: 'plugin_1' } as const;
 type ViewLifecycleEvent = Readonly<{
   type: 'bound' | 'unbound';
   browserSessionId: string;
@@ -61,32 +62,15 @@ describe('browser automation daemon service', () => {
     expect(timeline.entries[0]?.actionKind).toBe('snapshot');
   });
 
-  it('rejects a mutating action whose lease id does not match an active lease', async () => {
-    const service = createBrowserAutomationDaemonService({ adapter: readOnlyAdapter() });
-
-    const result = await service.execute(
-      request({ actionKind: 'navigate', leaseId: 'lease_missing', payload: { url: 'https://x.test/' } }),
-    );
-
-    expect(result.status).toBe('failed');
-    expect(result.errorCode).toBe('lease_required');
-  });
-
-  it('executes a mutating action with a valid lease held by the requester', async () => {
+  it('executes a mutating action with nothing to acquire first', async () => {
     const adapter: BrowserAutomationAdapter = {
       adapterKind: 'chromiumSidecar',
       execute: vi.fn(async () => ({ status: 'succeeded' as const, fidelity: 'cdp' as const, trustedInput: false })),
     };
     const service = createBrowserAutomationDaemonService({ adapter });
-    const lease = service.acquireLease({ ...view, holder: 'agent', requesterRef: agentRef, leaseTtlMs: 5_000 });
-    if (!lease.ok) throw new Error('expected lease');
 
     const result = await service.execute(
-      request({
-        actionKind: 'navigate',
-        leaseId: lease.lease.leaseId,
-        payload: { url: 'https://x.test/' },
-      }),
+      request({ actionKind: 'navigate', payload: { url: 'https://x.test/' } }),
     );
 
     expect(result.status).toBe('succeeded');
@@ -106,24 +90,54 @@ describe('browser automation daemon service', () => {
       }),
     };
     const service = createBrowserAutomationDaemonService({ adapter });
-    const lease = service.acquireLease({ ...view, holder: 'agent', requesterRef: agentRef, leaseTtlMs: 5_000 });
-    if (!lease.ok) throw new Error('expected lease');
 
-    const first = service.execute(
-      request({ actionKind: 'click', leaseId: lease.lease.leaseId, payload: { selector: '#go' } }),
-    );
-    const second = await service.execute(
-      request({ actionKind: 'type', leaseId: lease.lease.leaseId, payload: { text: 'hi' } }),
-    );
+    const first = service.execute(request({ actionKind: 'click', payload: { selector: '#go' } }));
+    const second = await service.execute(request({ actionKind: 'type', payload: { text: 'hi' } }));
 
     expect(second.status).toBe('failed');
-    expect(second.errorCode).toBe('lease_conflict');
+    expect(second.errorCode).toBe('automation_busy');
 
     release();
     await first;
+
+    // Single-flight releases when the first action settles: the view is dispatchable again.
+    const third = await service.execute(request({ actionKind: 'type', payload: { text: 'hi' } }));
+    expect(third.status).toBe('succeeded');
   });
 
-  it('cancels an in-flight action when cancelActive is called by the lease owner', async () => {
+  it('projects an active plugin automation request as the agent controller', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = createBrowserAutomationDaemonService({
+      adapter: {
+        adapterKind: 'chromiumSidecar',
+        execute: vi.fn(async () => {
+          await gate;
+          return { status: 'succeeded' as const, fidelity: 'cdp' as const, trustedInput: false };
+        }),
+      },
+    });
+
+    const pending = service.execute(request({
+      automationRequestId: 'plugin_request_1',
+      requestedBy: 'plugin',
+      requesterRef: pluginRef,
+      actionKind: 'click',
+      payload: { locator: { kind: 'css', value: '#go' } },
+    }));
+
+    expect(service.getStatus(view)).toMatchObject({
+      controller: 'agent',
+      activeAutomationRequestId: 'plugin_request_1',
+    });
+
+    release();
+    await pending;
+  });
+
+  it('cancels an in-flight action when cancelActive is called by the requester that started it', async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -136,11 +150,9 @@ describe('browser automation daemon service', () => {
       }),
     };
     const service = createBrowserAutomationDaemonService({ adapter });
-    const lease = service.acquireLease({ ...view, holder: 'agent', requesterRef: agentRef, leaseTtlMs: 5_000 });
-    if (!lease.ok) throw new Error('expected lease');
 
     const pending = service.execute(
-      request({ actionKind: 'navigate', leaseId: lease.lease.leaseId, payload: { url: 'https://x.test/' } }),
+      request({ actionKind: 'navigate', payload: { url: 'https://x.test/' } }),
     );
 
     const canceled = service.cancelActive({ ...view, requesterRef: agentRef });
@@ -156,6 +168,33 @@ describe('browser automation daemon service', () => {
     expect(timeline.entries.some((entry) => entry.status === 'canceled')).toBe(true);
   });
 
+  it('refuses cancelActive from a requester that did not start the in-flight action', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = createBrowserAutomationDaemonService({
+      adapter: {
+        adapterKind: 'chromiumSidecar',
+        execute: vi.fn(async () => {
+          await gate;
+          return { status: 'succeeded' as const, fidelity: 'cdp' as const, trustedInput: false };
+        }),
+      },
+    });
+
+    const pending = service.execute(request({ actionKind: 'navigate', payload: { url: 'https://x.test/' } }));
+
+    // Provenance is recorded at admission from the request itself. This check was unreachable
+    // while it read a lease requester, because no request could ever carry a lease.
+    const canceled = service.cancelActive({ ...view, requesterRef: pluginRef });
+
+    expect(canceled).toEqual({ ok: false, errorCode: 'owner_mismatch' });
+
+    release();
+    expect((await pending).status).toBe('succeeded');
+  });
+
   it('negotiates supportedOperations: fails closed up-front for an unsupported op without dispatching (BA-6)', async () => {
     const execute = vi.fn(async () => ({ status: 'succeeded' as const, fidelity: 'cdp' as const, trustedInput: false }));
     const adapter: BrowserAutomationAdapter = {
@@ -165,12 +204,8 @@ describe('browser automation daemon service', () => {
       execute,
     };
     const service = createBrowserAutomationDaemonService({ adapter });
-    const lease = service.acquireLease({ ...view, holder: 'agent', requesterRef: agentRef, leaseTtlMs: 5_000 });
-    if (!lease.ok) throw new Error('expected lease');
 
-    const result = await service.execute(
-      request({ actionKind: 'type', leaseId: lease.lease.leaseId, payload: { text: 'hi' } }),
-    );
+    const result = await service.execute(request({ actionKind: 'type', payload: { text: 'hi' } }));
 
     expect(result.status).toBe('failed');
     expect(result.errorCode).toBe('unsupported_action');
@@ -187,13 +222,9 @@ describe('browser automation daemon service', () => {
         execute,
       },
     });
-    const lease = service.acquireLease({ ...view, holder: 'agent', requesterRef: agentRef, leaseTtlMs: 5_000 });
-    if (!lease.ok) throw new Error('expected lease');
-
     const result = await service.execute(
       request({
         actionKind: 'evaluate',
-        leaseId: lease.lease.leaseId,
         payload: {
           diagnosticsEvalRequest: {
             v: 1,
@@ -247,14 +278,35 @@ describe('browser automation daemon service', () => {
     expect(undeclared.getSupportedOperations()).toBeNull();
   });
 
-  it('returns controller state via getStatus reflecting the active lease', async () => {
-    const service = createBrowserAutomationDaemonService({ adapter: readOnlyAdapter() });
-    const lease = service.acquireLease({ ...view, holder: 'agent', requesterRef: agentRef, leaseTtlMs: 5_000 });
-    if (!lease.ok) throw new Error('expected lease');
+  it('returns the view to an uncontrolled status once the in-flight action settles', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = createBrowserAutomationDaemonService({
+      adapter: {
+        adapterKind: 'chromiumSidecar',
+        execute: vi.fn(async () => {
+          await gate;
+          return { status: 'succeeded' as const, fidelity: 'cdp' as const, trustedInput: false };
+        }),
+      },
+    });
 
-    const state = service.getStatus(view);
-    expect(state.controller).toBe('agent');
-    expect(state.activeLease?.leaseId).toBe(lease.lease.leaseId);
+    expect(service.getStatus(view).controller).toBe('none');
+
+    const pending = service.execute(request({ automationRequestId: 'req_status', actionKind: 'click' }));
+    expect(service.getStatus(view)).toMatchObject({
+      controller: 'agent',
+      activeAutomationRequestId: 'req_status',
+    });
+
+    release();
+    await pending;
+
+    const settled = service.getStatus(view);
+    expect(settled.controller).toBe('none');
+    expect(settled.activeAutomationRequestId).toBeUndefined();
   });
 
   it('evicts view runtimes when the sidecar lifecycle reports views closed', async () => {

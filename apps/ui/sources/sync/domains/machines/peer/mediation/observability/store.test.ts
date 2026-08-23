@@ -248,7 +248,6 @@ describe('peer mediation observability UI store', () => {
         expect(selectors.selectPeerMediationObservabilityScopeState(next, machineScope)).toMatchObject({
             status: 'stale',
             stale: true,
-            resubscribeRequired: true,
             lastAppliedSequenceBySource: {
                 server: 1,
             },
@@ -287,7 +286,6 @@ describe('peer mediation observability UI store', () => {
         expect(selectors.selectPeerMediationObservabilityScopeState(next, machineScope)).toMatchObject({
             status: 'stale',
             stale: true,
-            resubscribeRequired: true,
             lastAppliedSequenceBySource: {
                 server: 1,
             },
@@ -355,7 +353,6 @@ describe('peer mediation observability UI store', () => {
         expect(selectors.selectPeerMediationObservabilityScopeState(next, machineScope)).toMatchObject({
             status: 'stale',
             stale: true,
-            resubscribeRequired: true,
             staleSourceBySource: {
                 server: false,
                 daemon: true,

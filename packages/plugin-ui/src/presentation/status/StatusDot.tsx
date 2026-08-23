@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { AppState, Animated, Platform, View, type ViewStyle } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { Animated, Platform, View, type ViewStyle } from 'react-native';
 
 import { useOptionalHappierUiAccessibility } from '../../environment/context.js';
 import type { HappierStyleProp } from '../portableTypes.js';
@@ -17,37 +17,9 @@ import type { HappierStyleProp } from '../portableTypes.js';
  * `reducedMotion` is injected (§3.10.2), and only the pulsing path reads it.
  * Status dots mount by the hundred in virtualized lists, so a preference read
  * on the static path would make every row pay for a value it cannot use.
- *
- * The pulse also PAUSES while the surface is hidden or backgrounded, which
- * `apps/ui/AGENTS.md` and `DESIGN.md` both require of long-running status
- * motion. That belongs here rather than at a call site: a launchpad of N rows
- * beside a services pane of N rows is 2N loops, and every one of them was
- * running behind a backgrounded pane. Subscribing only on the pulsing path
- * keeps the static dot free.
  */
 const WEB_PULSE_TIMING_FUNCTION = 'steps(6, end)';
 const DEFAULT_STATUS_DOT_SIZE = 6;
-
-/**
- * Whether the surface this dot lives on is on screen.
- *
- * `AppState` is the single mechanism on purpose: react-native-web implements it
- * on top of `document.visibilityState`, so one subscription covers a
- * backgrounded app on native and a hidden tab/window on web without a second,
- * web-only listener beside it.
- */
-function useSurfaceVisible(): boolean {
-  const [visible, setVisible] = useState(() => AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (next) => {
-      setVisible(next !== 'background' && next !== 'inactive');
-    });
-    return () => { subscription.remove(); };
-  }, []);
-
-  return visible;
-}
 
 export type HappierStatusDotProps = Readonly<{
   color: string;
@@ -101,15 +73,14 @@ export function HappierStatusDot(props: HappierStatusDotProps) {
 function MotionAwareStatusDot(props: HappierStatusDotProps) {
   const environmentAccessibility = useOptionalHappierUiAccessibility();
   const reducedMotion = props.reducedMotion ?? environmentAccessibility?.reducedMotion ?? false;
-  const surfaceVisible = useSurfaceVisible();
 
   if (reducedMotion) {
     return <StaticStatusDot {...props} />;
   }
   if (Platform.OS === 'web') {
-    return <WebStatusDot {...props} paused={!surfaceVisible} />;
+    return <WebStatusDot {...props} />;
   }
-  return <PulsingStatusDot {...props} paused={!surfaceVisible} />;
+  return <PulsingStatusDot {...props} />;
 }
 
 function StaticStatusDot({
@@ -128,8 +99,6 @@ function StaticStatusDot({
   );
 }
 
-type PausableStatusDotProps = HappierStatusDotProps & Readonly<{ paused: boolean }>;
-
 function WebStatusDot({
   color,
   isPulsing,
@@ -138,8 +107,7 @@ function WebStatusDot({
   testID,
   animationEnabled = true,
   accessibilityLabel,
-  paused,
-}: PausableStatusDotProps) {
+}: HappierStatusDotProps) {
   return (
     <View
       testID={testID}
@@ -147,10 +115,6 @@ function WebStatusDot({
       style={[
         dotStyle(color, size),
         isPulsing && animationEnabled ? webPulseStyle : null,
-        // `paused` rather than dropping the animation entirely: the keyframe holds
-        // its current frame and resumes in place, so a returning tab does not
-        // restart every dot on the screen in lockstep.
-        isPulsing && animationEnabled && paused ? webPulsePausedStyle : null,
         style,
       ]}
     />
@@ -163,15 +127,10 @@ function PulsingStatusDot({
   style,
   testID,
   accessibilityLabel,
-  paused,
-}: PausableStatusDotProps) {
+}: HappierStatusDotProps) {
   const opacity = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    if (paused) {
-      opacity.setValue(1);
-      return;
-    }
     const animation = Animated.loop(
       Animated.sequence([
         Animated.timing(opacity, {
@@ -190,7 +149,7 @@ function PulsingStatusDot({
     return () => {
       animation.stop();
     };
-  }, [opacity, paused]);
+  }, [opacity]);
 
   return (
     <Animated.View
@@ -211,7 +170,6 @@ type WebPulseStyle = ViewStyle & {
   animationIterationCount?: string;
   animationName?: string;
   animationTimingFunction?: string;
-  animationPlayState?: 'running' | 'paused';
 };
 
 const webPulseStyle: WebPulseStyle = {
@@ -220,8 +178,4 @@ const webPulseStyle: WebPulseStyle = {
   animationIterationCount: 'infinite',
   animationName: 'happierStatusDotPulse',
   animationTimingFunction: WEB_PULSE_TIMING_FUNCTION,
-};
-
-const webPulsePausedStyle: WebPulseStyle = {
-  animationPlayState: 'paused',
 };

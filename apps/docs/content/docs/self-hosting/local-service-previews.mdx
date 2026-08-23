@@ -1,0 +1,190 @@
+---
+title: Local service previews
+description: Let people open a dev server running on their machine from the Happier app — what to configure, and what each missing piece looks like when it is wrong.
+---
+
+Someone runs `npm run dev` on their laptop, opens Happier on their phone, and taps the
+service in the launchpad. The page loads. That is a **local service preview**: the app
+reaches a port bound to `127.0.0.1` on a machine, through your relay, without that port
+being exposed to anything else.
+
+This page is about turning that on for a self-hosted relay. It also covers **public
+exposure** — the shareable-link feature that puts one of those services on the open
+internet — which is off by default and, as of this release, should stay off.
+
+## Availability
+
+| Capability | Status | Default |
+| --- | --- | --- |
+| Detecting local services and listing them in the launchpad | Shipped | On |
+| Opening a private preview from the app | Shipped, but needs signing keys and a relay port allowlist | Feature on, transport unconfigured |
+| Public exposure through a shareable secret link | **Development only — do not enable** | Off |
+
+Private previews are the normal path and the rest of this page is mostly about them.
+
+<Callout type="warn">
+  **Public exposure is not ready to run.** The code is complete and it is not switched on,
+  and it should not be switched on until its security review has landed. Leave
+  `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED` unset. Everything below about it
+  is here so you can recognise it, not so you can turn it on.
+</Callout>
+
+## What you need first
+
+- A relay you control the environment of. All of this is server-side; **nothing is
+  configured on the machine running the dev server.**
+- The ability to generate and store a private key as an environment variable.
+- A rough idea of which ports your people actually develop on. The relay needs an explicit
+  allowlist and it starts empty.
+
+## How a preview actually travels
+
+Worth thirty seconds, because every failure below is one of these three steps refusing.
+
+1. **The machine registers a preview.** Its daemon tells the relay "session X can reach
+   `127.0.0.1:5173` on this machine".
+2. **The relay mints a route grant.** A short-lived Ed25519-signed token that names the
+   account, the machine, the flow, the route and the exact destination port. This is the
+   step that needs signing keys, and the one that is unconfigured out of the box.
+3. **Bytes ride the existing machine connection.** The relay forwards the HTTP request
+   over the machine's socket as framed envelopes, the daemon opens a loopback connection
+   to the port, and the response comes back the same way. The destination must be a
+   loopback address; a grant for any other host is refused.
+
+The daemon verifies every grant against the relay's public key, which it learns from the
+relay's own capability payload. That is why there is nothing to configure on the machine —
+and why a signing key you rotate takes effect as soon as machines refresh.
+
+## Turn on private previews
+
+### 1. Generate a route grant signing key
+
+The private key is a **32-byte Ed25519 seed, base64url-encoded without padding**. The
+relay derives the public key from it.
+
+<Tabs items={['macOS / Linux', 'PowerShell']}>
+  <Tab value="macOS / Linux">
+```bash
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+```
+  </Tab>
+  <Tab value="PowerShell">
+```powershell
+$bytes = New-Object byte[] 32
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+[Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
+```
+  </Tab>
+</Tabs>
+
+Padding characters and `+` / `/` are rejected, so do not skip the substitution.
+
+### 2. Set the four signing variables
+
+```bash
+HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID=relay-2026-08
+HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY=<the value from step 1>
+# Optional:
+HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY=<derived public key, base64url>
+HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT=1788000000000
+```
+
+- **`…_KEY_ID`** is any short label you choose. It travels with every grant so a machine can
+  tell which key signed it, which is what makes rotation possible. Change it whenever you
+  change the private key.
+- **`…_PRIVATE_KEY`** is the seed. Without it — or without the key id — the relay behaves as
+  if the whole feature does not exist.
+- **`…_PUBLIC_KEY`** is optional and is only ever checked, never trusted: the relay derives
+  the real public key from the seed and refuses to start signing if the two disagree. Set it
+  if you want a guard against pasting a mismatched pair.
+- **`…_EXPIRES_AT`** is epoch **milliseconds**. Machines drop a key once that instant passes,
+  so a grant signed by an expired key stops verifying. Leave it unset for a key with no
+  expiry, or set it when you are staging a rotation.
+
+### 3. Allow the ports previews may reach
+
+```bash
+HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED=true
+HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS=3000,4200,5173,8000,8080
+```
+
+These two are a pair and both are restrictive by default: the relay-routed tunnel is **off**
+unless you turn it on, and the allowlist is **empty**, which denies every port. A preview to
+a port outside the list is refused when the grant is minted — the port is checked before any
+connection is attempted, not after.
+
+Pick the ports your framework defaults actually use rather than a wide range. The allowlist
+is the only thing standing between "preview my dev server" and "preview anything listening
+on loopback", including a database admin console or another person's tool.
+
+### 4. Optional: private preview settings
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED` | on | The private preview feature itself. Loopback-only, no internet exposure, so it defaults on. |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__TOKEN_TTL_MS` | 5 minutes | How long a preview access token stays valid. |
+| `HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN` | unset | A base domain for host-mode previews, so each preview gets its own origin instead of a path under the API host. |
+
+The complete index of every variable in this family is on
+[Feature environment variables](/self-hosting/feature-env).
+
+## When it goes wrong
+
+The app names the specific unmet prerequisite on the service row itself, so start there
+rather than in the logs. Each sentence maps to exactly one thing:
+
+| What the app says | What is missing |
+| --- | --- |
+| "The server relay for machine tunnels is turned off." | `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED` |
+| "The server allows no tunnel ports." | `HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS` |
+| "Local service previews are turned off on the server." | `HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED` |
+| "Public previews are turned off on the server." | `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED` — expected, and correct |
+
+Signing keys are the one prerequisite with no sentence of its own, because the relay does
+not advertise the feature at all when they are missing. Its symptoms:
+
+- **Opening a preview fails with a server error**, and the relay logs
+  `local_service_preview_tunnel_unavailable:grant_signing_unavailable`.
+- **The route grant endpoint returns `404 Not Found`** rather than an error explaining
+  itself. This is deliberate: a relay with no signing keys does not claim to offer route
+  grants. A 404 there is the signature of missing keys, not a bad URL.
+
+Two more that look alike and are not:
+
+- **A preview to one port works and another does not.** The second port is not in
+  `HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS`. Ports are matched exactly; there are no
+  ranges.
+- **Previews worked and then stopped everywhere at once.** Check
+  `HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT`. Once it passes, machines stop
+  trusting the key, and every grant fails verification even though the relay is happily
+  signing them.
+
+<Callout type="info">
+  `HAPPIER_FEATURE_MACHINES_TUNNEL_DIRECT_PEER__ENABLED` sounds like it would help here and
+  does not. Local service previews always travel through the relay; that variable governs a
+  different route used by other features. Turning it on changes nothing about previews.
+</Callout>
+
+## Public exposure, and why it is off
+
+Public exposure takes a private preview and gives it a URL anyone on the internet can open,
+with no sign-in, for a limited time. It exists, it is feature-complete, and it is gated
+behind `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED`, which defaults to off.
+
+**Leave it off.** It has not completed the independent security review that this kind of
+surface requires, and a relay that enables it is exposing a port on someone's laptop to the
+open internet on the strength of code that has not been signed off for that job. This is not
+a limitation of your deployment; it is the current state of the feature.
+
+If you enable it anyway, the relay will refuse to actually mint links until several further
+prerequisites are configured — an exposure mode, a maximum link lifetime, a DNS/TLS host
+origin, an audit sink, and a rate limit profile — and the app will name whichever one is
+missing on the service row. That is a completeness check, not a security review, and passing
+it does not make the feature ready.
+
+## Related
+
+- [Feature environment variables](/self-hosting/feature-env) — the generated index of every `HAPPIER_FEATURE_*` variable, including the rest of the tunnel family.
+- [Environment variables](/self-hosting/env) — the complete server runtime surface.
+- [Feature flags](/extras/feature-flags) — how these server gates map to what clients show.
+- [Relay access](/apps/relay-access) — choosing the URL other devices use to reach your relay.

@@ -7,6 +7,7 @@
     "env",
     "feature-env",
     "rate-limits",
+    "local-service-previews",
     "observability",
     "auth",
     "auth-github",

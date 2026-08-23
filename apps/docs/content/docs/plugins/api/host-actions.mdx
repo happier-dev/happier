@@ -354,6 +354,18 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 No field hints are published. Use the typed input accepted by `execute`.
 
+## `browser.automation.drag`
+
+**Drag between browser elements** — Drag a browser element onto a drop target.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
 ## `browser.automation.focus`
 
 **Focus browser element** — Automate focusing a browser element.
@@ -549,6 +561,18 @@ No field hints are published. Use the typed input accepted by `execute`.
 ## `browser.automation.type`
 
 **Type into browser** — Automate typing text into the browser view.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.upload`
+
+**Upload files to browser input** — Attach one or more files to a browser file input.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -1918,7 +1942,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `peerMediation.observability.snapshot`
 
-**Get peer mediation observability snapshot** — Get peer mediation observability snapshot
+**Get peer mediation observability snapshot** — Read the current peer mediation observability counters for an authorized machine scope.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -1930,7 +1954,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `peerMediation.observability.subscribe`
 
-**Subscribe to peer mediation observability** — Subscribe to peer mediation observability
+**Subscribe to peer mediation observability** — Open a poll-backed peer mediation observability cursor: returns the current snapshot and its sequence, which the caller advances by re-reading the snapshot. Live deltas are pushed only when an out-of-band delta sink is wired.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -1942,7 +1966,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `peerMediation.observability.unsubscribe`
 
-**Unsubscribe from peer mediation observability** — Unsubscribe from peer mediation observability
+**Unsubscribe from peer mediation observability** — Close a peer mediation observability cursor and release any wired delta listener.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.

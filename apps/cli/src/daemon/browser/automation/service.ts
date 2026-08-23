@@ -11,6 +11,7 @@ import {
   type BrowserAutomationControllerKindV1,
   type BrowserAutomationControllerStateV1,
   type BrowserAutomationErrorCodeV1,
+  type BrowserAutomationRequesterKindV1,
   type BrowserAutomationRequesterRefV1,
   type BrowserAutomationTimelineEntryV1,
   type BrowserAutomationTimelineV1,
@@ -39,6 +40,21 @@ const NOT_IMPLEMENTED_ACTIONS = new Set<BrowserAutomationActionKindV1>([
   'startElementPicker',
   'cancelElementPicker',
 ]);
+
+type ActiveBrowserAutomationControllerKind = Exclude<BrowserAutomationControllerKindV1, 'none'>;
+
+const AUTOMATION_CONTROLLER_BY_REQUESTER = {
+  user: 'human',
+  agent: 'agent',
+  plugin: 'agent',
+  system: 'system',
+} as const satisfies Readonly<Record<BrowserAutomationRequesterKindV1, ActiveBrowserAutomationControllerKind>>;
+
+function projectAutomationRequesterToController(
+  requester: BrowserAutomationRequesterKindV1,
+): ActiveBrowserAutomationControllerKind {
+  return AUTOMATION_CONTROLLER_BY_REQUESTER[requester];
+}
 
 export type BrowserAutomationCancelResult =
   | Readonly<{ ok: true }>
@@ -209,7 +225,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
     if (mutating) {
       runtime.activeAutomationRequestId = request.automationRequestId;
       runtime.activeRequesterRef = request.requesterRef;
-      runtime.activeController = request.requestedBy === 'user' ? 'human' : request.requestedBy;
+      runtime.activeController = projectAutomationRequesterToController(request.requestedBy);
     }
 
     const cancellation = new Promise<{ canceled: true; errorCode: BrowserAutomationErrorCodeV1 }>((resolve) => {

@@ -55,6 +55,12 @@ export function ExternalUrlTarget(props: Readonly<{
                     onLoadStart: () => onLifecycle?.({ kind: 'loadStarted', url: externalUrl }),
                     onLoadEnd: () => onLifecycle?.({ kind: 'loadFinished', url: externalUrl }),
                     onError: () => onLifecycle?.({ kind: 'loadFailed', errorCode: WEBVIEW_LOAD_FAILED_ERROR_CODE, url: externalUrl }),
+                    // G4: the WebView's own navigation snapshot is the only producer of
+                    // back/forward history truth for this engine.
+                    onNavigationStateChange: (navigationState) => onLifecycle?.({
+                        kind: 'navigationStateChanged',
+                        ...navigationState,
+                    }),
                     ...(props.diagnostics ? { diagnostics: props.diagnostics } : {}),
                 }}
             />

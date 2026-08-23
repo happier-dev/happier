@@ -27,7 +27,6 @@ export function selectPeerMediationObservabilityScopeState(
         scopeKey,
         status: 'idle',
         stale: false,
-        resubscribeRequired: false,
         unavailableReasonCode: null,
         lastAppliedSequenceBySource: {},
         staleSourceBySource: {},

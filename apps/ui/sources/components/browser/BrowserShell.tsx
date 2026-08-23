@@ -393,6 +393,9 @@ export function BrowserShell(props: Readonly<{
     testID?: string;
 }>): React.ReactElement {
     const testID = props.testID ?? 'browser-shell';
+    // Measured CONTAINER width, not the window: the same shell renders into a ~380px session panel
+    // and a 2560px window on one machine, and only the container knows which.
+    const chromeDensity = useBrowserChromeDensity();
     const activeView = selectActiveBrowserView(props.state, props.browserSessionId, props.viewId);
     const browserDiagnostics = props.browserDiagnostics === undefined
         ? null
@@ -935,7 +938,7 @@ export function BrowserShell(props: Readonly<{
     ]);
 
     return (
-        <View testID={testID} style={stylesheet.root}>
+        <View testID={testID} style={stylesheet.root} onLayout={chromeDensity.onLayout}>
             <View style={stylesheet.toolbarRow}>
                 <BrowserToolbar
                     testID={testID}
@@ -957,17 +960,16 @@ export function BrowserShell(props: Readonly<{
                         onSubmitUrl={dispatchNavigate}
                     />
                 </View>
+                {/*
+                  * One identity chip, not three. The page title lives on the workspace tab strip that
+                  * already owns it, and the origin-kind pill folded into this chip's fallback label.
+                  * Collapsed, it keeps its glyph and drops its label: trust is never the thing that
+                  * gets hidden to save width.
+                  */}
                 <SecurityOriginIndicator
                     testID={`${testID}-security`}
                     view={activeView}
-                />
-                <BrowserToolbarTitle
-                    testID={`${testID}-title`}
-                    view={activeView}
-                />
-                <BrowserOriginChip
-                    testID={`${testID}-origin`}
-                    view={activeView}
+                    compact={chromeDensity.collapsed}
                 />
                 {props.browserProfile && shouldSurfaceBrowserPrivacy(props.browserProfile) ? (
                     <BrowserPrivacyPopover
@@ -979,32 +981,36 @@ export function BrowserShell(props: Readonly<{
                     testID={`${testID}-overflow`}
                     items={overflowItems}
                 />
-                {props.browserRecording ? (
-                    <BrowserRecordingControls
-                        testID={`${testID}-recording`}
-                        view={activeView}
-                        profileId={activeSession?.profileId ?? null}
-                        state={props.browserRecording.state}
-                        recordingCapabilities={props.browserRecording.recordingCapabilities}
-                        enabled={props.browserRecording.enabled}
-                        policyState={props.browserRecording.policyState}
-                        nowMs={props.browserRecording.nowMs ?? props.nowMs}
-                        onStartRecording={props.browserRecording.onStartRecording}
-                        onStopRecording={props.browserRecording.onStopRecording}
-                        onCancelRecording={props.browserRecording.onCancelRecording}
-                        onUnavailable={props.browserRecording.onUnavailable}
-                        isCaptureSourceAvailable={props.browserRecording.isCaptureSourceAvailable}
-                    />
-                ) : null}
-                {props.browserAutomation ? (
-                    <BrowserAutomationControls
-                        testID={`${testID}-automation`}
-                        view={activeView}
-                        controlService={props.browserAutomation.controlService}
-                        enabled={props.browserAutomation.enabled}
-                    />
-                ) : null}
             </View>
+            {props.browserRecording || props.browserAutomation ? (
+                <View style={stylesheet.liveStatusRow}>
+                    {props.browserRecording ? (
+                        <BrowserRecordingControls
+                            testID={`${testID}-recording`}
+                            view={activeView}
+                            profileId={activeSession?.profileId ?? null}
+                            state={props.browserRecording.state}
+                            recordingCapabilities={props.browserRecording.recordingCapabilities}
+                            enabled={props.browserRecording.enabled}
+                            policyState={props.browserRecording.policyState}
+                            nowMs={props.browserRecording.nowMs ?? props.nowMs}
+                            onStartRecording={props.browserRecording.onStartRecording}
+                            onStopRecording={props.browserRecording.onStopRecording}
+                            onCancelRecording={props.browserRecording.onCancelRecording}
+                            onUnavailable={props.browserRecording.onUnavailable}
+                            isCaptureSourceAvailable={props.browserRecording.isCaptureSourceAvailable}
+                        />
+                    ) : null}
+                    {props.browserAutomation ? (
+                        <BrowserAutomationControls
+                            testID={`${testID}-automation`}
+                            view={activeView}
+                            controlService={props.browserAutomation.controlService}
+                            enabled={props.browserAutomation.enabled}
+                        />
+                    ) : null}
+                </View>
+            ) : null}
             <View style={stylesheet.viewHost}>
                 <BrowserLoadProgressBar
                     testID={`${testID}-load-progress`}

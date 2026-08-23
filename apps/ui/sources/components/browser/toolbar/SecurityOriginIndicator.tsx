@@ -27,6 +27,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     chipInsecure: {
         backgroundColor: theme.colors.state.warning.background,
     },
+    chipCompact: {
+        paddingHorizontal: 6,
+        gap: 0,
+    },
     text: {
         ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
@@ -110,6 +114,11 @@ function originKindGlyph(view: BrowserControlViewState | null): IconName {
  */
 export function SecurityOriginIndicator(props: Readonly<{
     view: BrowserControlViewState | null;
+    /**
+     * Narrow chrome: keep the glyph, drop the label. The origin text is already in the address
+     * field two controls to the left, so the label is the redundant half — the trust glyph is not.
+     */
+    compact?: boolean;
     testID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
@@ -132,7 +141,11 @@ export function SecurityOriginIndicator(props: Readonly<{
     return (
         <View
             testID={props.testID}
-            style={[stylesheet.chip, insecure ? stylesheet.chipInsecure : null]}
+            style={[
+                stylesheet.chip,
+                insecure ? stylesheet.chipInsecure : null,
+                props.compact ? stylesheet.chipCompact : null,
+            ]}
             accessibilityRole="text"
             accessibilityLabel={hasOrigin && model.originLabel
                 ? `${securityLabel}: ${model.originLabel}`
@@ -141,9 +154,11 @@ export function SecurityOriginIndicator(props: Readonly<{
                     : originKindLabel(props.view)}
         >
             <Icon name={iconName} size={14} color={iconColor} />
-            <Text numberOfLines={1} style={[stylesheet.text, insecure ? stylesheet.textInsecure : null]}>
-                {label}
-            </Text>
+            {props.compact ? null : (
+                <Text numberOfLines={1} style={[stylesheet.text, insecure ? stylesheet.textInsecure : null]}>
+                    {label}
+                </Text>
+            )}
         </View>
     );
 }

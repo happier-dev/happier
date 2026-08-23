@@ -21,24 +21,6 @@ function isHttpsUrl(value: string | null): boolean {
     }
 }
 
-function hasProductionReadyPublicRateLimitChecker(
-    env: NodeJS.ProcessEnv,
-    dependencyKind: string,
-    publicPreviewOptIn: boolean,
-): boolean {
-    if (dependencyKind === "none") {
-        return false;
-    }
-    // V1 self-hosted opt-in: when the canonical `localServices.publicPreview` feature is enabled,
-    // the relay is a single process, so the in-memory `fixed_window` limiter IS the shared limiter.
-    // The production rejection encodes a hosted-multi-replica assumption that does not hold here;
-    // a distributed limiter for true multi-tenant relays remains the (deferred) hardening path.
-    if (publicPreviewOptIn) {
-        return true;
-    }
-    return env.NODE_ENV !== "production" || dependencyKind !== "fixed_window";
-}
-
 export function resolveLocalServicesFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta {
     const featureConfig = readLocalServicesFeatureEnv(env);
     const tunnelConfig = readMachineTunnelFeatureEnv(env);
@@ -57,17 +39,16 @@ export function resolveLocalServicesFeature(env: NodeJS.ProcessEnv): FeaturesPay
     })();
     const publicDnsTlsHostModeAvailable = Boolean(featureConfig.previewHostOriginBaseDomain)
         && isHttpsUrl(resolvePublicBaseUrl(env));
-    const publicDnsTlsRequired = featureConfig.publicPolicy.dnsTlsRequired || env.NODE_ENV === "production";
     const publicAllowedModesConfigured = featureConfig.publicPolicy.allowedModes.length > 0;
     const publicMaxTtlConfigured = typeof featureConfig.publicPolicy.maxTtlMs === "number";
     const publicAuditSinkAvailable = featureConfig.publicAuditDependency.kind !== "none";
-    const publicAuditRequired = featureConfig.publicPolicy.auditRequired;
     const publicRateLimitProfileConfigured = featureConfig.publicPolicy.rateLimitProfileIds.length > 0;
-    const publicRateLimitCheckerAvailable = hasProductionReadyPublicRateLimitChecker(
-        env,
-        featureConfig.publicRateLimitDependency.kind,
-        featureConfig.publicPreviewEnabled,
-    );
+    // OE-4: the former `hasProductionReadyPublicRateLimitChecker` helper computed exactly this.
+    // Its NODE_ENV and `fixed_window` branches sat behind an unconditional `publicPreviewOptIn`
+    // short-circuit that the single call site always satisfied when the gate could observe it.
+    // V1 self-hosted relays are a single process, so the in-memory `fixed_window` limiter IS the
+    // shared limiter; a distributed limiter for multi-replica relays remains a deferred hardening.
+    const publicRateLimitCheckerAvailable = featureConfig.publicRateLimitDependency.kind !== "none";
     const publicDisabledReasons = (() => {
         if (!featureConfig.publicPreviewEnabled) return ["disabled_by_server_policy"];
         return [
@@ -83,18 +64,17 @@ export function resolveLocalServicesFeature(env: NodeJS.ProcessEnv): FeaturesPay
                     : ["max_ttl_unconfigured"]
             ),
             ...(
-                publicDnsTlsRequired && !publicDnsTlsHostModeAvailable
-                    ? ["dns_tls_unavailable"]
-                    : []
+                // S-3: a public exposure is minted on its own isolated origin, so host-mode DNS/TLS
+                // is now a hard prerequisite rather than one conditional on `dnsTlsRequired`.
+                // Without it `createExposure` refuses with `public_origin_unavailable`.
+                publicDnsTlsHostModeAvailable
+                    ? []
+                    : ["dns_tls_unavailable"]
             ),
             ...(
-                publicAuditRequired
-                    ? (
-                        publicAuditSinkAvailable
-                            ? []
-                            : ["audit_sink_unavailable"]
-                    )
-                    : ["audit_required_disabled"]
+                publicAuditSinkAvailable
+                    ? []
+                    : ["audit_sink_unavailable"]
             ),
             ...(
                 publicRateLimitProfileConfigured
@@ -102,9 +82,11 @@ export function resolveLocalServicesFeature(env: NodeJS.ProcessEnv): FeaturesPay
                     : ["rate_limit_profile_unconfigured"]
             ),
             ...(
-                publicRateLimitProfileConfigured && !publicRateLimitCheckerAvailable
-                    ? ["rate_limit_checker_unavailable"]
-                    : []
+                // S-5 / INV-1: abuse control is the one dependency that used to fail open. A
+                // checker is now required unconditionally, matching the runtime's own refusal.
+                publicRateLimitCheckerAvailable
+                    ? []
+                    : ["rate_limit_checker_unavailable"]
             ),
         ];
     })();
@@ -161,7 +143,7 @@ export function resolveLocalServicesFeature(env: NodeJS.ProcessEnv): FeaturesPay
                     maxConcurrentExposures: featureConfig.publicPolicy.maxConcurrentExposures,
                     dnsTlsHostModeAvailable: publicDnsTlsHostModeAvailable,
                     webSocketSupport: publicRuntimeReady && pmsPreviewReady,
-                    auditEnabled: publicAuditRequired && publicAuditSinkAvailable,
+                    auditEnabled: publicAuditSinkAvailable,
                     abuseControlsEnabled: publicRateLimitProfileConfigured && publicRateLimitCheckerAvailable,
                     rateLimitProfileIds: featureConfig.publicPolicy.rateLimitProfileIds,
                     disabledReasons: publicDisabledReasons,

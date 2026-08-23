@@ -28,6 +28,11 @@ import {
 import { writeLocalServicePreviewDownstream } from "@/app/local/services/preview/downstream";
 import { encodeLocalServiceRequestPath } from "@/app/local/services/preview/requestTarget";
 import {
+    readLocalServicePublicClientKey,
+    resolveLocalServicePublicAccessIdentity,
+    type LocalServicePublicAccessPurpose,
+} from "@/app/local/services/public/accessAuthorization";
+import {
     createPublicExposureObservabilityEmitter,
     handleLocalServicePublicWebSocketUpgrade,
     type LocalServicePublicWebSocketUpgradeOptions,
@@ -50,7 +55,7 @@ export type RegisterLocalServicePublicRoutesOptions = Readonly<{
     authorizeSessionAccess?: (input: Readonly<{
         userId: string;
         sessionId: string;
-        purpose: "public_exposure" | "public_revoke" | "public_status";
+        purpose: "public_exposure" | "public_revoke" | "public_status" | LocalServicePublicAccessPurpose;
     }>) => boolean | Promise<boolean>;
     getStatus?: (request: DaemonLocalServicePublicPreviewStatusRequestV1) => LocalServicePublicPreviewSnapshotV1;
     createExposure: (input: Readonly<{
@@ -72,6 +77,8 @@ export type RegisterLocalServicePublicRoutesOptions = Readonly<{
         exposureId: string;
         rawToken: string | null;
         authenticated: boolean;
+        sessionAuthorized: boolean;
+        clientKey: string;
     }>) => LocalServicePublicRuntimeAccessResult;
     exchangeAccessToken?: (input: Readonly<{
         exposureId: string;
@@ -88,6 +95,8 @@ export type RegisterLocalServicePublicRoutesOptions = Readonly<{
 
 type RouteRequest = Readonly<{
     method?: string;
+    ip?: string;
+    socket?: Readonly<{ remoteAddress?: string }>;
     params?: Record<string, unknown>;
     query?: Record<string, unknown>;
     headers?: Record<string, unknown>;
@@ -570,10 +579,20 @@ async function handlePublicPreviewRequest(
         return undefined;
     }
 
+    // S-2: an authenticated exposure is bound to one session; holding any account on this server
+    // is not authorization to reach it. S-5: bucket the rate limiter per client, not per exposure.
+    const identity = await resolveLocalServicePublicAccessIdentity({
+        exposureId,
+        userId,
+        resolveExposure: options.resolveExposure,
+        authorizeSessionAccess: options.authorizeSessionAccess,
+    });
     const access = options.validateAccess({
         exposureId,
         rawToken: readLocalServicePublicTokenCookie(request.headers),
-        authenticated: Boolean(userId),
+        authenticated: identity.authenticated,
+        sessionAuthorized: identity.sessionAuthorized,
+        clientKey: readLocalServicePublicClientKey([request.ip, request.socket?.remoteAddress]),
     });
     if (!access.ok) {
         sendError(reply, 403, "public_preview_access_denied", access.reasonCode);

@@ -62,6 +62,12 @@ export function LocalPreviewTarget(props: Readonly<{
                     props.onError?.();
                     onLifecycle?.({ kind: 'loadFailed', errorCode: WEBVIEW_LOAD_FAILED_ERROR_CODE, url: props.url });
                 },
+                // G4: the WebView's own navigation snapshot is the only producer of back/forward
+                // history truth for this engine.
+                onNavigationStateChange: (navigationState) => onLifecycle?.({
+                    kind: 'navigationStateChanged',
+                    ...navigationState,
+                }),
                 onBlockedNavigation: props.onBlockedNavigation,
                 diagnostics: props.diagnostics,
                 automation: props.automation,

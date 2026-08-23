@@ -60,6 +60,15 @@ export function ExternalUrlTarget(props: Readonly<{
         url: view?.engineKind === 'webIframe' ? externalUrl : null,
         navigationKey: props.navigationKey,
     });
+    // R-3: ONE open-in-system-browser action for every branch of this target — the definitive
+    // non-framable fallback, the always-present iframe escape, AND the unavailable card. All three
+    // fulfil the identical OWNER-OPEN external path, so an unavailable in-app engine can never
+    // dead-end while the URL is still known.
+    const openInSystemBrowser = React.useCallback(() => {
+        if (!externalUrl) return;
+        void openBrowserExternalTabSelection(buildOpenExternalTabSelection(externalUrl));
+    }, [externalUrl]);
+    const escapeAction = externalUrl ? openInSystemBrowser : undefined;
 
     if (view && isExternalUrl && view.engineKind === 'desktopWebView') {
         if (!props.profileId) {
@@ -67,6 +76,7 @@ export function ExternalUrlTarget(props: Readonly<{
                 <BrowserFrameUnavailable
                     testID={props.testID}
                     reasonCode="browser_profile_missing"
+                    onOpenInSystemBrowser={escapeAction}
                 />
             );
         }
@@ -77,18 +87,18 @@ export function ExternalUrlTarget(props: Readonly<{
                 testID={props.testID}
                 diagnostics={props.diagnostics}
                 bridge={props.bridge}
+                // G8 break #2: the Wry child view dispatches reload/stop SOLELY from this prop. It
+                // was declared here and forwarded only into the webIframe config below, so the
+                // desktop toolbar's reload/stop reached no engine at all.
+                navigationCommand={props.navigationCommand}
                 onLifecycle={onLifecycle}
+                onOpenInSystemBrowser={escapeAction}
                 nowMs={props.nowMs}
             />
         );
     }
 
     if (view && isExternalUrl && view.engineKind === 'webIframe' && externalUrl) {
-        // ONE open-in-system-browser action, shared by the definitive non-framable fallback and
-        // the always-present escape, so both fulfil the identical OWNER-OPEN external path.
-        const openInSystemBrowser = () => {
-            void openBrowserExternalTabSelection(buildOpenExternalTabSelection(externalUrl));
-        };
         if (framability.verdict === 'nonFramable') {
             return (
                 <BrowserFrameNonFramable
@@ -138,6 +148,7 @@ export function ExternalUrlTarget(props: Readonly<{
         <BrowserFrameUnavailable
             testID={props.testID}
             reasonCode={props.reasonCode ?? 'external_url_unavailable'}
+            onOpenInSystemBrowser={escapeAction}
         />
     );
 }

@@ -29,8 +29,6 @@ type AutomationRequest = Readonly<{
     }>;
     actionKind: string;
     timeoutMs: number;
-    leaseId?: string;
-    expectedControlEpoch?: number;
     payload?: Readonly<Record<string, unknown>>;
 }>;
 
@@ -328,8 +326,6 @@ describe('injected-page browser automation runtime', () => {
         const resultPromise = owner.executeAction(createAutomationRequest({
             automationRequestId: 'automation_request_click_1',
             actionKind: 'click',
-            leaseId: 'lease_1',
-            expectedControlEpoch: 0,
             payload: {
                 locator: {
                     kind: 'css',

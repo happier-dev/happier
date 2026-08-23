@@ -268,7 +268,9 @@ function resolvePreviewHttpRouteTarget(
             tokenMaterial,
             exchangeCookiePath: pathModePreviewCookiePath(previewId),
             exchangeCookieSecure: false,
-            exchangeRedirectLocation: `${pathModePreviewCookiePath(previewId)}${path.replace(/^\/$/u, "")}${search}`,
+            // `pathModePreviewCookiePath` already ends in `/`; the encoded wildcard path always
+            // begins with one, so join them without producing a `//` segment.
+            exchangeRedirectLocation: `${pathModePreviewCookiePath(previewId)}${path.replace(/^\/+/u, "")}${search}`,
         };
     }
 

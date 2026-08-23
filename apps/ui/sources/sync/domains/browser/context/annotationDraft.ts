@@ -3,6 +3,7 @@ import {
     type BrowserAnnotationStrokeV1,
     type BrowserContextItemV1,
     type BrowserDiagnosticFidelityV1,
+    type BrowserDiagnosticsElementSourceLocationV1,
     type BrowserScreenshotMediaReferenceV1,
     type BrowserSemanticAdapterKindV1,
 } from '@happier-dev/protocol';
@@ -193,6 +194,8 @@ export function addBrowserAnnotationDraftTarget(
             selectorPath: string;
             accessibleName?: string;
             rect?: BrowserAnnotationViewportRect;
+            componentName?: string;
+            sourceLocation?: BrowserDiagnosticsElementSourceLocationV1;
         }>;
     }>,
 ): BrowserContextState {
@@ -203,6 +206,8 @@ export function addBrowserAnnotationDraftTarget(
         selectorPath: input.target.selectorPath,
         ...(input.target.accessibleName ? { accessibleName: input.target.accessibleName } : {}),
         ...(input.target.rect ? { rect: input.target.rect } : {}),
+        ...(input.target.componentName ? { componentName: input.target.componentName } : {}),
+        ...(input.target.sourceLocation ? { sourceLocation: input.target.sourceLocation } : {}),
         addedAtMs: input.nowMs,
     };
     return withDraft(state, {

@@ -1,4 +1,5 @@
 import { getPathRemainderWithinBase } from '../../../../session/handoff/paths/sessionHandoffPathNormalization';
+import type { LocalServiceProcessOwnership } from './platform/processOwnership';
 import type { TerminalProcessRegistry } from './terminalRegistry';
 
 export type LocalServiceProcessFact = Readonly<{
@@ -6,8 +7,13 @@ export type LocalServiceProcessFact = Readonly<{
     ppid?: number;
     processStartTimeMs?: number;
     command: string;
-    executablePath?: string;
     cwd?: string;
+    /**
+     * Whether this process is controllable by the daemon's own OS identity, as established by
+     * the platform scanner (`platform/processOwnership.ts`). `undefined` means the platform
+     * could not establish it, which the scanner treats as unproven, not as another owner.
+     */
+    processOwnership?: LocalServiceProcessOwnership;
 }>;
 
 export const LOCAL_SERVICE_PROCESS_LINEAGE_MAX_DEPTH = 4;

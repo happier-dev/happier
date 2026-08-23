@@ -31,6 +31,7 @@ describe("local service public exposure runtime", () => {
 
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -68,7 +69,7 @@ describe("local service public exposure runtime", () => {
                 machineId: "machine_1",
                 mode: "secret_link",
                 state: "active",
-                publicUrl: "https://preview.happier.test/v1/local-services/public/public_preview_1?publicToken=secret_token_1",
+                publicUrl: "https://public-preview-1.preview.example.test/v1/local-services/public/public_preview_1?publicToken=secret_token_1",
                 issuedAt: 1_000,
                 expiresAt: 61_000,
                 auditEventIds: ["audit_create_1"],
@@ -79,6 +80,8 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "public_token_exchange_required" });
 
         expect(runtime.exchangeAccessToken({
@@ -94,6 +97,70 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
+        })).toEqual({ ok: true, preview });
+    });
+
+    it("requires authenticated public access to be authorized for the exposure session", async () => {
+        const mod = await loadPublicRuntimeModule();
+        expect(mod?.createLocalServicePublicRuntime).toBeTypeOf("function");
+        if (!mod?.createLocalServicePublicRuntime) return;
+
+        let auditIndex = 0;
+        const runtime = mod.createLocalServicePublicRuntime({
+            publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
+            tokenSecret: "public-secret",
+            policy: {
+                enabled: true,
+                allowedModes: ["authenticated"],
+                maxTtlMs: 60_000,
+                dnsTlsRequired: false,
+                auditRequired: true,
+                rateLimitProfileIds: ["default"],
+            },
+            nowMs: () => 1_000,
+            generateExposureId: () => "public_preview_1",
+            generateAuditEventId: () => {
+                auditIndex += 1;
+                return `audit_${auditIndex}`;
+            },
+            allowTestDevAuditSink: true,
+            recordAuditEvent: () => undefined,
+            checkRateLimit: () => true,
+        });
+
+        expect(runtime.createExposure({
+            preview,
+            requestedMode: "authenticated",
+            requestedTtlMs: 60_000,
+            actorId: "user_1",
+            sessionAuthorized: true,
+            dnsTlsValid: true,
+            rateLimitProfileId: "default",
+        })).toEqual(expect.objectContaining({ ok: true }));
+
+        expect(runtime.validateAccess({
+            exposureId: "public_preview_1",
+            rawToken: null,
+            authenticated: false,
+            sessionAuthorized: false,
+            clientKey: "client_a",
+        })).toEqual({ ok: false, reasonCode: "authentication_required" });
+        expect(runtime.validateAccess({
+            exposureId: "public_preview_1",
+            rawToken: null,
+            authenticated: true,
+            sessionAuthorized: false,
+            clientKey: "client_a",
+        })).toEqual({ ok: false, reasonCode: "session_not_authorized" });
+        expect(runtime.validateAccess({
+            exposureId: "public_preview_1",
+            rawToken: null,
+            authenticated: true,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: true, preview });
     });
 
@@ -105,6 +172,7 @@ describe("local service public exposure runtime", () => {
         let exposureIndex = 0;
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -122,6 +190,7 @@ describe("local service public exposure runtime", () => {
             generateAuditEventId: () => `audit_create_${exposureIndex}`,
             allowTestDevAuditSink: true,
             recordAuditEvent: () => undefined,
+            checkRateLimit: () => true,
         });
 
         expect(runtime.createExposure({
@@ -171,7 +240,7 @@ describe("local service public exposure runtime", () => {
                 expect.objectContaining({
                     exposureId: "public_preview_1",
                     previewId: "preview_1",
-                    publicUrl: "https://preview.happier.test/v1/local-services/public/public_preview_1?publicToken=secret_token_1",
+                    publicUrl: "https://public-preview-1.preview.example.test/v1/local-services/public/public_preview_1?publicToken=secret_token_1",
                 }),
             ],
             diagnostics: [],
@@ -186,8 +255,10 @@ describe("local service public exposure runtime", () => {
 
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             policy: {},
             nowMs: () => 1_000,
+            checkRateLimit: () => true,
         });
 
         const result = runtime.createExposure({
@@ -211,6 +282,7 @@ describe("local service public exposure runtime", () => {
 
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -222,6 +294,7 @@ describe("local service public exposure runtime", () => {
             nowMs: () => 1_000,
             generateExposureId: () => "public_preview_1",
             generateSecretToken: () => "secret_token_1",
+            checkRateLimit: () => true,
         });
 
         expect(runtime.createExposure({
@@ -243,6 +316,7 @@ describe("local service public exposure runtime", () => {
 
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -255,6 +329,7 @@ describe("local service public exposure runtime", () => {
             generateExposureId: () => "public_preview_1",
             generateSecretToken: () => "secret_token_1",
             recordAuditEvent: () => undefined,
+            checkRateLimit: () => true,
         });
 
         expect(runtime.createExposure({
@@ -276,6 +351,7 @@ describe("local service public exposure runtime", () => {
 
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -291,6 +367,7 @@ describe("local service public exposure runtime", () => {
             generateAuditEventId: () => "audit_create_1",
             allowTestDevAuditSink: true,
             recordAuditEvent: () => undefined,
+            checkRateLimit: () => true,
         });
 
         expect(runtime.createExposure({
@@ -313,6 +390,7 @@ describe("local service public exposure runtime", () => {
         let auditWrites = 0;
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -332,6 +410,7 @@ describe("local service public exposure runtime", () => {
                     throw new Error("durable audit unavailable");
                 }
             },
+            checkRateLimit: () => true,
         });
 
         expect(runtime.createExposure({
@@ -352,6 +431,8 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "audit_sink_unavailable" });
         expect(runtime.resolveExposure("public_preview_1")).toEqual(expect.objectContaining({
             auditEventIds: ["audit_create_1"],
@@ -366,6 +447,7 @@ describe("local service public exposure runtime", () => {
         let auditWrites = 0;
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -385,6 +467,7 @@ describe("local service public exposure runtime", () => {
                     throw new Error("durable audit unavailable");
                 }
             },
+            checkRateLimit: () => true,
         });
 
         expect(runtime.createExposure({
@@ -414,6 +497,7 @@ describe("local service public exposure runtime", () => {
 
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -452,6 +536,8 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "rate_limit_checker_unavailable" });
     });
 
@@ -465,6 +551,7 @@ describe("local service public exposure runtime", () => {
         const auditIds = ["audit_create_1", "audit_denied_1", "audit_rate_limit_1", "audit_denied_2"];
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -504,6 +591,8 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "wrong_token",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "public_token_mismatch" });
         expect(rateLimitChecks).toBe(0);
         expect(runtime.resolveExposure("public_preview_1")).toEqual(expect.objectContaining({
@@ -514,6 +603,8 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "rate_limited" });
         expect(rateLimitChecks).toBe(1);
         expect(runtime.resolveExposure("public_preview_1")).toEqual(expect.objectContaining({
@@ -544,6 +635,7 @@ describe("local service public exposure runtime", () => {
         let rateLimitChecks = 0;
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -593,6 +685,8 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "public_token_mismatch" });
         // Token validation precedes the rate-limit check (checker still not consulted on rejection).
         expect(rateLimitChecks).toBe(0);
@@ -602,6 +696,8 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_2",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: true, preview });
         expect(rateLimitChecks).toBe(1);
     });
@@ -613,6 +709,7 @@ describe("local service public exposure runtime", () => {
 
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -627,6 +724,7 @@ describe("local service public exposure runtime", () => {
             generateAuditEventId: () => "audit_create_1",
             allowTestDevAuditSink: true,
             recordAuditEvent: () => undefined,
+            checkRateLimit: () => true,
         });
 
         expect(runtime.exchangeAccessToken({
@@ -654,6 +752,8 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "public_token_exchange_required" });
     });
 
@@ -665,6 +765,7 @@ describe("local service public exposure runtime", () => {
         let exposureIndex = 0;
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -683,6 +784,7 @@ describe("local service public exposure runtime", () => {
             generateAuditEventId: () => `audit_create_${exposureIndex}`,
             allowTestDevAuditSink: true,
             recordAuditEvent: () => undefined,
+            checkRateLimit: () => true,
         });
 
         expect(runtime.createExposure({
@@ -719,6 +821,7 @@ describe("local service public exposure runtime", () => {
         const auditIds = ["audit_create_1", "audit_revoke_1", "audit_denied_1"];
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -733,6 +836,7 @@ describe("local service public exposure runtime", () => {
             generateAuditEventId: () => auditIds.shift() ?? "audit_extra",
             allowTestDevAuditSink: true,
             recordAuditEvent: (event) => auditEvents.push(event),
+            checkRateLimit: () => true,
         });
 
         expect(runtime.createExposure({
@@ -750,6 +854,8 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "revoked" });
         expect(auditEvents).toEqual([
             expect.objectContaining({ eventId: "audit_create_1", action: "create" }),
@@ -776,6 +882,7 @@ describe("local service public exposure runtime", () => {
         const auditIds = ["audit_create_1", "audit_access_1", "audit_denied_1"];
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -790,6 +897,7 @@ describe("local service public exposure runtime", () => {
             generateAuditEventId: () => auditIds.shift() ?? "audit_extra",
             allowTestDevAuditSink: true,
             recordAuditEvent: (event) => auditEvents.push(event),
+            checkRateLimit: () => true,
         });
 
         expect(runtime.createExposure({
@@ -810,11 +918,15 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: true, preview });
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "wrong_token",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "public_token_mismatch" });
 
         expect(auditEvents).toEqual([
@@ -843,6 +955,7 @@ describe("local service public exposure runtime", () => {
         let resolvedPreview: LocalServicePreviewResourceV1 | null = preview;
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -858,6 +971,7 @@ describe("local service public exposure runtime", () => {
             allowTestDevAuditSink: true,
             recordAuditEvent: (event) => auditEvents.push(event),
             resolvePreview: () => resolvedPreview,
+            checkRateLimit: () => true,
         });
 
         expect(runtime.createExposure({
@@ -879,6 +993,8 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "preview_not_found" });
 
         resolvedPreview = {
@@ -889,6 +1005,8 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "preview_mismatch" });
 
         expect(auditEvents).toEqual([
@@ -916,6 +1034,7 @@ describe("local service public exposure runtime", () => {
         const auditIds = ["audit_create_1", "audit_expire_1", "audit_denied_1", "audit_denied_2"];
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -930,6 +1049,7 @@ describe("local service public exposure runtime", () => {
             generateAuditEventId: () => auditIds.shift() ?? "audit_extra",
             allowTestDevAuditSink: true,
             recordAuditEvent: (event) => auditEvents.push(event),
+            checkRateLimit: () => true,
         });
 
         expect(runtime.createExposure({
@@ -947,11 +1067,15 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "expired" });
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "expired" });
 
         expect(auditEvents).toEqual([
@@ -974,15 +1098,16 @@ describe("local service public exposure runtime", () => {
         }));
     });
 
-    it("emits a rate-limit audit event and records every rate-limited access denial", async () => {
+    it("keeps a rate-limited exposure usable in the next window instead of bricking the link", async () => {
         const mod = await loadPublicRuntimeModule();
         expect(mod?.createLocalServicePublicRuntime).toBeTypeOf("function");
         if (!mod?.createLocalServicePublicRuntime) return;
 
         const auditEvents: unknown[] = [];
-        const auditIds = ["audit_create_1", "audit_rate_limit_1", "audit_denied_1", "audit_denied_2"];
+        let auditSequence = 0;
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -994,7 +1119,10 @@ describe("local service public exposure runtime", () => {
             nowMs: () => 1_000,
             generateExposureId: () => "public_preview_1",
             generateSecretToken: () => "secret_token_1",
-            generateAuditEventId: () => auditIds.shift() ?? "audit_extra",
+            generateAuditEventId: () => {
+                auditSequence += 1;
+                return `audit_${auditSequence}`;
+            },
             allowTestDevAuditSink: true,
             recordAuditEvent: (event) => auditEvents.push(event),
             checkRateLimit: () => false,
@@ -1018,30 +1146,25 @@ describe("local service public exposure runtime", () => {
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "rate_limited" });
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
             authenticated: false,
+            sessionAuthorized: true,
+            clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "rate_limited" });
 
-        expect(auditEvents).toEqual([
-            expect.objectContaining({ eventId: "audit_create_1", action: "create" }),
-            expect.objectContaining({ eventId: "audit_rate_limit_1", action: "rate_limit" }),
-            expect.objectContaining({
-                eventId: "audit_denied_1",
-                action: "access_denied",
-                reasonCode: "rate_limited",
-            }),
-            expect.objectContaining({
-                eventId: "audit_denied_2",
-                action: "access_denied",
-                reasonCode: "rate_limited",
-            }),
-        ]);
+        // S-5: every refusal is audited...
+        expect(auditEvents.filter((event) => (event as { action?: string }).action === "rate_limit")).toHaveLength(2);
+        expect(auditEvents.filter((event) => (event as { reasonCode?: string }).reasonCode === "rate_limited")).toHaveLength(2);
+        // ...but the exposure itself stays ACTIVE. Persisting `state:'rate_limited'` made
+        // `isLocalServicePublicExposureAccessible` treat the link as permanently dead, so a single
+        // visitor exceeding the window bricked it for everyone holding it.
         expect(runtime.resolveExposure("public_preview_1")).toEqual(expect.objectContaining({
-            state: "rate_limited",
-            auditEventIds: ["audit_create_1", "audit_rate_limit_1", "audit_denied_1", "audit_denied_2"],
+            state: "active",
         }));
     });
 
@@ -1054,6 +1177,7 @@ describe("local service public exposure runtime", () => {
         const auditEvents: unknown[] = [];
         const runtime = mod.createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
@@ -1072,6 +1196,7 @@ describe("local service public exposure runtime", () => {
             allowTestDevAuditSink: true,
             recordAuditEvent: (event) => auditEvents.push(event),
             maxExposureAuditEventIds: 2,
+            checkRateLimit: () => true,
         });
 
         expect(runtime.createExposure({
@@ -1092,6 +1217,8 @@ describe("local service public exposure runtime", () => {
                 exposureId: "public_preview_1",
                 rawToken: "secret_token_1",
                 authenticated: false,
+                sessionAuthorized: true,
+                clientKey: "client_a",
             }).ok).toBe(true);
         }
 
@@ -1099,5 +1226,154 @@ describe("local service public exposure runtime", () => {
         expect(runtime.resolveExposure("public_preview_1")).toEqual(expect.objectContaining({
             auditEventIds: ["audit_3", "audit_4"],
         }));
+    });
+
+    function createAuthenticatedModeRuntime(
+        mod: Awaited<ReturnType<typeof loadPublicRuntimeModule>>,
+        overrides: Partial<Parameters<typeof mod.createLocalServicePublicRuntime>[0]> = {},
+    ) {
+        return mod.createLocalServicePublicRuntime({
+            publicBaseUrl: "https://preview.happier.test",
+            hostOriginBaseDomain: "preview.example.test",
+            tokenSecret: "public-secret",
+            policy: {
+                enabled: true,
+                allowedModes: ["authenticated"],
+                maxTtlMs: 60_000,
+                dnsTlsRequired: false,
+                auditRequired: true,
+                rateLimitProfileIds: ["default"],
+            },
+            nowMs: () => 1_000,
+            generateExposureId: () => "public_preview_1",
+            generateAuditEventId: () => "audit_1",
+            allowTestDevAuditSink: true,
+            recordAuditEvent: () => undefined,
+            checkRateLimit: () => true,
+            ...overrides,
+        });
+    }
+
+    function createAuthenticatedExposure(runtime: ReturnType<typeof createAuthenticatedModeRuntime>) {
+        return runtime.createExposure({
+            preview,
+            requestedMode: "authenticated",
+            requestedTtlMs: 60_000,
+            actorId: "user_1",
+            sessionAuthorized: true,
+            dnsTlsValid: true,
+            rateLimitProfileId: "default",
+        });
+    }
+
+    // S-2
+    it("refuses an authenticated exposure to an account that does not hold the bound session", async () => {
+        const mod = await loadPublicRuntimeModule();
+        const runtime = createAuthenticatedModeRuntime(mod);
+        expect(createAuthenticatedExposure(runtime).ok).toBe(true);
+
+        expect(runtime.validateAccess({
+            exposureId: "public_preview_1",
+            rawToken: null,
+            authenticated: true,
+            sessionAuthorized: false,
+            clientKey: "client_a",
+        })).toEqual({ ok: false, reasonCode: "session_not_authorized" });
+
+        expect(runtime.validateAccess({
+            exposureId: "public_preview_1",
+            rawToken: null,
+            authenticated: true,
+            sessionAuthorized: true,
+            clientKey: "client_a",
+        })).toEqual({ ok: true, preview });
+    });
+
+    // S-3
+    it("mints a public exposure on its own isolated origin and refuses without one", async () => {
+        const mod = await loadPublicRuntimeModule();
+
+        const isolated = createAuthenticatedExposure(createAuthenticatedModeRuntime(mod));
+        expect(isolated.ok).toBe(true);
+        if (!isolated.ok) return;
+        const exposureOrigin = new URL(isolated.exposure.publicUrl).origin;
+        expect(exposureOrigin).toBe("https://public-preview-1.preview.example.test");
+        expect(exposureOrigin).not.toBe(new URL("https://preview.happier.test").origin);
+
+        for (const overrides of [
+            { hostOriginBaseDomain: null },
+            { hostOriginBaseDomain: "not a domain" },
+            { publicBaseUrl: "http://preview.happier.test" },
+        ]) {
+            expect(createAuthenticatedExposure(createAuthenticatedModeRuntime(mod, overrides))).toEqual({
+                ok: false,
+                reasonCode: "public_origin_unavailable",
+            });
+        }
+    });
+
+    // S-5
+    it("requires a rate-limit checker to mint and to serve an exposure", async () => {
+        const mod = await loadPublicRuntimeModule();
+        const runtime = createAuthenticatedModeRuntime(mod, {
+            policy: {
+                enabled: true,
+                allowedModes: ["authenticated"],
+                maxTtlMs: 60_000,
+                dnsTlsRequired: false,
+                auditRequired: true,
+                // Empty, which is the DEFAULT configuration: the old runtime only refused when
+                // profiles were configured, so the default enabled deployment had no limiting.
+                rateLimitProfileIds: [],
+            },
+            checkRateLimit: undefined,
+        });
+
+        expect(createAuthenticatedExposure(runtime)).toEqual({
+            ok: false,
+            reasonCode: "rate_limit_checker_unavailable",
+        });
+
+        const served = createAuthenticatedModeRuntime(mod, { checkRateLimit: () => true });
+        expect(createAuthenticatedExposure(served).ok).toBe(true);
+        const unchecked = createAuthenticatedModeRuntime(mod, { checkRateLimit: undefined });
+        expect(unchecked.validateAccess({
+            exposureId: "public_preview_1",
+            rawToken: null,
+            authenticated: true,
+            sessionAuthorized: true,
+            clientKey: "client_a",
+        })).toEqual({ ok: false, reasonCode: "exposure_not_found" });
+    });
+
+    // S-5
+    it("buckets the rate limiter per client so one visitor cannot exhaust the window", async () => {
+        const mod = await loadPublicRuntimeModule();
+        const seen: string[] = [];
+        const runtime = createAuthenticatedModeRuntime(mod, {
+            checkRateLimit: ({ clientKey }) => {
+                seen.push(clientKey);
+                return clientKey !== "noisy_client";
+            },
+        });
+        expect(createAuthenticatedExposure(runtime).ok).toBe(true);
+
+        expect(runtime.validateAccess({
+            exposureId: "public_preview_1",
+            rawToken: null,
+            authenticated: true,
+            sessionAuthorized: true,
+            clientKey: "noisy_client",
+        })).toEqual({ ok: false, reasonCode: "rate_limited" });
+
+        // The next visitor is unaffected, and the exposure is still active.
+        expect(runtime.validateAccess({
+            exposureId: "public_preview_1",
+            rawToken: null,
+            authenticated: true,
+            sessionAuthorized: true,
+            clientKey: "quiet_client",
+        })).toEqual({ ok: true, preview });
+        expect(seen).toEqual(["noisy_client", "quiet_client"]);
     });
 });

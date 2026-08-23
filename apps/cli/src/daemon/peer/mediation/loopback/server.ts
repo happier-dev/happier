@@ -12,6 +12,10 @@ import {
 } from '@happier-dev/protocol';
 
 import {
+  createDaemonPeerMediationDirectFlowObserver,
+  type DaemonPeerMediationObservabilityEmitter,
+} from '../observability/events';
+import {
   verifyDirectRouteGrantV1,
   verifyPeerRouteNonceV1,
   type DirectRouteGrantTrustRoot,
@@ -66,6 +70,12 @@ export type PeerMediationLoopbackAppOptions = Readonly<{
   rpc?: PeerMachineRpcDirectRuntimeOptions;
   stream?: PeerMachineLiveStreamDirectRuntimeOptions;
   tunnel?: Omit<RegisterPeerTcpTunnelLoopbackRoutesOptions, 'nowMs' | 'expected' | 'trustRoots' | 'revokedGrantIds' | 'revokedGrantFamilyIds'>;
+  /**
+   * PMS-9 / P1-9. This composition root is the one place that knows the account, machine, route
+   * kind and clock for every direct route, so the emitter is bound here once and each registrar
+   * receives an already-scoped observer.
+   */
+  observability?: DaemonPeerMediationObservabilityEmitter;
 }>;
 
 export type StartPeerMediationLoopbackServerOptions = PeerMediationLoopbackAppOptions & Readonly<{
@@ -200,12 +210,23 @@ export function createPeerMediationLoopbackApp(options: PeerMediationLoopbackApp
     };
   });
 
+  const directFlowObserverFor = (expected: PeerMediationLoopbackExpectedBinding) => (
+    createDaemonPeerMediationDirectFlowObserver({
+      ...(options.observability ? { observability: options.observability } : {}),
+      accountId: expected.accountId,
+      machineId: expected.machineId,
+      routeKind: expected.routeKind,
+      nowMs: options.nowMs,
+    })
+  );
+
   if (options.rpc) {
     const expected = resolveExpectedBindingForFlow(options, 'machine_rpc');
     registerPeerMediationMachineRpcDirectRoutes(app, {
       ...options.rpc,
       nowMs: options.nowMs,
       expected,
+      observability: directFlowObserverFor(expected),
       trustRoots: options.trustRoots,
       revokedGrantIds: options.revokedGrantIds,
       revokedGrantFamilyIds: options.revokedGrantFamilyIds,
@@ -218,6 +239,7 @@ export function createPeerMediationLoopbackApp(options: PeerMediationLoopbackApp
       ...options.stream,
       nowMs: options.nowMs,
       expected,
+      observability: directFlowObserverFor(expected),
       trustRoots: options.trustRoots,
       revokedGrantIds: options.revokedGrantIds,
       revokedGrantFamilyIds: options.revokedGrantFamilyIds,
@@ -229,6 +251,7 @@ export function createPeerMediationLoopbackApp(options: PeerMediationLoopbackApp
     registerPeerTcpTunnelLoopbackRoutes(app, {
       ...options.tunnel,
       nowMs: options.nowMs,
+      observability: directFlowObserverFor(expected),
       expected: {
         accountId: expected.accountId,
         machineId: expected.machineId,

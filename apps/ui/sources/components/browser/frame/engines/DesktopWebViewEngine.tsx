@@ -206,6 +206,12 @@ export function DesktopWebViewEngine(props: Readonly<{
      * on the diagnostics-only page-info events. Held in a ref so it never churns `publishPageInfo`.
      */
     onLifecycle?: BrowserViewLifecycleEmitter;
+    /**
+     * R-3: the system-browser escape for the two states this engine can terminate in — the native
+     * child view being unavailable, and the render process having died. Both used to dead-end on a
+     * card with no next step even though the URL was still known.
+     */
+    onOpenInSystemBrowser?: () => void;
     nowMs?: () => number;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
@@ -666,6 +672,7 @@ export function DesktopWebViewEngine(props: Readonly<{
             <BrowserFrameUnavailable
                 testID={props.testID}
                 reasonCode={unavailableReason ?? 'external_url_unavailable'}
+                onOpenInSystemBrowser={props.onOpenInSystemBrowser}
             />
         );
     }

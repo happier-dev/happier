@@ -607,6 +607,8 @@ describe("local service public exposure routes", () => {
             exposureId: "public_preview_1",
             rawToken: "cookie_token_1",
             authenticated: false,
+            sessionAuthorized: false,
+            clientKey: "unknown",
         });
         expect(proxyInputs[0]).toEqual(expect.objectContaining({
             preview,
@@ -805,6 +807,8 @@ describe("local service public exposure routes", () => {
             exposureId: "public_preview_1",
             rawToken: "cookie_token_1",
             authenticated: false,
+            sessionAuthorized: false,
+            clientKey: "unknown",
         });
         expect(proxyInputs[0]).toEqual(expect.objectContaining({
             preview,
@@ -1101,6 +1105,8 @@ describe("local service public exposure routes", () => {
             exposureId: "public_preview_1",
             rawToken: "cookie_token_1",
             authenticated: false,
+            sessionAuthorized: false,
+            clientKey: "unknown",
         });
         expect(proxyWebSocket).toHaveBeenCalledWith(expect.objectContaining({
             preview,
@@ -1461,5 +1467,94 @@ describe("local service public exposure routes", () => {
         expect(reply.headers.Location).toBe(
             `/v1/local-services/public/public_preview_1${CANONICAL_ENCODED_CRLF_PATH}`,
         );
+    });
+
+    // S-2: `authenticated` proved only that the caller held SOME account on this server. The
+    // route must resolve access to the exposure's bound session and hand that fact to the runtime,
+    // on BOTH data planes.
+    it("resolves session authorization for the exposure owner on the HTTP data plane", async () => {
+        const mod = await loadPublicRoutesModule();
+        expect(mod?.registerLocalServicePublicRoutes).toBeTypeOf("function");
+        if (!mod?.registerLocalServicePublicRoutes) return;
+
+        const validateAccess = vi.fn(() => ({ ok: true as const, preview }));
+        const authorizeSessionAccess = vi.fn(() => false);
+        const app = createFakeRouteApp();
+        mod.registerLocalServicePublicRoutes(app as never, {
+            resolvePreview: vi.fn(() => preview),
+            resolveExposure: vi.fn(() => exposure),
+            createExposure: vi.fn(() => ({ ok: true as const, exposure })),
+            revokeExposure: vi.fn(() => ({ ok: true as const })),
+            validateAccess,
+            authorizeSessionAccess,
+            readOptionalUserId: async () => "co_tenant_user",
+            proxyHttp: vi.fn(async () => ({ ok: true as const })),
+        });
+
+        const handler = getRouteHandler(app, "GET", "/v1/local-services/public/:exposureId/*");
+        await handler({
+            method: "GET",
+            ip: "203.0.113.9",
+            params: { exposureId: "public_preview_1", "*": "index.html" },
+            query: {},
+            headers: { host: "preview.happier.test" },
+        }, createReplyStub());
+
+        expect(authorizeSessionAccess).toHaveBeenCalledWith({
+            userId: "co_tenant_user",
+            sessionId: "session_1",
+            purpose: "public_access",
+        });
+        expect(validateAccess).toHaveBeenCalledWith(expect.objectContaining({
+            exposureId: "public_preview_1",
+            authenticated: true,
+            sessionAuthorized: false,
+            clientKey: "203.0.113.9",
+        }));
+    });
+
+    it("resolves session authorization for the exposure owner on the WebSocket data plane", async () => {
+        const mod = await loadPublicRoutesModule();
+        expect(mod?.registerLocalServicePublicRoutes).toBeTypeOf("function");
+        if (!mod?.registerLocalServicePublicRoutes) return;
+
+        const validateAccess = vi.fn(() => ({ ok: false as const, reasonCode: "session_not_authorized" as const }));
+        const authorizeSessionAccess = vi.fn(() => false);
+        const app = createUpgradeRouteApp();
+        mod.registerLocalServicePublicRoutes(app as never, {
+            resolvePreview: vi.fn(() => preview),
+            resolveExposure: vi.fn(() => exposure),
+            createExposure: vi.fn(() => ({ ok: true as const, exposure })),
+            revokeExposure: vi.fn(() => ({ ok: true as const })),
+            validateAccess,
+            authorizeSessionAccess,
+            readOptionalUserId: async () => "co_tenant_user",
+            proxyHttp: vi.fn(async () => ({ ok: true as const })),
+            proxyWebSocket: vi.fn(async () => ({ ok: true as const })),
+        } as never);
+
+        const socket = { ...createUpgradeSocket(), remoteAddress: "203.0.113.9" };
+        await app.upgradeHandlers[0]?.({
+            url: "/v1/local-services/public/public_preview_1/socket",
+            headers: {
+                host: "preview.happier.test",
+                upgrade: "websocket",
+                connection: "Upgrade",
+            },
+            rawHeaders: [],
+        }, socket, new Uint8Array());
+
+        expect(authorizeSessionAccess).toHaveBeenCalledWith({
+            userId: "co_tenant_user",
+            sessionId: "session_1",
+            purpose: "public_access",
+        });
+        expect(validateAccess).toHaveBeenCalledWith(expect.objectContaining({
+            exposureId: "public_preview_1",
+            authenticated: true,
+            sessionAuthorized: false,
+            clientKey: "203.0.113.9",
+        }));
+        expect(new TextDecoder().decode(socket.write.mock.calls[0]?.[0])).toContain("403 Forbidden");
     });
 });
