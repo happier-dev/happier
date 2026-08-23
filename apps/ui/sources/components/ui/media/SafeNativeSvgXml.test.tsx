@@ -52,6 +52,16 @@ describe('parseSafeNativeSvgXml', () => {
         expect(parseSafeNativeSvgXml(xml)).toBeNull();
     });
 
+    it.each([
+        ['drawing elements', '<svg><path d="M0 0h16v16H0z"/></svg>'],
+        ['text content', '<svg><text x="1" y="8">safe</text></svg>'],
+        ['local paint fragments', '<svg><defs><linearGradient id="paint"/></defs><rect fill="url(\'#paint\')"/></svg>'],
+        ['local use fragments', '<svg><path id="shape"/><use href="#shape"/></svg>'],
+        ['narrow raster data URIs', '<svg><image href="data:image/png;base64,iVBORw0KGgo=" width="1" height="1"/></svg>'],
+    ])('keeps safe %s', (_name, svg) => {
+        expect(parseSafeNativeSvgXml(svg)).not.toBeNull();
+    });
+
     it('keeps ordinary SVG drawing, text, local fragments, and narrow raster data URIs', () => {
         const svg = [
             '<svg viewBox="0 0 16 16">',
